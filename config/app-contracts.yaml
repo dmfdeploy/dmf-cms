@@ -1,0 +1,46 @@
+product_name: DMF Console
+facility_name: Lab
+catalog_source: config/app-contracts.yaml
+apps:
+  - key: auth
+    display_name: Authentik
+    lane: public
+    deep_links:
+      primary: https://auth.dmf.example.com/
+    summary: Identity provider and OIDC source.
+  - key: awx
+    display_name: AWX
+    lane: public
+    deep_links:
+      primary: https://awx.dmf.example.com/
+    summary: Workflow execution and job history.
+  - key: forgejo
+    display_name: Forgejo
+    lane: public
+    deep_links:
+      primary: https://forgejo.dmf.example.com/
+    summary: Reviewable config and change history.
+  - key: grafana
+    display_name: Grafana
+    lane: private
+    deep_links:
+      primary: https://grafana.dmf.example.com/
+    summary: Deep charts and long-form observability.
+  - key: librenms
+    display_name: LibreNMS
+    lane: private
+    deep_links:
+      primary: https://librenms.dmf.example.com/
+    summary: Network monitoring and device telemetry.
+  - key: netbox
+    display_name: NetBox
+    lane: private
+    deep_links:
+      primary: https://netbox.dmf.example.com/
+    summary: Inventory, topology, and source of truth.
+  - key: registry
+    display_name: Registry
+    lane: private
+    deep_links:
+      primary: https://registry.dmf.example.com/
+    summary: Image registry and artifact storage.

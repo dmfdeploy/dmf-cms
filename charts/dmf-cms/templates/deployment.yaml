@@ -1,0 +1,184 @@
+{{- $runtimeMode := .Values.env.runtimeMode | default "local" -}}
+{{- if eq $runtimeMode "cluster" -}}
+{{- if not .Values.oidc.enabled -}}
+{{- fail "env.runtimeMode=cluster requires oidc.enabled=true" -}}
+{{- end -}}
+{{- if not .Values.oidc.issuerUrl -}}
+{{- fail "env.runtimeMode=cluster requires oidc.issuerUrl" -}}
+{{- end -}}
+{{- if not .Values.oidc.clientId -}}
+{{- fail "env.runtimeMode=cluster requires oidc.clientId" -}}
+{{- end -}}
+{{- if not .Values.oidc.clientSecret.existingSecretName -}}
+{{- fail "env.runtimeMode=cluster requires oidc.clientSecret.existingSecretName" -}}
+{{- end -}}
+{{- if not .Values.env.secretKeySecret.existingSecretName -}}
+{{- fail "env.runtimeMode=cluster requires env.secretKeySecret.existingSecretName" -}}
+{{- end -}}
+{{- end }}
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: {{ include "dmf-cms.fullname" . }}
+spec:
+  replicas: {{ .Values.replicaCount }}
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: {{ include "dmf-cms.name" . }}
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/name: {{ include "dmf-cms.name" . }}
+      {{- if .Values.catalog.enabled }}
+      annotations:
+        checksum/catalog-config: {{ include (print $.Template.BasePath "/configmap-catalog.yaml") . | sha256sum }}
+      {{- end }}
+    spec:
+      {{- with .Values.imagePullSecrets }}
+      imagePullSecrets:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      {{- if .Values.catalog.enabled }}
+      volumes:
+        - name: catalog
+          configMap:
+            name: {{ include "dmf-cms.fullname" . }}-catalog
+      {{- end }}
+      containers:
+        - name: dmf-cms
+          image: "{{ .Values.image.repository }}:{{ .Values.image.tag }}"
+          imagePullPolicy: {{ .Values.image.pullPolicy }}
+          ports:
+            - name: http
+              containerPort: {{ .Values.service.port }}
+          {{- if .Values.catalog.enabled }}
+          volumeMounts:
+            - name: catalog
+              mountPath: /etc/dmf-cms/catalog
+              readOnly: true
+          {{- end }}
+          {{- $basePath := "/" -}}
+          {{- if eq .Values.ingress.exposureMode "path" -}}
+          {{- $basePath = "/console" -}}
+          {{- end }}
+          env:
+            - name: DMF_CONSOLE_APP_CONTRACT_PATH
+              value: {{ .Values.env.appContractPath | quote }}
+            - name: DMF_CONSOLE_BASE_PATH
+              value: {{ $basePath | quote }}
+            - name: DMF_CONSOLE_RUNTIME_MODE
+              value: {{ .Values.env.runtimeMode | quote }}
+            - name: DMF_CONSOLE_SECRET_KEY
+              {{- if .Values.env.secretKeySecret.existingSecretName }}
+              valueFrom:
+                secretKeyRef:
+                  name: {{ .Values.env.secretKeySecret.existingSecretName | quote }}
+                  key: {{ .Values.env.secretKeySecret.key | quote }}
+              {{- else }}
+              value: {{ .Values.env.secretKey | quote }}
+              {{- end }}
+            - name: DMF_CONSOLE_DEV_LOGIN_ENABLED
+              value: {{ .Values.env.devLoginEnabled | quote }}
+            - name: DMF_CONSOLE_OIDC_ENABLED
+              value: {{ .Values.oidc.enabled | quote }}
+            - name: DMF_CONSOLE_OIDC_ISSUER_URL
+              value: {{ .Values.oidc.issuerUrl | quote }}
+            {{- if .Values.oidc.backchannelIssuerUrl }}
+            - name: DMF_CONSOLE_OIDC_BACKCHANNEL_ISSUER_URL
+              value: {{ .Values.oidc.backchannelIssuerUrl | quote }}
+            {{- end }}
+            - name: DMF_CONSOLE_OIDC_CLIENT_ID
+              value: {{ .Values.oidc.clientId | quote }}
+            - name: DMF_CONSOLE_OIDC_CLIENT_SECRET
+              valueFrom:
+                secretKeyRef:
+                  name: {{ .Values.oidc.clientSecret.existingSecretName | quote }}
+                  key: {{ .Values.oidc.clientSecret.key | quote }}
+            {{- if .Values.oidc.logoutRedirectUrl }}
+            - name: DMF_CONSOLE_OIDC_LOGOUT_REDIRECT_URL
+              value: {{ .Values.oidc.logoutRedirectUrl | quote }}
+            {{- end }}
+            {{- if .Values.authentik.apiUrl }}
+            - name: DMF_CONSOLE_AUTHENTIK_API_URL
+              value: {{ .Values.authentik.apiUrl | quote }}
+            {{- end }}
+            {{- if .Values.authentik.publicBaseUrl }}
+            - name: DMF_CONSOLE_AUTHENTIK_PUBLIC_BASE_URL
+              value: {{ .Values.authentik.publicBaseUrl | quote }}
+            {{- end }}
+            {{- if .Values.authentik.apiToken.existingSecretName }}
+            - name: DMF_CONSOLE_AUTHENTIK_API_TOKEN
+              valueFrom:
+                secretKeyRef:
+                  name: {{ .Values.authentik.apiToken.existingSecretName | quote }}
+                  key: {{ .Values.authentik.apiToken.key | quote }}
+                  optional: true
+            {{- end }}
+            {{- if .Values.authentik.enrollmentFlow }}
+            - name: DMF_CONSOLE_AUTHENTIK_ENROLLMENT_FLOW
+              value: {{ .Values.authentik.enrollmentFlow | quote }}
+            {{- end }}
+            {{- if .Values.authentik.invitationTtl }}
+            - name: DMF_CONSOLE_AUTHENTIK_INVITATION_TTL
+              value: {{ .Values.authentik.invitationTtl | quote }}
+            {{- end }}
+            {{- if .Values.awx.apiUrl }}
+            - name: DMF_CONSOLE_AWX_API_URL
+              value: {{ .Values.awx.apiUrl | quote }}
+            {{- end }}
+            {{- if .Values.awx.apiToken.existingSecretName }}
+            - name: DMF_CONSOLE_AWX_API_TOKEN
+              valueFrom:
+                secretKeyRef:
+                  name: {{ .Values.awx.apiToken.existingSecretName | quote }}
+                  key: {{ .Values.awx.apiToken.key | quote }}
+                  optional: true
+            {{- end }}
+            - name: DMF_CONSOLE_AWX_SSL_VERIFY
+              value: {{ .Values.awx.sslVerify | quote }}
+            {{- if .Values.netbox.apiUrl }}
+            - name: DMF_CONSOLE_NETBOX_API_URL
+              value: {{ .Values.netbox.apiUrl | quote }}
+            {{- end }}
+            {{- if .Values.netbox.apiToken.existingSecretName }}
+            - name: DMF_CONSOLE_NETBOX_API_TOKEN
+              valueFrom:
+                secretKeyRef:
+                  name: {{ .Values.netbox.apiToken.existingSecretName | quote }}
+                  key: {{ .Values.netbox.apiToken.key | quote }}
+                  optional: true
+            {{- end }}
+            - name: DMF_CONSOLE_NETBOX_SSL_VERIFY
+              value: {{ .Values.netbox.sslVerify | quote }}
+            {{- if .Values.prometheus.url }}
+            - name: DMF_CONSOLE_PROMETHEUS_URL
+              value: {{ .Values.prometheus.url | quote }}
+            {{- end }}
+            {{- if .Values.forgejo.apiUrl }}
+            - name: DMF_CONSOLE_FORGEJO_API_URL
+              value: {{ .Values.forgejo.apiUrl | quote }}
+            {{- end }}
+            {{- if .Values.forgejo.apiToken.existingSecretName }}
+            - name: DMF_CONSOLE_FORGEJO_API_TOKEN
+              valueFrom:
+                secretKeyRef:
+                  name: {{ .Values.forgejo.apiToken.existingSecretName | quote }}
+                  key: {{ .Values.forgejo.apiToken.key | quote }}
+                  optional: true
+            {{- end }}
+          readinessProbe:
+            httpGet:
+              path: /healthz
+              port: http
+            initialDelaySeconds: 5
+            periodSeconds: 10
+          livenessProbe:
+            httpGet:
+              path: /healthz
+              port: http
+            initialDelaySeconds: 10
+            periodSeconds: 20
+          {{- with .Values.resources }}
+          resources:
+            {{- toYaml . | nindent 12 }}
+          {{- end }}

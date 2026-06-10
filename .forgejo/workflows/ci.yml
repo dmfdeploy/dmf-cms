@@ -1,0 +1,8 @@
+on: [push, pull_request]
+jobs:
+  lint:
+    runs-on: docker
+    steps:
+      - uses: actions/checkout@v4
+      # Placeholder — update when tech stack is chosen
+      - run: echo "CI pipeline placeholder — update when CMS tech stack is chosen"

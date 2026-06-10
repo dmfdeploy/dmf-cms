@@ -1,0 +1,17 @@
+# dmf-cms — CODEOWNERS
+# Activates on GitHub once branch protection requires reviews.
+
+# Default
+*                              @dmfdeploy/maintainers
+
+# Release + build pipeline
+/scripts/release.sh            @dmfdeploy/maintainers
+/scripts/build-image.sh        @dmfdeploy/maintainers
+/scripts/sync-version.sh       @dmfdeploy/maintainers
+/VERSION                       @dmfdeploy/maintainers
+
+# Helm chart — deployment-affecting
+/charts/                       @dmfdeploy/maintainers
+
+# CI / GitHub workflows
+/.github/                      @dmfdeploy/maintainers

@@ -1,0 +1,82 @@
+replicaCount: 1
+
+image:
+  repository: registry.dmf.example.com/dmf-cms
+  tag: "0.10.0"
+  pullPolicy: IfNotPresent
+
+imagePullSecrets:
+  - name: registry-creds
+
+service:
+  type: ClusterIP
+  port: 8000
+
+ingress:
+  enabled: true
+  className: nginx
+  annotations: {}
+  exposureMode: host
+  host: console.dmf.example.com
+  pathType: Prefix
+  # host = console.<domain>; path = /console fallback deployment.
+
+env:
+  appContractPath: /app/config/app-contracts.yaml
+  runtimeMode: cluster
+  secretKey: change-me-in-production
+  secretKeySecret:
+    existingSecretName: dmf-cms-runtime
+    key: secretKey
+  devLoginEnabled: "false"
+
+oidc:
+  enabled: true
+  issuerUrl: ""  # PUBLIC canonical issuer — used for the browser authorize redirect + iss
+  # Optional cluster-internal back-channel base for discovery/token/userinfo (ADR-0023).
+  # When set, server-side OIDC calls use this; the browser still uses issuerUrl.
+  backchannelIssuerUrl: ""
+  clientId: ""
+  clientSecret:
+    existingSecretName: dmf-cms-oidc
+    key: clientSecret
+  logoutRedirectUrl: ""  # Deferred to Ansible/Helm template (cluster) or Python fallback (local dev)
+
+authentik:
+  apiUrl: "http://authentik-server.authentik.svc.cluster.local"  # internal back-channel for API calls
+  # PUBLIC, browser-resolvable base for user-facing passkey enrollment URLs (ADR-0023).
+  publicBaseUrl: "https://auth.dmf.example.com"
+  apiToken:
+    existingSecretName: dmf-cms-runtime
+    key: authentikApiToken
+  enrollmentFlow: dmf-bootstrap-passkey-enrollment
+  invitationTtl: "24"
+
+awx:
+  apiUrl: "http://awx-service.awx.svc.cluster.local"
+  apiToken:
+    existingSecretName: dmf-cms-runtime
+    key: awxApiToken
+  sslVerify: "false"
+
+netbox:
+  apiUrl: "http://netbox.netbox.svc.cluster.local"
+  apiToken:
+    existingSecretName: dmf-cms-runtime
+    key: netboxApiToken
+  sslVerify: "false"
+
+prometheus:
+  url: "http://prometheus-server.monitoring.svc.cluster.local/prometheus"
+
+forgejo:
+  apiUrl: "http://forgejo-http.forgejo.svc.cluster.local:3000"
+  apiToken:
+    existingSecretName: dmf-cms-runtime
+    key: forgejoApiToken
+
+resources: {}
+
+catalog:
+  enabled: false
+  entries: {}

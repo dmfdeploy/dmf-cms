@@ -1,0 +1,227 @@
+{% extends "base.html" %}
+
+{% block content %}
+  <section class="hero">
+    <div class="hero-copy">
+      <p class="kicker">{{ section|title }}</p>
+      <h1>{{ title }}</h1>
+      <p class="lead">
+        {% if page.lead %}
+          {{ page.lead }}
+        {% elif section == 'overview' %}
+          The operator shell is live and ready for release-0 wiring.
+        {% endif %}
+      </p>
+    </div>
+    {% if section == 'overview' %}
+      <div class="hero-panel">
+        <div class="panel-label">Catalog</div>
+        <div class="panel-value">{{ contract.apps|length }} apps</div>
+        <div class="panel-note">Loaded from {{ contract.catalog_source }}</div>
+      </div>
+    {% endif %}
+  </section>
+
+  {% if page.summary %}
+    <section class="cards">
+      {% for item in page.summary %}
+        <article class="card">
+          <div class="card-label">{{ item.label }}</div>
+          <div class="card-value">{{ item.value }}</div>
+        </article>
+      {% endfor %}
+    </section>
+  {% endif %}
+
+  {% if page.highlights %}
+    <section class="panel">
+      <h2>Highlights</h2>
+      <ul class="bullet-list">
+        {% for item in page.highlights %}
+          <li>{{ item }}</li>
+        {% endfor %}
+      </ul>
+    </section>
+  {% endif %}
+
+  {% if cards %}
+    <section class="panel">
+      <div class="panel-header">
+        <h2>App Catalog</h2>
+        <span class="panel-subtitle">{{ contract.facility_name }}</span>
+      </div>
+      <div class="catalog-grid">
+        {% for app in cards %}
+          <article class="catalog-card lane-{{ app.lane }}">
+            <div class="catalog-head">
+              <h3>{{ app.title }}</h3>
+              <span class="lane-tag">{{ app.lane }}</span>
+            </div>
+            <p>{{ app.summary }}</p>
+            <div class="link-row">
+              {% for link in app.links %}
+                <a href="{{ link.url }}">{{ link.label }}</a>
+              {% endfor %}
+            </div>
+          </article>
+        {% endfor %}
+      </div>
+    </section>
+  {% endif %}
+
+  {% if page.bullets %}
+    <section class="panel">
+      <h2>Initial Scope</h2>
+      <ul class="bullet-list">
+        {% for item in page.bullets %}
+          <li>{{ item }}</li>
+        {% endfor %}
+      </ul>
+    </section>
+  {% endif %}
+
+  {% if workflows %}
+    <section class="panel">
+      <div class="panel-header">
+        <h2>Approved Workflows</h2>
+        <span class="panel-subtitle">{{ "AWX workflow engine active" if page.awx_available else "AWX launchers land in release 2" }}</span>
+      </div>
+
+      {% if page.awx_available %}
+        <div class="workflow-list" id="workflow-list">
+          {% for workflow in workflows %}
+            <article class="workflow-item" data-workflow="{{ workflow.name }}">
+              <div>
+                <strong>{{ workflow.label }}</strong>
+                <div class="muted">{{ workflow.name }}</div>
+                <div class="muted">{{ workflow.summary }}</div>
+              </div>
+              <div class="workflow-actions">
+                <button
+                  class="btn btn-sm btn-primary workflow-launch-btn"
+                  data-workflow="{{ workflow.name }}"
+                  onclick="launchWorkflow('{{ workflow.name }}', this)"
+                >
+                  ▶ Launch
+                </button>
+              </div>
+              <div class="workflow-job-status" id="job-status-{{ workflow.name }}" style="display:none;">
+                <span class="job-status-text"></span>
+                <span class="job-status-time muted"></span>
+              </div>
+            </article>
+          {% endfor %}
+        </div>
+
+        <div id="active-jobs-panel" class="workflow-active-jobs" style="display:none;">
+          <h3>Active Jobs</h3>
+          <div id="active-jobs-list"></div>
+        </div>
+
+        <script>
+        const AWX_AVAILABLE = true;
+        const activeJobs = new Map();
+
+        async function launchWorkflow(name, btn) {
+          btn.disabled = true;
+          btn.textContent = '⏳ Launching…';
+
+          try {
+            const resp = await fetch(`{{ base_path }}api/workflows/${name}/launch`, { method: 'POST' });
+            const data = await resp.json();
+
+            if (!resp.ok) {
+              throw new Error(data.error || 'Launch failed');
+            }
+
+            btn.textContent = '✅ Launched';
+            btn.disabled = false;
+            setTimeout(() => { btn.textContent = '▶ Launch'; }, 2000);
+
+            if (data.job_id) {
+              addJobToActiveList(name, data.job_id);
+              pollJobStatus(name, data.job_id);
+            }
+          } catch (err) {
+            btn.textContent = '❌ Failed';
+            btn.disabled = false;
+            setTimeout(() => { btn.textContent = '▶ Launch'; }, 3000);
+            console.error('Launch failed:', err);
+          }
+        }
+
+        function addJobToActiveList(name, jobId) {
+          const key = `${name}:${jobId}`;
+          if (activeJobs.has(key)) return;
+
+          const panel = document.getElementById('active-jobs-panel');
+          panel.style.display = 'block';
+
+          const div = document.createElement('div');
+          div.className = 'active-job-row';
+          div.id = `active-job-${key}`;
+          div.innerHTML = `<strong>${name}</strong> <span class="muted">job/${jobId}</span> <span class="job-badge status-new">new</span>`;
+          document.getElementById('active-jobs-list').appendChild(div);
+
+          activeJobs.set(key, { name, jobId, status: 'new' });
+        }
+
+        async function pollJobStatus(name, jobId) {
+          const key = `${name}:${jobId}`;
+
+          try {
+            const resp = await fetch(`{{ base_path }}api/workflows/jobs/${jobId}`);
+            const data = await resp.json();
+
+            if (!resp.ok) return;
+
+            const row = document.getElementById(`active-job-${key}`);
+            if (row) {
+              const badge = row.querySelector('.job-badge');
+              badge.className = `job-badge status-${data.status}`;
+              badge.textContent = data.status;
+
+              if (data.elapsed) {
+                row.querySelector('.muted').textContent = `job/${jobId} · ${data.elapsed.toFixed(1)}s`;
+              }
+            }
+
+            // Update inline status on the workflow item
+            const statusDiv = document.getElementById(`job-status-${name}`);
+            if (statusDiv) {
+              statusDiv.style.display = 'block';
+              statusDiv.querySelector('.job-status-text').textContent = data.status;
+              statusDiv.querySelector('.job-status-time').textContent = data.elapsed ? `${data.elapsed.toFixed(1)}s` : '';
+            }
+
+            if (!data.status || !['successful', 'failed', 'error', 'canceled'].includes(data.status)) {
+              setTimeout(() => pollJobStatus(name, jobId), 5000);
+            } else {
+              activeJobs.delete(key);
+              if (activeJobs.size === 0) {
+                document.getElementById('active-jobs-panel').style.display = 'none';
+                document.getElementById('active-jobs-list').innerHTML = '';
+              }
+            }
+          } catch (err) {
+            console.error('Poll failed:', err);
+            setTimeout(() => pollJobStatus(name, jobId), 10000);
+          }
+        }
+        </script>
+      {% else %}
+        <div class="workflow-list">
+          {% for workflow in workflows %}
+            <article class="workflow-item">
+              <div>
+                <strong>{{ workflow.label }}</strong>
+                <div class="muted">{{ workflow.name }}</div>
+              </div>
+              <p>{{ workflow.summary }}</p>
+            </article>
+          {% endfor %}
+        </div>
+      {% endif %}
+    </section>
+  {% endif %}
+{% endblock %}

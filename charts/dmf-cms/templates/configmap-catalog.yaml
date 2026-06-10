@@ -1,0 +1,20 @@
+{{- if .Values.catalog.enabled }}
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: {{ include "dmf-cms.fullname" . }}-catalog
+  labels:
+    {{- include "dmf-cms.labels" . | nindent 4 }}
+data:
+  {{- /*
+    ConfigMap.data is map[string]string. Each catalog entry's parsed YAML
+    object must be re-serialised to a string here; emitting the object
+    directly produces nested mappings that the API server rejects with
+    "json: cannot unmarshal object into Go struct field ConfigMap.data
+    of type string".
+  */}}
+  {{- range $key, $entry := .Values.catalog.entries }}
+  {{ $key }}: |
+{{ toYaml $entry | indent 4 }}
+  {{- end }}
+{{- end }}
