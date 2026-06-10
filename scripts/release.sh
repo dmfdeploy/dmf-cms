@@ -139,13 +139,13 @@ see STATUS.md in the umbrella repo.
        git push origin v$NEW
 
   2. Publish image to GHCR (canonical public source):
-       cd ~/repos/dmfdeploy/dmf-cms
+       cd $DMFDEPLOY_UMBRELLA/dmf-cms
        # macOS Keychain (token never typed):
        security find-generic-password -s "ghcr.io" -a "<github-username>" -w \\
          | GHCR_USER="<github-username>" scripts/publish-to-ghcr.sh
 
   3. Mirror GHCR → cluster-internal Zot (playbook 630):
-       cd ~/repos/dmfdeploy/dmf-env
+       cd $DMFDEPLOY_UMBRELLA/dmf-env
        bin/run-playbook.sh <env-name> \\
          ../dmf-infra/k3s-lab-bootstrap/playbooks/630-zot-seed-platform.yml
 
@@ -154,7 +154,7 @@ see STATUS.md in the umbrella repo.
          ../dmf-infra/k3s-lab-bootstrap/playbooks/650-dmf-cms.yml
 
   5. Verify rollout matches local VERSION:
-       cd ~/repos/dmfdeploy/dmf-cms
+       cd $DMFDEPLOY_UMBRELLA/dmf-cms
        scripts/verify-cluster.sh
 
   6. Smoke test:
