@@ -1,7 +1,7 @@
 # MXL Flows page (demo evaluation)
 
 The **MXL Flows** page (`/mxl-flows`) is an evaluation surface for the MXL fabrics
-spike: it shows the active MXL media nodes, the flow + grain activity, and a small
+demo: it shows the active MXL media nodes, the flow + grain activity, and a small
 live preview of the transferred test pattern, with copy framing it as a
 **libfabric / tcp** cross-host demo.
 
@@ -50,7 +50,7 @@ and the `/api/mxl/*` routes in `src/dmf_cms/main.py`. Frontend:
 `frontend/src/pages/MxlFlows.tsx` + `useMxlStatus()`.
 
 ## Roadmap — Prometheus metrics integration (future investigation)
-The current sidecar is a **direct-poll** source, chosen for a self-contained spike.
+The current sidecar is a **direct-poll** source, chosen for a self-contained demo.
 The more durable integration is to expose MXL flow state as **Prometheus metrics**
 and read them through the console's existing `prometheus.py` client:
 
