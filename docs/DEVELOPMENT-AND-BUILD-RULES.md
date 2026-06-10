@@ -110,7 +110,7 @@ security find-generic-password -s "ghcr.io" -a "<github-username>" -w \
   | GHCR_USER="<github-username>" scripts/publish-to-ghcr.sh
 
 # 2. Mirror GHCR → cluster-internal Zot
-cd ~/repos/dmfdeploy/dmf-env
+cd $DMFDEPLOY_UMBRELLA/dmf-env
 bin/run-playbook.sh <env-name> \
   ../dmf-infra/k3s-lab-bootstrap/playbooks/630-zot-seed-platform.yml
 
@@ -238,7 +238,7 @@ For every change that needs to land in the cluster:
 4.  scripts/release.sh patch                  (or minor / major / X.Y.Z)
 5.  git push origin HEAD && git push origin v<NEW>
 6.  scripts/publish-to-ghcr.sh                (push image to GHCR)
-7.  cd ~/repos/dmfdeploy/dmf-env
+7.  cd $DMFDEPLOY_UMBRELLA/dmf-env
     bin/run-playbook.sh <env-name> \
         ../dmf-infra/k3s-lab-bootstrap/playbooks/630-zot-seed-platform.yml
     bin/run-playbook.sh <env-name> \

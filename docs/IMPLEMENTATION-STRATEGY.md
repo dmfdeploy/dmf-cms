@@ -420,7 +420,7 @@ If continuing from context loss, prioritize in this order:
      | GHCR_USER="<github-username>" scripts/publish-to-ghcr.sh
 
    # Mirror GHCR → cluster Zot, then Helm-deploy
-   cd ~/repos/dmfdeploy/dmf-env
+   cd $DMFDEPLOY_UMBRELLA/dmf-env
    bin/run-playbook.sh <env-name> \
      ../dmf-infra/k3s-lab-bootstrap/playbooks/630-zot-seed-platform.yml
    bin/run-playbook.sh <env-name> \
