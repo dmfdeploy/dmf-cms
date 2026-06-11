@@ -1,5 +1,17 @@
 {
   "enabledPlugins": {
     "frontend-design@claude-plugins-official": true
+  },
+  "hooks": {
+    "SessionStart": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "bin/working-model-digest.sh"
+          }
+        ]
+      }
+    ]
   }
 }
