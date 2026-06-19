@@ -44,6 +44,23 @@ export interface WorkflowLaunchResponse {
   status: string
 }
 
+// Async operation tracking (WS5 scale-to-zero)
+export type OperationState = 'waking' | 'launching' | 'launched' | 'error'
+
+export interface Operation {
+  operation_id: string
+  action: 'launch' | 'deploy' | 'teardown'
+  target: string
+  state: OperationState
+  job_id: number | null
+  error: string | null
+  created_at: string
+  updated_at: string
+}
+
+// Union type: sync response (200) or async operation (202)
+export type WorkflowLaunchResult = WorkflowLaunchResponse | Operation
+
 export interface WorkflowJobStatus {
   job_id: number
   status: 'new' | 'pending' | 'waiting' | 'running' | 'successful' | 'failed' | 'canceled' | 'error'
@@ -245,6 +262,9 @@ export interface CatalogActionResponse {
   job_id: number
   status: string
 }
+
+// Union type: sync response (200) or async operation (202)
+export type CatalogActionResult = CatalogActionResponse | Operation
 
 export interface CatalogJobStatus {
   job_id: number

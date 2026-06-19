@@ -4,7 +4,7 @@ import type {
   UserIdentity,
   AppContract,
   WorkflowsListResponse,
-  WorkflowLaunchResponse,
+  WorkflowLaunchResult,
   WorkflowJobStatus,
   PasskeyInvitationResponse,
   AdminHealthResponse,
@@ -19,10 +19,16 @@ import type {
   ChangesPullsResponse,
   AdminGroupsResponse,
   CatalogListResponse,
-  CatalogActionResponse,
+  CatalogActionResult,
   CatalogJobStatus,
   MxlStatusResponse,
+  Operation,
 } from './types'
+
+// Type guard: check if response is an async operation (has operation_id)
+export function isOperation(result: any): result is Operation {
+  return result && typeof result === 'object' && 'operation_id' in result
+}
 
 export function useCurrentUser() {
   return useQuery({
@@ -50,9 +56,25 @@ export function useWorkflows() {
 export function useLaunchWorkflow() {
   return useMutation({
     mutationFn: (workflowName: string) =>
-      apiCall<WorkflowLaunchResponse>(`/api/workflows/${workflowName}/launch`, {
+      apiCall<WorkflowLaunchResult>(`/api/workflows/${workflowName}/launch`, {
         method: 'POST',
       }),
+  })
+}
+
+export function useOperationStatus(operationId: string | null) {
+  return useQuery({
+    queryKey: ['operation', operationId],
+    queryFn: () => apiCall<Operation>(`/api/operations/${operationId}`),
+    enabled: operationId !== null,
+    refetchInterval: (query) => {
+      // Stop polling when operation reaches terminal state
+      const data = query.state.data
+      if (data && (data.state === 'launched' || data.state === 'error')) {
+        return false
+      }
+      return 3000 // Poll every 3s for non-terminal states
+    },
   })
 }
 
@@ -213,7 +235,7 @@ export function useCatalog() {
 export function useDeployCatalog() {
   return useMutation({
     mutationFn: (key: string) =>
-      apiCall<CatalogActionResponse>(`/api/catalog/${key}/deploy`, {
+      apiCall<CatalogActionResult>(`/api/catalog/${key}/deploy`, {
         method: 'POST',
       }),
   })
@@ -222,7 +244,7 @@ export function useDeployCatalog() {
 export function useTeardownCatalog() {
   return useMutation({
     mutationFn: (key: string) =>
-      apiCall<CatalogActionResponse>(`/api/catalog/${key}/teardown`, {
+      apiCall<CatalogActionResult>(`/api/catalog/${key}/teardown`, {
         method: 'POST',
       }),
   })

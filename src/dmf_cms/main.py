@@ -20,10 +20,13 @@ from .authentik import (
     list_groups,
     list_users,
 )
-from .awx import AWXAPIError, AWXJobInfo, list_job_templates, launch_job, get_job_status, wait_for_job, lookup_job_template_by_name, list_recent_jobs, find_active_job_for_template
+from .awx import AWXAPIError, AWXAutoscaleError, AWXJobInfo, list_job_templates, launch_job, get_job_status, wait_for_job, lookup_job_template_by_name, list_recent_jobs, find_active_job_for_template, ensure_awx_awake
 from .catalog import CatalogEntry, load_catalog_entries, get_lifecycle_status
 from .contracts import AppContract, load_app_contract
+from .operations import OperationStore, OperationState
 from . import netbox, prometheus, forgejo, mxl
+from starlette.concurrency import run_in_threadpool
+import asyncio
 from .security import (
     ROLE_GROUPS,
     ROLE_ORDER,
@@ -134,7 +137,273 @@ def _bootstrap_console_groups(settings: Settings) -> None:
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     _bootstrap_console_groups(app.state.settings)
+    app.state.operations = OperationStore(ttl_seconds=3600)
+    app.state.operation_tasks: set[asyncio.Task] = set()
     yield
+
+
+async def _run_launch_operation(app: FastAPI, operation_id: str, workflow_name: str) -> None:
+    """Background task to wake AWX and launch a workflow job."""
+    settings = app.state.settings
+    ops_store = app.state.operations
+
+    try:
+        # Wake AWX (threadpooled to avoid blocking event loop)
+        await run_in_threadpool(
+            ensure_awx_awake,
+            helper_url=settings.awx_autoscale.helper_url,
+            bearer_token=settings.awx_autoscale.bearer_token,
+            max_startup_wait=settings.awx_autoscale.max_startup_wait,
+        )
+
+        # Update state to launching
+        ops_store.update(operation_id, state=OperationState.LAUNCHING)
+
+        # Lookup job template
+        template = await run_in_threadpool(
+            lookup_job_template_by_name,
+            api_url=settings.awx.api_url,
+            api_token=settings.awx.api_token,
+            name=workflow_name,
+            ssl_verify=settings.awx.ssl_verify,
+        )
+        if template is None:
+            ops_store.update(
+                operation_id,
+                state=OperationState.ERROR,
+                error=f"AWX job template not found: {workflow_name}",
+            )
+            return
+
+        # Check for existing active job (idempotency)
+        active_job_id = await run_in_threadpool(
+            find_active_job_for_template,
+            api_url=settings.awx.api_url,
+            api_token=settings.awx.api_token,
+            job_template_id=template["id"],
+            ssl_verify=settings.awx.ssl_verify,
+        )
+        if active_job_id is not None:
+            ops_store.update(
+                operation_id,
+                state=OperationState.LAUNCHED,
+                job_id=active_job_id,
+            )
+            return
+
+        # Launch job
+        job_id = await run_in_threadpool(
+            launch_job,
+            api_url=settings.awx.api_url,
+            api_token=settings.awx.api_token,
+            job_template_id=template["id"],
+            ssl_verify=settings.awx.ssl_verify,
+        )
+
+        ops_store.update(
+            operation_id,
+            state=OperationState.LAUNCHED,
+            job_id=job_id,
+        )
+    except AWXAutoscaleError as exc:
+        # Log raw error server-side only, sanitize for client
+        logger.error("AWX autoscale error in launch operation %s: %s", operation_id, exc.body)
+        ops_store.update(
+            operation_id,
+            state=OperationState.ERROR,
+            error="AWX wake failed",
+        )
+    except AWXAPIError as exc:
+        # Log raw error server-side only, sanitize for client
+        logger.error("AWX API error in launch operation %s: %s", operation_id, exc.body)
+        ops_store.update(
+            operation_id,
+            state=OperationState.ERROR,
+            error="AWX API error while launching",
+        )
+    except Exception as exc:
+        logger.exception("Unexpected error in launch operation %s", operation_id)
+        ops_store.update(
+            operation_id,
+            state=OperationState.ERROR,
+            error="Unexpected error while launching",
+        )
+
+
+async def _run_deploy_operation(app: FastAPI, operation_id: str, key: str, jt_name: str) -> None:
+    """Background task to wake AWX and deploy a catalog entry."""
+    settings = app.state.settings
+    ops_store = app.state.operations
+
+    try:
+        # Wake AWX (threadpooled to avoid blocking event loop)
+        await run_in_threadpool(
+            ensure_awx_awake,
+            helper_url=settings.awx_autoscale.helper_url,
+            bearer_token=settings.awx_autoscale.bearer_token,
+            max_startup_wait=settings.awx_autoscale.max_startup_wait,
+        )
+
+        # Update state to launching
+        ops_store.update(operation_id, state=OperationState.LAUNCHING)
+
+        # Lookup job template
+        template = await run_in_threadpool(
+            lookup_job_template_by_name,
+            api_url=settings.awx.api_url,
+            api_token=settings.awx.api_token,
+            name=jt_name,
+            ssl_verify=settings.awx.ssl_verify,
+        )
+        if template is None:
+            ops_store.update(
+                operation_id,
+                state=OperationState.ERROR,
+                error=f"AWX job template '{jt_name}' not found",
+            )
+            return
+
+        # Check for existing active job (idempotency)
+        active_job_id = await run_in_threadpool(
+            find_active_job_for_template,
+            api_url=settings.awx.api_url,
+            api_token=settings.awx.api_token,
+            job_template_id=template["id"],
+            ssl_verify=settings.awx.ssl_verify,
+        )
+        if active_job_id is not None:
+            ops_store.update(
+                operation_id,
+                state=OperationState.LAUNCHED,
+                job_id=active_job_id,
+            )
+            return
+
+        # Launch job
+        job_id = await run_in_threadpool(
+            launch_job,
+            api_url=settings.awx.api_url,
+            api_token=settings.awx.api_token,
+            job_template_id=template["id"],
+            ssl_verify=settings.awx.ssl_verify,
+        )
+
+        ops_store.update(
+            operation_id,
+            state=OperationState.LAUNCHED,
+            job_id=job_id,
+        )
+    except AWXAutoscaleError as exc:
+        # Log raw error server-side only, sanitize for client
+        logger.error("AWX autoscale error in deploy operation %s: %s", operation_id, exc.body)
+        ops_store.update(
+            operation_id,
+            state=OperationState.ERROR,
+            error="AWX wake failed",
+        )
+    except AWXAPIError as exc:
+        # Log raw error server-side only, sanitize for client
+        logger.error("AWX API error in deploy operation %s: %s", operation_id, exc.body)
+        ops_store.update(
+            operation_id,
+            state=OperationState.ERROR,
+            error="AWX API error while deploying",
+        )
+    except Exception as exc:
+        logger.exception("Unexpected error in deploy operation %s", operation_id)
+        ops_store.update(
+            operation_id,
+            state=OperationState.ERROR,
+            error="Unexpected error while deploying",
+        )
+
+
+async def _run_teardown_operation(app: FastAPI, operation_id: str, key: str, jt_name: str) -> None:
+    """Background task to wake AWX and teardown a catalog entry."""
+    settings = app.state.settings
+    ops_store = app.state.operations
+
+    try:
+        # Wake AWX (threadpooled to avoid blocking event loop)
+        await run_in_threadpool(
+            ensure_awx_awake,
+            helper_url=settings.awx_autoscale.helper_url,
+            bearer_token=settings.awx_autoscale.bearer_token,
+            max_startup_wait=settings.awx_autoscale.max_startup_wait,
+        )
+
+        # Update state to launching
+        ops_store.update(operation_id, state=OperationState.LAUNCHING)
+
+        # Lookup job template
+        template = await run_in_threadpool(
+            lookup_job_template_by_name,
+            api_url=settings.awx.api_url,
+            api_token=settings.awx.api_token,
+            name=jt_name,
+            ssl_verify=settings.awx.ssl_verify,
+        )
+        if template is None:
+            ops_store.update(
+                operation_id,
+                state=OperationState.ERROR,
+                error=f"AWX job template '{jt_name}' not found",
+            )
+            return
+
+        # Check for existing active job (idempotency)
+        active_job_id = await run_in_threadpool(
+            find_active_job_for_template,
+            api_url=settings.awx.api_url,
+            api_token=settings.awx.api_token,
+            job_template_id=template["id"],
+            ssl_verify=settings.awx.ssl_verify,
+        )
+        if active_job_id is not None:
+            ops_store.update(
+                operation_id,
+                state=OperationState.LAUNCHED,
+                job_id=active_job_id,
+            )
+            return
+
+        # Launch job
+        job_id = await run_in_threadpool(
+            launch_job,
+            api_url=settings.awx.api_url,
+            api_token=settings.awx.api_token,
+            job_template_id=template["id"],
+            ssl_verify=settings.awx.ssl_verify,
+        )
+
+        ops_store.update(
+            operation_id,
+            state=OperationState.LAUNCHED,
+            job_id=job_id,
+        )
+    except AWXAutoscaleError as exc:
+        # Log raw error server-side only, sanitize for client
+        logger.error("AWX autoscale error in teardown operation %s: %s", operation_id, exc.body)
+        ops_store.update(
+            operation_id,
+            state=OperationState.ERROR,
+            error="AWX wake failed",
+        )
+    except AWXAPIError as exc:
+        # Log raw error server-side only, sanitize for client
+        logger.error("AWX API error in teardown operation %s: %s", operation_id, exc.body)
+        ops_store.update(
+            operation_id,
+            state=OperationState.ERROR,
+            error="AWX API error while tearing down",
+        )
+    except Exception as exc:
+        logger.exception("Unexpected error in teardown operation %s", operation_id)
+        ops_store.update(
+            operation_id,
+            state=OperationState.ERROR,
+            error="Unexpected error while tearing down",
+        )
 
 
 def create_app(settings: Settings | None = None, contract: AppContract | None = None) -> FastAPI:
@@ -295,6 +564,18 @@ def create_app(settings: Settings | None = None, contract: AppContract | None = 
             return JSONResponse({"error": f"authentik API error: {exc.body}"}, status_code=exc.status)
 
     # ------------------------------------------------------------------
+    # Async operation tracking endpoints
+    # ------------------------------------------------------------------
+    @app.get("/api/operations/{operation_id}")
+    async def api_operation_status(request: Request, operation_id: str):
+        if not _require_user(request):
+            return JSONResponse({"error": "unauthorized"}, status_code=401)
+        op = request.app.state.operations.get(operation_id)
+        if op is None:
+            return JSONResponse({"error": "operation not found"}, status_code=404)
+        return JSONResponse(op.to_dict())
+
+    # ------------------------------------------------------------------
     # AWX workflow endpoints
     # ------------------------------------------------------------------
     @app.get("/api/workflows")
@@ -329,6 +610,33 @@ def create_app(settings: Settings | None = None, contract: AppContract | None = 
             return JSONResponse({"error": "unauthorized"}, status_code=401)
         if not settings.awx.configured:
             return JSONResponse({"error": "AWX API not configured"}, status_code=503)
+
+        # Async operation flow (when autoscale enabled)
+        if settings.awx_autoscale.enabled:
+            if not settings.awx_autoscale.configured:
+                return JSONResponse({"error": "AWX autoscale enabled but misconfigured"}, status_code=503)
+
+            ops_store = request.app.state.operations
+
+            # Atomic dedupe: find existing or create new under one lock
+            op, created = ops_store.get_or_create(action="launch", target=workflow_name)
+
+            if not created:
+                # Existing operation found - return it without spawning new task
+                # v1 behavior: browser refresh loses live spinner but re-clicking
+                # safely reattaches via get_or_create (no double launch)
+                return JSONResponse(op.to_dict(), status_code=200)
+
+            # Spawn background task with tracking
+            task = asyncio.create_task(_run_launch_operation(
+                request.app, op.operation_id, workflow_name
+            ))
+            request.app.state.operation_tasks.add(task)
+            task.add_done_callback(request.app.state.operation_tasks.discard)
+
+            return JSONResponse(op.to_dict(), status_code=202)
+
+        # Sync flow (autoscale disabled)
         try:
             template = lookup_job_template_by_name(
                 api_url=settings.awx.api_url,
@@ -927,6 +1235,33 @@ def create_app(settings: Settings | None = None, contract: AppContract | None = 
         jt_name = (entry.configure or {}).get("awx_job_template")
         if not jt_name:
             return JSONResponse({"error": f"entry '{key}' has no configure.awx_job_template"}, status_code=500)
+
+        # Async operation flow (when autoscale enabled)
+        if settings.awx_autoscale.enabled:
+            if not settings.awx_autoscale.configured:
+                return JSONResponse({"error": "AWX autoscale enabled but misconfigured"}, status_code=503)
+
+            ops_store = request.app.state.operations
+
+            # Atomic dedupe: find existing or create new under one lock
+            op, created = ops_store.get_or_create(action="deploy", target=key)
+
+            if not created:
+                # Existing operation found - return it without spawning new task
+                # v1 behavior: browser refresh loses live spinner but re-clicking
+                # safely reattaches via get_or_create (no double launch)
+                return JSONResponse(op.to_dict(), status_code=200)
+
+            # Spawn background task with tracking
+            task = asyncio.create_task(_run_deploy_operation(
+                request.app, op.operation_id, key, jt_name
+            ))
+            request.app.state.operation_tasks.add(task)
+            task.add_done_callback(request.app.state.operation_tasks.discard)
+
+            return JSONResponse(op.to_dict(), status_code=202)
+
+        # Sync flow (autoscale disabled)
         try:
             template = lookup_job_template_by_name(
                 api_url=settings.awx.api_url,
@@ -972,6 +1307,33 @@ def create_app(settings: Settings | None = None, contract: AppContract | None = 
         jt_name = (entry.finalise or {}).get("awx_job_template")
         if not jt_name:
             return JSONResponse({"error": f"entry '{key}' has no finalise.awx_job_template"}, status_code=500)
+
+        # Async operation flow (when autoscale enabled)
+        if settings.awx_autoscale.enabled:
+            if not settings.awx_autoscale.configured:
+                return JSONResponse({"error": "AWX autoscale enabled but misconfigured"}, status_code=503)
+
+            ops_store = request.app.state.operations
+
+            # Atomic dedupe: find existing or create new under one lock
+            op, created = ops_store.get_or_create(action="teardown", target=key)
+
+            if not created:
+                # Existing operation found - return it without spawning new task
+                # v1 behavior: browser refresh loses live spinner but re-clicking
+                # safely reattaches via get_or_create (no double launch)
+                return JSONResponse(op.to_dict(), status_code=200)
+
+            # Spawn background task with tracking
+            task = asyncio.create_task(_run_teardown_operation(
+                request.app, op.operation_id, key, jt_name
+            ))
+            request.app.state.operation_tasks.add(task)
+            task.add_done_callback(request.app.state.operation_tasks.discard)
+
+            return JSONResponse(op.to_dict(), status_code=202)
+
+        # Sync flow (autoscale disabled)
         try:
             template = lookup_job_template_by_name(
                 api_url=settings.awx.api_url,

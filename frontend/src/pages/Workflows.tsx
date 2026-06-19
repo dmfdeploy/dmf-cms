@@ -1,9 +1,14 @@
-import { useState } from 'react'
-import { useWorkflows, useLaunchWorkflow, useWorkflowJobStatus, useCurrentUser } from '../api/hooks'
+import { useState, useEffect } from 'react'
+import { useWorkflows, useLaunchWorkflow, useWorkflowJobStatus, useCurrentUser, useOperationStatus, isOperation } from '../api/hooks'
 
 interface ActiveJob {
   workflowName: string
   jobId: number
+}
+
+interface PendingOperation {
+  workflowName: string
+  operationId: string
 }
 
 export default function Workflows() {
@@ -11,11 +16,18 @@ export default function Workflows() {
   const { data: workflowsData, isLoading } = useWorkflows()
   const launchMutation = useLaunchWorkflow()
   const [activeJobs, setActiveJobs] = useState<ActiveJob[]>([])
+  const [pendingOps, setPendingOps] = useState<PendingOperation[]>([])
 
   const handleLaunch = async (workflowName: string) => {
     try {
       const result = await launchMutation.mutateAsync(workflowName)
-      setActiveJobs([...activeJobs, { workflowName, jobId: result.job_id }])
+      if (isOperation(result)) {
+        // Async flow (202): track the operation
+        setPendingOps(prev => [...prev, { workflowName, operationId: result.operation_id }])
+      } else {
+        // Sync flow (200): immediate job_id
+        setActiveJobs(prev => [...prev, { workflowName, jobId: result.job_id }])
+      }
     } catch (error) {
       console.error('Failed to launch workflow:', error)
     }
@@ -58,12 +70,41 @@ export default function Workflows() {
                 onLaunch={() => handleLaunch(template.name)}
                 isLaunching={launchMutation.isPending}
                 activeJob={activeJobs.find((j) => j.workflowName === template.name)}
+                pendingOp={pendingOps.find((op) => op.workflowName === template.name)}
                 onJobComplete={(jobId) => {
-                  setActiveJobs(activeJobs.filter((j) => j.jobId !== jobId))
+                  setActiveJobs(prev => prev.filter((j) => j.jobId !== jobId))
+                }}
+                onOpComplete={(operationId) => {
+                  setPendingOps(prev => prev.filter((op) => op.operationId !== operationId))
                 }}
               />
             ))}
           </div>
+
+          {pendingOps.length > 0 && (
+            <div className="panel">
+              <div className="panel-header">
+                <h3 className="text-lg font-bold">Waking AWX</h3>
+                <span className="panel-subtitle">{pendingOps.length} pending</span>
+              </div>
+              <div className="space-y-3">
+                {pendingOps.map((op) => (
+                  <OperationMonitor
+                    key={op.operationId}
+                    workflowName={op.workflowName}
+                    operationId={op.operationId}
+                    onLaunched={(jobId) => {
+                      setActiveJobs(prev => [...prev, { workflowName: op.workflowName, jobId }])
+                      setPendingOps(prev => prev.filter((p) => p.operationId !== op.operationId))
+                    }}
+                    onError={() => {
+                      setPendingOps(prev => prev.filter((p) => p.operationId !== op.operationId))
+                    }}
+                  />
+                ))}
+              </div>
+            </div>
+          )}
 
           {activeJobs.length > 0 && (
             <div className="panel">
@@ -91,7 +132,7 @@ export default function Workflows() {
   )
 
   function handleJobComplete(jobId: number) {
-    setActiveJobs(activeJobs.filter((j) => j.jobId !== jobId))
+    setActiveJobs(prev => prev.filter((j) => j.jobId !== jobId))
   }
 }
 
@@ -100,30 +141,96 @@ function WorkflowCard({
   onLaunch,
   isLaunching,
   activeJob,
+  pendingOp,
   onJobComplete,
+  onOpComplete,
 }: {
   template: any
   onLaunch: () => void
   isLaunching: boolean
   activeJob?: { workflowName: string; jobId: number }
+  pendingOp?: { workflowName: string; operationId: string }
   onJobComplete: (jobId: number) => void
+  onOpComplete: (operationId: string) => void
 }) {
   return (
     <div className="panel flex items-start justify-between">
       <div className="flex-1">
         <h3 className="text-lg font-semibold mb-1">{template.name}</h3>
         <p className="text-sm text-muted">{template.description}</p>
-        {activeJob && (
+        {activeJob && !pendingOp && (
           <JobStatus jobId={activeJob.jobId} onComplete={() => onJobComplete(activeJob.jobId)} />
         )}
       </div>
       <button
         onClick={onLaunch}
-        disabled={isLaunching || !!activeJob}
+        disabled={isLaunching || !!activeJob || !!pendingOp}
         className="btn btn-primary btn-sm ml-4"
       >
-        {activeJob ? '⏳ Running...' : '▶ Launch'}
+        {pendingOp ? '⏳ Waking...' : activeJob ? '⏳ Running...' : '▶ Launch'}
       </button>
+    </div>
+  )
+}
+
+function OperationMonitor({
+  workflowName,
+  operationId,
+  onLaunched,
+  onError,
+}: {
+  workflowName: string
+  operationId: string
+  onLaunched: (jobId: number) => void
+  onError: () => void
+}) {
+  const { data: operation } = useOperationStatus(operationId)
+
+  useEffect(() => {
+    if (!operation) return
+    
+    let timer: ReturnType<typeof setTimeout> | undefined
+    
+    if (operation.state === 'launched' && operation.job_id) {
+      timer = setTimeout(() => onLaunched(operation.job_id!), 1000)
+    } else if (operation.state === 'error') {
+      console.error('Operation failed:', operation.error)
+      timer = setTimeout(() => onError(), 3000)
+    }
+    
+    return () => {
+      if (timer) clearTimeout(timer)
+    }
+  }, [operation, onLaunched, onError])
+
+  if (!operation) return null
+
+  const stateLabel = {
+    waking: '🔄 Waking AWX...',
+    launching: '🚀 Launching job...',
+    launched: '✓ Launched',
+    error: '✗ Error',
+  }[operation.state]
+
+  const stateColor = {
+    waking: 'badge-status-pending',
+    launching: 'badge-status-running',
+    launched: 'badge-status-successful',
+    error: 'badge-status-failed',
+  }[operation.state]
+
+  return (
+    <div className="flex items-center justify-between">
+      <div>
+        <div className="font-semibold">{workflowName}</div>
+        <div className="text-sm text-muted">operation {operationId.slice(0, 8)}...</div>
+      </div>
+      <div className="flex items-center gap-3">
+        <span className={`badge text-xs ${stateColor}`}>{stateLabel}</span>
+        {operation.error && (
+          <span className="text-xs text-red-500">{operation.error}</span>
+        )}
+      </div>
     </div>
   )
 }
@@ -131,13 +238,16 @@ function WorkflowCard({
 function JobStatus({ jobId, onComplete }: { jobId: number; onComplete: () => void }) {
   const { data: jobStatus } = useWorkflowJobStatus(jobId)
 
+  const isTerminal = jobStatus ? ['successful', 'failed', 'error', 'canceled'].includes(jobStatus.status) : false
+
+  useEffect(() => {
+    if (!isTerminal) return
+    
+    const timer = setTimeout(() => onComplete(), 2000)
+    return () => clearTimeout(timer)
+  }, [isTerminal, onComplete])
+
   if (!jobStatus) return null
-
-  const isTerminal = ['successful', 'failed', 'error', 'canceled'].includes(jobStatus.status)
-
-  if (isTerminal) {
-    setTimeout(() => onComplete(), 2000)
-  }
 
   const statusColor = {
     new: 'badge-status-new',
@@ -166,13 +276,16 @@ function JobStatus({ jobId, onComplete }: { jobId: number; onComplete: () => voi
 function JobMonitor({ workflowName, jobId, onComplete }: { workflowName: string; jobId: number; onComplete: () => void }) {
   const { data: jobStatus } = useWorkflowJobStatus(jobId)
 
+  const isTerminal = jobStatus ? ['successful', 'failed', 'error', 'canceled'].includes(jobStatus.status) : false
+
+  useEffect(() => {
+    if (!isTerminal) return
+    
+    const timer = setTimeout(() => onComplete(), 2000)
+    return () => clearTimeout(timer)
+  }, [isTerminal, onComplete])
+
   if (!jobStatus) return null
-
-  const isTerminal = ['successful', 'failed', 'error', 'canceled'].includes(jobStatus.status)
-
-  if (isTerminal) {
-    setTimeout(() => onComplete(), 2000)
-  }
 
   const statusColor = {
     new: 'badge-status-new',
