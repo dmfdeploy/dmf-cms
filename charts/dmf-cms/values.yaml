@@ -59,6 +59,18 @@ awx:
     key: awxApiToken
   sslVerify: "false"
 
+# On-demand scale-to-zero helper integration (WS1/WS5).
+# When enabled, dmf-cms calls the helper before AWX API reads.
+# maxStartupWait MUST be >= helper AWX_AUTOSCALE_MAX_STARTUP_WAIT (1200s)
+# plus margin. Pi cold wake measured at ~15 min.
+awxAutoscale:
+  enabled: false
+  helperUrl: "http://awx-autoscale.awx.svc.cluster.local:8080"
+  maxStartupWait: "1260"
+  bearerToken:
+    existingSecretName: dmf-cms-runtime
+    key: awxAutoscaleBearerToken
+
 netbox:
   apiUrl: "http://netbox.netbox.svc.cluster.local"
   apiToken:

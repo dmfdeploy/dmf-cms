@@ -136,6 +136,22 @@ spec:
             {{- end }}
             - name: DMF_CONSOLE_AWX_SSL_VERIFY
               value: {{ .Values.awx.sslVerify | quote }}
+            - name: DMF_CONSOLE_AWX_AUTOSCALE_ENABLED
+              value: {{ .Values.awxAutoscale.enabled | quote }}
+            {{- if .Values.awxAutoscale.helperUrl }}
+            - name: DMF_CONSOLE_AWX_AUTOSCALE_HELPER_URL
+              value: {{ .Values.awxAutoscale.helperUrl | quote }}
+            {{- end }}
+            - name: DMF_CONSOLE_AWX_AUTOSCALE_MAX_STARTUP_WAIT
+              value: {{ .Values.awxAutoscale.maxStartupWait | quote }}
+            {{- if .Values.awxAutoscale.bearerToken.existingSecretName }}
+            - name: DMF_CONSOLE_AWX_AUTOSCALE_BEARER_TOKEN
+              valueFrom:
+                secretKeyRef:
+                  name: {{ .Values.awxAutoscale.bearerToken.existingSecretName | quote }}
+                  key: {{ .Values.awxAutoscale.bearerToken.key | quote }}
+                  optional: true
+            {{- end }}
             {{- if .Values.netbox.apiUrl }}
             - name: DMF_CONSOLE_NETBOX_API_URL
               value: {{ .Values.netbox.apiUrl | quote }}

@@ -21,6 +21,15 @@ class AWXAPIError(Exception):
         super().__init__(f"AWX API {status}: {body}")
 
 
+class AWXAutoscaleError(Exception):
+    """Raised when the AWX autoscale helper returns a non-200 response."""
+
+    def __init__(self, status: int, body: str) -> None:
+        self.status = status
+        self.body = body
+        super().__init__(f"AWX autoscale helper {status}: {body}")
+
+
 @dataclass(frozen=True)
 class AWXJobInfo:
     job_id: int
@@ -199,6 +208,46 @@ def wait_for_job(
         status="timed_out",
         name=f"job/{job_id}",
     )
+
+
+def ensure_awx_awake(
+    *,
+    helper_url: str,
+    bearer_token: str,
+    max_startup_wait: int = 1260,
+) -> None:
+    """Call the AWX autoscale helper to wake AWX before API reads.
+
+    POSTs to {helper_url}/ensure-awake with bearer auth. The helper blocks
+    until AWX is ready (idempotent, single-flight). Returns on 200. Raises
+    AWXAutoscaleError on 503/timeout or network error.
+
+    No-op if helper_url or bearer_token is empty (allows graceful disable
+    without changing the enabled flag).
+    
+    max_startup_wait MUST be >= helper AWX_AUTOSCALE_MAX_STARTUP_WAIT (1200s)
+    plus margin. Pi cold wake measured at ~15 min.
+    """
+    if not helper_url or not bearer_token:
+        return
+
+    url = helper_url.rstrip("/") + "/ensure-awake"
+    headers = {
+        "Authorization": f"Bearer {bearer_token}",
+        "Accept": "application/json",
+    }
+    req = urllib.request.Request(url, data=b"", headers=headers, method="POST")
+
+    try:
+        with urllib.request.urlopen(req, timeout=max_startup_wait) as resp:
+            if resp.status != 200:
+                error_body = resp.read().decode() if resp.fp else str(resp.status)
+                raise AWXAutoscaleError(resp.status, error_body)
+    except urllib.error.HTTPError as exc:
+        error_body = exc.read().decode() if exc.fp else str(exc)
+        raise AWXAutoscaleError(exc.code, error_body) from exc
+    except urllib.error.URLError as exc:
+        raise AWXAutoscaleError(0, f"network error: {exc.reason}") from exc
 
 
 def list_recent_jobs(

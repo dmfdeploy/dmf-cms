@@ -96,6 +96,27 @@ class AWXSettings:
 
 
 @dataclass(frozen=True)
+class AWXAutoscaleSettings:
+    """On-demand scale-to-zero helper integration (WS1/WS5).
+
+    When enabled, dmf-cms calls POST {helper_url}/ensure-awake before any
+    AWX API read. The helper wakes AWX (idempotent, single-flight) and
+    blocks until ready. grace_period lives in the helper, not here.
+    
+    max_startup_wait MUST be >= helper AWX_AUTOSCALE_MAX_STARTUP_WAIT (1200s)
+    plus margin. Pi cold wake measured at ~15 min.
+    """
+    enabled: bool = False
+    helper_url: str = ""
+    max_startup_wait: int = 1260
+    bearer_token: str = ""
+
+    @property
+    def configured(self) -> bool:
+        return bool(self.enabled and self.helper_url and self.bearer_token)
+
+
+@dataclass(frozen=True)
 class NetboxSettings:
     api_url: str = ""
     api_token: str = ""
@@ -179,6 +200,7 @@ class Settings:
     oidc: OIDCSettings = field(default_factory=OIDCSettings)
     authentik: AuthentikSettings = field(default_factory=AuthentikSettings)
     awx: AWXSettings = field(default_factory=AWXSettings)
+    awx_autoscale: AWXAutoscaleSettings = field(default_factory=AWXAutoscaleSettings)
     netbox: NetboxSettings = field(default_factory=NetboxSettings)
     prometheus: PrometheusSettings = field(default_factory=PrometheusSettings)
     forgejo: ForgejoSettings = field(default_factory=ForgejoSettings)
@@ -219,6 +241,12 @@ def load_settings() -> Settings:
             api_url=os.getenv("DMF_CONSOLE_AWX_API_URL", ""),
             api_token=os.getenv("DMF_CONSOLE_AWX_API_TOKEN", ""),
             ssl_verify=_env_bool("DMF_CONSOLE_AWX_SSL_VERIFY", False),
+        ),
+        awx_autoscale=AWXAutoscaleSettings(
+            enabled=_env_bool("DMF_CONSOLE_AWX_AUTOSCALE_ENABLED", False),
+            helper_url=os.getenv("DMF_CONSOLE_AWX_AUTOSCALE_HELPER_URL", ""),
+            max_startup_wait=int(os.getenv("DMF_CONSOLE_AWX_AUTOSCALE_MAX_STARTUP_WAIT", "1260")),
+            bearer_token=os.getenv("DMF_CONSOLE_AWX_AUTOSCALE_BEARER_TOKEN", ""),
         ),
         netbox=NetboxSettings(
             api_url=os.getenv("DMF_CONSOLE_NETBOX_API_URL", ""),
