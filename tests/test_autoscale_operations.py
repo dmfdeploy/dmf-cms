@@ -207,7 +207,7 @@ def test_operation_error_sanitization(enabled_settings):
     app = create_app(settings=enabled_settings)
     with TestClient(app) as client:
         # Mock auth and make ensure_awx_awake raise an error with raw body
-        raw_error_body = "Internal server error: database connection failed at 10.0.0.1:5432"
+        raw_error_body = "Internal server error: database connection failed at db.internal.example:5432"
         with patch("dmf_cms.main._require_user", return_value=True), \
              patch("dmf_cms.main.ensure_awx_awake", side_effect=AWXAutoscaleError(500, raw_error_body)):
 
