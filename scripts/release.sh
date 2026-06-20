@@ -16,7 +16,7 @@
 #   1. Validate working tree is clean
 #   2. Compute new version
 #   3. Run sync-version.sh to update all version files
-#   4. Commit "release: vX.Y.Z"
+#   4. Commit "chore(release): vX.Y.Z" (conventional + DCO sign-off)
 #   5. git tag vX.Y.Z
 #   6. Build image locally via build-image.sh --no-push
 #   7. Print next-step commands (does NOT auto-publish or deploy)
@@ -111,7 +111,7 @@ echo "[1/4] Syncing version files..."
 echo ""
 echo "[2/4] Committing version bump..."
 git add VERSION pyproject.toml frontend/package.json charts/dmf-cms/Chart.yaml charts/dmf-cms/values.yaml
-git commit -m "release: v$NEW"
+git commit -s -m "chore(release): v$NEW"
 
 # 5. Tag
 echo ""
