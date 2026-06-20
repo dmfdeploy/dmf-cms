@@ -143,7 +143,6 @@ function WorkflowCard({
   activeJob,
   pendingOp,
   onJobComplete,
-  onOpComplete,
 }: {
   template: any
   onLaunch: () => void
@@ -151,6 +150,8 @@ function WorkflowCard({
   activeJob?: { workflowName: string; jobId: number }
   pendingOp?: { workflowName: string; operationId: string }
   onJobComplete: (jobId: number) => void
+  // onOpComplete is part of the call-site contract but op completion is owned
+  // by the parent's pending-operations panel, not the card; accept, don't bind.
   onOpComplete: (operationId: string) => void
 }) {
   return (

@@ -305,12 +305,13 @@ function EntryCard({
 /* ─── operation status line (polls via hook) ─── */
 
 function OperationStatusLine({
-  entryKey,
   operationId,
-  kind,
   onLaunched,
   onError,
 }: {
+  // entryKey + kind are part of the call-site contract (passed by every caller)
+  // but the status line keys off operationId / operation.state; accept them in
+  // the type, don't bind them here.
   entryKey: string
   operationId: string
   kind: 'deploy' | 'teardown'

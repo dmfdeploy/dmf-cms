@@ -65,7 +65,13 @@ export default function AdminOverview() {
   const handleLaunch = async (workflowName: string) => {
     try {
       const result = await launchMutation.mutateAsync(workflowName)
-      setActiveJobs([...activeJobs, { workflowName, jobId: result.job_id }])
+      // result is WorkflowLaunchResponse | Operation; the async (202/waking)
+      // path has a null job_id until the job is actually launched. Only track
+      // it here once it has a real id (the Workflows page owns the full
+      // operation-status UX).
+      if (result.job_id != null) {
+        setActiveJobs([...activeJobs, { workflowName, jobId: result.job_id }])
+      }
     } catch (error) {
       console.error('Failed to launch workflow:', error)
     }
