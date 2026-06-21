@@ -28,6 +28,10 @@ class CatalogEntry:
     configure: Optional[dict[str, Any]] = None
     finalise: Optional[dict[str, Any]] = None
     dependencies: Optional[list[str]] = None
+    # Optional UI link-out for functions that expose an operator console of their
+    # own (e.g. nmos-crosspoint). Shape: {host: <fqdn>}. Surfaced as an "Open"
+    # link on the card once the entry is lifecycle:active.
+    ingress: Optional[dict[str, Any]] = None
 
 
 def _load_one_yaml(path: Path) -> Optional[CatalogEntry]:
@@ -59,6 +63,7 @@ def _load_one_yaml(path: Path) -> Optional[CatalogEntry]:
         configure=raw.get("configure"),
         finalise=raw.get("finalise"),
         dependencies=raw.get("dependencies"),
+        ingress=raw.get("ingress"),
     )
 
 

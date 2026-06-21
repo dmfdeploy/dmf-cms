@@ -201,6 +201,16 @@ function EntryCard({
         </div>
 
         <div className="flex gap-2 ml-4">
+          {entry.lifecycle === 'active' && entry.ingress_url && (
+            <a
+              href={entry.ingress_url}
+              target="_blank"
+              rel="noopener noreferrer"
+              className="btn btn-secondary btn-sm"
+            >
+              ↗ Open
+            </a>
+          )}
           <button
             onClick={() => onDeploy(entry)}
             disabled={deployDisabled}

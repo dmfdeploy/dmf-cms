@@ -1187,6 +1187,17 @@ def create_app(settings: Settings | None = None, contract: AppContract | None = 
         provision = entry.provision or {}
         configure = entry.configure or {}
         finalise = entry.finalise or {}
+        ingress = entry.ingress or {}
+        ingress_host = ingress.get("host")
+        # Suppress the link for the public example-domain placeholder so we never
+        # render a dead "Open" link. A real env carries a real host (future:
+        # stamped from the NetBox runtime endpoint, dmfdeploy/dmfdeploy#108) and
+        # the link lights up then.
+        ingress_url = (
+            f"https://{ingress_host}"
+            if ingress_host and not ingress_host.endswith(".example.com")
+            else None
+        )
         return {
             "key": entry.key,
             "display_name": entry.display_name,
@@ -1200,6 +1211,8 @@ def create_app(settings: Settings | None = None, contract: AppContract | None = 
             "configure_awx_job_template": configure.get("awx_job_template"),
             "finalise_awx_job_template": finalise.get("awx_job_template"),
             "dependencies": entry.dependencies or [],
+            # Link-out to the function's own console when it declares a real host.
+            "ingress_url": ingress_url,
         }
 
     @app.get("/api/catalog")
