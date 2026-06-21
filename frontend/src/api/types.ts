@@ -252,6 +252,8 @@ export interface CatalogEntry {
   configure_awx_job_template: string | null
   finalise_awx_job_template: string | null
   dependencies: string[]
+  // Link-out to the function's own console (e.g. nmos-crosspoint), shown when active.
+  ingress_url: string | null
 }
 
 export interface CatalogListResponse {
