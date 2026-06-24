@@ -68,7 +68,7 @@ The target UI is defined by the DMF Portal mockup (three role-aware dashboards):
 - Manager — request approval (approval flows, activity feed, site readiness)
 - System Engineer — build & troubleshoot (topology, drift/compliance)
 
-Reference image: `secbrain/tmp/dmf-portal-mockup-2025.png` in the knowledge base vault.
+Reference image: the DMF Portal mockup lives in the operator's private design vault (not committed to this public repo).
 All new UI must match this dark theme, panel structure, and metric card layout.
 See `AGENTS.md` for the full design token and component spec.
 

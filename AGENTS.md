@@ -49,7 +49,7 @@ If you change cross-repo state, update the `<!-- HUMAN-START -->` section of
 
 ## 1. Design System & Visual Language
 
-**Reference mockup:** `secbrain/tmp/dmf-portal-mockup-2025.png` — three role-aware dashboards
+**Reference mockup:** the DMF Portal mockup (operator's private design vault; not in this public repo) — three role-aware dashboards
 (Media Operator, Manager, System Engineer) with dark theme, metric cards, sparklines,
 status tables, and approval/activity feeds.
 
