@@ -15,7 +15,7 @@ def test_add_user_to_group_patches_full_member_list(monkeypatch):
         if method == "GET" and path.startswith("/api/v3/core/groups/?"):
             return {"results": [{"name": "dmf-console-admin", "pk": 5}]}
         if method == "GET" and path.startswith("/api/v3/core/users/"):
-            return {"results": [{"username": "lorenz", "pk": 7}]}
+            return {"results": [{"username": "testuser", "pk": 7}]}
         if method == "GET" and path == "/api/v3/core/groups/5/?page_size=100":
             return {"users": [{"pk": 3}]}  # existing member
         return {}
@@ -24,7 +24,7 @@ def test_add_user_to_group_patches_full_member_list(monkeypatch):
     added = authentik.add_user_to_group(
         api_url="http://authentik-server.authentik.svc.cluster.local",
         api_token="t",
-        username="lorenz",
+        username="testuser",
         group_name="dmf-console-admin",
     )
     assert added is True
