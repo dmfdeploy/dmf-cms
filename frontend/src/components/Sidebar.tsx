@@ -13,7 +13,6 @@ interface NavItem {
 const allNavItems: NavItem[] = [
   { label: 'Overview', path: '/', icon: 'home' },
   { label: 'Monitoring', path: '/monitoring', icon: 'monitor' },
-  { label: 'MXL Flows', path: '/mxl-flows', icon: 'mxl' },
   // v1 gating (plan #173 WP2): visible to engineer+admin; nav visibility is
   // cosmetic — the backend enforces the same boundary on every endpoint.
   { label: 'Media Workloads', path: '/media-workloads', icon: 'inventory', onlyRoles: ['engineer', 'admin'] },

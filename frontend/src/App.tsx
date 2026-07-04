@@ -8,7 +8,6 @@ import Overview from './pages/overview'
 import Facility from './pages/Facility'
 import Workflows from './pages/Workflows'
 import Monitoring from './pages/Monitoring'
-import MxlFlows from './pages/MxlFlows'
 import MediaWorkloads from './pages/MediaWorkloads'
 import Catalog from './pages/Catalog'
 import Changes from './pages/Changes'
@@ -60,7 +59,8 @@ export default function App() {
         <Route path="/workflows" element={<ProtectedRoute><Workflows /></ProtectedRoute>} />
         <Route path="/catalog" element={<ProtectedRoute><Catalog /></ProtectedRoute>} />
         <Route path="/monitoring" element={<ProtectedRoute><Monitoring /></ProtectedRoute>} />
-        <Route path="/mxl-flows" element={<ProtectedRoute><MxlFlows /></ProtectedRoute>} />
+        {/* WP4 (#173): MXL Flows retired into the Media Workloads live-view panel. */}
+        <Route path="/mxl-flows" element={<Navigate to="/media-workloads" replace />} />
         <Route path="/media-workloads" element={<ProtectedRoute><MediaWorkloads /></ProtectedRoute>} />
         <Route path="/changes" element={<ProtectedRoute><Changes /></ProtectedRoute>} />
         <Route path="/admin" element={<ProtectedRoute><Admin /></ProtectedRoute>} />
