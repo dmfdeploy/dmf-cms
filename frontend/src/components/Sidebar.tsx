@@ -14,7 +14,7 @@ const allNavItems: NavItem[] = [
   { label: 'Overview', path: '/', icon: 'home' },
   { label: 'Monitoring', path: '/monitoring', icon: 'monitor' },
   { label: 'MXL Flows', path: '/mxl-flows', icon: 'mxl' },
-  { label: 'Facility', path: '/facility', icon: 'flows' },
+  { label: 'Facilities', path: '/facility', icon: 'flows' },
   { label: 'Workflow', path: '/workflows', icon: 'automation' },
   { label: 'Catalog', path: '/catalog', icon: 'catalog' },
   { label: 'Changes', path: '/changes', icon: 'reports' },

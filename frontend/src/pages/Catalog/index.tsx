@@ -116,7 +116,7 @@ export default function Catalog() {
         <p className="kicker">Service Catalog</p>
         <h1>Media Functions</h1>
         <p>
-          Registered catalog entries with lifecycle status. Deploy and teardown entries via
+          Registered catalog entries with deployment status. Deploy and teardown entries via
           AWX job templates.
         </p>
       </div>
@@ -189,14 +189,22 @@ function EntryCard({
             <span className={`badge text-xs ${deployBadge}`}>{entry.lifecycle}</span>
           </div>
           <p className="text-sm text-muted">{entry.summary}</p>
+          {/* EBU layer/vertical ontology is expert-tier vocabulary (UX
+              Constitution Art. 3) — collapsed behind an explicit affordance,
+              never a default-level line. */}
           {(entry.ebu_layer || entry.ebu_vertical || entry.ebu_lifecycle_owner) && (
-            <p className="text-xs text-muted mt-1">
-              {entry.ebu_layer ? `Layer ${entry.ebu_layer}` : ''}
-              {entry.ebu_layer && entry.ebu_vertical ? ' · ' : ''}
-              {entry.ebu_vertical ? <span className="capitalize">{entry.ebu_vertical}</span> : ''}
-              {(entry.ebu_layer || entry.ebu_vertical) && entry.ebu_lifecycle_owner ? ' · ' : ''}
-              {entry.ebu_lifecycle_owner ? <span className="capitalize">{entry.ebu_lifecycle_owner}</span> : ''}
-            </p>
+            <details className="mt-1 text-xs text-muted">
+              <summary className="cursor-pointer select-none opacity-80 hover:opacity-100">
+                System details
+              </summary>
+              <p className="mt-1 pl-4">
+                {entry.ebu_layer ? `EBU layer ${entry.ebu_layer}` : ''}
+                {entry.ebu_layer && entry.ebu_vertical ? ' · ' : ''}
+                {entry.ebu_vertical ? <span className="capitalize">{entry.ebu_vertical}</span> : ''}
+                {(entry.ebu_layer || entry.ebu_vertical) && entry.ebu_lifecycle_owner ? ' · ' : ''}
+                {entry.ebu_lifecycle_owner ? <span className="capitalize">{entry.ebu_lifecycle_owner}</span> : ''}
+              </p>
+            </details>
           )}
         </div>
 
