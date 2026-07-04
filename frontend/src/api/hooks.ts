@@ -23,6 +23,7 @@ import type {
   CatalogJobStatus,
   MxlStatusResponse,
   MediaWorkloadsResponse,
+  ClearForDeploymentResult,
   Operation,
 } from './types'
 
@@ -276,5 +277,22 @@ export function useMediaWorkloads() {
     queryKey: ['media-workloads'],
     queryFn: () => apiCall<MediaWorkloadsResponse>('/api/media-workloads'),
     refetchInterval: 15000,
+  })
+}
+
+// The ONE consequential media-workloads write (ADR-0037): flips desired
+// state in NetBox; convergence belongs to the automation lane. reason is
+// mandatory (C5 quartet).
+export function useClearForDeployment() {
+  return useMutation({
+    mutationFn: ({ instance, reason }: { instance: string; reason: string }) =>
+      apiCall<ClearForDeploymentResult>(
+        `/api/media-workloads/${encodeURIComponent(instance)}/clear`,
+        {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ reason }),
+        },
+      ),
   })
 }

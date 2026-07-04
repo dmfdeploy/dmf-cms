@@ -121,10 +121,18 @@ class NetboxSettings:
     api_url: str = ""
     api_token: str = ""
     ssl_verify: bool = False
+    # Scoped catalog-writer token (ADR-0032, `dmf-catalog-svc` class) for the
+    # ONE console write: the media-workloads clear-for-deployment tag flip.
+    # Reads stay on api_token; the write endpoint is dark (503) when unset.
+    writer_token: str = ""
 
     @property
     def configured(self) -> bool:
         return bool(self.api_url and self.api_token)
+
+    @property
+    def write_configured(self) -> bool:
+        return bool(self.api_url and self.writer_token)
 
 
 @dataclass(frozen=True)
@@ -313,6 +321,7 @@ def load_settings() -> Settings:
             api_url=os.getenv("DMF_CONSOLE_NETBOX_API_URL", ""),
             api_token=os.getenv("DMF_CONSOLE_NETBOX_API_TOKEN", ""),
             ssl_verify=_env_bool("DMF_CONSOLE_NETBOX_SSL_VERIFY", False),
+            writer_token=os.getenv("DMF_CONSOLE_NETBOX_WRITER_TOKEN", ""),
         ),
         prometheus=PrometheusSettings(
             url=os.getenv("DMF_CONSOLE_PROMETHEUS_URL", ""),

@@ -357,3 +357,17 @@ export interface MediaWorkloadsResponse {
   instances: MediaWorkloadInstance[]
   functions: MediaWorkloadFunction[]
 }
+
+export interface ClearForDeploymentResult {
+  instance: string
+  requested_state: string
+  previous_state: string
+  request_id: string
+  actor: string
+  role: string
+  reason: string
+  reconcile: {
+    expectation: string
+    watch: string
+  }
+}
