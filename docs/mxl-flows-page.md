@@ -1,9 +1,14 @@
-# MXL Flows page (demo evaluation)
+# MXL live view (Media Workloads detail panel)
 
-The **MXL Flows** page (`/mxl-flows`) is an evaluation surface for the MXL fabrics
-demo: it shows the active MXL media nodes, the flow + grain activity, and a small
-live preview of the transferred test pattern, with copy framing it as a
-**libfabric / tcp** cross-host demo.
+> **Retired as a standalone page (dmfdeploy/dmfdeploy#173 WP4).** The MXL Flows
+> page folded into **Media Workloads** as a per-instance *Live view* detail
+> panel (`frontend/src/pages/MediaWorkloads/MxlDetailPanel.tsx`); `/mxl-flows`
+> now redirects to `/media-workloads`. The status-sidecar fan-out, endpoint
+> config (`DMF_CONSOLE_MXL_ENDPOINTS`), and graceful degradation described
+> below carry over unchanged.
+
+The live view shows the active MXL media nodes, the flow + grain activity, and a
+small live preview of the transferred test pattern from the MXL fabrics demo.
 
 ## What it shows
 - **Active MXL nodes** — one card per node with a **cloud-provider logo** and role

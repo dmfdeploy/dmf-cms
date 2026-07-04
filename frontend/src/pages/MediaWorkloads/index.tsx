@@ -1,5 +1,6 @@
 import { useMemo, useState } from 'react'
 import { useClearForDeployment, useMediaWorkloads } from '../../api/hooks'
+import MxlDetailPanel from './MxlDetailPanel'
 import type { ClearForDeploymentResult, MediaWorkloadInstance } from '../../api/types'
 
 /**
@@ -34,6 +35,8 @@ export default function MediaWorkloads() {
   const [confirming, setConfirming] = useState<string | null>(null)
   const [reason, setReason] = useState('')
   const [lastResult, setLastResult] = useState<ClearForDeploymentResult | null>(null)
+  // WP4: the retired MXL Flows page lives on as a per-instance live view.
+  const [expanded, setExpanded] = useState<string | null>(null)
   const clearMutation = useClearForDeployment()
 
   const submitClear = (instance: string) => {
@@ -152,7 +155,19 @@ export default function MediaWorkloads() {
                   {instances.map((inst: MediaWorkloadInstance) => (
                     <tr key={inst.instance} className="border-b border-white/5">
                       <td className="px-4 py-3 font-mono text-xs">{inst.instance}</td>
-                      <td className="px-4 py-3">{inst.function_key ?? '—'}</td>
+                      <td className="px-4 py-3">
+                        {inst.function_key ?? '—'}
+                        {inst.function_key?.startsWith('mxl') && (
+                          <button
+                            className="btn btn-secondary btn-sm ml-2"
+                            onClick={() =>
+                              setExpanded(expanded === inst.instance ? null : inst.instance)
+                            }
+                          >
+                            {expanded === inst.instance ? 'Hide live view' : 'Live view'}
+                          </button>
+                        )}
+                      </td>
                       <td className="px-4 py-3">{inst.placement.node ?? '—'}</td>
                       <td className="px-4 py-3">
                         <span
@@ -234,6 +249,13 @@ export default function MediaWorkloads() {
                       </td>
                     </tr>
                   ))}
+                  {expanded != null && (
+                    <tr key="__mxl-live-view" className="border-b border-white/5">
+                      <td colSpan={6} className="px-4 py-3">
+                        <MxlDetailPanel />
+                      </td>
+                    </tr>
+                  )}
                 </tbody>
               </table>
             </div>
