@@ -170,6 +170,18 @@ spec:
             - name: DMF_CONSOLE_PROMETHEUS_URL
               value: {{ .Values.prometheus.url | quote }}
             {{- end }}
+            {{- if .Values.media.tenancy }}
+            - name: DMF_CONSOLE_MEDIA_TENANCY
+              value: {{ .Values.media.tenancy | quote }}
+            {{- end }}
+            {{- if .Values.media.groupTenantMap }}
+            - name: DMF_CONSOLE_MEDIA_GROUP_TENANT_MAP
+              value: {{ .Values.media.groupTenantMap | quote }}
+            {{- end }}
+            {{- if .Values.mxl.endpoints }}
+            - name: DMF_CONSOLE_MXL_ENDPOINTS
+              value: {{ .Values.mxl.endpoints | quote }}
+            {{- end }}
             {{- if .Values.forgejo.apiUrl }}
             - name: DMF_CONSOLE_FORGEJO_API_URL
               value: {{ .Values.forgejo.apiUrl | quote }}

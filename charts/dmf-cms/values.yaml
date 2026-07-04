@@ -81,6 +81,20 @@ netbox:
 prometheus:
   url: "http://prometheus-server.monitoring.svc.cluster.local/prometheus"
 
+# Media Workloads page (dmfdeploy/dmfdeploy#173): fail-closed — the page stays
+# dark unless tenancy is "single" or "scoped" (scoped additionally needs the
+# group→tenant map, format "group=tenant|tenant;...").
+media:
+  tenancy: ""
+  groupTenantMap: ""
+
+# MXL live-view fan-out (dmfdeploy/dmfdeploy#17): comma-separated
+# "role|provider|url" entries pointing at the per-release status Services,
+# e.g. "source|generic|http://mxl-videotestsrc.mxl.svc.cluster.local:9000".
+# Deriving these from NetBox cluster_* records is a v0.2 follow-up.
+mxl:
+  endpoints: ""
+
 forgejo:
   apiUrl: "http://forgejo-http.forgejo.svc.cluster.local:3000"
   apiToken:
