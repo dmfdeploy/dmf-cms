@@ -137,6 +137,44 @@ class PrometheusSettings:
 
 
 @dataclass(frozen=True)
+class MediaTenancySettings:
+    """Tenancy posture for the Media Workloads surface (ADR-0037).
+
+    Fail-closed by design: with ``mode`` unset the endpoints stay dark
+    (``configured: false``). ``single`` is the *explicitly declared*
+    single-tenant posture (all instances visible to permitted roles).
+    ``scoped`` enforces the raw OIDC-group -> NetBox-tenant map server-side;
+    a scoped user whose groups map to nothing sees nothing (and writes 404).
+    Groups are tenancy, roles are capability — the map keys are raw group
+    names, never console roles.
+    """
+
+    mode: str = ""  # "" | "single" | "scoped"
+    group_tenant_map: tuple[tuple[str, tuple[str, ...]], ...] = ()
+
+    @property
+    def configured(self) -> bool:
+        return self.mode in ("single", "scoped")
+
+    def tenants_for(self, groups: tuple[str, ...]) -> tuple[str, ...] | None:
+        """Return permitted NetBox tenant slugs, or ``None`` for unscoped.
+
+        ``None`` means "no tenant filter" (single mode). An empty tuple means
+        "no visibility" (scoped mode, no mapped groups) — callers must treat
+        it as an empty result set, never fall through to unscoped.
+        """
+        if self.mode == "single":
+            return None
+        mapping = dict(self.group_tenant_map)
+        out: list[str] = []
+        for group in groups:
+            for slug in mapping.get(group, ()):  # fail closed on unmapped
+                if slug not in out:
+                    out.append(slug)
+        return tuple(out)
+
+
+@dataclass(frozen=True)
 class ForgejoSettings:
     api_url: str = ""
     api_token: str = ""
@@ -205,6 +243,29 @@ class Settings:
     prometheus: PrometheusSettings = field(default_factory=PrometheusSettings)
     forgejo: ForgejoSettings = field(default_factory=ForgejoSettings)
     mxl: MXLSettings = field(default_factory=MXLSettings)
+    media_tenancy: MediaTenancySettings = field(default_factory=MediaTenancySettings)
+
+
+def _parse_group_tenant_map(raw: str | None) -> tuple[tuple[str, tuple[str, ...]], ...]:
+    """Parse DMF_CONSOLE_MEDIA_GROUP_TENANT_MAP.
+
+    Format: ``group=tenant1|tenant2;group2=tenant3`` (semicolon-separated
+    entries, pipe-separated tenant slugs). Malformed entries are dropped with
+    a fail-closed effect (unmapped group -> no visibility in scoped mode).
+    """
+    if not raw:
+        return ()
+    out: list[tuple[str, tuple[str, ...]]] = []
+    for chunk in raw.split(";"):
+        chunk = chunk.strip()
+        if not chunk or "=" not in chunk:
+            continue
+        group, _, tenants = chunk.partition("=")
+        group = group.strip()
+        slugs = tuple(s.strip() for s in tenants.split("|") if s.strip())
+        if group and slugs:
+            out.append((group, slugs))
+    return tuple(out)
 
 
 def load_settings() -> Settings:
@@ -262,5 +323,11 @@ def load_settings() -> Settings:
         ),
         mxl=MXLSettings(
             endpoints=_parse_mxl_endpoints(os.getenv("DMF_CONSOLE_MXL_ENDPOINTS")),
+        ),
+        media_tenancy=MediaTenancySettings(
+            mode=_env_choice("DMF_CONSOLE_MEDIA_TENANCY", "", ("", "single", "scoped")),
+            group_tenant_map=_parse_group_tenant_map(
+                os.getenv("DMF_CONSOLE_MEDIA_GROUP_TENANT_MAP")
+            ),
         ),
     )

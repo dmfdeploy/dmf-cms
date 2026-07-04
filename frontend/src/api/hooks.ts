@@ -22,6 +22,7 @@ import type {
   CatalogActionResult,
   CatalogJobStatus,
   MxlStatusResponse,
+  MediaWorkloadsResponse,
   Operation,
 } from './types'
 
@@ -265,5 +266,15 @@ export function useMxlStatus() {
     queryKey: ['mxl-status'],
     queryFn: () => apiCall<MxlStatusResponse>('/api/mxl/status'),
     refetchInterval: 200,
+  })
+}
+
+// Media Workloads — inventory changes slowly; 15s keeps the status overlay
+// fresh without hammering NetBox/Prometheus through the backend.
+export function useMediaWorkloads() {
+  return useQuery({
+    queryKey: ['media-workloads'],
+    queryFn: () => apiCall<MediaWorkloadsResponse>('/api/media-workloads'),
+    refetchInterval: 15000,
   })
 }
