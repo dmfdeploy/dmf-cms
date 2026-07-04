@@ -24,12 +24,13 @@ from .awx import AWXAPIError, AWXAutoscaleError, AWXJobInfo, list_job_templates,
 from .catalog import CatalogEntry, load_catalog_entries, get_lifecycle_status
 from .contracts import AppContract, load_app_contract
 from .operations import OperationStore, OperationState
-from . import netbox, prometheus, forgejo, mxl
+from . import netbox, prometheus, forgejo, mxl, media_workloads
 from starlette.concurrency import run_in_threadpool
 import asyncio
 from .security import (
     ROLE_GROUPS,
     ROLE_ORDER,
+    UserIdentity,
     build_authorize_url,
     clear_user,
     discovery_document,
@@ -39,6 +40,7 @@ from .security import (
     new_pkce_verifier,
     new_state,
     pkce_challenge,
+    role_at_least,
     session_user,
     store_user,
     user_from_claims,
@@ -88,6 +90,20 @@ class BasePathMiddleware:
 
 def _require_user(request: Request) -> bool:
     return session_user(request.session) is not None
+
+
+def _require_min_role(request: Request, minimum: str) -> tuple[UserIdentity | None, JSONResponse | None]:
+    """Backend role gate (roles are capability; tenancy is a separate axis).
+
+    Returns ``(user, None)`` when authorized, else ``(None, error_response)``.
+    Nav visibility is cosmetic — every gated endpoint must call this.
+    """
+    user = session_user(request.session)
+    if user is None:
+        return None, JSONResponse({"error": "unauthorized"}, status_code=401)
+    if not role_at_least(user.role, minimum):
+        return None, JSONResponse({"error": "forbidden"}, status_code=403)
+    return user, None
 
 
 def _bootstrap_console_groups(settings: Settings) -> None:
@@ -1459,6 +1475,51 @@ def create_app(settings: Settings | None = None, contract: AppContract | None = 
         if jpeg is None:
             return JSONResponse({"error": "preview unavailable"}, status_code=404)
         return Response(content=jpeg, media_type="image/jpeg", headers={"Cache-Control": "no-store"})
+
+    # ------------------------------------------------------------------
+    # Media Workloads (ADR-0037): NetBox instance inventory, desired vs
+    # observed, hard server-side role + tenancy boundary.
+    # ------------------------------------------------------------------
+    @app.get("/api/media-workloads")
+    async def api_media_workloads(request: Request):
+        user, err = _require_min_role(request, "engineer")
+        if err is not None:
+            return err
+        # Fail-closed tenancy: dark until the env declares its posture
+        # (single | scoped) — an implicit allow-all default is forbidden
+        # (ADR-0037 hard boundary; GATE-7).
+        if not settings.media_tenancy.configured:
+            return JSONResponse(
+                {
+                    "configured": False,
+                    "reason": "media-tenancy-not-configured",
+                    "instances": [],
+                    "functions": [],
+                }
+            )
+        if not settings.netbox.configured:
+            return JSONResponse(
+                {
+                    "configured": True,
+                    "degraded": True,
+                    "reason": "netbox-not-configured",
+                    "instances": [],
+                    "functions": [],
+                }
+            )
+        assert user is not None
+        tenant_slugs = settings.media_tenancy.tenants_for(user.groups)
+        payload = await run_in_threadpool(
+            media_workloads.list_instances,
+            settings.netbox.api_url,
+            settings.netbox.api_token,
+            settings.netbox.ssl_verify,
+            tenant_slugs,
+            settings.prometheus.url if settings.prometheus.configured else "",
+        )
+        payload["configured"] = True
+        payload["scope"] = "all" if tenant_slugs is None else list(tenant_slugs)
+        return JSONResponse(payload)
 
     # ------------------------------------------------------------------
     # Catch-all: serve React SPA index.html (must be registered last)

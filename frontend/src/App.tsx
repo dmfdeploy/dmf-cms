@@ -9,6 +9,7 @@ import Facility from './pages/Facility'
 import Workflows from './pages/Workflows'
 import Monitoring from './pages/Monitoring'
 import MxlFlows from './pages/MxlFlows'
+import MediaWorkloads from './pages/MediaWorkloads'
 import Catalog from './pages/Catalog'
 import Changes from './pages/Changes'
 import Admin from './pages/Admin'
@@ -60,6 +61,7 @@ export default function App() {
         <Route path="/catalog" element={<ProtectedRoute><Catalog /></ProtectedRoute>} />
         <Route path="/monitoring" element={<ProtectedRoute><Monitoring /></ProtectedRoute>} />
         <Route path="/mxl-flows" element={<ProtectedRoute><MxlFlows /></ProtectedRoute>} />
+        <Route path="/media-workloads" element={<ProtectedRoute><MediaWorkloads /></ProtectedRoute>} />
         <Route path="/changes" element={<ProtectedRoute><Changes /></ProtectedRoute>} />
         <Route path="/admin" element={<ProtectedRoute><Admin /></ProtectedRoute>} />
         <Route path="/settings" element={<ProtectedRoute><Settings /></ProtectedRoute>} />

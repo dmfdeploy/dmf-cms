@@ -323,3 +323,37 @@ export interface MxlStatusResponse {
   flow: MxlFlow
   transport: MxlTransport
 }
+
+// ------------------------------------------------------------------
+// Media Workloads (ADR-0037): NetBox instance inventory, desired vs observed.
+// requested_state is INTENT (NetBox lifecycle tag); observed_state is runtime
+// proof (probe overlay). The UI must never render intent as running.
+export interface MediaWorkloadInstance {
+  instance: string
+  netbox_id: number | null
+  function_key: string | null
+  requested_state: 'bootstrapped' | 'active' | 'unknown' | string
+  observed_state: 'running' | 'failing' | 'unknown'
+  reconcile_pending: boolean
+  placement: {
+    node: string | null
+    ports: number[]
+    protocol: string | null
+  }
+}
+
+export interface MediaWorkloadFunction {
+  function_key: string
+  count: number
+  running: number
+  reconcile_pending: number
+}
+
+export interface MediaWorkloadsResponse {
+  configured: boolean
+  reason?: string
+  degraded?: boolean
+  scope?: 'all' | string[]
+  instances: MediaWorkloadInstance[]
+  functions: MediaWorkloadFunction[]
+}

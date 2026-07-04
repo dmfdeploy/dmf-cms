@@ -38,6 +38,19 @@ def current_role(groups: tuple[str, ...]) -> str:
     return "viewer"
 
 
+def role_at_least(role: str, minimum: str) -> bool:
+    """True when *role* meets or exceeds *minimum* in ROLE_ORDER.
+
+    Unknown roles rank below viewer (fail closed). Roles are capability;
+    tenancy scope is a separate axis (MediaTenancySettings).
+    """
+    try:
+        have = ROLE_ORDER.index(role)
+    except ValueError:
+        return False
+    return have >= ROLE_ORDER.index(minimum)
+
+
 def user_from_claims(claims: dict[str, object]) -> UserIdentity:
     raw_groups = claims.get("groups", [])
     if isinstance(raw_groups, str):
