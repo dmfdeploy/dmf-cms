@@ -187,9 +187,11 @@ function SectionTitle() {
     <div className="mb-4 flex items-start justify-between gap-3">
       <div>
         <p className="kicker">MXL flows</p>
-        <h1 className="text-2xl font-semibold text-text">EBU DMF layer stack</h1>
+        {/* Art. 3: operator-tier wording at default level; the EBU layer
+            ontology stays expert/internal (Console Glossary). */}
+        <h1 className="text-2xl font-semibold text-text">Media stack by node</h1>
         <p className="mt-1 max-w-3xl text-sm text-muted">
-          Compact layer-by-node grid, backed by live status data. Missing facts remain em dashes for later phases.
+          Compact stack-by-node grid, backed by live status data. Missing facts remain em dashes for later phases.
         </p>
       </div>
       <div className="hidden items-center gap-2 text-xs text-muted md:flex">
@@ -244,7 +246,7 @@ export default function MxlFlows() {
         {nodes.length === 0 ? (
           <div className="rounded-2xl border border-white/10 bg-white/[0.05] px-5 py-6 text-sm text-muted">
             <div className="text-lg font-semibold text-text">Deploy the producer + receiver functions to populate the DMF stack</div>
-            <p className="mt-1 max-w-2xl">This view becomes the 6-layer teaching grid once both media functions are live.</p>
+            <p className="mt-1 max-w-2xl">This view fills in once both media functions are live.</p>
           </div>
         ) : (
           <div className="mx-auto w-fit overflow-hidden rounded-2xl border border-white/10 bg-black/10 shadow-[0_14px_40px_rgba(0,0,0,0.18)]">
