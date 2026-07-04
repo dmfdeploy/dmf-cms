@@ -22,15 +22,24 @@ def _request(
     api_token: str,
     path: str,
     ssl_context: ssl.SSLContext | None = None,
+    method: str = "GET",
+    payload: dict | None = None,
 ) -> dict:
-    """Make an authenticated JSON GET request to the NetBox API."""
+    """Make an authenticated JSON request to the NetBox API.
+
+    Defaults to GET (all pre-existing callers). Write methods (PATCH) are
+    used ONLY by the media-workloads clear-for-deployment action, which
+    authenticates with the scoped writer token (ADR-0032), never the
+    read token.
+    """
     url = api_url.rstrip("/") + path
     headers = {
         "Authorization": f"Bearer {api_token}",
         "Content-Type": "application/json",
         "Accept": "application/json",
     }
-    req = urllib.request.Request(url, headers=headers, method="GET")
+    data = json.dumps(payload).encode("utf-8") if payload is not None else None
+    req = urllib.request.Request(url, headers=headers, method=method, data=data)
 
     try:
         with urllib.request.urlopen(req, timeout=30, context=ssl_context) as resp:

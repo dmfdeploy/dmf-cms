@@ -79,23 +79,54 @@ def _fetch_services(
     from . import netbox as _netbox
 
     ctx = _netbox._ssl_context(ssl_verify)
+    base = f"/api/ipam/services/?tag={urllib.parse.quote(CATALOG_TAG)}&limit=500"
 
-    device_filter = ""
-    if tenant_slugs is not None:
-        if not tenant_slugs:
-            return []  # scoped, nothing mapped: fail closed to empty
-        device_ids: list[int] = []
-        for slug in tenant_slugs:
-            path = f"/api/dcim/devices/?tenant={urllib.parse.quote(slug)}&brief=true&limit=500"
-            result = _netbox._request(netbox_url, netbox_token, path, ssl_context=ctx)
-            device_ids.extend(d["id"] for d in result.get("results", []) if d.get("id"))
-        if not device_ids:
-            return []
-        device_filter = "".join(f"&device_id={d}" for d in device_ids)
+    if tenant_slugs is None:
+        result = _netbox._request(netbox_url, netbox_token, base, ssl_context=ctx)
+        return list(result.get("results", []))
 
-    path = f"/api/ipam/services/?tag={urllib.parse.quote(CATALOG_TAG)}&limit=500{device_filter}"
-    result = _netbox._request(netbox_url, netbox_token, path, ssl_context=ctx)
-    return list(result.get("results", []))
+    if not tenant_slugs:
+        return []  # scoped, nothing mapped: fail closed to empty
+
+    # Services attach to a parent device OR virtual machine (ADR-0037 §2);
+    # tenant scope must resolve through BOTH parents or VM-backed workloads
+    # silently vanish from scoped inventories (and clear-for-deployment
+    # would 404 them). NetBox ANDs distinct filter params, so device- and
+    # VM-scoped services need separate queries, unioned by service id.
+    device_ids: list[int] = []
+    vm_ids: list[int] = []
+    for slug in tenant_slugs:
+        quoted = urllib.parse.quote(slug)
+        result = _netbox._request(
+            netbox_url,
+            netbox_token,
+            f"/api/dcim/devices/?tenant={quoted}&brief=true&limit=500",
+            ssl_context=ctx,
+        )
+        device_ids.extend(d["id"] for d in result.get("results", []) if d.get("id"))
+        result = _netbox._request(
+            netbox_url,
+            netbox_token,
+            f"/api/virtualization/virtual-machines/?tenant={quoted}&brief=true&limit=500",
+            ssl_context=ctx,
+        )
+        vm_ids.extend(v["id"] for v in result.get("results", []) if v.get("id"))
+
+    if not device_ids and not vm_ids:
+        return []
+
+    by_id: dict[Any, dict[str, Any]] = {}
+    if device_ids:
+        path = base + "".join(f"&device_id={d}" for d in device_ids)
+        result = _netbox._request(netbox_url, netbox_token, path, ssl_context=ctx)
+        for svc in result.get("results", []):
+            by_id[svc.get("id")] = svc
+    if vm_ids:
+        path = base + "".join(f"&virtual_machine_id={v}" for v in vm_ids)
+        result = _netbox._request(netbox_url, netbox_token, path, ssl_context=ctx)
+        for svc in result.get("results", []):
+            by_id[svc.get("id")] = svc
+    return list(by_id.values())
 
 
 def _observed_by_app(prometheus_url: str) -> dict[str, float]:
@@ -172,4 +203,75 @@ def list_instances(
         "degraded": False,
         "instances": instances,
         "functions": sorted(functions.values(), key=lambda f: f["function_key"]),
+    }
+
+
+def clear_for_deployment(
+    netbox_url: str,
+    writer_token: str,
+    ssl_verify: bool,
+    tenant_slugs: Optional[tuple[str, ...]],
+    read_token: str,
+    instance_name: str,
+) -> dict[str, Any]:
+    """Flip an instance's lifecycle tag bootstrapped -> active (ADR-0037 WP2b).
+
+    "Clear for deployment" IS the desired-state flip: ``lifecycle:active`` is
+    the intent signal the AWX lane understands (the tag taxonomy is binary,
+    ADR-0013). NetBox is the ONLY thing the console writes; convergence is
+    the catalog launch / drift-detection loop's job — never k3s from here.
+
+    Scope is enforced independently on this write path: the instance is
+    looked up WITHIN the caller's tenant scope, so an out-of-scope name is
+    indistinguishable from a nonexistent one (``not-found``, no side effect,
+    no existence leak). The tag rewrite preserves every non-``lifecycle:*``
+    tag. Reads use *read_token*; the single PATCH uses *writer_token*
+    (ADR-0032 scoped writer).
+
+    Returns a dict with either ``error`` (not-found | already-active |
+    netbox-unreachable | netbox-error) or the new state.
+    """
+    from . import netbox as _netbox
+
+    ctx = _netbox._ssl_context(ssl_verify)
+    try:
+        services = _fetch_services(netbox_url, read_token, ssl_verify, tenant_slugs)
+    except _netbox.NetboxAPIError as exc:
+        logger.warning("media-workloads: clear lookup failed: %s", exc)
+        return {"error": "netbox-unreachable"}
+    except Exception as exc:
+        logger.warning("media-workloads: clear lookup unexpected error: %s", exc)
+        return {"error": "netbox-error"}
+
+    svc = next((s for s in services if s.get("name") == instance_name), None)
+    if svc is None or not svc.get("id"):
+        return {"error": "not-found"}
+
+    names = _tag_names(svc)
+    current = _tag_suffix(names, "lifecycle") or "unknown"
+    if current == "active":
+        return {"error": "already-active", "requested_state": "active"}
+
+    new_tags = [{"name": n} for n in names if not n.startswith("lifecycle:")]
+    new_tags.append({"name": "lifecycle:active"})
+    try:
+        _netbox._request(
+            netbox_url,
+            writer_token,
+            f"/api/ipam/services/{svc['id']}/",
+            ssl_context=ctx,
+            method="PATCH",
+            payload={"tags": new_tags},
+        )
+    except _netbox.NetboxAPIError as exc:
+        logger.warning("media-workloads: clear PATCH failed: %s", exc)
+        return {"error": "netbox-unreachable"}
+    except Exception as exc:
+        logger.warning("media-workloads: clear PATCH unexpected error: %s", exc)
+        return {"error": "netbox-error"}
+
+    return {
+        "instance": instance_name,
+        "requested_state": "active",
+        "previous_state": current,
     }

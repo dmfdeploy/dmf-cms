@@ -1,6 +1,6 @@
 import { useMemo, useState } from 'react'
-import { useMediaWorkloads } from '../../api/hooks'
-import type { MediaWorkloadInstance } from '../../api/types'
+import { useClearForDeployment, useMediaWorkloads } from '../../api/hooks'
+import type { ClearForDeploymentResult, MediaWorkloadInstance } from '../../api/types'
 
 /**
  * Media Workloads (ADR-0037): Media Function instance inventory from NetBox
@@ -26,8 +26,29 @@ const observedBadge: Record<string, string> = {
 }
 
 export default function MediaWorkloads() {
-  const { data, isLoading, error } = useMediaWorkloads()
+  const { data, isLoading, error, refetch } = useMediaWorkloads()
   const [functionFilter, setFunctionFilter] = useState<string>('')
+  // Graduated friction for the one consequential action (hard gate 3):
+  // click arms a per-row confirm panel with an impact preview and a
+  // mandatory reason (C5); nothing fires on the first click.
+  const [confirming, setConfirming] = useState<string | null>(null)
+  const [reason, setReason] = useState('')
+  const [lastResult, setLastResult] = useState<ClearForDeploymentResult | null>(null)
+  const clearMutation = useClearForDeployment()
+
+  const submitClear = (instance: string) => {
+    clearMutation.mutate(
+      { instance, reason: reason.trim() },
+      {
+        onSuccess: (result) => {
+          setLastResult(result)
+          setConfirming(null)
+          setReason('')
+          refetch()
+        },
+      },
+    )
+  }
 
   const instances = useMemo(() => {
     const rows = (data?.instances ?? []).filter(
@@ -66,6 +87,20 @@ export default function MediaWorkloads() {
         <div className="panel mt-6 border border-amber-500/20 bg-amber-500/10 px-4 py-3 text-sm text-amber-200">
           Inventory is degraded ({data.reason ?? 'unknown reason'}) — the facility
           source of truth is unreachable. Showing nothing rather than stale guesses.
+        </div>
+      )}
+
+      {lastResult && (
+        <div className="panel mt-6 border border-green-500/20 bg-green-500/10 px-4 py-3 text-sm text-green-200">
+          <div className="font-semibold">
+            {lastResult.instance}: requested state is now {lastResult.requested_state}
+            {' '}(was {lastResult.previous_state})
+          </div>
+          <p className="mt-1 text-green-200/80">{lastResult.reconcile.expectation}</p>
+          <p className="mt-1 text-xs text-green-200/60">
+            Recorded: {lastResult.actor} ({lastResult.role}) · reason: “{lastResult.reason}” ·
+            ref {lastResult.request_id}
+          </p>
         </div>
       )}
 
@@ -136,7 +171,66 @@ export default function MediaWorkloads() {
                         </span>
                       </td>
                       <td className="px-4 py-3 text-xs text-muted">
-                        {inst.reconcile_pending ? 'Waiting to converge' : ''}
+                        {inst.reconcile_pending ? (
+                          'Waiting to converge'
+                        ) : inst.requested_state === 'bootstrapped' ? (
+                          confirming === inst.instance ? (
+                            <div className="min-w-64 rounded-lg border border-amber-500/30 bg-amber-500/10 p-3 text-amber-100">
+                              <div className="text-xs font-semibold">
+                                Clear {inst.instance} for deployment?
+                              </div>
+                              <p className="mt-1 text-xs text-amber-200/80">
+                                This records the intent to run in the facility source of
+                                truth; the platform's automation lane will deploy it. The
+                                console does not start anything directly.
+                              </p>
+                              <textarea
+                                className="mt-2 w-full rounded border border-white/10 bg-black/20 p-1 text-xs text-text"
+                                placeholder="Reason (required, recorded in the audit trail)"
+                                value={reason}
+                                onChange={(e) => setReason(e.target.value)}
+                                rows={2}
+                              />
+                              {clearMutation.isError && (
+                                <p className="mt-1 text-xs text-red-300">
+                                  {String(clearMutation.error)}
+                                </p>
+                              )}
+                              <div className="mt-2 flex gap-2">
+                                <button
+                                  className="btn btn-primary btn-sm"
+                                  disabled={!reason.trim() || clearMutation.isPending}
+                                  onClick={() => submitClear(inst.instance)}
+                                >
+                                  {clearMutation.isPending ? 'Recording…' : 'Confirm'}
+                                </button>
+                                <button
+                                  className="btn btn-secondary btn-sm"
+                                  onClick={() => {
+                                    setConfirming(null)
+                                    setReason('')
+                                    clearMutation.reset()
+                                  }}
+                                >
+                                  Cancel
+                                </button>
+                              </div>
+                            </div>
+                          ) : (
+                            <button
+                              className="btn btn-secondary btn-sm"
+                              onClick={() => {
+                                setConfirming(inst.instance)
+                                setLastResult(null)
+                                clearMutation.reset()
+                              }}
+                            >
+                              Clear for deployment
+                            </button>
+                          )
+                        ) : (
+                          ''
+                        )}
                       </td>
                     </tr>
                   ))}

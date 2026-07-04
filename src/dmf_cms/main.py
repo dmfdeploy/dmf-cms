@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import logging
 import time
+import uuid
 from contextlib import asynccontextmanager
 from pathlib import Path
 from typing import Any
@@ -1520,6 +1521,91 @@ def create_app(settings: Settings | None = None, contract: AppContract | None = 
         payload["configured"] = True
         payload["scope"] = "all" if tenant_slugs is None else list(tenant_slugs)
         return JSONResponse(payload)
+
+    @app.post("/api/media-workloads/{instance}/clear")
+    async def api_media_workloads_clear(request: Request, instance: str):
+        """Clear for deployment — the ONE consequential media-workloads write.
+
+        Flips the instance's NetBox lifecycle tag to active (desired state);
+        the AWX lane converges it (ADR-0037 §4). Captures the ADR-0028 C5
+        quartet; scope + role are enforced independently on this write path.
+        NetBox is the only thing the console writes — never k3s.
+        """
+        user, err = _require_min_role(request, "engineer")
+        if err is not None:
+            return err
+        assert user is not None
+        # Writes refuse loudly when the surface is dark (contrast: reads are
+        # 200-configured:false so the page can explain itself).
+        if not settings.media_tenancy.configured:
+            return JSONResponse({"error": "media-tenancy-not-configured"}, status_code=503)
+        if not settings.netbox.write_configured:
+            return JSONResponse({"error": "netbox-writer-not-configured"}, status_code=503)
+        try:
+            body = await request.json()
+        except Exception:
+            body = None
+        reason = (body or {}).get("reason", "")
+        if not isinstance(reason, str) or not reason.strip():
+            return JSONResponse(
+                {"error": "reason-required", "detail": "a non-empty 'reason' field is mandatory (C5)"},
+                status_code=400,
+            )
+        request_id = uuid.uuid4().hex
+        tenant_slugs = settings.media_tenancy.tenants_for(user.groups)
+        result = await run_in_threadpool(
+            media_workloads.clear_for_deployment,
+            settings.netbox.api_url,
+            settings.netbox.writer_token,
+            settings.netbox.ssl_verify,
+            tenant_slugs,
+            settings.netbox.api_token,
+            instance,
+        )
+        # C5 quartet (actor / role / request-id / reason): the structured log
+        # line is the durable audit record until the console-local activity
+        # lane lands with #174; request_id correlates response <-> log.
+        logger.info(
+            "media-workloads clear: actor=%s role=%s request_id=%s instance=%s reason=%r outcome=%s",
+            user.subject,
+            user.role,
+            request_id,
+            instance,
+            reason.strip(),
+            result.get("error", "ok"),
+        )
+        if result.get("error") == "not-found":
+            # Out-of-scope and nonexistent are indistinguishable: no leak.
+            return JSONResponse({"error": "not-found", "request_id": request_id}, status_code=404)
+        if result.get("error") == "already-active":
+            return JSONResponse(
+                {"error": "already-active", "request_id": request_id}, status_code=409
+            )
+        if result.get("error"):
+            return JSONResponse(
+                {"error": result["error"], "request_id": request_id}, status_code=502
+            )
+        # Close the loop at the point of action (hard gate 2): new state +
+        # what converges it and how to watch.
+        return JSONResponse(
+            {
+                "instance": result["instance"],
+                "requested_state": result["requested_state"],
+                "previous_state": result["previous_state"],
+                "request_id": request_id,
+                "actor": user.subject,
+                "role": user.role,
+                "reason": reason.strip(),
+                "reconcile": {
+                    "expectation": (
+                        "Desired state recorded in the facility source of truth. The "
+                        "platform's automation lane converges it (catalog launch); the "
+                        "drift check will flag the gap until then."
+                    ),
+                    "watch": "/api/media-workloads",
+                },
+            }
+        )
 
     # ------------------------------------------------------------------
     # Catch-all: serve React SPA index.html (must be registered last)

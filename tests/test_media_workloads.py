@@ -123,6 +123,9 @@ def test_scoped_mode_filters_by_mapped_tenant_devices(monkeypatch):
         if path.startswith("/api/dcim/devices/"):
             assert "tenant=tenant-a" in path
             return {"results": [{"id": 7}]}
+        if path.startswith("/api/virtualization/virtual-machines/"):
+            assert "tenant=tenant-a" in path
+            return {"results": []}
         assert "device_id=7" in path
         return {"results": [_service("mxl-hello", ["dmf-catalog", "app:mxl-hello", "lifecycle:active"])]}
 
@@ -136,7 +139,49 @@ def test_scoped_mode_filters_by_mapped_tenant_devices(monkeypatch):
     body = client.get("/api/media-workloads").json()
     assert body["scope"] == ["tenant-a"]
     assert [i["instance"] for i in body["instances"]] == ["mxl-hello"]
+    # BOTH parent kinds must be consulted (services attach to devices OR VMs).
     assert any(p.startswith("/api/dcim/devices/") for p in calls)
+    assert any(p.startswith("/api/virtualization/virtual-machines/") for p in calls)
+
+
+def test_scoped_mode_includes_vm_backed_services(monkeypatch):
+    """VM-backed workloads must not vanish from scoped inventories (GATE-10 P1)."""
+    calls: list[tuple[str, str]] = []
+    vm_svc = {
+        "id": 2,
+        "name": "mxl-vm",
+        "tags": [{"name": t} for t in ["dmf-catalog", "app:mxl-vm", "lifecycle:bootstrapped"]],
+        "virtual_machine": {"name": "vm-1"},
+        "ports": [9000],
+        "protocol": {"value": "tcp"},
+    }
+
+    def fake_request(api_url, api_token, path, ssl_context=None, method="GET", payload=None):
+        calls.append((method, path))
+        if path.startswith("/api/dcim/devices/"):
+            return {"results": []}
+        if path.startswith("/api/virtualization/virtual-machines/"):
+            return {"results": [{"id": 42}]}
+        if method == "PATCH":
+            return {}
+        assert "virtual_machine_id=42" in path
+        return {"results": [vm_svc]}
+
+    monkeypatch.setattr(netbox_module, "_request", fake_request)
+    tenancy = MediaTenancySettings(
+        mode="scoped", group_tenant_map=(("dmf-console-engineer", ("tenant-a",)),)
+    )
+    client = _client(tenancy)
+    body = client.get("/api/media-workloads").json()
+    assert [i["instance"] for i in body["instances"]] == ["mxl-vm"]
+    assert body["instances"][0]["placement"]["node"] == "vm-1"
+
+    # And the clear path finds it too (was not-found before the fix).
+    writer = _writer_client(tenancy=tenancy)
+    resp = writer.post("/api/media-workloads/mxl-vm/clear", json={"reason": "vm go"})
+    assert resp.status_code == 200
+    patches = [c for c in calls if c[0] == "PATCH"]
+    assert patches and patches[0][1] == "/api/ipam/services/2/"
 
 
 def test_netbox_failure_degrades_never_500(monkeypatch):
@@ -164,3 +209,120 @@ def test_group_tenant_map_parser():
     parsed = _parse_group_tenant_map("g1=t1|t2;g2=t3; malformed ;=t4;g3=")
     assert parsed == (("g1", ("t1", "t2")), ("g2", ("t3",)))
     assert _parse_group_tenant_map(None) == ()
+
+
+# ---------------------------------------------------------------------------
+# WP2b: clear-for-deployment write path (GATE-7 write-path checklist).
+# ---------------------------------------------------------------------------
+
+def _writer_client(tenancy=None, groups=ENGINEER, writer_token="wtok"):
+    from dmf_cms.settings import Settings, NetboxSettings
+
+    settings = Settings(
+        runtime_mode="local",
+        dev_login_enabled=True,
+        dev_groups=groups,
+        netbox=NetboxSettings(api_url="http://netbox.test", api_token="rtok", writer_token=writer_token),
+        media_tenancy=tenancy or MediaTenancySettings(mode="single"),
+    )
+    client = TestClient(create_app(settings=settings))
+    client.get("/auth/login", follow_redirects=False)
+    return client
+
+
+def _patch_recorder(monkeypatch, services):
+    """Monkeypatch netbox._request; record PATCH calls, serve reads."""
+    calls = {"patches": []}
+
+    def fake_request(api_url, api_token, path, ssl_context=None, method="GET", payload=None):
+        if method == "PATCH":
+            calls["patches"].append({"path": path, "payload": payload, "token": api_token})
+            return {}
+        assert method == "GET"
+        assert api_token == "rtok", "reads must use the read token"
+        return {"results": services}
+
+    monkeypatch.setattr(netbox_module, "_request", fake_request)
+    return calls
+
+
+def test_clear_requires_reason(monkeypatch):
+    calls = _patch_recorder(monkeypatch, [])
+    client = _writer_client()
+    resp = client.post("/api/media-workloads/x/clear", json={})
+    assert resp.status_code == 400
+    assert resp.json()["error"] == "reason-required"
+    assert calls["patches"] == []
+
+
+def test_clear_below_engineer_403_no_side_effect(monkeypatch):
+    calls = _patch_recorder(monkeypatch, [])
+    client = _writer_client(groups=OPERATOR)
+    resp = client.post("/api/media-workloads/x/clear", json={"reason": "go"})
+    assert resp.status_code == 403
+    assert calls["patches"] == []
+
+
+def test_clear_writer_token_unset_is_dark_503(monkeypatch):
+    calls = _patch_recorder(monkeypatch, [])
+    client = _writer_client(writer_token="")
+    resp = client.post("/api/media-workloads/x/clear", json={"reason": "go"})
+    assert resp.status_code == 503
+    assert resp.json()["error"] == "netbox-writer-not-configured"
+    assert calls["patches"] == []
+
+
+def test_clear_tenancy_undeclared_is_503(monkeypatch):
+    calls = _patch_recorder(monkeypatch, [])
+    client = _writer_client(tenancy=MediaTenancySettings(mode=""))
+    resp = client.post("/api/media-workloads/x/clear", json={"reason": "go"})
+    assert resp.status_code == 503
+    assert resp.json()["error"] == "media-tenancy-not-configured"
+    assert calls["patches"] == []
+
+
+def test_clear_out_of_scope_404_no_side_effect(monkeypatch):
+    # Scoped user with no mapped tenants: instance invisible -> 404, no PATCH,
+    # indistinguishable from nonexistent (no existence leak).
+    calls = _patch_recorder(monkeypatch, [_service("mxl-hello", ["dmf-catalog", "app:mxl-hello", "lifecycle:bootstrapped"])])
+    client = _writer_client(
+        tenancy=MediaTenancySettings(mode="scoped", group_tenant_map=(("other", ("t1",)),))
+    )
+    resp = client.post("/api/media-workloads/mxl-hello/clear", json={"reason": "go"})
+    assert resp.status_code == 404
+    assert calls["patches"] == []
+
+
+def test_clear_already_active_409_no_side_effect(monkeypatch):
+    calls = _patch_recorder(
+        monkeypatch, [_service("mxl-hello", ["dmf-catalog", "app:mxl-hello", "lifecycle:active"])]
+    )
+    client = _writer_client()
+    resp = client.post("/api/media-workloads/mxl-hello/clear", json={"reason": "go"})
+    assert resp.status_code == 409
+    assert calls["patches"] == []
+
+
+def test_clear_flips_tag_with_writer_token_and_c5(monkeypatch):
+    calls = _patch_recorder(
+        monkeypatch,
+        [_service("mxl-hello", ["dmf-catalog", "app:mxl-hello", "lifecycle:bootstrapped"])],
+    )
+    client = _writer_client()
+    resp = client.post("/api/media-workloads/mxl-hello/clear", json={"reason": "ready for demo"})
+    assert resp.status_code == 200
+    body = resp.json()
+    # C5 quartet echoed at the point of action.
+    assert body["actor"] == "operator" and body["role"] == "engineer"
+    assert body["reason"] == "ready for demo" and body["request_id"]
+    assert body["previous_state"] == "bootstrapped" and body["requested_state"] == "active"
+    assert "reconcile" in body
+    # Exactly one PATCH, on the writer token, replacing only the lifecycle tag.
+    assert len(calls["patches"]) == 1
+    patch = calls["patches"][0]
+    assert patch["token"] == "wtok"
+    assert patch["path"] == "/api/ipam/services/1/"
+    tag_names = [t["name"] for t in patch["payload"]["tags"]]
+    assert "lifecycle:active" in tag_names
+    assert "lifecycle:bootstrapped" not in tag_names
+    assert "dmf-catalog" in tag_names and "app:mxl-hello" in tag_names
