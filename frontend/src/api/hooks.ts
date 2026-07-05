@@ -1,5 +1,5 @@
 import { useQuery, useMutation } from '@tanstack/react-query'
-import { apiCall } from './client'
+import { apiCall, APIError } from './client'
 import type {
   UserIdentity,
   AppContract,
@@ -11,6 +11,7 @@ import type {
   AdminUsersResponse,
   AdminJobsResponse,
   AlertsResponse,
+  WorkspaceHealth,
   TargetsResponse,
   MonitoringMetrics,
   FacilitySummary,
@@ -127,6 +128,25 @@ export function useAdminJobs() {
 // ------------------------------------------------------------------
 // Monitoring
 // ------------------------------------------------------------------
+
+// Workspace core (#174 WP2). The queryFn throws on reachable:false so
+// react-query keeps the last good snapshot (data + dataUpdatedAt gives
+// "last-known state, Xs old") while error signals the degradation.
+// configured:false is a valid resting state, not an error.
+export function useWorkspaceHealth() {
+  return useQuery({
+    queryKey: ['workspace', 'health'],
+    queryFn: async () => {
+      const health = await apiCall<WorkspaceHealth>('/api/workspace/health')
+      if (health.configured && !health.reachable) {
+        throw new APIError(503, health.reason, 'monitoring unreachable')
+      }
+      return health
+    },
+    refetchInterval: 30_000,
+    staleTime: 10_000,
+  })
+}
 
 export function useMonitoringAlerts() {
   return useQuery({

@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import hashlib
 import logging
 import time
 import uuid
@@ -939,6 +940,106 @@ def create_app(settings: Settings | None = None, contract: AppContract | None = 
     # ------------------------------------------------------------------
     # Monitoring endpoints
     # ------------------------------------------------------------------
+    @app.get("/api/workspace/health")
+    async def api_workspace_health(request: Request):
+        """Workspace "are we OK?" core signal (#174 WP2).
+
+        Reads the live alert set (the #166 suite) via the Prometheus alerts
+        API — labels AND annotations, unlike the raw ``ALERTS`` series — and
+        flattens it to the console contract. Fail-soft by design: every
+        outcome is a 200 with an explicit state; the three non-OK states
+        (not configured / unreachable / no Watchdog) are content, never raw
+        errors (Constitution Arts. 1+8). The always-firing Watchdog alert is
+        the pipeline-liveness proof that lets a zero-alert answer render as
+        *verified* green instead of silence.
+        """
+        if not _require_user(request):
+            return JSONResponse({"error": "unauthorized"}, status_code=401)
+        if not settings.prometheus.configured:
+            return JSONResponse(
+                {
+                    "configured": False,
+                    "reachable": False,
+                    "reason": "prometheus-not-configured",
+                    "watchdog_firing": False,
+                    "alerts": [],
+                }
+            )
+        try:
+            raw_alerts = await run_in_threadpool(
+                prometheus.list_alerts, url=settings.prometheus.url
+            )
+        except Exception as exc:
+            logger.warning("workspace health: alert fetch failed: %s", exc)
+            return JSONResponse(
+                {
+                    "configured": True,
+                    "reachable": False,
+                    "reason": "prometheus-unreachable",
+                    "watchdog_firing": False,
+                    "alerts": [],
+                }
+            )
+        watchdog_firing = False
+        severity_rank = {"critical": 0, "warning": 1, "info": 2}
+        alerts = []
+        for alert in raw_alerts:
+            labels = alert.get("labels") or {}
+            annotations = alert.get("annotations") or {}
+            name = labels.get("alertname", "unknown")
+            severity = labels.get("severity", "")
+            state = alert.get("state", "")
+            if name == "Watchdog" or severity == "none":
+                # Deadman signal, not a problem: firing == pipeline alive.
+                if state == "firing":
+                    watchdog_firing = True
+                continue
+            if state != "firing":
+                # The core contracts on firing alerts only (plan §3 WP2;
+                # GATE-22 P2): an alert inside its for: pending window is
+                # not yet a current problem.
+                continue
+            # Identity is the full label set, not alertname+instance — one
+            # rule can fire per namespace/pod with a shared or blank
+            # instance (GATE-22 P2). The fingerprint keys UI rows; the
+            # residual labels give the operator the distinguishing context.
+            fingerprint = hashlib.sha256(
+                "|".join(f"{k}={v}" for k, v in sorted(labels.items())).encode()
+            ).hexdigest()[:16]
+            context = " ".join(
+                f"{k}={v}"
+                for k, v in sorted(labels.items())
+                if k not in ("alertname", "severity", "instance") and v
+            )
+            alerts.append(
+                {
+                    "id": fingerprint,
+                    "name": name,
+                    "state": state,
+                    "severity": severity,
+                    "instance": labels.get("instance", ""),
+                    "context": context,
+                    "summary": annotations.get("summary", ""),
+                    "description": annotations.get("description", ""),
+                    "runbook_url": annotations.get("runbook_url", ""),
+                    "active_at": alert.get("activeAt", ""),
+                }
+            )
+        # Deterministic order (severity, then name, then fingerprint):
+        # unchanged data must produce an unchanged list (hard gate 5).
+        alerts.sort(key=lambda a: (severity_rank.get(a["severity"], 1), a["name"], a["id"]))
+        return JSONResponse(
+            {
+                "configured": True,
+                "reachable": True,
+                # watchdog-missing is an explicit reason token, not silence
+                # (GATE-22 P3): rules may simply not be loaded.
+                "reason": "" if watchdog_firing else "watchdog-missing",
+                "watchdog_firing": watchdog_firing,
+                "alerts": alerts,
+            }
+        )
+
     @app.get("/api/monitoring/alerts")
     async def api_monitoring_alerts(request: Request):
         if not _require_user(request):
