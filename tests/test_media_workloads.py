@@ -16,6 +16,7 @@ from dmf_cms.settings import MediaTenancySettings, NetboxSettings, Settings
 
 ENGINEER = ("dmf-console-engineer",)
 OPERATOR = ("dmf-console-operator",)
+MEDIA_ENGINEERS = ("media-engineers",)  # tenancy group, no capability role (#174)
 
 
 def _client(tenancy: MediaTenancySettings, groups=ENGINEER, netbox=True) -> TestClient:
@@ -55,6 +56,28 @@ def test_anonymous_is_401():
 def test_operator_role_is_403():
     client = _client(MediaTenancySettings(mode="single"), groups=OPERATOR)
     assert client.get("/api/media-workloads").status_code == 403
+
+
+def test_mxl_status_shares_the_media_workloads_boundary():
+    # GATE-20 P3 fold: the live-view endpoints sit inside the Media
+    # Workloads surface, so they carry the same ADR-0037 §5 gate.
+    below = _client(MediaTenancySettings(mode="single"), groups=OPERATOR)
+    assert below.get("/api/mxl/status").status_code == 403
+    assert below.get("/api/mxl/preview/receiver").status_code == 403
+    member = _client(MediaTenancySettings(mode="single"), groups=MEDIA_ENGINEERS)
+    resp = member.get("/api/mxl/status")
+    assert resp.status_code == 200
+    assert resp.json()["configured"] is False  # unconfigured MXL, not a 403
+
+
+def test_media_engineers_group_grants_read_without_role(monkeypatch):
+    # ADR-0037 §5 / #174: the media-engineers group scopes the surface even
+    # though the member's capability role resolves to viewer.
+    monkeypatch.setattr(netbox_module, "_request", lambda *a, **k: {"results": []})
+    client = _client(MediaTenancySettings(mode="single"), groups=MEDIA_ENGINEERS)
+    resp = client.get("/api/media-workloads")
+    assert resp.status_code == 200
+    assert resp.json()["configured"] is True
 
 
 def test_undeclared_tenancy_is_dark_not_allow_all(monkeypatch):
@@ -261,6 +284,20 @@ def test_clear_below_engineer_403_no_side_effect(monkeypatch):
     resp = client.post("/api/media-workloads/x/clear", json={"reason": "go"})
     assert resp.status_code == 403
     assert calls["patches"] == []
+
+
+def test_clear_media_engineers_group_grants_write_without_role(monkeypatch):
+    # ADR-0037 §5 scopes the group over both read and the clear write; the C5
+    # record still reports the member's true capability role (viewer).
+    calls = _patch_recorder(
+        monkeypatch,
+        [_service("mxl-hello", ["dmf-catalog", "app:mxl-hello", "lifecycle:bootstrapped"])],
+    )
+    client = _writer_client(groups=MEDIA_ENGINEERS)
+    resp = client.post("/api/media-workloads/mxl-hello/clear", json={"reason": "go"})
+    assert resp.status_code == 200
+    assert resp.json()["role"] == "viewer"
+    assert len(calls["patches"]) == 1
 
 
 def test_clear_writer_token_unset_is_dark_503(monkeypatch):

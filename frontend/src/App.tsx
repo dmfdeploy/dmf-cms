@@ -4,7 +4,7 @@ import { useCurrentUser } from './api/hooks'
 import { useAuthStore } from './store/auth'
 import Shell from './components/Shell'
 import ProtectedRoute from './components/ProtectedRoute'
-import Overview from './pages/overview'
+import Workspace from './pages/Workspace'
 import Facility from './pages/Facility'
 import Workflows from './pages/Workflows'
 import Monitoring from './pages/Monitoring'
@@ -54,8 +54,11 @@ export default function App() {
   return (
     <Routes>
       <Route element={<Shell />}>
-        <Route path="/" element={<ProtectedRoute><Overview /></ProtectedRoute>} />
-        <Route path="/facility" element={<ProtectedRoute><Facility /></ProtectedRoute>} />
+        <Route path="/" element={<ProtectedRoute><Workspace /></ProtectedRoute>} />
+        {/* IA §9 (#174 WP1): Facilities rail; permanent redirect keeps old
+            /facility bookmarks working. */}
+        <Route path="/facilities" element={<ProtectedRoute><Facility /></ProtectedRoute>} />
+        <Route path="/facility" element={<Navigate to="/facilities" replace />} />
         <Route path="/workflows" element={<ProtectedRoute><Workflows /></ProtectedRoute>} />
         <Route path="/catalog" element={<ProtectedRoute><Catalog /></ProtectedRoute>} />
         <Route path="/monitoring" element={<ProtectedRoute><Monitoring /></ProtectedRoute>} />

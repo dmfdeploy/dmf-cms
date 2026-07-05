@@ -29,6 +29,7 @@ from . import netbox, prometheus, forgejo, mxl, media_workloads
 from starlette.concurrency import run_in_threadpool
 import asyncio
 from .security import (
+    MEDIA_ENGINEERS_GROUP,
     ROLE_GROUPS,
     ROLE_ORDER,
     UserIdentity,
@@ -107,6 +108,22 @@ def _require_min_role(request: Request, minimum: str) -> tuple[UserIdentity | No
     return user, None
 
 
+def _require_media_workloads_access(request: Request) -> tuple[UserIdentity | None, JSONResponse | None]:
+    """Media Workloads surface gate (ADR-0037 §5, dmfdeploy/dmfdeploy#174).
+
+    Granted by the engineer capability role (the #173 v1 gate, kept as the
+    single-operator fallback) OR membership of the media-engineers group.
+    The group scopes the surface — both read and the clear write — while
+    tenant visibility within it stays with MediaTenancySettings.
+    """
+    user = session_user(request.session)
+    if user is None:
+        return None, JSONResponse({"error": "unauthorized"}, status_code=401)
+    if not role_at_least(user.role, "engineer") and MEDIA_ENGINEERS_GROUP not in user.groups:
+        return None, JSONResponse({"error": "forbidden"}, status_code=403)
+    return user, None
+
+
 def _bootstrap_console_groups(settings: Settings) -> None:
     """Seed dmf-console-* groups and assign bootstrap user to admin (startup only)."""
     if not settings.authentik.configured:
@@ -114,9 +131,9 @@ def _bootstrap_console_groups(settings: Settings) -> None:
         return
 
     logger.info("Authentik API configured — bootstrapping DMF Console groups")
-    for role in ROLE_ORDER:
-        group_names = ROLE_GROUPS[role]
-        name = next(iter(group_names))
+    seed_groups = [next(iter(ROLE_GROUPS[role])) for role in ROLE_ORDER]
+    seed_groups.append(MEDIA_ENGINEERS_GROUP)
+    for name in seed_groups:
         try:
             created = ensure_group(
                 api_url=settings.authentik.api_url,
@@ -1456,8 +1473,11 @@ def create_app(settings: Settings | None = None, contract: AppContract | None = 
     # ------------------------------------------------------------------
     @app.get("/api/mxl/status")
     async def api_mxl_status(request: Request):
-        if not _require_user(request):
-            return JSONResponse({"error": "unauthorized"}, status_code=401)
+        # Same surface boundary as the Media Workloads page that hosts the
+        # live-view panel (ADR-0037 §5; GATE-20 P3 fold, #174).
+        _, err = _require_media_workloads_access(request)
+        if err is not None:
+            return err
         if not settings.mxl.configured:
             return JSONResponse(
                 {"configured": False, "nodes": [], "flow": {}, "transport": {}, "reachable": False}
@@ -1468,8 +1488,9 @@ def create_app(settings: Settings | None = None, contract: AppContract | None = 
 
     @app.get("/api/mxl/preview/{role}")
     async def api_mxl_preview(request: Request, role: str):
-        if not _require_user(request):
-            return JSONResponse({"error": "unauthorized"}, status_code=401)
+        _, err = _require_media_workloads_access(request)
+        if err is not None:
+            return err
         if not settings.mxl.configured:
             return JSONResponse({"error": "MXL endpoints not configured"}, status_code=503)
         jpeg = mxl.fetch_preview(settings.mxl.endpoints, role)
@@ -1483,7 +1504,7 @@ def create_app(settings: Settings | None = None, contract: AppContract | None = 
     # ------------------------------------------------------------------
     @app.get("/api/media-workloads")
     async def api_media_workloads(request: Request):
-        user, err = _require_min_role(request, "engineer")
+        user, err = _require_media_workloads_access(request)
         if err is not None:
             return err
         # Fail-closed tenancy: dark until the env declares its posture
@@ -1531,7 +1552,7 @@ def create_app(settings: Settings | None = None, contract: AppContract | None = 
         quartet; scope + role are enforced independently on this write path.
         NetBox is the only thing the console writes — never k3s.
         """
-        user, err = _require_min_role(request, "engineer")
+        user, err = _require_media_workloads_access(request)
         if err is not None:
             return err
         assert user is not None
