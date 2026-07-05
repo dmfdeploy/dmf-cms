@@ -1,5 +1,5 @@
 import { useState, useEffect } from 'react'
-import { useWorkflows, useLaunchWorkflow, useWorkflowJobStatus, useCurrentUser, useOperationStatus, isOperation } from '../api/hooks'
+import { useWorkflows, useLaunchWorkflow, useWorkflowJobStatus, useCurrentUser, useOperationStatus, isOperation } from '../../api/hooks'
 
 interface ActiveJob {
   workflowName: string
@@ -11,7 +11,10 @@ interface PendingOperation {
   operationId: string
 }
 
-export default function Workflows() {
+// Jobs lane — "what is running / launchable" (IA §5). The former
+// /workflows page body; the Activity shell owns the hero and scroll
+// container. Launch outcomes stay anchored on the card (hard gate 2).
+export default function JobsLane() {
   const { data: user } = useCurrentUser()
   const { data: workflowsData, isLoading } = useWorkflows()
   const launchMutation = useLaunchWorkflow()
@@ -34,20 +37,7 @@ export default function Workflows() {
   }
 
   return (
-    <div className="flex-1 overflow-y-auto p-6">
-      {/* Hero */}
-      <div className="hero">
-        <div className="hero-copy">
-          <p className="kicker">Workflow</p>
-          <h1>Workflows</h1>
-          <p>
-            {user?.awx_configured
-              ? 'Launch and monitor approved AWX workflows'
-              : 'AWX integration not configured in this environment'}
-          </p>
-        </div>
-      </div>
-
+    <div>
       {!user?.awx_configured ? (
         <div className="panel text-center py-12">
           <p className="text-muted">AWX API not configured. Release 2 will expose approved AWX jobs from this surface.</p>

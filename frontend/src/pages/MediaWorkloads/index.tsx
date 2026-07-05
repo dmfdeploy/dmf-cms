@@ -1,5 +1,6 @@
 import { useMemo, useState } from 'react'
 import { useClearForDeployment, useMediaWorkloads } from '../../api/hooks'
+import { useActivityStore } from '../../store/activity'
 import MxlDetailPanel from './MxlDetailPanel'
 import type { ClearForDeploymentResult, MediaWorkloadInstance } from '../../api/types'
 
@@ -47,6 +48,9 @@ export default function MediaWorkloads() {
           setLastResult(result)
           setConfirming(null)
           setReason('')
+          // WP3 (#174): the C5 record also lands in Activity → History
+          // (console-local lane), correlated by request_id.
+          useActivityStore.getState().recordClear(result)
           refetch()
         },
       },

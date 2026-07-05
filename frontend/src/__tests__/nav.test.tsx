@@ -93,10 +93,41 @@ describe('route migration (IA §9)', () => {
     )
   })
 
-  it('keeps /workflows and /changes live until WP3 merges them into Activity', async () => {
-    renderAt('/workflows')
-    await screen.findByRole('heading', { name: /workflow/i })
-    expect(screen.getByTestId('location').textContent).toBe('/workflows')
+  it('redirects retired /workflows to the Activity Jobs lane', async () => {
+    renderAt('/workflows', identity({ role: 'operator' }))
+    await waitFor(() =>
+      expect(screen.getByTestId('location').textContent).toBe('/activity/jobs'),
+    )
+  })
+
+  it('redirects retired /changes to the Activity History lane', async () => {
+    renderAt('/changes')
+    await waitFor(() =>
+      expect(screen.getByTestId('location').textContent).toBe('/activity/history'),
+    )
+  })
+})
+
+describe('Activity lanes (IA §5 merge condition)', () => {
+  it('defaults operators to the Jobs lane', async () => {
+    renderAt('/activity', identity({ role: 'operator' }))
+    await waitFor(() =>
+      expect(screen.getByTestId('location').textContent).toBe('/activity/jobs'),
+    )
+  })
+
+  it('defaults viewers to History and keeps them out of Jobs', async () => {
+    renderAt('/activity/jobs', identity({ role: 'viewer' }))
+    await waitFor(() =>
+      expect(screen.getByTestId('location').textContent).toBe('/activity/history'),
+    )
+    expect(screen.queryByRole('link', { name: 'Jobs' })).toBeNull()
+  })
+
+  it('renders both lane tabs for operators', async () => {
+    renderAt('/activity/history', identity({ role: 'operator' }))
+    expect(await screen.findByRole('link', { name: 'Jobs' })).toBeTruthy()
+    expect(screen.getByRole('link', { name: 'History' })).toBeTruthy()
   })
 })
 
@@ -129,20 +160,19 @@ describe('sidebar rails + role-gated secondaries (IA §3/§7)', () => {
       'Workspace',
       'Facilities',
       'Monitoring',
-      'Changes',
+      'Activity',
       'Settings',
     ])
   })
 
-  it('operator gains Catalog and Workflow', async () => {
+  it('operator gains Catalog', async () => {
     renderSidebar(identity({ role: 'operator' }))
     expect(await visibleLabels()).toEqual([
       'Workspace',
       'Facilities',
       'Catalog',
       'Monitoring',
-      'Workflow',
-      'Changes',
+      'Activity',
       'Settings',
     ])
   })
@@ -167,8 +197,7 @@ describe('sidebar rails + role-gated secondaries (IA §3/§7)', () => {
       'Media Workloads',
       'Catalog',
       'Monitoring',
-      'Workflow',
-      'Changes',
+      'Activity',
       'Admin',
       'Settings',
     ])

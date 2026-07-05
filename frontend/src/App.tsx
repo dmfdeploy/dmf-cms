@@ -6,11 +6,10 @@ import Shell from './components/Shell'
 import ProtectedRoute from './components/ProtectedRoute'
 import Workspace from './pages/Workspace'
 import Facility from './pages/Facility'
-import Workflows from './pages/Workflows'
+import Activity from './pages/Activity'
 import Monitoring from './pages/Monitoring'
 import MediaWorkloads from './pages/MediaWorkloads'
 import Catalog from './pages/Catalog'
-import Changes from './pages/Changes'
 import Admin from './pages/Admin'
 import Settings from './pages/Settings'
 
@@ -59,13 +58,15 @@ export default function App() {
             /facility bookmarks working. */}
         <Route path="/facilities" element={<ProtectedRoute><Facility /></ProtectedRoute>} />
         <Route path="/facility" element={<Navigate to="/facilities" replace />} />
-        <Route path="/workflows" element={<ProtectedRoute><Workflows /></ProtectedRoute>} />
+        {/* WP3 (#174): Workflows + Changes merged into Activity, two lanes. */}
+        <Route path="/activity/:lane?" element={<ProtectedRoute><Activity /></ProtectedRoute>} />
+        <Route path="/workflows" element={<Navigate to="/activity/jobs" replace />} />
+        <Route path="/changes" element={<Navigate to="/activity/history" replace />} />
         <Route path="/catalog" element={<ProtectedRoute><Catalog /></ProtectedRoute>} />
         <Route path="/monitoring" element={<ProtectedRoute><Monitoring /></ProtectedRoute>} />
         {/* WP4 (#173): MXL Flows retired into the Media Workloads live-view panel. */}
         <Route path="/mxl-flows" element={<Navigate to="/media-workloads" replace />} />
         <Route path="/media-workloads" element={<ProtectedRoute><MediaWorkloads /></ProtectedRoute>} />
-        <Route path="/changes" element={<ProtectedRoute><Changes /></ProtectedRoute>} />
         <Route path="/admin" element={<ProtectedRoute><Admin /></ProtectedRoute>} />
         <Route path="/settings" element={<ProtectedRoute><Settings /></ProtectedRoute>} />
         <Route path="*" element={<Navigate to="/" replace />} />
