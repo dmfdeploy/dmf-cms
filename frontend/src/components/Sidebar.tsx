@@ -26,8 +26,9 @@ const allNavItems: NavItem[] = [
   { label: 'Media Workloads', path: '/media-workloads', icon: 'inventory', section: 'rail', onlyRoles: ['engineer', 'admin'], onlyGroups: ['media-engineers'] },
   { label: 'Catalog', path: '/catalog', icon: 'catalog', section: 'rail', onlyRoles: ['operator', 'engineer', 'admin'] },
   { label: 'Monitoring', path: '/monitoring', icon: 'monitor', section: 'secondary' },
-  { label: 'Workflow', path: '/workflows', icon: 'automation', section: 'secondary', onlyRoles: ['operator', 'engineer', 'admin'] },
-  { label: 'Changes', path: '/changes', icon: 'reports', section: 'secondary' },
+  // One rail, two lanes (IA §5): viewer lands on History; the Jobs lane
+  // gates itself to operator+ inside the page.
+  { label: 'Activity', path: '/activity', icon: 'automation', section: 'secondary' },
   { label: 'Admin', path: '/admin', icon: 'shield', section: 'secondary', onlyRoles: ['admin'] },
   { label: 'Settings', path: '/settings', icon: 'settings', section: 'secondary' },
 ]
@@ -77,7 +78,10 @@ const icons: Record<string, React.ReactNode> = {
 }
 
 function renderItem(item: NavItem, pathname: string, expanded: boolean) {
-  const isActive = pathname === item.path
+  const isActive =
+    item.path === '/'
+      ? pathname === '/'
+      : pathname === item.path || pathname.startsWith(`${item.path}/`)
   return (
     <Link
       key={item.label}

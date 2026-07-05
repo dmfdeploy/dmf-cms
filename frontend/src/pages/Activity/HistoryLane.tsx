@@ -1,20 +1,65 @@
 import { useChangesJobs, useChangesCommits, useChangesPulls } from '@/api/hooks'
-import { GitCommit, GitPullRequest, Zap, ExternalLink } from 'lucide-react'
+import { GitCommit, GitPullRequest, MousePointerClick, Zap, ExternalLink } from 'lucide-react'
+import { useActivityStore } from '../../store/activity'
 
-export default function Changes() {
+// History lane — "what just changed" (IA §5): the audit/history lens the
+// merge condition protects. The former /changes page body plus the
+// console-local record of console-originated actions (#173 follow-on).
+// Rows are keyed by stable identity, not index — unchanged data must not
+// rebuild DOM (hard gate 5; this page's predecessor was the measured
+// anti-pattern).
+export default function HistoryLane() {
   const jobs = useChangesJobs()
   const commits = useChangesCommits()
   const pulls = useChangesPulls()
+  const consoleActions = useActivityStore((s) => s.records)
 
   const isLoading = jobs.isLoading || commits.isLoading || pulls.isLoading
 
   return (
-    <div className="flex-1 overflow-y-auto p-6">
-      <div className="hero">
-        <div className="hero-copy">
-          <p className="kicker">Change Management</p>
-          <h1>Changes</h1>
-          <p>Recent infrastructure changes from AWX workflows and Forgejo repositories.</p>
+    <div>
+      {/* Console-originated actions (this browser). Provenance is explicit
+          (Art. 1): the backend has no queryable audit record yet, so this
+          list never claims facility-wide completeness. */}
+      <div className="panel mb-6">
+        <div className="px-6 py-4 border-b border-panel">
+          <h2 className="text-lg font-semibold flex items-center gap-2">
+            <MousePointerClick className="w-5 h-5 text-accent" />
+            Console actions
+          </h2>
+          <p className="text-xs text-muted mt-1">
+            Actions taken from this console in this browser — correlated by
+            request id. Other operators&apos; sessions are not shown here.
+          </p>
+        </div>
+        <div className="divide-y divide-panel">
+          {consoleActions.length === 0 ? (
+            <div className="px-6 py-8 text-center text-muted text-sm">
+              No console actions recorded in this browser yet
+            </div>
+          ) : (
+            consoleActions.map((rec) => (
+              <div key={rec.request_id} className="px-6 py-4 hover:bg-panel/30 transition">
+                <div className="flex items-start justify-between gap-4">
+                  <div className="flex-1 min-w-0">
+                    <h3 className="font-semibold text-sm">
+                      Cleared {rec.target} for deployment
+                    </h3>
+                    <p className="text-xs text-muted mt-1">
+                      {rec.previous_state} → {rec.requested_state} · “{rec.reason}”
+                    </p>
+                    <p className="text-xs text-muted mt-1">
+                      {rec.actor} ({rec.role}) · request {rec.request_id.slice(0, 8)}
+                    </p>
+                    <p className="text-xs text-muted mt-1">{rec.reconcile_expectation}</p>
+                  </div>
+                  <div className="text-right text-xs text-muted shrink-0">
+                    {new Date(rec.at).toLocaleString()}
+                  </div>
+                </div>
+              </div>
+            ))
+          )}
         </div>
       </div>
 
@@ -32,8 +77,8 @@ export default function Changes() {
           ) : jobs.data?.jobs?.length === 0 ? (
             <div className="px-6 py-8 text-center text-muted text-sm">No recent jobs</div>
           ) : (
-            jobs.data?.jobs?.slice(0, 10).map((job: typeof jobs.data.jobs[0], i: number) => (
-              <div key={i} className="px-6 py-4 hover:bg-panel/30 transition">
+            jobs.data?.jobs?.slice(0, 10).map((job: typeof jobs.data.jobs[0]) => (
+              <div key={job.id} className="px-6 py-4 hover:bg-panel/30 transition">
                 <div className="flex items-start justify-between">
                   <div className="flex-1">
                     <h3 className="font-semibold text-sm">{job.name}</h3>
@@ -77,8 +122,8 @@ export default function Changes() {
             commits.data?.repos?.map((repo: typeof commits.data.repos[0]) => (
               <div key={repo.name}>
                 <div className="px-6 py-3 bg-panel/30 font-semibold text-sm">{repo.name}</div>
-                {repo.commits.slice(0, 5).map((commit: typeof repo.commits[0], i: number) => (
-                  <div key={i} className="px-6 py-3 hover:bg-panel/30 transition text-xs border-b border-panel/50 last:border-b-0">
+                {repo.commits.slice(0, 5).map((commit: typeof repo.commits[0]) => (
+                  <div key={commit.sha_short} className="px-6 py-3 hover:bg-panel/30 transition text-xs border-b border-panel/50 last:border-b-0">
                     <div className="flex items-start justify-between gap-4">
                       <div className="flex-1 min-w-0">
                         <p className="font-mono text-muted text-xs">{commit.sha_short}</p>
@@ -111,8 +156,8 @@ export default function Changes() {
           ) : pulls.data?.pulls?.length === 0 ? (
             <div className="px-6 py-8 text-center text-muted text-sm">No pull requests</div>
           ) : (
-            pulls.data?.pulls?.map((pr: typeof pulls.data.pulls[0], i: number) => (
-              <div key={i} className="px-6 py-4 hover:bg-panel/30 transition">
+            pulls.data?.pulls?.map((pr: typeof pulls.data.pulls[0]) => (
+              <div key={`${pr.repo}#${pr.number}`} className="px-6 py-4 hover:bg-panel/30 transition">
                 <div className="flex items-start justify-between gap-4">
                   <div className="flex-1 min-w-0">
                     <div className="flex items-center gap-2 mb-2">
