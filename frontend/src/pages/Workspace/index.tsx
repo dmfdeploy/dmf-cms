@@ -1,10 +1,13 @@
 import { useCurrentUser } from '../../api/hooks'
 import AdminPanels from './AdminPanels'
+import HealthCore from './HealthCore'
+import RecentChanges from './RecentChanges'
 
-// Workspace — the single role-aware home (IA 2026-06-23 §4.1). Content varies
-// by role within this one page; there is no per-role page fork. The pinned
-// "are we OK?" core (severity tiles + Current Problems) lands with #174 WP2
-// and will sit above the role content on every variant.
+// Workspace — the single role-aware home (IA 2026-06-23 §4.1). The pinned
+// core (HealthCore + RecentChanges) is non-removable and identical for
+// every role: "is the facility healthy, what just changed, what do I need
+// to do" is always answered first. Role varies only the content below it;
+// there is no per-role page fork.
 export default function Workspace() {
   const { data: user } = useCurrentUser()
   const role = user?.role ?? 'viewer'
@@ -16,19 +19,9 @@ export default function Workspace() {
         <h1>Workspace</h1>
         <p>Facility health, recent changes, and what needs attention.</p>
       </div>
-      {role === 'admin' ? (
-        <AdminPanels />
-      ) : (
-        <div className="panel text-center py-12">
-          <p className="text-muted text-sm">
-            The facility health summary is not available yet.
-          </p>
-          <p className="text-xs text-muted mt-2">
-            Use Facilities, Media Workloads, and Monitoring in the sidebar for
-            live status.
-          </p>
-        </div>
-      )}
+      <HealthCore />
+      <RecentChanges />
+      {role === 'admin' && <AdminPanels />}
     </div>
   )
 }

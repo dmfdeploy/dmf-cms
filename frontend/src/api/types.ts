@@ -122,6 +122,30 @@ export interface AdminJobsResponse {
 // Monitoring
 // ------------------------------------------------------------------
 
+// Workspace "are we OK?" core (#174 WP2) — flattened, fail-soft contract.
+export interface WorkspaceAlert {
+  // Stable identity over the full label set (GATE-22): one rule can fire
+  // per namespace/pod with a shared or blank instance.
+  id: string
+  name: string
+  state: string
+  severity: string
+  instance: string
+  context: string
+  summary: string
+  description: string
+  runbook_url: string
+  active_at: string
+}
+
+export interface WorkspaceHealth {
+  configured: boolean
+  reachable: boolean
+  reason: string
+  watchdog_firing: boolean
+  alerts: WorkspaceAlert[]
+}
+
 export interface MonitoringAlert {
   name: string
   state: 'firing' | 'pending'

@@ -1,0 +1,135 @@
+/**
+ * Workspace "are we OK?" core (#174 WP2) — the plan §6 fixture-driven
+ * states: verified green (0 alerts + Watchdog), warning-only, critical,
+ * Prometheus unreachable, and not-configured. Each renders the specified
+ * verdict as content, never a raw error (hard gates 1+4).
+ */
+import { afterEach, describe, expect, it, vi } from 'vitest'
+import { cleanup, render, screen } from '@testing-library/react'
+import { QueryClient, QueryClientProvider } from '@tanstack/react-query'
+import { MemoryRouter } from 'react-router-dom'
+import Workspace from '../pages/Workspace'
+import type { UserIdentity, WorkspaceHealth } from '../api/types'
+
+const user: UserIdentity = {
+  subject: 'u1',
+  display_name: 'Test User',
+  email: 'test@dmf.example.com',
+  role: 'viewer',
+  groups: [],
+  awx_configured: false,
+  authentik_configured: false,
+}
+
+function health(overrides: Partial<WorkspaceHealth> = {}): WorkspaceHealth {
+  return {
+    configured: true,
+    reachable: true,
+    reason: '',
+    watchdog_firing: true,
+    alerts: [],
+    ...overrides,
+  }
+}
+
+function alert(name: string, severity: string, summary = '', id = '', context = '') {
+  return {
+    id: id || `fp-${name}`,
+    name,
+    state: 'firing',
+    severity,
+    instance: 'node-1',
+    context,
+    summary,
+    description: '',
+    runbook_url: severity === 'critical' ? 'https://runbooks.test#x' : '',
+    active_at: '2026-07-05T12:00:00Z',
+  }
+}
+
+function renderWorkspace(healthBody: WorkspaceHealth) {
+  vi.stubGlobal(
+    'fetch',
+    vi.fn(async (input: RequestInfo | URL) => {
+      const url = (typeof input === 'string' ? input : (input as Request).url).toString()
+      let body: unknown = {}
+      if (url.endsWith('/api/me')) body = user
+      if (url.endsWith('/api/workspace/health')) body = healthBody
+      if (url.endsWith('/api/changes/jobs')) body = { jobs: [] }
+      return new Response(JSON.stringify(body), {
+        status: 200,
+        headers: { 'Content-Type': 'application/json' },
+      })
+    }),
+  )
+  const queryClient = new QueryClient({ defaultOptions: { queries: { retry: false } } })
+  return render(
+    <QueryClientProvider client={queryClient}>
+      <MemoryRouter>
+        <Workspace />
+      </MemoryRouter>
+    </QueryClientProvider>,
+  )
+}
+
+afterEach(() => {
+  cleanup()
+  vi.unstubAllGlobals()
+})
+
+describe('Workspace health core states (plan §6)', () => {
+  it('zero alerts + Watchdog renders an explicit verified green, not an empty list', async () => {
+    renderWorkspace(health())
+    expect(await screen.findByText(/No problems — facility monitoring reports all quiet/)).toBeTruthy()
+    expect(screen.getByText(/Verified: the alert pipeline/)).toBeTruthy()
+  })
+
+  it('zero alerts without Watchdog renders unknown, never a false green', async () => {
+    renderWorkspace(health({ watchdog_firing: false }))
+    expect(await screen.findByText(/cannot be verified as healthy/)).toBeTruthy()
+    expect(screen.getByText(/Treat this as unknown, not green/)).toBeTruthy()
+  })
+
+  it('warning-only state fills the warning tile and lists the problem', async () => {
+    renderWorkspace(health({ alerts: [alert('HostMemoryPressure', 'warning', 'memory tight')] }))
+    expect(await screen.findByText('HostMemoryPressure')).toBeTruthy()
+    expect(screen.getByText('memory tight')).toBeTruthy()
+    expect(screen.getByText('warning')).toBeTruthy()
+    // Non-mutating actions only: Investigate link, no Ack anywhere.
+    expect(screen.getByRole('link', { name: 'Investigate' })).toBeTruthy()
+    expect(screen.queryByText(/ack/i)).toBeNull()
+  })
+
+  it('critical state lists the problem with severity and runbook link', async () => {
+    renderWorkspace(health({ alerts: [alert('NodeDown', 'critical', 'node gone')] }))
+    expect(await screen.findByText('NodeDown')).toBeTruthy()
+    expect(screen.getByText('critical')).toBeTruthy()
+    expect(screen.getByRole('link', { name: /Runbook/ })).toBeTruthy()
+  })
+
+  it('renders two rows for the same alert name with distinct identities', async () => {
+    renderWorkspace(
+      health({
+        alerts: [
+          alert('PodCrashLooping', 'warning', '', 'fp-1', 'namespace=mxl pod=a'),
+          alert('PodCrashLooping', 'warning', '', 'fp-2', 'namespace=nmos pod=b'),
+        ],
+      }),
+    )
+    expect(await screen.findAllByText('PodCrashLooping')).toHaveLength(2)
+    expect(screen.getByText('namespace=mxl pod=a')).toBeTruthy()
+    expect(screen.getByText('namespace=nmos pod=b')).toBeTruthy()
+  })
+
+  it('unreachable monitoring with no prior data renders unknown as content, no raw error', async () => {
+    renderWorkspace(health({ reachable: false, reason: 'prometheus-unreachable' }))
+    expect(await screen.findByText(/Facility health — unknown/)).toBeTruthy()
+    expect(screen.getByText(/Monitoring is unreachable and no earlier state/)).toBeTruthy()
+    expect(screen.queryByText(/prometheus-unreachable/)).toBeNull()
+  })
+
+  it('not-configured renders the explicit dark state', async () => {
+    renderWorkspace(health({ configured: false, reachable: false, watchdog_firing: false }))
+    expect(await screen.findByText(/Monitoring is not configured in this environment/)).toBeTruthy()
+  })
+})
