@@ -20,6 +20,12 @@ ROLE_GROUPS = {
     "admin": {"dmf-console-admin"},
 }
 
+# Media Workloads surface group (ADR-0037 §5): membership grants the Media
+# Workloads surface — read and the clear-for-deployment write — without
+# granting the engineer capability role. Tenancy scope within the surface
+# stays with MediaTenancySettings (dmfdeploy/dmfdeploy#174).
+MEDIA_ENGINEERS_GROUP = "media-engineers"
+
 
 @dataclass(frozen=True)
 class UserIdentity:

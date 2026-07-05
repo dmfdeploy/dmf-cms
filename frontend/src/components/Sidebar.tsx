@@ -6,26 +6,43 @@ interface NavItem {
   label: string
   path: string
   icon: string
+  /** Primary rails are always present; secondaries are role-gated (IA §3). */
+  section: 'rail' | 'secondary'
   onlyRoles?: string[]
-  excludeRoles?: string[]
+  /** Grants visibility by OIDC group membership, OR-ed with onlyRoles. */
+  onlyGroups?: string[]
 }
 
+// The 4-rail IA spine + role-gated secondaries (IA 2026-06-23 §3/§7, #174
+// WP1). Nav visibility is cosmetic — the backend enforces the same boundary
+// on every endpoint. Licenses/Users/Site settings are named-deferred (no
+// pages yet); Workflow + Changes are interim entries until WP3 merges them
+// into Activity.
 const allNavItems: NavItem[] = [
-  { label: 'Overview', path: '/', icon: 'home' },
-  { label: 'Monitoring', path: '/monitoring', icon: 'monitor' },
-  // v1 gating (plan #173 WP2): visible to engineer+admin; nav visibility is
-  // cosmetic — the backend enforces the same boundary on every endpoint.
-  { label: 'Media Workloads', path: '/media-workloads', icon: 'inventory', onlyRoles: ['engineer', 'admin'] },
-  { label: 'Facilities', path: '/facility', icon: 'flows' },
-  { label: 'Workflow', path: '/workflows', icon: 'automation' },
-  { label: 'Catalog', path: '/catalog', icon: 'catalog' },
-  { label: 'Changes', path: '/changes', icon: 'reports' },
-  { label: 'Admin', path: '/admin', icon: 'shield', onlyRoles: ['admin'] },
+  { label: 'Workspace', path: '/', icon: 'grid', section: 'rail' },
+  { label: 'Facilities', path: '/facilities', icon: 'sites', section: 'rail' },
+  // Surface gate per ADR-0037 §5: engineer+admin role (the #173 v1 gate) OR
+  // the media-engineers tenancy group — first frontend groups[] consumer.
+  { label: 'Media Workloads', path: '/media-workloads', icon: 'inventory', section: 'rail', onlyRoles: ['engineer', 'admin'], onlyGroups: ['media-engineers'] },
+  { label: 'Catalog', path: '/catalog', icon: 'catalog', section: 'rail', onlyRoles: ['operator', 'engineer', 'admin'] },
+  { label: 'Monitoring', path: '/monitoring', icon: 'monitor', section: 'secondary' },
+  { label: 'Workflow', path: '/workflows', icon: 'automation', section: 'secondary', onlyRoles: ['operator', 'engineer', 'admin'] },
+  { label: 'Changes', path: '/changes', icon: 'reports', section: 'secondary' },
+  { label: 'Admin', path: '/admin', icon: 'shield', section: 'secondary', onlyRoles: ['admin'] },
+  { label: 'Settings', path: '/settings', icon: 'settings', section: 'secondary' },
 ]
 
 const icons: Record<string, React.ReactNode> = {
   home: (
     <path d="M10 20v-6h4v6h5v-8h3L12 3 2 12h3v8z" fill="currentColor" />
+  ),
+  // Workspace: 9-square app-grid (IA §3) — launcher-into-operations, not a
+  // blank SaaS canvas.
+  grid: (
+    <path d="M4 4h4v4H4zM10 4h4v4h-4zM16 4h4v4h-4zM4 10h4v4H4zM10 10h4v4h-4zM16 10h4v4h-4zM4 16h4v4H4zM10 16h4v4h-4zM16 16h4v4h-4z" stroke="currentColor" strokeWidth="1.5" fill="none" strokeLinejoin="round" />
+  ),
+  sites: (
+    <path d="M19 21V5a2 2 0 00-2-2H7a2 2 0 00-2 2v16m14 0h2m-2 0h-5m-9 0H3m2 0h5M9 7h1m-1 4h1m4-4h1m-1 4h1m-5 10v-5a1 1 0 011-1h2a1 1 0 011 1v5m-4 0h4" stroke="currentColor" strokeWidth="2" fill="none" strokeLinecap="round" strokeLinejoin="round" />
   ),
   monitor: (
     <path d="M9 19v-6a2 2 0 00-2-2H5a2 2 0 00-2 2v6a2 2 0 002 2h2a2 2 0 002-2zm0 0V9a2 2 0 012-2h2a2 2 0 012 2v10m-6 0a2 2 0 002 2h2a2 2 0 002-2m0 0V5a2 2 0 012-2h2a2 2 0 012 2v14a2 2 0 01-2 2h-2a2 2 0 01-2-2z" stroke="currentColor" strokeWidth="2" fill="none" strokeLinecap="round" strokeLinejoin="round" />
@@ -59,16 +76,48 @@ const icons: Record<string, React.ReactNode> = {
   ),
 }
 
+function renderItem(item: NavItem, pathname: string, expanded: boolean) {
+  const isActive = pathname === item.path
+  return (
+    <Link
+      key={item.label}
+      to={item.path}
+      className={`flex items-center rounded-lg transition-colors ${
+        isActive
+          ? 'bg-accent/20 text-accent'
+          : 'text-muted hover:text-text hover:bg-panel/50'
+      } ${expanded ? 'px-3 py-2.5 gap-3' : 'w-10 h-10 justify-center mx-auto'}`}
+    >
+      <svg className="w-5 h-5 shrink-0" viewBox="0 0 24 24" fill="none">
+        {icons[item.icon]}
+      </svg>
+      <span
+        className={`text-sm font-medium truncate transition-opacity duration-200 ${
+          expanded ? 'opacity-100' : 'opacity-0 w-0'
+        }`}
+      >
+        {item.label}
+      </span>
+    </Link>
+  )
+}
+
 export default function Sidebar() {
   const [expanded, setExpanded] = useState(false)
   const location = useLocation()
   const { data: user } = useCurrentUser()
 
+  const role = user?.role || 'viewer'
+  const groups = user?.groups || []
   const navItems = allNavItems.filter((item) => {
-    if (item.onlyRoles) return item.onlyRoles.includes(user?.role || 'viewer')
-    if (item.excludeRoles) return !item.excludeRoles.includes(user?.role || 'viewer')
-    return true
+    if (!item.onlyRoles && !item.onlyGroups) return true
+    return (
+      (item.onlyRoles?.includes(role) ?? false) ||
+      (item.onlyGroups?.some((g) => groups.includes(g)) ?? false)
+    )
   })
+  const rails = navItems.filter((item) => item.section === 'rail')
+  const secondaries = navItems.filter((item) => item.section === 'secondary')
 
   return (
     <aside
@@ -79,31 +128,9 @@ export default function Sidebar() {
       onMouseLeave={() => setExpanded(false)}
     >
       <nav className="flex flex-col py-4 px-2 gap-1 flex-1">
-        {navItems.map((item) => {
-          const isActive = location.pathname === item.path
-          return (
-            <Link
-              key={item.label}
-              to={item.path}
-              className={`flex items-center rounded-lg transition-colors ${
-                isActive
-                  ? 'bg-accent/20 text-accent'
-                  : 'text-muted hover:text-text hover:bg-panel/50'
-              } ${expanded ? 'px-3 py-2.5 gap-3' : 'w-10 h-10 justify-center mx-auto'}`}
-            >
-              <svg className="w-5 h-5 shrink-0" viewBox="0 0 24 24" fill="none">
-                {icons[item.icon]}
-              </svg>
-              <span
-                className={`text-sm font-medium truncate transition-opacity duration-200 ${
-                  expanded ? 'opacity-100' : 'opacity-0 w-0'
-                }`}
-              >
-                {item.label}
-              </span>
-            </Link>
-          )
-        })}
+        {rails.map((item) => renderItem(item, location.pathname, expanded))}
+        {secondaries.length > 0 && <div className="border-t border-border my-2 mx-2" />}
+        {secondaries.map((item) => renderItem(item, location.pathname, expanded))}
       </nav>
 
     </aside>

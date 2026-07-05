@@ -41,7 +41,10 @@ const roleBadgeStyles: Record<string, string> = {
   admin: 'bg-indigo-900/40 text-indigo-300',
 }
 
-export default function AdminOverview() {
+// Admin default panels on the Workspace home (IA §4.1 role-varied content;
+// moved from the retired pages/overview/AdminOverview.tsx, #174 WP4). The
+// Workspace page owns the hero and the scroll container.
+export default function AdminPanels() {
   const { data: user } = useCurrentUser()
   const { data: contract } = useAppContract()
   const { data: healthData, isLoading: healthLoading } = useAdminHealth()
@@ -55,11 +58,7 @@ export default function AdminOverview() {
   const [activeJobs, setActiveJobs] = useState<{ workflowName: string; jobId: number }[]>([])
 
   if (!contract || !user) {
-    return (
-      <div className="flex-1 overflow-y-auto p-6">
-        <div className="animate-pulse text-muted">Loading...</div>
-      </div>
-    )
+    return <div className="animate-pulse text-muted">Loading...</div>
   }
 
   const handleLaunch = async (workflowName: string) => {
@@ -88,13 +87,7 @@ export default function AdminOverview() {
   }
 
   return (
-    <div className="flex-1 overflow-y-auto p-6">
-      {/* Page header */}
-      <div className="mb-8">
-        <h1 className="text-4xl font-bold text-text">{user.display_name}</h1>
-        <p className="text-muted text-sm mt-1">DMF Console Administration — {contract.facility_name}</p>
-      </div>
-
+    <div>
       {/* Integration Status Panel */}
       <div className="mb-8">
         <h2 className="text-lg font-semibold text-text mb-4">Integration Status</h2>
