@@ -3,6 +3,8 @@ export interface UserIdentity {
   display_name: string
   email: string
   role: 'viewer' | 'operator' | 'engineer' | 'admin'
+  real_role: 'viewer' | 'operator' | 'engineer' | 'admin'
+  view_as_active: boolean
   groups: string[]
   awx_configured: boolean
   authentik_configured: boolean

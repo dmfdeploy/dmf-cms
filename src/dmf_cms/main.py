@@ -34,10 +34,12 @@ from .security import (
     ROLE_GROUPS,
     ROLE_ORDER,
     UserIdentity,
+    VIEW_AS_ROLES,
     build_authorize_url,
     clear_user,
     discovery_document,
     dev_user,
+    effective_user,
     exchange_code_for_token,
     fetch_userinfo,
     new_pkce_verifier,
@@ -100,8 +102,12 @@ def _require_min_role(request: Request, minimum: str) -> tuple[UserIdentity | No
 
     Returns ``(user, None)`` when authorized, else ``(None, error_response)``.
     Nav visibility is cosmetic — every gated endpoint must call this.
+
+    Gates on the *effective* role so an admin's active view-as downgrade is
+    enforced server-side (dmfdeploy/dmfdeploy#185 WP-B), not merely reflected
+    in the nav.
     """
-    user = session_user(request.session)
+    user = effective_user(request.session)
     if user is None:
         return None, JSONResponse({"error": "unauthorized"}, status_code=401)
     if not role_at_least(user.role, minimum):
@@ -116,8 +122,13 @@ def _require_media_workloads_access(request: Request) -> tuple[UserIdentity | No
     single-operator fallback) OR membership of the media-engineers group.
     The group scopes the surface — both read and the clear write — while
     tenant visibility within it stays with MediaTenancySettings.
+
+    Gates on the *effective* role (view-as downgrade enforced). Groups are the
+    real groups even under view-as: a real viewer in media-engineers reaches
+    the surface, and so does an admin viewing-as-viewer who is also in that
+    group — correct by design (dmfdeploy/dmfdeploy#185 WP-B, Risk 3).
     """
-    user = session_user(request.session)
+    user = effective_user(request.session)
     if user is None:
         return None, JSONResponse({"error": "unauthorized"}, status_code=401)
     if not role_at_least(user.role, "engineer") and MEDIA_ENGINEERS_GROUP not in user.groups:
@@ -570,9 +581,13 @@ def create_app(settings: Settings | None = None, contract: AppContract | None = 
 
     @app.post("/api/admin/invitations")
     async def create_passkey_invitation(request: Request):
-        user = session_user(request.session)
-        if user is None:
-            return JSONResponse({"error": "unauthorized"}, status_code=401)
+        # Admin-surface action: gate on the effective admin role (GATE-G24 —
+        # closes both a pre-existing under-gate, where any authenticated user
+        # could reach it, and the view-as escape). effective_user keeps the
+        # caller's subject/email/display_name; view-as only lowers the role.
+        user, err = _require_min_role(request, "admin")
+        if err is not None:
+            return err
 
         if not settings.authentik.configured:
             return JSONResponse({"error": "authentik API not configured"}, status_code=503)
@@ -720,17 +735,88 @@ def create_app(settings: Settings | None = None, contract: AppContract | None = 
     # ------------------------------------------------------------------
     @app.get("/api/me")
     async def api_current_user(request: Request):
-        user = session_user(request.session)
-        if user is None:
+        real = session_user(request.session)
+        if real is None:
             return JSONResponse({"error": "unauthorized"}, status_code=401)
+        user = effective_user(request.session)
+        assert user is not None  # non-None whenever real is non-None
         return JSONResponse({
             "subject": user.subject,
             "display_name": user.display_name,
             "email": user.email,
+            # role is always the EFFECTIVE role (what gates enforce + nav shows);
+            # real_role is the identity's true ceiling; view_as_active flags the
+            # simulated downgrade so the UI can surface the reset affordance.
             "role": user.role,
+            "real_role": real.role,
+            "view_as_active": user.role != real.role,
             "groups": user.groups,
             "awx_configured": settings.awx.configured,
             "authentik_configured": settings.authentik.configured,
+        })
+
+    @app.post("/api/me/view-as")
+    async def api_set_view_as(request: Request):
+        """Admin-only, session-scoped, strictly-downgrade role simulation.
+
+        Authorizes against the REAL user (never the effective one) so the
+        gate can't be escaped or re-entered from inside a downgrade. Groups
+        stay real; only the role is simulated (ADR-0028-safe).
+        """
+        real = session_user(request.session)
+        if real is None:
+            return JSONResponse({"error": "unauthorized"}, status_code=401)
+        if real.role != "admin":
+            return JSONResponse({"error": "forbidden"}, status_code=403)
+        try:
+            body = await request.json()
+        except Exception:
+            body = None
+        role = (body or {}).get("role")
+        if not isinstance(role, str) or role not in VIEW_AS_ROLES:
+            # Rejects admin (not a downgrade) and any unknown role — fail closed.
+            return JSONResponse(
+                {"error": "invalid-role", "detail": f"role must be one of {sorted(VIEW_AS_ROLES)}"},
+                status_code=400,
+            )
+        request.session["view_as"] = role
+        request_id = uuid.uuid4().hex
+        # C5 audit line (actor / real role / request-id / simulated role),
+        # mirroring the clear-for-deployment record.
+        logger.info(
+            "view-as set: actor=%s real_role=%s view_as=%s request_id=%s",
+            real.subject,
+            real.role,
+            role,
+            request_id,
+        )
+        return JSONResponse({
+            "role": role,
+            "real_role": real.role,
+            "view_as_active": True,
+            "request_id": request_id,
+        })
+
+    @app.delete("/api/me/view-as")
+    async def api_clear_view_as(request: Request):
+        """Reset an active view-as. Authorizes against the REAL user so reset
+        works while downgraded (an effective-viewer admin can still reset)."""
+        real = session_user(request.session)
+        if real is None:
+            return JSONResponse({"error": "unauthorized"}, status_code=401)
+        request.session.pop("view_as", None)
+        request_id = uuid.uuid4().hex
+        logger.info(
+            "view-as cleared: actor=%s real_role=%s request_id=%s",
+            real.subject,
+            real.role,
+            request_id,
+        )
+        return JSONResponse({
+            "role": real.role,
+            "real_role": real.role,
+            "view_as_active": False,
+            "request_id": request_id,
         })
 
     @app.get("/api/contract")
@@ -759,11 +845,12 @@ def create_app(settings: Settings | None = None, contract: AppContract | None = 
     # ------------------------------------------------------------------
     @app.get("/api/admin/health")
     async def api_admin_health(request: Request):
-        user = session_user(request.session)
-        if user is None:
-            return JSONResponse({"error": "unauthorized"}, status_code=401)
-        if user.role != "admin":
-            return JSONResponse({"error": "forbidden"}, status_code=403)
+        # Effective-role gate: an admin under an active view-as downgrade is
+        # 403 here too, so the admin surface can't be reached from inside a
+        # downgrade (WP-B: enforced server-side, not just in the nav).
+        _, err = _require_min_role(request, "admin")
+        if err is not None:
+            return err
 
         def _ping_authentik() -> dict:
             if not settings.authentik.configured:
@@ -833,11 +920,12 @@ def create_app(settings: Settings | None = None, contract: AppContract | None = 
 
     @app.get("/api/admin/users")
     async def api_admin_users(request: Request):
-        user = session_user(request.session)
-        if user is None:
-            return JSONResponse({"error": "unauthorized"}, status_code=401)
-        if user.role != "admin":
-            return JSONResponse({"error": "forbidden"}, status_code=403)
+        # Effective-role gate: an admin under an active view-as downgrade is
+        # 403 here too, so the admin surface can't be reached from inside a
+        # downgrade (WP-B: enforced server-side, not just in the nav).
+        _, err = _require_min_role(request, "admin")
+        if err is not None:
+            return err
         if not settings.authentik.configured:
             return JSONResponse({"error": "Authentik not configured"}, status_code=503)
 
@@ -871,11 +959,12 @@ def create_app(settings: Settings | None = None, contract: AppContract | None = 
 
     @app.get("/api/admin/jobs")
     async def api_admin_jobs(request: Request):
-        user = session_user(request.session)
-        if user is None:
-            return JSONResponse({"error": "unauthorized"}, status_code=401)
-        if user.role != "admin":
-            return JSONResponse({"error": "forbidden"}, status_code=403)
+        # Effective-role gate: an admin under an active view-as downgrade is
+        # 403 here too, so the admin surface can't be reached from inside a
+        # downgrade (WP-B: enforced server-side, not just in the nav).
+        _, err = _require_min_role(request, "admin")
+        if err is not None:
+            return err
         if not settings.awx.configured:
             return JSONResponse({"jobs": []})
 
@@ -905,11 +994,12 @@ def create_app(settings: Settings | None = None, contract: AppContract | None = 
     # ------------------------------------------------------------------
     @app.get("/api/admin/groups")
     async def api_admin_groups(request: Request):
-        user = session_user(request.session)
-        if user is None:
-            return JSONResponse({"error": "unauthorized"}, status_code=401)
-        if user.role != "admin":
-            return JSONResponse({"error": "forbidden"}, status_code=403)
+        # Effective-role gate: an admin under an active view-as downgrade is
+        # 403 here too, so the admin surface can't be reached from inside a
+        # downgrade (WP-B: enforced server-side, not just in the nav).
+        _, err = _require_min_role(request, "admin")
+        if err is not None:
+            return err
         if not settings.authentik.configured:
             return JSONResponse({"groups": []})
 

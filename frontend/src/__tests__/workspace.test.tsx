@@ -16,6 +16,8 @@ const user: UserIdentity = {
   display_name: 'Test User',
   email: 'test@dmf.example.com',
   role: 'viewer',
+  real_role: 'viewer',
+  view_as_active: false,
   groups: [],
   awx_configured: false,
   authentik_configured: false,

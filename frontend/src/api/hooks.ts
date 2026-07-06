@@ -1,4 +1,4 @@
-import { useQuery, useMutation } from '@tanstack/react-query'
+import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
 import { apiCall, APIError } from './client'
 import type {
   UserIdentity,
@@ -38,6 +38,23 @@ export function useCurrentUser() {
     queryKey: ['user'],
     queryFn: () => apiCall<UserIdentity>('/api/me'),
     retry: false,
+  })
+}
+
+export function useSetViewAs() {
+  const queryClient = useQueryClient()
+  return useMutation({
+    mutationFn: (role: 'viewer' | 'operator' | 'engineer') =>
+      apiCall('/api/me/view-as', { method: 'POST', body: JSON.stringify({ role }) }),
+    onSuccess: () => queryClient.invalidateQueries(),
+  })
+}
+
+export function useClearViewAs() {
+  const queryClient = useQueryClient()
+  return useMutation({
+    mutationFn: () => apiCall('/api/me/view-as', { method: 'DELETE' }),
+    onSuccess: () => queryClient.invalidateQueries(),
   })
 }
 
