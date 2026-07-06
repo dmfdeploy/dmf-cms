@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 import base64
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 import hashlib
 from urllib.error import HTTPError
 from urllib.parse import urlencode, urljoin, urlsplit, urlunsplit
@@ -25,6 +25,12 @@ ROLE_GROUPS = {
 # granting the engineer capability role. Tenancy scope within the surface
 # stays with MediaTenancySettings (dmfdeploy/dmfdeploy#174).
 MEDIA_ENGINEERS_GROUP = "media-engineers"
+
+# Roles a real admin may *view as* (dmfdeploy/dmfdeploy#185 WP-B). Strictly a
+# downgrade: "admin" is excluded (it is the real ceiling, not a simulated
+# level) and unknown roles are rejected, so view-as can only ever reduce
+# capability, never grant it.
+VIEW_AS_ROLES = frozenset({"viewer", "operator", "engineer"})
 
 
 @dataclass(frozen=True)
@@ -109,6 +115,30 @@ def session_user(session: dict[str, object]) -> UserIdentity | None:
     )
 
 
+def effective_user(session: dict[str, object]) -> UserIdentity | None:
+    """The real user, optionally downgraded by an admin's active view-as.
+
+    Backend authorization runs against THIS, not ``session_user``: a real
+    admin who has set ``session["view_as"]`` to a lower role is treated as
+    that role everywhere a gate looks. Fails closed — the downgrade applies
+    only when the real role is admin AND the stored view-as is a valid
+    strict-downgrade role; anything else (non-admin with a stale key, an
+    unknown/admin view-as value) returns the real identity untouched.
+
+    Groups are NOT altered — view-as simulates "same groups, lower role"
+    without mutating identity (ADR-0028-safe), so a surface gated on group
+    membership (e.g. media-engineers) still admits a downgraded admin exactly
+    as it would a real viewer in that group.
+    """
+    user = session_user(session)
+    if user is None:
+        return None
+    view_as = session.get("view_as")
+    if user.role == "admin" and isinstance(view_as, str) and view_as in VIEW_AS_ROLES:
+        return replace(user, role=view_as)
+    return user
+
+
 def store_user(session: dict[str, object], user: UserIdentity) -> None:
     session["user"] = {
         "subject": user.subject,
@@ -117,10 +147,14 @@ def store_user(session: dict[str, object], user: UserIdentity) -> None:
         "groups": list(user.groups),
         "role": user.role,
     }
+    # Never inherit a stale downgrade across a fresh login / identity refresh:
+    # every path that (re)establishes the real user drops any prior view-as.
+    session.pop("view_as", None)
 
 
 def clear_user(session: dict[str, object]) -> None:
     session.pop("user", None)
+    session.pop("view_as", None)
     session.pop("oidc_state", None)
     session.pop("oidc_nonce", None)
     session.pop("oidc_code_verifier", None)
