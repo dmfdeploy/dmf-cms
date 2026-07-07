@@ -357,6 +357,33 @@ export interface MxlStatusResponse {
   transport: MxlTransport
 }
 
+// Per-instance MXL live view (WP-D endpoint GET
+// /api/media-workloads/{instance}/mxl/status). Server-shaped, bounded field
+// set — a compromised sidecar cannot smuggle a locator (mxl.shape_status).
+// NOTE: `node` is deliberately NOT relayed here — NetBox placement.node is the
+// source of truth, so the tile joins node from the inventory payload, not this.
+export interface MxlInstanceFlow {
+  head_index: number | null
+  latency_ms: number | null
+  latency_grains: number | null
+  active: boolean | null
+  format: string | null
+  grain_rate: string | null
+}
+
+export interface MxlInstanceStatus {
+  instance: string
+  available: boolean
+  // Present only when available:
+  role?: string | null
+  provider?: string | null
+  preview?: boolean
+  mxl_version?: string | null
+  flow?: MxlInstanceFlow
+  // Present only when unavailable (available:false):
+  reason?: 'no-sidecar' | 'unreachable' | 'not-found' | string
+}
+
 // ------------------------------------------------------------------
 // Media Workloads (ADR-0037): NetBox instance inventory, desired vs observed.
 // requested_state is INTENT (NetBox lifecycle tag); observed_state is runtime
@@ -365,6 +392,10 @@ export interface MediaWorkloadInstance {
   instance: string
   netbox_id: number | null
   function_key: string | null
+  // ONLY a boolean crosses the trust boundary (WP-D): whether a scoped MXL
+  // sidecar is resolvable. WP-C uses it to decide which tiles poll live view.
+  // Coords/URLs/IPs never leave the backend.
+  live_view?: boolean
   requested_state: 'bootstrapped' | 'active' | 'unknown' | string
   observed_state: 'running' | 'failing' | 'unknown'
   reconcile_pending: boolean

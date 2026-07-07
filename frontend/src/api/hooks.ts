@@ -23,6 +23,7 @@ import type {
   CatalogActionResult,
   CatalogJobStatus,
   MxlStatusResponse,
+  MxlInstanceStatus,
   MediaWorkloadsResponse,
   ClearForDeploymentResult,
   Operation,
@@ -323,6 +324,26 @@ export function useMediaWorkloads() {
     queryKey: ['media-workloads'],
     queryFn: () => apiCall<MediaWorkloadsResponse>('/api/media-workloads'),
     refetchInterval: 15000,
+  })
+}
+
+// Per-instance MXL live view (WP-D). Consumers gate `enabled` and choose
+// `refetchInterval` so polling only runs when it should: in grid view, with a
+// visible tab, within the live-tile cap, and not under reduced motion. The
+// modal drives it faster. `false`/undefined interval means fetch-once-then-hold
+// (a static last frame with an explicit Refresh affordance).
+export function useInstanceMxlStatus(
+  instance: string,
+  opts?: { enabled?: boolean; refetchInterval?: number | false },
+) {
+  return useQuery({
+    queryKey: ['mxl-instance-status', instance],
+    queryFn: () =>
+      apiCall<MxlInstanceStatus>(
+        `/api/media-workloads/${encodeURIComponent(instance)}/mxl/status`,
+      ),
+    enabled: opts?.enabled ?? true,
+    refetchInterval: opts?.refetchInterval ?? false,
   })
 }
 
