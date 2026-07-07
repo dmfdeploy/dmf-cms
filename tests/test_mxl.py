@@ -119,3 +119,70 @@ def test_fetch_preview_one_rejects_oversized_body(monkeypatch):
 def test_fetch_preview_one_none_on_transport_error(monkeypatch):
     _patch_urlopen(monkeypatch, exc=urllib.error.HTTPError("u", 502, "bad", {}, None))
     assert mxl.fetch_preview_one("http://h:9000") is None
+
+
+# --- WP-D codex fixes: shape_status bounding (P2) + fail-closed parse (P3) ---
+
+def test_shape_status_bounds_and_slugs_fields():
+    raw = {
+        "role": "receiver",
+        "provider": "aliyun",
+        "preview": True,
+        "node": "cax21-node-1",
+        "mxl_version": "1.2.3",
+        "flow": {"head_index": 7, "latency_ms": 3, "active": True, "format": "Video", "grain_rate": "50/1"},
+    }
+    out = mxl.shape_status("mxl-x", raw)
+    assert out["instance"] == "mxl-x"
+    assert out["available"] is True
+    assert out["role"] == "receiver"
+    assert out["provider"] == "aliyun"
+    assert out["node"] == "cax21-node-1"
+    assert out["flow"]["head_index"] == 7
+    assert out["flow"]["grain_rate"] == "50/1"
+
+
+def test_shape_status_drops_locator_smuggling():
+    # A compromised sidecar tries to leak a URL / coord / oversized blob.
+    raw = {
+        "role": "http://10.0.0.1/",          # not a slug -> dropped
+        "provider": "a b c",                  # space -> not a slug -> dropped
+        "node": "x" * 200,                    # over length cap -> dropped
+        "mxl_version": "v\n1.0",             # control char -> dropped
+        "preview": True,
+        "flow": {"head_index": "not-a-number", "active": "yes", "format": "y" * 999},
+    }
+    out = mxl.shape_status("mxl-x", raw)
+    assert out["role"] is None
+    assert out["provider"] is None
+    assert out["node"] is None
+    assert out["mxl_version"] is None
+    assert out["flow"]["head_index"] is None  # string coerced to None
+    assert out["flow"]["active"] is None       # non-bool -> None
+    assert out["flow"]["format"] is None       # over cap -> None
+
+
+def test_shape_status_handles_non_dict_flow():
+    out = mxl.shape_status("mxl-x", {"role": "source", "flow": "garbage"})
+    assert out["flow"]["head_index"] is None
+
+
+def test_parse_int_set_fails_closed_on_all_invalid():
+    from dmf_cms.settings import _parse_int_set
+
+    default = frozenset({9000})
+    # blank / absent -> default
+    assert _parse_int_set(None, default) == default
+    assert _parse_int_set("   ", default) == default
+    # explicit valid -> that set
+    assert _parse_int_set("9000, 9443", default) == frozenset({9000, 9443})
+    # explicit but ALL invalid -> empty (feature dark), never silent default
+    assert _parse_int_set("abc, xyz", default) == frozenset()
+
+
+def test_fetch_one_degrades_on_invalid_url(monkeypatch):
+    import http.client
+
+    _patch_urlopen(monkeypatch, exc=http.client.InvalidURL("control char in host"))
+    assert mxl.fetch_status_one("http://h:9000") is None
+    assert mxl.fetch_preview_one("http://h:9000") is None

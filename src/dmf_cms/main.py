@@ -1877,6 +1877,11 @@ def create_app(settings: Settings | None = None, contract: AppContract | None = 
             settings.netbox.ssl_verify,
             tenant_slugs,
             settings.prometheus.url if settings.prometheus.configured else "",
+            # Same allowlists as the live-view endpoints so list `live_view`
+            # and status/preview never disagree under non-default config
+            # (codex WP-D P3).
+            settings.mxl.sidecar_namespaces,
+            settings.mxl.sidecar_ports,
         )
         payload["configured"] = True
         payload["scope"] = "all" if tenant_slugs is None else list(tenant_slugs)
@@ -2025,26 +2030,9 @@ def create_app(settings: Settings | None = None, contract: AppContract | None = 
             return JSONResponse(
                 {"instance": instance, "available": False, "reason": "unreachable"}
             )
-        flow = data.get("flow") or {}
-        return JSONResponse(
-            {
-                "instance": instance,
-                "available": True,
-                "role": data.get("role"),
-                "provider": data.get("provider"),
-                "preview": bool(data.get("preview")),
-                "node": data.get("node"),
-                "mxl_version": data.get("mxl_version"),
-                "flow": {
-                    "head_index": flow.get("head_index"),
-                    "latency_ms": flow.get("latency_ms"),
-                    "latency_grains": flow.get("latency_grains"),
-                    "active": flow.get("active"),
-                    "format": flow.get("format"),
-                    "grain_rate": flow.get("grain_rate") or flow.get("rate"),
-                },
-            }
-        )
+        # shape_status returns a FIXED, bounded field set — never a raw
+        # passthrough of sidecar strings (codex WP-D P2).
+        return JSONResponse(mxl.shape_status(instance, data))
 
     @app.get("/api/media-workloads/{instance}/mxl/preview")
     async def api_media_workloads_mxl_preview(request: Request, instance: str):

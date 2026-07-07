@@ -257,11 +257,13 @@ def _parse_str_set(raw: str | None, default: frozenset[str]) -> frozenset[str]:
 def _parse_int_set(raw: str | None, default: frozenset[int]) -> frozenset[int]:
     """Comma/space-separated int allowlist; blank/absent -> default.
 
-    Non-integer tokens are dropped (fail-closed: a typo shrinks the allowlist,
-    never widens it). An all-invalid value falls back to the default rather than
-    an empty set, so a misconfig doesn't silently disable every live view.
+    Fail-closed for a *security* allowlist (codex WP-D P3): non-integer tokens
+    are dropped, and an explicit-but-all-invalid value yields an EMPTY set
+    (every live view goes dark — a loud, visible failure the operator fixes)
+    rather than silently re-enabling the default. Only a genuinely blank/absent
+    value falls back to the default.
     """
-    if raw is None:
+    if raw is None or not raw.strip():
         return default
     items: set[int] = set()
     for tok in raw.replace(",", " ").split():
@@ -269,7 +271,7 @@ def _parse_int_set(raw: str | None, default: frozenset[int]) -> frozenset[int]:
             items.add(int(tok))
         except ValueError:
             continue
-    return frozenset(items) if items else default
+    return frozenset(items)
 
 
 @dataclass(frozen=True)
