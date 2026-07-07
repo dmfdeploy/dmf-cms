@@ -144,7 +144,7 @@ def test_status_ok_shapes_flow_and_leaks_no_coords(monkeypatch):
     assert body["available"] is True
     assert body["role"] == "receiver"
     assert body["provider"] == "aliyun"
-    assert body["node"] == "node-a"
+    assert "node" not in body  # sidecar node not relayed (NetBox is SoT)
     assert body["preview"] is True
     assert body["flow"]["head_index"] == 42
     assert body["flow"]["grain_rate"] == "50/1"
