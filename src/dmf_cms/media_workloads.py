@@ -32,8 +32,11 @@ CATALOG_TAG = "dmf-catalog"
 
 # RFC1123 DNS label (Kubernetes Service/namespace name): lowercase alnum + '-',
 # no leading/trailing '-', 1..63 chars. Gates the NetBox-stamped sidecar coords
-# before they can ever be composed into an in-cluster URL.
-_DNS_LABEL = re.compile(r"^[a-z0-9]([a-z0-9-]{0,61}[a-z0-9])?$")
+# before they can ever be composed into an in-cluster URL. Always applied with
+# .fullmatch (NOT .match): re '$' matches before a trailing '\n', so 'mxl-x\n'
+# would slip past .match and then raise http.client.InvalidURL when composed —
+# fullmatch anchors the whole string and rejects that (codex WP-D P2).
+_DNS_LABEL = re.compile(r"[a-z0-9]([a-z0-9-]{0,61}[a-z0-9])?")
 
 # Default SSRF allowlists (overridden by MXLSettings). Kept here too so
 # sidecar_base_url / _service_to_instance are safe to call without wiring.
@@ -71,7 +74,7 @@ def sidecar_base_url(
     namespace = cf.get("cluster_namespace")
     if not isinstance(service, str) or not isinstance(namespace, str):
         return None
-    if not _DNS_LABEL.match(service) or not _DNS_LABEL.match(namespace):
+    if not _DNS_LABEL.fullmatch(service) or not _DNS_LABEL.fullmatch(namespace):
         return None
     if namespace not in namespaces:
         return None
@@ -90,6 +93,15 @@ def sidecar_base_url(
     # own name. In the shipped catalog svc.name == launcher mxl_release ==
     # cluster_service (dmf-runbooks roles/mxl); requiring equality blocks
     # retargeting even to another workload inside the mxl namespace.
+    #
+    # Threat model (codex WP-D P2): this defends against a writer that can only
+    # tamper with custom_fields. The ADR-0032 scoped catalog writer can also
+    # change a Service's `name`, so it controls BOTH sides of this equality —
+    # but that writer is a trusted in-cluster component (a compromise of it
+    # already grants lifecycle-tag flips i.e. deploys), and the only reachable
+    # target is a peer mxl:9000 status sidecar the same media-engineer can
+    # already view. NetBox is the source of truth here; no immutable
+    # controller-owned identity exists to bind to instead.
     if service != svc.get("name"):
         return None
     return f"http://{service}.{namespace}.svc.cluster.local:{port_num}"

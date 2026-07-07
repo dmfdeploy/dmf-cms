@@ -518,3 +518,40 @@ def test_scoped_service_cache_separates_scopes():
     cache.get(("tenant-b",), loader)
     cache.get(("tenant-a",), loader)  # cached
     assert calls["n"] == 2
+
+
+# --- WP-D codex fixes: DNS-label trailing-newline (P2c) + list allowlist (P3a) ---
+
+@pytest.mark.parametrize("bad", ["mxl-x\n", "mxl-x\r", "\nmxl-x", "mxl-x\t"])
+def test_sidecar_base_url_rejects_trailing_whitespace_labels(bad):
+    # re '$' matches before a trailing newline; fullmatch must reject it so no
+    # http.client.InvalidURL (500) can ever be composed (codex P2).
+    svc = _svc_cf(bad, {"cluster_service": bad, "cluster_namespace": "mxl", "cluster_port": 9000})
+    assert sidecar_base_url(svc) is None
+
+
+def test_list_instances_live_view_uses_configured_allowlists(monkeypatch):
+    # A non-default namespace: default {mxl} would mark live_view False, but the
+    # endpoint must pass the CONFIGURED allowlist so list agrees with status.
+    coords = {"cluster_service": "mxl-x", "cluster_namespace": "media", "cluster_port": 9000}
+
+    def fake_request(*a, **k):
+        return {"results": [_svc_cf("mxl-x", coords)]}
+
+    monkeypatch.setattr(netbox_module, "_request", fake_request)
+
+    from dmf_cms.settings import MXLSettings, NetboxSettings
+
+    settings = Settings(
+        runtime_mode="local",
+        dev_login_enabled=True,
+        dev_groups=ENGINEER,
+        netbox=NetboxSettings(api_url="http://netbox.test", api_token="tok"),
+        media_tenancy=MediaTenancySettings(mode="single"),
+        mxl=MXLSettings(sidecar_namespaces=frozenset({"media"}), sidecar_ports=frozenset({9000})),
+    )
+    client = TestClient(create_app(settings=settings))
+    client.get("/auth/login", follow_redirects=False)
+    body = client.get("/api/media-workloads").json()
+    inst = {i["instance"]: i for i in body["instances"]}["mxl-x"]
+    assert inst["live_view"] is True  # would be False under the default {mxl}
