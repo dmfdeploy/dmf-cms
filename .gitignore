@@ -5,6 +5,10 @@ build/
 dist/
 *.egg-info/
 .venv/
+# uv.lock is incidental (project builds with setuptools/pip); ignore it — same
+# call as dmf-init. Running `uv run` auto-writes it, but it's not part of the
+# committed set.
+uv.lock
 
 # macOS metadata
 .DS_Store
