@@ -1,60 +1,82 @@
-import { useMemo, useState } from 'react'
-import { useClearForDeployment, useMediaWorkloads } from '../../api/hooks'
-import { useActivityStore } from '../../store/activity'
+import { useEffect, useMemo, useState } from 'react'
+import { useCatalog, useMediaWorkloads } from '../../api/hooks'
 import MxlDetailPanel from './MxlDetailPanel'
+import ClearForDeployment from './ClearForDeployment'
+import WorkloadTile from './WorkloadTile'
+import InstanceLiveModal from './InstanceLiveModal'
+import {
+  LIVE_TILE_CAP,
+  useDocumentVisible,
+  usePrefersReducedMotion,
+} from './liveView'
+import {
+  observedBadge,
+  OBSERVED_TITLE,
+  requestedBadge,
+  REQUESTED_TITLE,
+} from './stateBadges'
 import type { ClearForDeploymentResult, MediaWorkloadInstance } from '../../api/types'
 
 /**
  * Media Workloads (ADR-0037): Media Function instance inventory from NetBox
- * with live status overlaid. MVP: count + placement, filter by function.
- * No flow graph, no composition canvas (ADR-0037 §8 deferrals).
+ * with live status overlaid. WP-C makes the media-native tile grid the default
+ * view (small live thumbnails + click-open preview modal) behind a Grid|Table
+ * toggle; the proven table + clear-for-deployment flow stays intact.
  *
- * Hard gate 5: rows are keyed by stable instance identity and sorted
- * deterministically, so a poll that changes nothing semantic never reflows
- * the list. Desired (requested_state) and observed (observed_state) are
- * rendered as SEPARATE facts — intent is never shown as running.
+ * Hard gate 5: instances are keyed by stable identity and sorted
+ * deterministically, so a poll that changes nothing semantic never reflows the
+ * list. Desired (requested_state) and observed (observed_state) are rendered as
+ * SEPARATE facts — intent is never shown as running. Node is always the NetBox
+ * placement, never a sidecar self-report (WP-D R2).
  */
 
-const requestedBadge: Record<string, string> = {
-  active: 'bg-sky-900/30 text-sky-300',
-  bootstrapped: 'bg-gray-900/30 text-gray-300',
-  unknown: 'bg-gray-900/30 text-gray-400',
-}
+type ViewMode = 'grid' | 'table'
+const VIEW_KEY = 'dmf-console-mw-view'
 
-const observedBadge: Record<string, string> = {
-  running: 'bg-green-900/30 text-green-300',
-  failing: 'bg-red-900/30 text-red-300',
-  unknown: 'bg-gray-900/30 text-gray-400',
+function loadView(): ViewMode {
+  try {
+    return window.localStorage.getItem(VIEW_KEY) === 'table' ? 'table' : 'grid'
+  } catch {
+    return 'grid'
+  }
 }
 
 export default function MediaWorkloads() {
   const { data, isLoading, error, refetch } = useMediaWorkloads()
+  const { data: catalog } = useCatalog()
   const [functionFilter, setFunctionFilter] = useState<string>('')
-  // Graduated friction for the one consequential action (hard gate 3):
-  // click arms a per-row confirm panel with an impact preview and a
-  // mandatory reason (C5); nothing fires on the first click.
-  const [confirming, setConfirming] = useState<string | null>(null)
-  const [reason, setReason] = useState('')
+  const [view, setView] = useState<ViewMode>(loadView)
   const [lastResult, setLastResult] = useState<ClearForDeploymentResult | null>(null)
-  // WP4: the retired MXL Flows page lives on as a per-instance live view.
+  // WP4: the retired MXL Flows page lives on as a per-instance live view (table
+  // path). The grid path opens the richer InstanceLiveModal instead.
   const [expanded, setExpanded] = useState<string | null>(null)
-  const clearMutation = useClearForDeployment()
+  const [openInstance, setOpenInstance] = useState<MediaWorkloadInstance | null>(null)
 
-  const submitClear = (instance: string) => {
-    clearMutation.mutate(
-      { instance, reason: reason.trim() },
-      {
-        onSuccess: (result) => {
-          setLastResult(result)
-          setConfirming(null)
-          setReason('')
-          // WP3 (#174): the C5 record also lands in Activity → History
-          // (console-local lane), correlated by request_id.
-          useActivityStore.getState().recordClear(result)
-          refetch()
-        },
-      },
-    )
+  const visible = useDocumentVisible()
+  const reducedMotion = usePrefersReducedMotion()
+
+  useEffect(() => {
+    try {
+      window.localStorage.setItem(VIEW_KEY, view)
+    } catch {
+      /* private mode / storage disabled — the toggle just won't persist */
+    }
+  }, [view])
+
+  // Catalog display_name join, keyed by function_key (fallback to the key).
+  const displayNames = useMemo(() => {
+    const map = new Map<string, string>()
+    for (const entry of catalog?.entries ?? []) {
+      map.set(entry.key, entry.display_name)
+    }
+    return map
+  }, [catalog?.entries])
+
+  const onCleared = (result: ClearForDeploymentResult) => {
+    // WP3 (#174): the C5 record already landed in Activity inside the control;
+    // here we surface the page-level confirmation banner and refetch inventory.
+    setLastResult(result)
+    refetch()
   }
 
   const instances = useMemo(() => {
@@ -64,6 +86,25 @@ export default function MediaWorkloads() {
     // Deterministic order by stable identity: unchanged data -> unchanged DOM.
     return [...rows].sort((a, b) => a.instance.localeCompare(b.instance))
   }, [data?.instances, functionFilter])
+
+  // Live-tile cap (codex P2): only the first LIVE_TILE_CAP tiles that actually
+  // resolve a sidecar auto-refresh at once; the rest hold a last frame with a
+  // Refresh affordance. Computed over the deterministic order so it's stable.
+  const motionTiles = useMemo(() => {
+    const set = new Set<string>()
+    let n = 0
+    for (const inst of instances) {
+      if (inst.live_view && n < LIVE_TILE_CAP) {
+        set.add(inst.instance)
+        n += 1
+      }
+    }
+    return set
+  }, [instances])
+
+  // Tile polling is allowed only in grid view, with a visible tab, and while no
+  // modal is open (the open modal is the single fast-cadence surface).
+  const tilesActive = view === 'grid' && visible && openInstance === null
 
   return (
     <div className="flex-1 overflow-y-auto p-6">
@@ -135,12 +176,48 @@ export default function MediaWorkloads() {
                 Scope: {data.scope.length > 0 ? data.scope.join(', ') : 'none'}
               </span>
             )}
+
+            {/* Grid|Table segmented toggle (persisted). */}
+            <div
+              className="ml-auto inline-flex overflow-hidden rounded-md border border-white/10"
+              role="group"
+              aria-label="View mode"
+            >
+              <button
+                className={`px-3 py-1 text-sm ${view === 'grid' ? 'bg-accent text-bg' : 'bg-black/20 text-muted'}`}
+                aria-pressed={view === 'grid'}
+                onClick={() => setView('grid')}
+              >
+                Grid
+              </button>
+              <button
+                className={`px-3 py-1 text-sm ${view === 'table' ? 'bg-accent text-bg' : 'bg-black/20 text-muted'}`}
+                aria-pressed={view === 'table'}
+                onClick={() => setView('table')}
+              >
+                Table
+              </button>
+            </div>
           </div>
 
           {instances.length === 0 ? (
             <div className="panel mt-4 py-10 text-center text-sm text-muted">
               No Media Function instances
               {functionFilter ? ` for ${functionFilter}` : ''} in your scope.
+            </div>
+          ) : view === 'grid' ? (
+            <div className="mt-4 grid grid-cols-1 gap-4 md:grid-cols-2 xl:grid-cols-3">
+              {instances.map((inst) => (
+                <WorkloadTile
+                  key={inst.instance}
+                  instance={inst}
+                  displayName={displayNames.get(inst.function_key ?? '') ?? inst.function_key ?? '—'}
+                  active={tilesActive}
+                  motionAllowed={motionTiles.has(inst.instance) && !reducedMotion}
+                  onOpen={setOpenInstance}
+                  onCleared={onCleared}
+                />
+              ))}
             </div>
           ) : (
             <div className="panel mt-4 overflow-x-auto p-0">
@@ -176,15 +253,15 @@ export default function MediaWorkloads() {
                       <td className="px-4 py-3">
                         <span
                           className={`badge text-xs ${requestedBadge[inst.requested_state] ?? requestedBadge.unknown}`}
-                          title="Requested state — intent recorded in the facility source of truth, not proof of running"
+                          title={REQUESTED_TITLE}
                         >
                           {inst.requested_state}
                         </span>
                       </td>
                       <td className="px-4 py-3">
                         <span
-                          className={`badge text-xs ${observedBadge[inst.observed_state]}`}
-                          title="Observed state — proven by live monitoring probes"
+                          className={`badge text-xs ${observedBadge[inst.observed_state] ?? observedBadge.unknown}`}
+                          title={OBSERVED_TITLE}
                         >
                           {inst.observed_state}
                         </span>
@@ -193,60 +270,7 @@ export default function MediaWorkloads() {
                         {inst.reconcile_pending ? (
                           'Waiting to converge'
                         ) : inst.requested_state === 'bootstrapped' ? (
-                          confirming === inst.instance ? (
-                            <div className="min-w-64 rounded-lg border border-amber-500/30 bg-amber-500/10 p-3 text-amber-100">
-                              <div className="text-xs font-semibold">
-                                Clear {inst.instance} for deployment?
-                              </div>
-                              <p className="mt-1 text-xs text-amber-200/80">
-                                This records the intent to run in the facility source of
-                                truth; the platform's automation lane will deploy it. The
-                                console does not start anything directly.
-                              </p>
-                              <textarea
-                                className="mt-2 w-full rounded border border-white/10 bg-black/20 p-1 text-xs text-text"
-                                placeholder="Reason (required, recorded in the audit trail)"
-                                value={reason}
-                                onChange={(e) => setReason(e.target.value)}
-                                rows={2}
-                              />
-                              {clearMutation.isError && (
-                                <p className="mt-1 text-xs text-red-300">
-                                  {String(clearMutation.error)}
-                                </p>
-                              )}
-                              <div className="mt-2 flex gap-2">
-                                <button
-                                  className="btn btn-primary btn-sm"
-                                  disabled={!reason.trim() || clearMutation.isPending}
-                                  onClick={() => submitClear(inst.instance)}
-                                >
-                                  {clearMutation.isPending ? 'Recording…' : 'Confirm'}
-                                </button>
-                                <button
-                                  className="btn btn-secondary btn-sm"
-                                  onClick={() => {
-                                    setConfirming(null)
-                                    setReason('')
-                                    clearMutation.reset()
-                                  }}
-                                >
-                                  Cancel
-                                </button>
-                              </div>
-                            </div>
-                          ) : (
-                            <button
-                              className="btn btn-secondary btn-sm"
-                              onClick={() => {
-                                setConfirming(inst.instance)
-                                setLastResult(null)
-                                clearMutation.reset()
-                              }}
-                            >
-                              Clear for deployment
-                            </button>
-                          )
+                          <ClearForDeployment instance={inst.instance} onCleared={onCleared} />
                         ) : (
                           ''
                         )}
@@ -265,6 +289,18 @@ export default function MediaWorkloads() {
             </div>
           )}
         </>
+      )}
+
+      {openInstance && (
+        <InstanceLiveModal
+          instance={openInstance}
+          displayName={
+            displayNames.get(openInstance.function_key ?? '') ??
+            openInstance.function_key ??
+            openInstance.instance
+          }
+          onClose={() => setOpenInstance(null)}
+        />
       )}
     </div>
   )
