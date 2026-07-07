@@ -91,3 +91,61 @@ def fetch_preview(endpoints, role: str, timeout: float = 4.0) -> bytes | None:
         except (urllib.error.URLError, urllib.error.HTTPError, OSError):
             return None
     return None
+
+
+# ---------------------------------------------------------------------------
+# Per-instance (NetBox-derived) fetchers for the Media Workloads live view
+# (WP-D / G26). base_url is composed server-side by
+# media_workloads.sidecar_base_url — an allowlisted, DNS-validated,
+# identity-checked in-cluster URL — NEVER raw user input. These add the codex
+# WP-D P3 hardening: short timeouts, response byte caps, and a JPEG magic-byte
+# check, so a compromised or misdirected sidecar can't wedge or poison the
+# console.
+# ---------------------------------------------------------------------------
+
+def _read_capped(resp, max_bytes: int) -> bytes | None:
+    """Read at most ``max_bytes``; return None if the body exceeds the cap.
+
+    Reads one byte past the cap so an over-cap body is detected rather than
+    silently truncated (a truncated JPEG would still pass the SOI check).
+    """
+    data = resp.read(max_bytes + 1)
+    return None if len(data) > max_bytes else data
+
+
+def fetch_status_one(
+    base_url: str, *, timeout: float = 2.0, max_bytes: int = 32 * 1024
+) -> dict | None:
+    """Fetch + parse ONE sidecar's ``/status`` JSON, hardened. None on any failure."""
+    req = urllib.request.Request(f"{base_url.rstrip('/')}/status", method="GET")
+    try:
+        with urllib.request.urlopen(req, timeout=timeout) as resp:
+            raw = _read_capped(resp, max_bytes)
+    except (urllib.error.URLError, urllib.error.HTTPError, OSError, TimeoutError, ValueError):
+        return None
+    if not raw:
+        return None
+    try:
+        data = json.loads(raw)
+    except (ValueError, json.JSONDecodeError):
+        return None
+    return data if isinstance(data, dict) else None
+
+
+def fetch_preview_one(
+    base_url: str, *, timeout: float = 4.0, max_bytes: int = 256 * 1024
+) -> bytes | None:
+    """Fetch ONE sidecar's ``/preview.jpg``, hardened. None on any failure.
+
+    A JPEG SOI (``0xFFD8``) magic-byte check runs before we ever proxy the body
+    as ``image/jpeg`` — so a non-JPEG or over-cap body is rejected, not relayed.
+    """
+    req = urllib.request.Request(f"{base_url.rstrip('/')}/preview.jpg", method="GET")
+    try:
+        with urllib.request.urlopen(req, timeout=timeout) as resp:
+            data = _read_capped(resp, max_bytes)
+    except (urllib.error.URLError, urllib.error.HTTPError, OSError, TimeoutError):
+        return None
+    if not data or data[:2] != b"\xff\xd8":
+        return None
+    return data

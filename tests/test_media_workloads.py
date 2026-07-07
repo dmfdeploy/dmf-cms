@@ -363,3 +363,158 @@ def test_clear_flips_tag_with_writer_token_and_c5(monkeypatch):
     assert "lifecycle:active" in tag_names
     assert "lifecycle:bootstrapped" not in tag_names
     assert "dmf-catalog" in tag_names and "app:mxl-hello" in tag_names
+
+
+# ---------------------------------------------------------------------------
+# WP-D (G26): NetBox-derived per-instance MXL sidecar coords — SSRF gate,
+# scoped resolve, TTL cache, and live_view exposure (no coord leak).
+# ---------------------------------------------------------------------------
+from dmf_cms.media_workloads import (  # noqa: E402
+    ScopedServiceCache,
+    resolve_sidecar_target,
+    sidecar_base_url,
+)
+
+
+def _svc_cf(name: str, custom_fields: dict) -> dict:
+    return {
+        "id": 1,
+        "name": name,
+        "tags": [{"name": "dmf-catalog"}, {"name": f"app:{name}"}],
+        "device": {"name": "node-1"},
+        "ports": [9000],
+        "custom_fields": custom_fields,
+    }
+
+
+_GOOD_CF = {"cluster_service": "mxl-videotestsrc", "cluster_namespace": "mxl", "cluster_port": 9000}
+
+
+def test_sidecar_base_url_composes_promsd_contract():
+    # Byte-for-byte the dmf-promsd host:port contract.
+    svc = _svc_cf("mxl-videotestsrc", _GOOD_CF)
+    assert sidecar_base_url(svc) == "http://mxl-videotestsrc.mxl.svc.cluster.local:9000"
+
+
+def test_sidecar_base_url_accepts_numeric_string_port():
+    svc = _svc_cf("mxl-videotestsrc", {**_GOOD_CF, "cluster_port": "9000"})
+    assert sidecar_base_url(svc) == "http://mxl-videotestsrc.mxl.svc.cluster.local:9000"
+
+
+@pytest.mark.parametrize(
+    "name,cf",
+    [
+        # missing / partial coords
+        ("mxl-x", {}),
+        ("mxl-x", {"cluster_service": "mxl-x", "cluster_namespace": "mxl"}),  # no port
+        ("mxl-x", {"cluster_service": "mxl-x", "cluster_port": 9000}),  # no namespace
+        # namespace not allowlisted (classic SSRF pivots)
+        ("mxl-x", {"cluster_service": "mxl-x", "cluster_namespace": "kube-system", "cluster_port": 9000}),
+        ("mxl-x", {"cluster_service": "mxl-x", "cluster_namespace": "default", "cluster_port": 9000}),
+        # port not allowlisted
+        ("mxl-x", {"cluster_service": "mxl-x", "cluster_namespace": "mxl", "cluster_port": 8080}),
+        ("mxl-x", {"cluster_service": "mxl-x", "cluster_namespace": "mxl", "cluster_port": 80}),
+        # not DNS labels
+        ("mxl-x", {"cluster_service": "MXL-X", "cluster_namespace": "mxl", "cluster_port": 9000}),
+        ("mxl-x", {"cluster_service": "mxl-x", "cluster_namespace": "m x l", "cluster_port": 9000}),
+        ("kubernetes.default", {"cluster_service": "kubernetes.default", "cluster_namespace": "mxl", "cluster_port": 9000}),
+        # identity mismatch: coords point at a DIFFERENT (allowlisted-ns) target
+        ("mxl-x", {"cluster_service": "authentik", "cluster_namespace": "mxl", "cluster_port": 9000}),
+        ("mxl-x", {"cluster_service": "netbox", "cluster_namespace": "mxl", "cluster_port": 9000}),
+        ("mxl-x", {"cluster_service": "mxl-other", "cluster_namespace": "mxl", "cluster_port": 9000}),
+        # bool port must not slip through the int() coercion
+        ("mxl-x", {"cluster_service": "mxl-x", "cluster_namespace": "mxl", "cluster_port": True}),
+        # custom_fields not a dict
+    ],
+)
+def test_sidecar_base_url_ssrf_rejections(name, cf):
+    assert sidecar_base_url(_svc_cf(name, cf)) is None
+
+
+def test_sidecar_base_url_none_when_custom_fields_absent():
+    assert sidecar_base_url({"id": 1, "name": "mxl-x"}) is None
+
+
+def test_sidecar_base_url_respects_configured_allowlists():
+    svc = _svc_cf("mxl-x", {"cluster_service": "mxl-x", "cluster_namespace": "media", "cluster_port": 8443})
+    # Default allowlists reject media/8443...
+    assert sidecar_base_url(svc) is None
+    # ...but an env that widens them composes the URL.
+    assert (
+        sidecar_base_url(svc, namespaces=frozenset({"media"}), ports=frozenset({8443}))
+        == "http://mxl-x.media.svc.cluster.local:8443"
+    )
+
+
+def test_list_instances_exposes_live_view_without_leaking_coords(monkeypatch):
+    def fake_request(*args, **kwargs):
+        return {
+            "results": [
+                _svc_cf("mxl-videotestsrc", _GOOD_CF),
+                _svc_cf("mxl-hello", {}),  # no sidecar coords
+            ]
+        }
+
+    monkeypatch.setattr(netbox_module, "_request", fake_request)
+    client = _client(MediaTenancySettings(mode="single"))
+    resp = client.get("/api/media-workloads")
+    assert resp.status_code == 200
+    body = resp.json()
+    by_name = {i["instance"]: i for i in body["instances"]}
+    assert by_name["mxl-videotestsrc"]["live_view"] is True
+    assert by_name["mxl-hello"]["live_view"] is False
+    # The coords / composed URL must NEVER appear anywhere in the JSON.
+    raw = resp.text
+    for leak in ("cluster_service", "cluster_namespace", "cluster_port", "svc.cluster.local", "custom_fields"):
+        assert leak not in raw
+
+
+def test_resolve_sidecar_target_scope_and_states(monkeypatch):
+    services = [_svc_cf("mxl-videotestsrc", _GOOD_CF), _svc_cf("mxl-hello", {})]
+    monkeypatch.setattr(netbox_module, "_request", lambda *a, **k: {"results": services})
+
+    ok = resolve_sidecar_target("http://nb", "tok", False, None, "mxl-videotestsrc")
+    assert ok["status"] == "ok"
+    assert ok["base_url"] == "http://mxl-videotestsrc.mxl.svc.cluster.local:9000"
+
+    no_sidecar = resolve_sidecar_target("http://nb", "tok", False, None, "mxl-hello")
+    assert no_sidecar["status"] == "no-sidecar"
+
+    absent = resolve_sidecar_target("http://nb", "tok", False, None, "nope")
+    assert absent["status"] == "not-found"
+
+
+def test_resolve_sidecar_target_netbox_failure_degrades(monkeypatch):
+    def boom(*a, **k):
+        raise netbox_module.NetboxAPIError("down")
+
+    monkeypatch.setattr(netbox_module, "_request", boom)
+    out = resolve_sidecar_target("http://nb", "tok", False, None, "mxl-videotestsrc")
+    assert out["status"] == "unreachable"
+
+
+def test_scoped_service_cache_hits_within_ttl():
+    calls = {"n": 0}
+
+    def loader():
+        calls["n"] += 1
+        return [{"name": "a"}]
+
+    cache = ScopedServiceCache(ttl=100.0)
+    assert cache.get(None, loader) == [{"name": "a"}]
+    assert cache.get(None, loader) == [{"name": "a"}]
+    assert calls["n"] == 1  # second call served from cache
+
+
+def test_scoped_service_cache_separates_scopes():
+    calls = {"n": 0}
+
+    def loader():
+        calls["n"] += 1
+        return []
+
+    cache = ScopedServiceCache(ttl=100.0)
+    cache.get(("tenant-a",), loader)
+    cache.get(("tenant-b",), loader)
+    cache.get(("tenant-a",), loader)  # cached
+    assert calls["n"] == 2
