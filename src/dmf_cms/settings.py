@@ -201,15 +201,30 @@ class MXLEndpoint:
 
 @dataclass(frozen=True)
 class MXLSettings:
-    """MXL demo status-sidecar endpoints for the 'MXL Flows' evaluation page.
+    """MXL status-sidecar config for the Media Workloads live-view surface.
 
-    Configured via DMF_CONSOLE_MXL_ENDPOINTS as comma-separated `role|provider|url`
-    entries, e.g. ``producer|aliyun|http://host:9000,receiver|aliyun|http://host:9000``.
-    URLs hold internal (tailnet) addresses and live ONLY in runtime config — never
-    committed (this repo is gitleaks-enforced) and never surfaced in the UI.
+    Two independent surfaces share this block:
+
+    * ``endpoints`` — the *static* split-node (tailnet-only) demo aggregate for
+      the legacy ``/api/mxl/*`` page. Configured via DMF_CONSOLE_MXL_ENDPOINTS as
+      comma-separated ``role|provider|url`` entries. URLs hold internal (tailnet)
+      addresses and live ONLY in runtime config — never committed (this repo is
+      gitleaks-enforced) and never surfaced in the UI. Docstring-deprecated;
+      retired with that demo.
+    * ``sidecar_namespaces`` / ``sidecar_ports`` — the SSRF allowlists for the
+      *per-instance* NetBox-derived MXL endpoints (WP-D / G26). A NetBox writer
+      stamps ``cluster_service``/``cluster_namespace``/``cluster_port`` custom
+      fields; the console only ever composes an in-cluster URL when the namespace
+      and port are in these allowlists AND ``cluster_service`` equals the
+      instance's own service name — so arbitrary coords can't turn the console
+      into an in-cluster proxy (codex WP-D P1).
     """
 
     endpoints: tuple[MXLEndpoint, ...] = ()
+    # Tight defaults matching the shipped mxl catalog (dmf-runbooks roles/mxl,
+    # dmf-media mxl-fabrics-demo chart): namespace ``mxl``, sidecar port 9000.
+    sidecar_namespaces: frozenset[str] = frozenset({"mxl"})
+    sidecar_ports: frozenset[int] = frozenset({9000})
 
     @property
     def configured(self) -> bool:
@@ -229,6 +244,32 @@ def _parse_mxl_endpoints(raw: str | None) -> tuple[MXLEndpoint, ...]:
             raise ValueError("DMF_CONSOLE_MXL_ENDPOINTS entries must be 'role|provider|url'")
         out.append(MXLEndpoint(role=parts[0], provider=parts[1], url=parts[2].rstrip("/")))
     return tuple(out)
+
+
+def _parse_str_set(raw: str | None, default: frozenset[str]) -> frozenset[str]:
+    """Comma/space-separated string allowlist; blank/absent -> default."""
+    if raw is None:
+        return default
+    items = {p.strip() for p in raw.replace(",", " ").split() if p.strip()}
+    return frozenset(items) if items else default
+
+
+def _parse_int_set(raw: str | None, default: frozenset[int]) -> frozenset[int]:
+    """Comma/space-separated int allowlist; blank/absent -> default.
+
+    Non-integer tokens are dropped (fail-closed: a typo shrinks the allowlist,
+    never widens it). An all-invalid value falls back to the default rather than
+    an empty set, so a misconfig doesn't silently disable every live view.
+    """
+    if raw is None:
+        return default
+    items: set[int] = set()
+    for tok in raw.replace(",", " ").split():
+        try:
+            items.add(int(tok))
+        except ValueError:
+            continue
+    return frozenset(items) if items else default
 
 
 @dataclass(frozen=True)
@@ -332,6 +373,12 @@ def load_settings() -> Settings:
         ),
         mxl=MXLSettings(
             endpoints=_parse_mxl_endpoints(os.getenv("DMF_CONSOLE_MXL_ENDPOINTS")),
+            sidecar_namespaces=_parse_str_set(
+                os.getenv("DMF_CONSOLE_MXL_SIDECAR_NAMESPACES"), frozenset({"mxl"})
+            ),
+            sidecar_ports=_parse_int_set(
+                os.getenv("DMF_CONSOLE_MXL_SIDECAR_PORTS"), frozenset({9000})
+            ),
         ),
         media_tenancy=MediaTenancySettings(
             mode=_env_choice("DMF_CONSOLE_MEDIA_TENANCY", "", ("", "single", "scoped")),

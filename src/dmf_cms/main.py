@@ -531,6 +531,9 @@ def create_app(settings: Settings | None = None, contract: AppContract | None = 
     )
     app.state.settings = settings
     app.state.contract = contract
+    # Per-app 5s TTL cache of the scope-filtered service list, so the live-view
+    # endpoints (polled per-tile) don't re-query NetBox on every tick (WP-D).
+    scoped_service_cache = media_workloads.ScopedServiceCache()
     app.add_middleware(ProxyHeadersMiddleware, trusted_hosts="*")
     if settings.base_path != "/":
         app.add_middleware(BasePathMiddleware, base_path=settings.base_path)
@@ -1962,6 +1965,102 @@ def create_app(settings: Settings | None = None, contract: AppContract | None = 
                     "watch": "/api/media-workloads",
                 },
             }
+        )
+
+    # ------------------------------------------------------------------
+    # Media Workloads live view (WP-D / G26): per-instance MXL status +
+    # preview, sourced from NetBox-stamped sidecar coords. Same ADR-0037 §5
+    # gate as the inventory; the SSRF allowlist + concrete-identity bind live
+    # in media_workloads.sidecar_base_url. The public payload leaks NO coords/
+    # URLs/IPs — only a boolean live-ness and shaped flow stats.
+    # ------------------------------------------------------------------
+    async def _resolve_mxl_target(request: Request, instance: str):
+        """Shared gate + scoped resolve for the two live-view endpoints.
+
+        Returns ``(outcome, None)`` on success or ``(None, error_response)``.
+        ``outcome`` is the media_workloads.resolve_sidecar_target dict, or a
+        synthetic ``{"status": "unreachable"}`` when the surface is dark (no
+        scope to resolve — degrade, don't 500).
+        """
+        user, err = _require_media_workloads_access(request)
+        if err is not None:
+            return None, err
+        assert user is not None
+        if not settings.media_tenancy.configured or not settings.netbox.configured:
+            return {"status": "unreachable"}, None
+        tenant_slugs = settings.media_tenancy.tenants_for(user.groups)
+        outcome = await run_in_threadpool(
+            media_workloads.resolve_sidecar_target,
+            settings.netbox.api_url,
+            settings.netbox.api_token,
+            settings.netbox.ssl_verify,
+            tenant_slugs,
+            instance,
+            sidecar_namespaces=settings.mxl.sidecar_namespaces,
+            sidecar_ports=settings.mxl.sidecar_ports,
+            cache=scoped_service_cache,
+        )
+        return outcome, None
+
+    @app.get("/api/media-workloads/{instance}/mxl/status")
+    async def api_media_workloads_mxl_status(request: Request, instance: str):
+        outcome, err = await _resolve_mxl_target(request, instance)
+        if err is not None:
+            return err
+        status = outcome["status"]
+        if status == "not-found":
+            # Out-of-scope and nonexistent are indistinguishable: no leak.
+            return JSONResponse(
+                {"instance": instance, "available": False, "reason": "not-found"},
+                status_code=404,
+            )
+        if status != "ok":
+            # no-sidecar | unreachable -> degraded is 200 content, never a 500.
+            reason = "no-sidecar" if status == "no-sidecar" else "unreachable"
+            return JSONResponse(
+                {"instance": instance, "available": False, "reason": reason}
+            )
+        data = await run_in_threadpool(mxl.fetch_status_one, outcome["base_url"])
+        if data is None:
+            return JSONResponse(
+                {"instance": instance, "available": False, "reason": "unreachable"}
+            )
+        flow = data.get("flow") or {}
+        return JSONResponse(
+            {
+                "instance": instance,
+                "available": True,
+                "role": data.get("role"),
+                "provider": data.get("provider"),
+                "preview": bool(data.get("preview")),
+                "node": data.get("node"),
+                "mxl_version": data.get("mxl_version"),
+                "flow": {
+                    "head_index": flow.get("head_index"),
+                    "latency_ms": flow.get("latency_ms"),
+                    "latency_grains": flow.get("latency_grains"),
+                    "active": flow.get("active"),
+                    "format": flow.get("format"),
+                    "grain_rate": flow.get("grain_rate") or flow.get("rate"),
+                },
+            }
+        )
+
+    @app.get("/api/media-workloads/{instance}/mxl/preview")
+    async def api_media_workloads_mxl_preview(request: Request, instance: str):
+        outcome, err = await _resolve_mxl_target(request, instance)
+        if err is not None:
+            return err
+        # Image surface: out-of-scope, no sidecar, unreachable, or a rejected
+        # (non-JPEG / over-cap) body all collapse to 404 so the <img> onError
+        # placeholder handles it uniformly — no coords/reason ever leak here.
+        if outcome["status"] != "ok":
+            return JSONResponse({"error": "preview-unavailable"}, status_code=404)
+        jpeg = await run_in_threadpool(mxl.fetch_preview_one, outcome["base_url"])
+        if jpeg is None:
+            return JSONResponse({"error": "preview-unavailable"}, status_code=404)
+        return Response(
+            content=jpeg, media_type="image/jpeg", headers={"Cache-Control": "no-store"}
         )
 
     # ------------------------------------------------------------------

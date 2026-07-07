@@ -18,14 +18,81 @@ tenant slug. All errors surface as a degraded payload, never a raw 500
 from __future__ import annotations
 
 import logging
+import re
+import threading
+import time
 import urllib.parse
-from typing import Any, Optional
+from typing import Any, Callable, Optional
 
 logger = logging.getLogger(__name__)
 
 # Aggregation contract from ADR-0037 §2: instances are ipam.Services carrying
 # the catalog tag convention app:<key> + dmf-catalog + lifecycle:*.
 CATALOG_TAG = "dmf-catalog"
+
+# RFC1123 DNS label (Kubernetes Service/namespace name): lowercase alnum + '-',
+# no leading/trailing '-', 1..63 chars. Gates the NetBox-stamped sidecar coords
+# before they can ever be composed into an in-cluster URL.
+_DNS_LABEL = re.compile(r"^[a-z0-9]([a-z0-9-]{0,61}[a-z0-9])?$")
+
+# Default SSRF allowlists (overridden by MXLSettings). Kept here too so
+# sidecar_base_url / _service_to_instance are safe to call without wiring.
+_DEFAULT_SIDECAR_NAMESPACES = frozenset({"mxl"})
+_DEFAULT_SIDECAR_PORTS = frozenset({9000})
+
+
+def sidecar_base_url(
+    svc: dict[str, Any],
+    *,
+    namespaces: frozenset[str] = _DEFAULT_SIDECAR_NAMESPACES,
+    ports: frozenset[int] = _DEFAULT_SIDECAR_PORTS,
+) -> Optional[str]:
+    """Compose an instance's in-cluster status-sidecar base URL, or None.
+
+    Reads the ADR-0038 Amendment-A coords the catalog launcher stamps
+    (``cluster_service``/``cluster_namespace``/``cluster_port`` custom fields)
+    and composes ``http://<svc>.<ns>.svc.cluster.local:<port>`` — byte-for-byte
+    the dmf-promsd contract. The SSRF gate (codex WP-D P1) is the whole point:
+
+    * ``cluster_service`` and ``cluster_namespace`` must be RFC1123 DNS labels;
+    * ``cluster_namespace`` must be in the configured allowlist (default {mxl});
+    * ``cluster_port`` must be in the configured allowlist (default {9000});
+    * ``cluster_service`` must equal THIS instance's own service name — the
+      concrete identity, not merely the same app family (codex R2 note) — so a
+      NetBox writer stamping arbitrary coords cannot retarget the proxy at
+      ``authentik``/``netbox``/``kubernetes.default`` or a peer workload.
+
+    Any missing/invalid field returns None (no live view), never raises.
+    """
+    cf = svc.get("custom_fields")
+    if not isinstance(cf, dict):
+        return None
+    service = cf.get("cluster_service")
+    namespace = cf.get("cluster_namespace")
+    if not isinstance(service, str) or not isinstance(namespace, str):
+        return None
+    if not _DNS_LABEL.match(service) or not _DNS_LABEL.match(namespace):
+        return None
+    if namespace not in namespaces:
+        return None
+    # Port may arrive as int or numeric string from NetBox; bool is rejected
+    # (True/False are ints in Python but never a valid port stamp).
+    port = cf.get("cluster_port")
+    if isinstance(port, bool):
+        return None
+    try:
+        port_num = int(port)
+    except (TypeError, ValueError):
+        return None
+    if port_num not in ports:
+        return None
+    # Concrete-identity bind: the sidecar Service name MUST be this instance's
+    # own name. In the shipped catalog svc.name == launcher mxl_release ==
+    # cluster_service (dmf-runbooks roles/mxl); requiring equality blocks
+    # retargeting even to another workload inside the mxl namespace.
+    if service != svc.get("name"):
+        return None
+    return f"http://{service}.{namespace}.svc.cluster.local:{port_num}"
 
 
 def _tag_names(obj: dict[str, Any]) -> list[str]:
@@ -42,13 +109,24 @@ def _tag_suffix(names: list[str], prefix: str) -> Optional[str]:
     return None
 
 
-def _service_to_instance(svc: dict[str, Any]) -> dict[str, Any]:
+def _service_to_instance(
+    svc: dict[str, Any],
+    *,
+    sidecar_namespaces: frozenset[str] = _DEFAULT_SIDECAR_NAMESPACES,
+    sidecar_ports: frozenset[int] = _DEFAULT_SIDECAR_PORTS,
+) -> dict[str, Any]:
     names = _tag_names(svc)
     parent = svc.get("device") or svc.get("virtual_machine") or {}
     return {
         "instance": svc.get("name", ""),
         "netbox_id": svc.get("id"),
         "function_key": _tag_suffix(names, "app"),
+        # ONLY a boolean leaves the backend — never the coords/URL/IP. WP-C
+        # uses it to decide which tiles poll the live-view endpoints.
+        "live_view": sidecar_base_url(
+            svc, namespaces=sidecar_namespaces, ports=sidecar_ports
+        )
+        is not None,
         # Desired state: the lifecycle tag is INTENT (what should be running),
         # per ADR-0013/0037. Never render it as runtime truth.
         "requested_state": _tag_suffix(names, "lifecycle") or "unknown",
@@ -161,6 +239,8 @@ def list_instances(
     ssl_verify: bool,
     tenant_slugs: Optional[tuple[str, ...]],
     prometheus_url: str = "",
+    sidecar_namespaces: frozenset[str] = _DEFAULT_SIDECAR_NAMESPACES,
+    sidecar_ports: frozenset[int] = _DEFAULT_SIDECAR_PORTS,
 ) -> dict[str, Any]:
     """Inventory payload: instances + per-function rollup, desired vs observed."""
     from . import netbox as _netbox
@@ -174,7 +254,12 @@ def list_instances(
         logger.warning("media-workloads: unexpected NetBox error: %s", exc)
         return {"degraded": True, "reason": "netbox-error", "instances": [], "functions": []}
 
-    instances = [_service_to_instance(svc) for svc in services]
+    instances = [
+        _service_to_instance(
+            svc, sidecar_namespaces=sidecar_namespaces, sidecar_ports=sidecar_ports
+        )
+        for svc in services
+    ]
 
     observed = _observed_by_app(prometheus_url) if prometheus_url else {}
     for inst in instances:
@@ -275,3 +360,90 @@ def clear_for_deployment(
         "requested_state": "active",
         "previous_state": current,
     }
+
+
+class ScopedServiceCache:
+    """5s TTL cache of the scope-filtered ipam.Service list, keyed by tenant scope.
+
+    The live-view endpoints poll per-tile (status ~2s, preview ~1.5s); without
+    this every poll re-queries NetBox for the whole catalog. Keyed by the
+    caller's tenant scope (``None`` unscoped, or the sorted tenant tuple) so two
+    users with the same visibility share an entry and scope can never bleed
+    across. One instance per app (created in ``create_app``) — no module global,
+    so tests get a fresh cache per app and there is no cross-test bleed.
+    """
+
+    def __init__(self, ttl: float = 5.0) -> None:
+        self._ttl = ttl
+        self._lock = threading.Lock()
+        self._entries: dict[Any, tuple[float, list[dict[str, Any]]]] = {}
+
+    def get(
+        self,
+        tenant_slugs: Optional[tuple[str, ...]],
+        loader: Callable[[], list[dict[str, Any]]],
+    ) -> list[dict[str, Any]]:
+        # None (unscoped) and a tenant tuple are both hashable; a fresh sorted
+        # tuple canonicalises scope order so equivalent scopes share an entry.
+        key: Any = None if tenant_slugs is None else tuple(sorted(tenant_slugs))
+        now = time.monotonic()
+        with self._lock:
+            hit = self._entries.get(key)
+            if hit is not None and now - hit[0] < self._ttl:
+                return hit[1]
+        services = loader()  # may raise NetboxAPIError — caller wraps it
+        with self._lock:
+            self._entries[key] = (now, services)
+        return services
+
+
+def resolve_sidecar_target(
+    netbox_url: str,
+    read_token: str,
+    ssl_verify: bool,
+    tenant_slugs: Optional[tuple[str, ...]],
+    instance_name: str,
+    *,
+    sidecar_namespaces: frozenset[str] = _DEFAULT_SIDECAR_NAMESPACES,
+    sidecar_ports: frozenset[int] = _DEFAULT_SIDECAR_PORTS,
+    cache: Optional[ScopedServiceCache] = None,
+) -> dict[str, Any]:
+    """Scoped lookup of an instance's status-sidecar base URL for the live view.
+
+    Returns one of:
+
+    * ``{"status": "not-found"}``            -> endpoint 404s (out-of-scope OR
+      absent are indistinguishable; scope parity with clear_for_deployment,
+      so membership never leaks);
+    * ``{"status": "no-sidecar"}``           -> 200 ``available:false`` (in scope
+      but no valid/allowlisted coords);
+    * ``{"status": "unreachable"}``          -> 200 ``available:false`` (NetBox
+      lookup failed — we can't verify scope, so we degrade rather than 404);
+    * ``{"status": "ok", "base_url": ...}``  -> caller fetches the sidecar.
+
+    The composed base URL never leaves the backend; only the caller passes it to
+    the hardened fetchers in ``mxl``.
+    """
+    from . import netbox as _netbox
+
+    def _load() -> list[dict[str, Any]]:
+        return _fetch_services(netbox_url, read_token, ssl_verify, tenant_slugs)
+
+    try:
+        services = cache.get(tenant_slugs, _load) if cache is not None else _load()
+    except _netbox.NetboxAPIError as exc:
+        logger.warning("media-workloads: sidecar lookup failed: %s", exc)
+        return {"status": "unreachable"}
+    except Exception as exc:
+        logger.warning("media-workloads: sidecar lookup unexpected error: %s", exc)
+        return {"status": "unreachable"}
+
+    svc = next((s for s in services if s.get("name") == instance_name), None)
+    if svc is None:
+        return {"status": "not-found"}
+    base_url = sidecar_base_url(
+        svc, namespaces=sidecar_namespaces, ports=sidecar_ports
+    )
+    if base_url is None:
+        return {"status": "no-sidecar"}
+    return {"status": "ok", "base_url": base_url}
