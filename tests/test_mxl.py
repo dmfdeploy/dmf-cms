@@ -123,12 +123,12 @@ def test_fetch_preview_one_none_on_transport_error(monkeypatch):
 
 # --- WP-D codex fixes: shape_status bounding (P2) + fail-closed parse (P3) ---
 
-def test_shape_status_bounds_and_slugs_fields():
+def test_shape_status_admits_real_values_and_omits_node():
     raw = {
         "role": "receiver",
         "provider": "aliyun",
         "preview": True,
-        "node": "cax21-node-1",
+        "node": "cax21-node-1",  # present in raw but never relayed (NetBox is SoT)
         "mxl_version": "1.2.3",
         "flow": {"head_index": 7, "latency_ms": 3, "active": True, "format": "Video", "grain_rate": "50/1"},
     }
@@ -137,29 +137,45 @@ def test_shape_status_bounds_and_slugs_fields():
     assert out["available"] is True
     assert out["role"] == "receiver"
     assert out["provider"] == "aliyun"
-    assert out["node"] == "cax21-node-1"
+    assert "node" not in out  # not relayed from the sidecar (codex R2)
+    assert out["mxl_version"] == "1.2.3"
     assert out["flow"]["head_index"] == 7
     assert out["flow"]["grain_rate"] == "50/1"
+    assert out["flow"]["format"] == "Video"
 
 
 def test_shape_status_drops_locator_smuggling():
     # A compromised sidecar tries to leak a URL / coord / oversized blob.
     raw = {
-        "role": "http://10.0.0.1/",          # not a slug -> dropped
-        "provider": "a b c",                  # space -> not a slug -> dropped
-        "node": "x" * 200,                    # over length cap -> dropped
-        "mxl_version": "v\n1.0",             # control char -> dropped
+        "role": "http://10.0.0.1/",           # not a slug -> dropped
+        "provider": "a b c",                   # space -> not a slug -> dropped
+        "node": "10.0.0.1",                    # never relayed at all
+        "mxl_version": "v\n1.0",              # control char -> dropped
         "preview": True,
         "flow": {"head_index": "not-a-number", "active": "yes", "format": "y" * 999},
     }
     out = mxl.shape_status("mxl-x", raw)
     assert out["role"] is None
     assert out["provider"] is None
-    assert out["node"] is None
+    assert "node" not in out
     assert out["mxl_version"] is None
     assert out["flow"]["head_index"] is None  # string coerced to None
     assert out["flow"]["active"] is None       # non-bool -> None
     assert out["flow"]["format"] is None       # over cap -> None
+
+
+def test_shape_status_rejects_short_locator_strings():
+    # codex R2: the exact short-locator cases a length cap alone let through.
+    raw = {
+        "mxl_version": "10.0.0.2",                       # IPv4-shaped -> dropped
+        "flow": {"format": "netbox.mxl.svc.cluster.local", "grain_rate": "http://x"},
+    }
+    out = mxl.shape_status("mxl-x", raw)
+    assert out["mxl_version"] is None
+    assert out["flow"]["format"] is None      # has dots -> not a format label
+    assert out["flow"]["grain_rate"] is None  # not a bare fraction
+    # An FQDN-ish version is rejected too.
+    assert mxl.shape_status("x", {"mxl_version": "a.mxl.svc.cluster.local"})["mxl_version"] is None
 
 
 def test_shape_status_handles_non_dict_flow():

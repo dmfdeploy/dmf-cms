@@ -14,9 +14,19 @@ import re
 import urllib.error
 import urllib.request
 
-# role/provider are contract slugs (producer|receiver|source|view; a cloud
-# slug like "aliyun") — enforce a strict lowercase slug grammar.
+# Tight positive grammars for the bounded public status fields (codex WP-D R2):
+# a compromised/buggy sidecar must not be able to smuggle a URL / IP / internal
+# DNS coord into the client payload, even a SHORT one. Each field gets the
+# narrowest grammar that still admits its real values.
+#   role/provider — contract slugs (producer|receiver|source|view; "aliyun")
+#   mxl_version   — semver-ish token, then IPv4 / FQDN-shape rejected below
+#   format        — media format label; NO dots/colons/slashes (kills DNS/URLs)
+#   grain_rate    — a bare fraction like "50" or "50/1" (kills "http://x")
 _SLUG = re.compile(r"[a-z0-9][a-z0-9-]{0,31}")
+_VERSION = re.compile(r"[0-9A-Za-z][0-9A-Za-z.+_-]{0,31}")
+_FORMAT = re.compile(r"[A-Za-z0-9][A-Za-z0-9 x_-]{0,31}")
+_RATE = re.compile(r"[0-9]+(/[0-9]+)?")
+_IPV4 = re.compile(r"[0-9]{1,3}(\.[0-9]{1,3}){3}")
 
 
 def _get_json(url: str, path: str, timeout: float = 2.0) -> dict:
@@ -147,16 +157,34 @@ def _slug_or_none(value) -> str | None:
     return v if _SLUG.fullmatch(v) else None
 
 
-def _bounded_or_none(value, maxlen: int) -> str | None:
-    """A trimmed, length-capped, control-char-free string, else None."""
+def _version_or_none(value) -> str | None:
     if not isinstance(value, str):
         return None
     v = value.strip()
-    if not v or len(v) > maxlen:
+    if not _VERSION.fullmatch(v):
         return None
-    if any(ord(c) < 0x20 or ord(c) == 0x7F for c in v):
+    # Reject locator-shaped values a version grammar can't otherwise exclude:
+    # a bare IPv4, or an FQDN-ish token (>=3 dots, e.g. x.mxl.svc.cluster.local).
+    if _IPV4.fullmatch(v) or v.count(".") >= 3:
         return None
     return v
+
+
+def _format_or_none(value) -> str | None:
+    if not isinstance(value, str):
+        return None
+    v = value.strip()
+    return v if _FORMAT.fullmatch(v) else None
+
+
+def _rate_or_none(value) -> str | None:
+    # mxl-info may print the rate as a number or a "num/den" string.
+    if isinstance(value, (int, float)) and not isinstance(value, bool):
+        return str(value)
+    if not isinstance(value, str):
+        return None
+    v = value.strip()
+    return v if _RATE.fullmatch(v) else None
 
 
 def _num_or_none(value):
@@ -165,15 +193,17 @@ def _num_or_none(value):
 
 
 def shape_status(instance: str, data: dict) -> dict:
-    """Bounded public status payload from raw sidecar JSON (codex WP-D P2).
+    """Bounded public status payload from raw sidecar JSON (codex WP-D P2/R2).
 
     The sidecar is our own in-cluster workload, but a compromised/buggy one
-    could stuff a URL/coord/IP into a string field. So we return a FIXED field
-    set (never passthrough), strict-slug role/provider, length-cap + strip
-    control chars on node/version/format/grain_rate, and coerce numeric flow
-    fields to number-or-None. Residual: a short in-cluster-DNS-shaped string in
-    ``node`` still parses — that's a trusted-infra display value, not a leak of
-    the NetBox-stamped coords (which never flow through the sidecar payload).
+    could stuff a URL/coord/IP into a string field — even a SHORT one that a
+    mere length cap wouldn't stop. So we return a FIXED field set (never
+    passthrough) and admit each string only through its narrowest grammar:
+    strict-slug role/provider, semver-with-IP/FQDN-rejection mxl_version,
+    dot/colon/slash-free format, bare-fraction grain_rate, numeric-or-None flow
+    stats. ``node`` is intentionally NOT relayed: NetBox placement is the source
+    of truth for node, so the console joins it from the inventory payload rather
+    than trusting the sidecar's self-reported string.
     """
     flow = data.get("flow")
     if not isinstance(flow, dict):
@@ -185,15 +215,14 @@ def shape_status(instance: str, data: dict) -> dict:
         "role": _slug_or_none(data.get("role")),
         "provider": _slug_or_none(data.get("provider")),
         "preview": bool(data.get("preview")),
-        "node": _bounded_or_none(data.get("node"), 64),
-        "mxl_version": _bounded_or_none(data.get("mxl_version"), 32),
+        "mxl_version": _version_or_none(data.get("mxl_version")),
         "flow": {
             "head_index": _num_or_none(flow.get("head_index")),
             "latency_ms": _num_or_none(flow.get("latency_ms")),
             "latency_grains": _num_or_none(flow.get("latency_grains")),
             "active": active if isinstance(active, bool) else None,
-            "format": _bounded_or_none(flow.get("format"), 32),
-            "grain_rate": _bounded_or_none(flow.get("grain_rate") or flow.get("rate"), 32),
+            "format": _format_or_none(flow.get("format")),
+            "grain_rate": _rate_or_none(flow.get("grain_rate") or flow.get("rate")),
         },
     }
 
