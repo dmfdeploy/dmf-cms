@@ -1,5 +1,7 @@
-import { useState } from 'react'
+import { Fragment, useState } from 'react'
 import { QRCodeSVG } from 'qrcode.react'
+import ReasonConfirm from '../../components/ReasonConfirm'
+import { useActivityStore } from '../../store/activity'
 import {
   useAppContract,
   useCurrentUser,
@@ -9,6 +11,7 @@ import {
   useWorkflows,
   useLaunchWorkflow,
   useCreatePasskeyInvitation,
+  isOperation,
 } from '../../api/hooks'
 import type { AdminUser } from '../../api/types'
 
@@ -53,17 +56,31 @@ export default function AdminPanels() {
   const { data: workflowsData } = useWorkflows()
   const launchMutation = useLaunchWorkflow()
   const inviteMutation = useCreatePasskeyInvitation()
+  const recordAwxWrite = useActivityStore((s) => s.recordAwxWrite)
   const [showQR, setShowQR] = useState(false)
   const [inviteResult, setInviteResult] = useState<any>(null)
   const [activeJobs, setActiveJobs] = useState<{ workflowName: string; jobId: number }[]>([])
+  // Which template's Launch is armed (reason panel open). AWX launch is
+  // operator-gated + reason-required (#185 WP-E), so the quick-launch arms too.
+  const [launchArming, setLaunchArming] = useState<string | null>(null)
 
   if (!contract || !user) {
     return <div className="animate-pulse text-muted">Loading...</div>
   }
 
-  const handleLaunch = async (workflowName: string) => {
+  const handleLaunch = async (workflowName: string, reason: string) => {
     try {
-      const result = await launchMutation.mutateAsync(workflowName)
+      const result = await launchMutation.mutateAsync({ workflowName, reason })
+      // Console-local Activity record (plan §4a, #185 WP-E P2-3).
+      recordAwxWrite({
+        request_id: result.request_id ?? '',
+        action: 'launch',
+        target: workflowName,
+        reason,
+        actor: user?.subject ?? 'unknown',
+        role: user?.role ?? 'unknown',
+        outcome: isOperation(result) ? 'dispatched' : (result.status ?? 'launched'),
+      })
       // result is WorkflowLaunchResponse | Operation; the async (202/waking)
       // path has a null job_id until the job is actually launched. Only track
       // it here once it has a real id (the Workflows page owns the full
@@ -254,21 +271,39 @@ export default function AdminPanels() {
                       </thead>
                       <tbody>
                         {workflowsData.templates.map((template: any) => (
-                          <tr key={template.id}>
-                            <td className="font-medium text-text">{template.name}</td>
-                            <td className="text-sm text-muted">{template.description}</td>
-                            <td className="text-right">
-                              <button
-                                onClick={() => handleLaunch(template.name)}
-                                disabled={launchMutation.isPending || activeJobs.some(j => j.workflowName === template.name)}
-                                className="btn btn-primary btn-sm"
-                              >
-                                {activeJobs.some(j => j.workflowName === template.name)
-                                  ? '⟳ Running'
-                                  : '▶ Launch'}
-                              </button>
-                            </td>
-                          </tr>
+                          <Fragment key={template.id}>
+                            <tr>
+                              <td className="font-medium text-text">{template.name}</td>
+                              <td className="text-sm text-muted">{template.description}</td>
+                              <td className="text-right">
+                                <button
+                                  onClick={() => setLaunchArming(template.name)}
+                                  disabled={launchMutation.isPending || launchArming !== null || activeJobs.some(j => j.workflowName === template.name)}
+                                  className="btn btn-primary btn-sm"
+                                >
+                                  {activeJobs.some(j => j.workflowName === template.name)
+                                    ? '⟳ Running'
+                                    : '▶ Launch'}
+                                </button>
+                              </td>
+                            </tr>
+                            {launchArming === template.name && (
+                              <tr>
+                                <td colSpan={3} className="py-2">
+                                  <ReasonConfirm
+                                    title={`Launch ${template.name}?`}
+                                    description="Runs this AWX workflow. The action is operator-gated and recorded in the audit trail with your reason."
+                                    confirmLabel="Confirm launch"
+                                    pendingLabel="Launching…"
+                                    pending={launchMutation.isPending && launchMutation.variables?.workflowName === template.name}
+                                    error={launchMutation.variables?.workflowName === template.name ? launchMutation.error : null}
+                                    onConfirm={(reason) => { void handleLaunch(template.name, reason); setLaunchArming(null) }}
+                                    onCancel={() => setLaunchArming(null)}
+                                  />
+                                </td>
+                              </tr>
+                            )}
+                          </Fragment>
                         ))}
                       </tbody>
                     </table>

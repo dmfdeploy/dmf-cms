@@ -222,6 +222,40 @@ def build_authorize_url(
     return f"{authorize_endpoint}?{query}"
 
 
+def build_end_session_url(
+    discovery: dict[str, object],
+    settings: OIDCSettings,
+    post_logout_redirect_uri: str = "",
+    id_token_hint: str | None = None,
+) -> str | None:
+    """Build the RP-initiated logout (end-session) URL, or ``None`` if the IdP
+    advertises no ``end_session_endpoint``.
+
+    Front-channel, exactly like :func:`build_authorize_url`: take the endpoint
+    path from discovery but force the scheme+host of the public ``issuer_url``
+    (a back-channel discovery fetch must still yield a browser-resolvable URL).
+    ``id_token_hint`` (when we captured the id_token at callback) lets the IdP
+    log out silently; without it Authentik prompts to confirm. ``client_id`` is
+    sent alongside ``post_logout_redirect_uri`` per the OIDC RP-logout spec so
+    the IdP can validate the redirect against the registered app.
+    """
+    endpoint = discovery.get("end_session_endpoint")
+    if not endpoint:
+        return None
+    discovered = urlsplit(str(endpoint))
+    public = urlsplit(settings.issuer_url)
+    end_session_endpoint = urlunsplit((public.scheme, public.netloc, discovered.path, "", ""))
+    params: dict[str, str] = {}
+    if id_token_hint:
+        params["id_token_hint"] = id_token_hint
+    if post_logout_redirect_uri:
+        params["post_logout_redirect_uri"] = post_logout_redirect_uri
+        params["client_id"] = settings.client_id
+    if not params:
+        return end_session_endpoint
+    return f"{end_session_endpoint}?{urlencode(params)}"
+
+
 def exchange_code_for_token(
     discovery: dict[str, object],
     settings: OIDCSettings,

@@ -18,6 +18,7 @@ def enabled_settings():
     return Settings(
         runtime_mode="local",
         dev_login_enabled=True,
+        dev_groups=("dmf-console-operator",),
         awx=AWXSettings(
             api_url="http://awx.test",
             api_token="test-token",
@@ -40,6 +41,7 @@ def disabled_settings():
     return Settings(
         runtime_mode="local",
         dev_login_enabled=True,
+        dev_groups=("dmf-console-operator",),
         awx=AWXSettings(
             api_url="http://awx.test",
             api_token="test-token",
@@ -57,6 +59,7 @@ def misconfigured_settings():
     return Settings(
         runtime_mode="local",
         dev_login_enabled=True,
+        dev_groups=("dmf-console-operator",),
         awx=AWXSettings(
             api_url="http://awx.test",
             api_token="test-token",
@@ -132,11 +135,10 @@ def test_enabled_but_misconfigured_returns_503(misconfigured_settings):
 
     app = create_app(settings=misconfigured_settings)
     with TestClient(app) as client:
-        # Mock auth
-        with patch("dmf_cms.main._require_user", return_value=True):
-            response = client.post("/api/workflows/test-workflow/launch")
-            assert response.status_code == 503
-            assert "misconfigured" in response.json()["error"].lower()
+        client.get("/auth/login", follow_redirects=False)  # operator session (WP-E gate)
+        response = client.post("/api/workflows/test-workflow/launch", json={"reason": "test"})
+        assert response.status_code == 503
+        assert "misconfigured" in response.json()["error"].lower()
 
 
 def test_disabled_autoscale_uses_sync_path(disabled_settings):
@@ -146,14 +148,14 @@ def test_disabled_autoscale_uses_sync_path(disabled_settings):
 
     app = create_app(settings=disabled_settings)
     with TestClient(app) as client:
-        with patch("dmf_cms.main._require_user", return_value=True), \
-             patch("dmf_cms.main.lookup_job_template_by_name") as mock_lookup, \
+        client.get("/auth/login", follow_redirects=False)  # operator session (WP-E gate)
+        with patch("dmf_cms.main.lookup_job_template_by_name") as mock_lookup, \
              patch("dmf_cms.main.launch_job") as mock_launch:
 
             mock_lookup.return_value = {"id": 123, "name": "test-workflow"}
             mock_launch.return_value = 456
 
-            response = client.post("/api/workflows/test-workflow/launch")
+            response = client.post("/api/workflows/test-workflow/launch", json={"reason": "test"})
 
             # Should return sync response with job_id
             assert response.status_code == 200
@@ -173,8 +175,8 @@ def test_concurrent_duplicate_posts_yield_one_operation(enabled_settings):
 
     app = create_app(settings=enabled_settings)
     with TestClient(app) as client:
-        with patch("dmf_cms.main._require_user", return_value=True), \
-             patch("dmf_cms.main.ensure_awx_awake"), \
+        client.get("/auth/login", follow_redirects=False)  # operator session (WP-E gate)
+        with patch("dmf_cms.main.ensure_awx_awake"), \
              patch("dmf_cms.main.lookup_job_template_by_name") as mock_lookup, \
              patch("dmf_cms.main.launch_job") as mock_launch:
 
@@ -182,14 +184,14 @@ def test_concurrent_duplicate_posts_yield_one_operation(enabled_settings):
             mock_launch.return_value = 456
 
             # First POST creates operation
-            response1 = client.post("/api/workflows/test-workflow/launch")
+            response1 = client.post("/api/workflows/test-workflow/launch", json={"reason": "test"})
             assert response1.status_code == 202
             data1 = response1.json()
             assert "operation_id" in data1
             op_id = data1["operation_id"]
 
             # Second POST returns existing operation (200, not 202)
-            response2 = client.post("/api/workflows/test-workflow/launch")
+            response2 = client.post("/api/workflows/test-workflow/launch", json={"reason": "test"})
             assert response2.status_code == 200
             data2 = response2.json()
             assert data2["operation_id"] == op_id
@@ -206,13 +208,13 @@ def test_operation_error_sanitization(enabled_settings):
 
     app = create_app(settings=enabled_settings)
     with TestClient(app) as client:
-        # Mock auth and make ensure_awx_awake raise an error with raw body
+        client.get("/auth/login", follow_redirects=False)  # operator session (WP-E gate)
+        # Make ensure_awx_awake raise an error with a raw body
         raw_error_body = "Internal server error: database connection failed at db.internal.example:5432"
-        with patch("dmf_cms.main._require_user", return_value=True), \
-             patch("dmf_cms.main.ensure_awx_awake", side_effect=AWXAutoscaleError(500, raw_error_body)):
+        with patch("dmf_cms.main.ensure_awx_awake", side_effect=AWXAutoscaleError(500, raw_error_body)):
 
             # POST to create operation (will fail in background task)
-            response = client.post("/api/workflows/test-workflow/launch")
+            response = client.post("/api/workflows/test-workflow/launch", json={"reason": "test"})
             assert response.status_code == 202
             op_id = response.json()["operation_id"]
 

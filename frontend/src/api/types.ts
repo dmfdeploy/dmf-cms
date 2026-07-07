@@ -44,6 +44,8 @@ export interface WorkflowsListResponse {
 export interface WorkflowLaunchResponse {
   job_id: number
   status: string
+  // C5: echoed by the operator-gated write (#185 WP-E), correlates to the audit line.
+  request_id?: string
 }
 
 // Async operation tracking (WS5 scale-to-zero)
@@ -58,6 +60,9 @@ export interface Operation {
   error: string | null
   created_at: string
   updated_at: string
+  // Spread onto the 202/200 async write response by the operator-gated write
+  // (#185 WP-E); absent on later poll reads of the operation itself.
+  request_id?: string
 }
 
 // Union type: sync response (200) or async operation (202)
@@ -289,6 +294,8 @@ export interface CatalogListResponse {
 export interface CatalogActionResponse {
   job_id: number
   status: string
+  // C5: echoed by the operator-gated write (#185 WP-E), correlates to the audit line.
+  request_id?: string
 }
 
 // Union type: sync response (200) or async operation (202)

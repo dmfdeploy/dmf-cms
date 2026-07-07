@@ -1,3 +1,11 @@
+{#
+  MOTHBALLED (dmfdeploy/dmfdeploy#185 WP-E). This server-rendered template is
+  DEAD: no route/TemplateResponse serves it — the console is the React SPA under
+  static/app. Kept only for provenance. Do NOT resurrect as-is: the workflow
+  launch below now requires the operator gate + a mandatory C5 `reason` (the
+  fetch was updated to send one so a naive revival wouldn't 400, but the whole
+  page needs re-derivation from the SPA before any reuse).
+#}
 {% extends "base.html" %}
 
 {% block content %}
@@ -127,7 +135,12 @@
           btn.textContent = '⏳ Launching…';
 
           try {
-            const resp = await fetch(`{{ base_path }}api/workflows/${name}/launch`, { method: 'POST' });
+            const resp = await fetch(`{{ base_path }}api/workflows/${name}/launch`, {
+              method: 'POST',
+              headers: { 'Content-Type': 'application/json' },
+              // C5: the launch is operator-gated + reason-required (#185 WP-E).
+              body: JSON.stringify({ reason: 'launched from legacy console' }),
+            });
             const data = await resp.json();
 
             if (!resp.ok) {

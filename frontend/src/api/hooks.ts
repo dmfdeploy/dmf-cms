@@ -73,11 +73,16 @@ export function useWorkflows() {
   })
 }
 
+// AWX writes are operator-gated and carry the C5 quartet: a mandatory reason
+// is sent in the body (backend 400s without it), and the response echoes a
+// request_id (#185 WP-E), mirroring clear-for-deployment.
 export function useLaunchWorkflow() {
   return useMutation({
-    mutationFn: (workflowName: string) =>
+    mutationFn: ({ workflowName, reason }: { workflowName: string; reason: string }) =>
       apiCall<WorkflowLaunchResult>(`/api/workflows/${workflowName}/launch`, {
         method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ reason }),
       }),
   })
 }
@@ -273,18 +278,22 @@ export function useCatalog() {
 
 export function useDeployCatalog() {
   return useMutation({
-    mutationFn: (key: string) =>
+    mutationFn: ({ key, reason }: { key: string; reason: string }) =>
       apiCall<CatalogActionResult>(`/api/catalog/${key}/deploy`, {
         method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ reason }),
       }),
   })
 }
 
 export function useTeardownCatalog() {
   return useMutation({
-    mutationFn: (key: string) =>
+    mutationFn: ({ key, reason }: { key: string; reason: string }) =>
       apiCall<CatalogActionResult>(`/api/catalog/${key}/teardown`, {
         method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ reason }),
       }),
   })
 }

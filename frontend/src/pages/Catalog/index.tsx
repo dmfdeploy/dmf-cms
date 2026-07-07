@@ -1,14 +1,17 @@
 import { useState, useEffect } from 'react'
 import { useQueryClient } from '@tanstack/react-query'
 import type { CatalogEntry } from '../../api/types'
+import ReasonConfirm from '../../components/ReasonConfirm'
 import {
   useCatalog,
+  useCurrentUser,
   useDeployCatalog,
   useTeardownCatalog,
   useCatalogJobStatus,
   useOperationStatus,
   isOperation,
 } from '../../api/hooks'
+import { useActivityStore } from '../../store/activity'
 
 const lifecycleBadge: Record<string, string> = {
   bootstrapped: 'bg-muted/20 text-muted',
@@ -27,13 +30,36 @@ interface EntryActionState {
 export default function Catalog() {
   const queryClient = useQueryClient()
   const { data: catalogData, isLoading, error } = useCatalog()
+  const { data: user } = useCurrentUser()
   const deployMutation = useDeployCatalog()
   const teardownMutation = useTeardownCatalog()
+  const recordAwxWrite = useActivityStore((s) => s.recordAwxWrite)
   const [entryActions, setEntryActions] = useState<Record<string, EntryActionState>>({})
 
-  const handleDeploy = async (entry: CatalogEntry) => {
+  // Console-local Activity record for a consequential write (plan §4a: AWX
+  // writes land in the Activity record "like clear does"). request_id + reason
+  // come from the write; actor/role from the effective user (#185 WP-E P2-3).
+  const record = (
+    action: 'deploy' | 'teardown',
+    key: string,
+    reason: string,
+    result: { request_id?: string; status?: string },
+    outcome: string,
+  ) =>
+    recordAwxWrite({
+      request_id: result.request_id ?? '',
+      action,
+      target: key,
+      reason,
+      actor: user?.subject ?? 'unknown',
+      role: user?.role ?? 'unknown',
+      outcome,
+    })
+
+  const handleDeploy = async (entry: CatalogEntry, reason: string) => {
     try {
-      const result = await deployMutation.mutateAsync(entry.key)
+      const result = await deployMutation.mutateAsync({ key: entry.key, reason })
+      record('deploy', entry.key, reason, result, isOperation(result) ? 'dispatched' : result.status)
       if (isOperation(result)) {
         // Async flow (202): track the operation
         setEntryActions((prev) => ({
@@ -52,9 +78,10 @@ export default function Catalog() {
     }
   }
 
-  const handleTeardown = async (entry: CatalogEntry) => {
+  const handleTeardown = async (entry: CatalogEntry, reason: string) => {
     try {
-      const result = await teardownMutation.mutateAsync(entry.key)
+      const result = await teardownMutation.mutateAsync({ key: entry.key, reason })
+      record('teardown', entry.key, reason, result, isOperation(result) ? 'dispatched' : result.status)
       if (isOperation(result)) {
         // Async flow (202): track the operation
         setEntryActions((prev) => ({
@@ -134,8 +161,10 @@ export default function Catalog() {
               actionState={entryActions[entry.key] ?? { deployJobId: null, teardownJobId: null, deployOpId: null, teardownOpId: null }}
               onDeploy={handleDeploy}
               onTeardown={handleTeardown}
-              isDeploying={deployMutation.isPending && deployMutation.variables === entry.key}
-              isTearingDown={teardownMutation.isPending && teardownMutation.variables === entry.key}
+              isDeploying={deployMutation.isPending && deployMutation.variables?.key === entry.key}
+              isTearingDown={teardownMutation.isPending && teardownMutation.variables?.key === entry.key}
+              deployError={deployMutation.variables?.key === entry.key ? deployMutation.error : null}
+              teardownError={teardownMutation.variables?.key === entry.key ? teardownMutation.error : null}
               onJobComplete={handleJobComplete}
               setEntryActions={setEntryActions}
             />
@@ -155,19 +184,26 @@ function EntryCard({
   onTeardown,
   isDeploying,
   isTearingDown,
+  deployError,
+  teardownError,
   onJobComplete,
   setEntryActions,
 }: {
   entry: CatalogEntry
   actionState: EntryActionState
-  onDeploy: (entry: CatalogEntry) => void
-  onTeardown: (entry: CatalogEntry) => void
+  onDeploy: (entry: CatalogEntry, reason: string) => void
+  onTeardown: (entry: CatalogEntry, reason: string) => void
   isDeploying: boolean
   isTearingDown: boolean
+  deployError: unknown
+  teardownError: unknown
   onJobComplete: (key: string, kind: 'deploy' | 'teardown') => void
   setEntryActions: React.Dispatch<React.SetStateAction<Record<string, EntryActionState>>>
 }) {
   const deployBadge = lifecycleBadge[entry.lifecycle] ?? 'bg-gray-900/30 text-gray-400'
+  // Graduated friction (hard gate 3): the Deploy/Teardown buttons arm a
+  // reason panel; the write fires only on Confirm with a non-empty reason.
+  const [arming, setArming] = useState<'deploy' | 'teardown' | null>(null)
 
   // A job or operation is in-flight while its id is set (launch → cleared on completion).
   // Gate the buttons on this, not just the sub-second launch mutation
@@ -220,21 +256,50 @@ function EntryCard({
             </a>
           )}
           <button
-            onClick={() => onDeploy(entry)}
-            disabled={deployDisabled}
+            onClick={() => setArming('deploy')}
+            disabled={deployDisabled || arming !== null}
             className="btn btn-primary btn-sm"
           >
             {isDeploying ? '⏳ Launching…' : actionState.deployOpId ? '⏳ Waking…' : deployInFlight ? '⏳ Deploying…' : '▶ Deploy'}
           </button>
           <button
-            onClick={() => onTeardown(entry)}
-            disabled={teardownDisabled}
+            onClick={() => setArming('teardown')}
+            disabled={teardownDisabled || arming !== null}
             className="btn btn-secondary btn-sm"
           >
             {isTearingDown ? '⏳ Tearing down…' : actionState.teardownOpId ? '⏳ Waking…' : teardownInFlight ? '⏳ Tearing down…' : '⏏ Teardown'}
           </button>
         </div>
       </div>
+
+      {arming === 'deploy' && (
+        <div className="mt-3">
+          <ReasonConfirm
+            title={`Deploy ${entry.display_name}?`}
+            description="Provisions this media function via its AWX job template. The action is operator-gated and recorded in the audit trail with your reason."
+            confirmLabel="Confirm deploy"
+            pendingLabel="Launching…"
+            pending={isDeploying}
+            error={deployError}
+            onConfirm={(reason) => { onDeploy(entry, reason); setArming(null) }}
+            onCancel={() => setArming(null)}
+          />
+        </div>
+      )}
+      {arming === 'teardown' && (
+        <div className="mt-3">
+          <ReasonConfirm
+            title={`Teardown ${entry.display_name}?`}
+            description="Finalises this media function via its AWX teardown template. The action is operator-gated and recorded in the audit trail with your reason."
+            confirmLabel="Confirm teardown"
+            pendingLabel="Tearing down…"
+            pending={isTearingDown}
+            error={teardownError}
+            onConfirm={(reason) => { onTeardown(entry, reason); setArming(null) }}
+            onCancel={() => setArming(null)}
+          />
+        </div>
+      )}
 
       {entry.dependencies && entry.dependencies.length > 0 && (
         <div className="mt-3 pt-3 border-t border-muted/10">
