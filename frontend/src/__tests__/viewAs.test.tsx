@@ -112,6 +112,15 @@ describe('view-as dropdown control', () => {
   })
 })
 
+describe('account menu — Settings placement (#185 WP-E)', () => {
+  it('offers Settings (own prefs) in the avatar dropdown, linking to /settings', () => {
+    renderTopbar(identity())
+    fireEvent.click(screen.getByRole('button', { name: /AU/i }))
+    const settings = screen.getByRole('link', { name: 'Settings' })
+    expect(settings.getAttribute('href')).toBe('/settings')
+  })
+})
+
 describe('amber view-as chip', () => {
   it('renders when active, showing the effective role, with a Reset', () => {
     renderTopbar(identity({ role: 'viewer', real_role: 'admin', view_as_active: true }))

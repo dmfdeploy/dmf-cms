@@ -17,7 +17,10 @@ interface NavItem {
 // WP1). Nav visibility is cosmetic — the backend enforces the same boundary
 // on every endpoint. Licenses/Users/Site settings are named-deferred (no
 // pages yet); Workflow + Changes are interim entries until WP3 merges them
-// into Activity.
+// into Activity. "Settings (own prefs)" is NOT a rail secondary — it lives in
+// the Topbar avatar menu only (IA §3 placement clarification, #185 WP-E); the
+// rail slot is reserved for facility-level Site settings, which appears only
+// once that admin-gated page exists.
 const allNavItems: NavItem[] = [
   { label: 'Workspace', path: '/', icon: 'grid', section: 'rail' },
   { label: 'Facilities', path: '/facilities', icon: 'sites', section: 'rail' },
@@ -30,7 +33,6 @@ const allNavItems: NavItem[] = [
   // gates itself to operator+ inside the page.
   { label: 'Activity', path: '/activity', icon: 'automation', section: 'secondary' },
   { label: 'Admin', path: '/admin', icon: 'shield', section: 'secondary', onlyRoles: ['admin'] },
-  { label: 'Settings', path: '/settings', icon: 'settings', section: 'secondary' },
 ]
 
 const icons: Record<string, React.ReactNode> = {

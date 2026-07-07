@@ -36,6 +36,7 @@ from .security import (
     UserIdentity,
     VIEW_AS_ROLES,
     build_authorize_url,
+    build_end_session_url,
     clear_user,
     discovery_document,
     dev_user,
@@ -134,6 +135,66 @@ def _require_media_workloads_access(request: Request) -> tuple[UserIdentity | No
     if not role_at_least(user.role, "engineer") and MEDIA_ENGINEERS_GROUP not in user.groups:
         return None, JSONResponse({"error": "forbidden"}, status_code=403)
     return user, None
+
+
+async def _require_reason(request: Request) -> tuple[str | None, JSONResponse | None]:
+    """Extract + validate the mandatory C5 ``reason`` from a write request body.
+
+    Returns ``(reason, None)`` (reason stripped, guaranteed non-empty) when
+    present, else ``(None, error_response)`` — a 400 that must short-circuit the
+    handler *before* any actuator call (no AWX launch on a missing reason).
+    Mirrors the clear-for-deployment precondition (ADR-0028 C5).
+    """
+    try:
+        body = await request.json()
+    except Exception:
+        body = None
+    reason = (body or {}).get("reason", "")
+    if not isinstance(reason, str) or not reason.strip():
+        return None, JSONResponse(
+            {"error": "reason-required", "detail": "a non-empty 'reason' field is mandatory (C5)"},
+            status_code=400,
+        )
+    return reason.strip(), None
+
+
+def _audit_awx_write(
+    request: Request,
+    user: UserIdentity,
+    *,
+    action: str,
+    target: str,
+    request_id: str,
+    reason: str,
+    outcome: str,
+) -> None:
+    """Emit the C5 quartet audit line for a DMF-initiated AWX write.
+
+    deploy / teardown / launch are consequential automated actions, so they
+    carry the same durable record as clear-for-deployment: actor + effective
+    role + request-id + reason + outcome. ``real_role`` is included only when a
+    view-as downgrade is active, so an admin acting-as-viewer stays attributable
+    (B+E composition). The structured log line is the audit record until the
+    console-local Activity lane subsumes it (#174).
+
+    Scope (codex WP-E P2-4): the C5 quartet is recorded HERE (the dmf-cms log +
+    the console-local Activity record), NOT injected into AWX job ``extra_vars``.
+    This matches clear-for-deployment: the console is the authoritative audit
+    surface (ADR-0028); threading C5 into AWX itself is deferred.
+    """
+    real = session_user(request.session)
+    real_role = real.role if (real is not None and request.session.get("view_as")) else ""
+    logger.info(
+        "awx write: action=%s actor=%s role=%s real_role=%s request_id=%s target=%s reason=%r outcome=%s",
+        action,
+        user.subject,
+        user.role,
+        real_role,
+        request_id,
+        target,
+        reason,
+        outcome,
+    )
 
 
 def _bootstrap_console_groups(settings: Settings) -> None:
@@ -540,6 +601,28 @@ def create_app(settings: Settings | None = None, contract: AppContract | None = 
         # Fallback to "/" (current origin root) — never hardcode a domain
         # that may be stale (e.g. the dmf.example.com placeholder).
         landing = settings.oidc.logout_redirect_url or "/"
+        # RP-initiated logout: route the browser through the IdP end-session
+        # endpoint so the *SSO* session is terminated, not merely the console
+        # session — otherwise Authentik's session survives and the next login is
+        # silent (handoff §5b). We deliberately do NOT pass id_token_hint: that
+        # would require persisting the id_token in the client-side signed session
+        # cookie (browser-stored token material + cookie bloat, codex WP-E P2).
+        # RP logout rides client_id + post_logout_redirect_uri instead — the IdP
+        # shows a confirm interstitial but the SSO session is still terminated.
+        # Falls back to the plain landing when OIDC is unconfigured or the IdP
+        # advertises no end-session endpoint.
+        if settings.oidc.configured:
+            try:
+                discovery = discovery_document(settings.oidc)
+                end_session = build_end_session_url(
+                    discovery,
+                    settings.oidc,
+                    post_logout_redirect_uri=landing,
+                )
+                if end_session:
+                    landing = end_session
+            except Exception as exc:  # discovery fetch / parse is best-effort
+                logger.warning("logout: could not build end-session URL, using plain landing: %s", exc)
         return HTMLResponse(
             content=(
                 f'<!doctype html><html><head><meta charset="utf-8">'
@@ -656,15 +739,28 @@ def create_app(settings: Settings | None = None, contract: AppContract | None = 
 
     @app.post("/api/workflows/{workflow_name}/launch")
     async def api_workflow_launch(request: Request, workflow_name: str):
-        if not _require_user(request):
-            return JSONResponse({"error": "unauthorized"}, status_code=401)
+        # Operator+ gate (was login-only — a viewer could launch by curl).
+        user, err = _require_min_role(request, "operator")
+        if err is not None:
+            return err
+        assert user is not None
+        # C5: validate reason + allocate request_id BEFORE any early return
+        # (incl. the config 503s) so EVERY post-auth path is audited and echoes
+        # request_id, and a missing reason is a 400 even when AWX is dark.
+        reason, rerr = await _require_reason(request)
+        if rerr is not None:
+            return rerr
+        assert reason is not None
+        request_id = uuid.uuid4().hex
         if not settings.awx.configured:
-            return JSONResponse({"error": "AWX API not configured"}, status_code=503)
+            _audit_awx_write(request, user, action="launch", target=workflow_name, request_id=request_id, reason=reason, outcome="awx-not-configured")
+            return JSONResponse({"error": "AWX API not configured", "request_id": request_id}, status_code=503)
 
         # Async operation flow (when autoscale enabled)
         if settings.awx_autoscale.enabled:
             if not settings.awx_autoscale.configured:
-                return JSONResponse({"error": "AWX autoscale enabled but misconfigured"}, status_code=503)
+                _audit_awx_write(request, user, action="launch", target=workflow_name, request_id=request_id, reason=reason, outcome="autoscale-misconfigured")
+                return JSONResponse({"error": "AWX autoscale enabled but misconfigured", "request_id": request_id}, status_code=503)
 
             ops_store = request.app.state.operations
 
@@ -675,7 +771,8 @@ def create_app(settings: Settings | None = None, contract: AppContract | None = 
                 # Existing operation found - return it without spawning new task
                 # v1 behavior: browser refresh loses live spinner but re-clicking
                 # safely reattaches via get_or_create (no double launch)
-                return JSONResponse(op.to_dict(), status_code=200)
+                _audit_awx_write(request, user, action="launch", target=workflow_name, request_id=request_id, reason=reason, outcome="reattached")
+                return JSONResponse({**op.to_dict(), "request_id": request_id}, status_code=200)
 
             # Spawn background task with tracking
             task = asyncio.create_task(_run_launch_operation(
@@ -684,7 +781,8 @@ def create_app(settings: Settings | None = None, contract: AppContract | None = 
             request.app.state.operation_tasks.add(task)
             task.add_done_callback(request.app.state.operation_tasks.discard)
 
-            return JSONResponse(op.to_dict(), status_code=202)
+            _audit_awx_write(request, user, action="launch", target=workflow_name, request_id=request_id, reason=reason, outcome="dispatched")
+            return JSONResponse({**op.to_dict(), "request_id": request_id}, status_code=202)
 
         # Sync flow (autoscale disabled)
         try:
@@ -695,16 +793,19 @@ def create_app(settings: Settings | None = None, contract: AppContract | None = 
                 ssl_verify=settings.awx.ssl_verify,
             )
             if template is None:
-                return JSONResponse({"error": f"workflow '{workflow_name}' not found in AWX"}, status_code=404)
+                _audit_awx_write(request, user, action="launch", target=workflow_name, request_id=request_id, reason=reason, outcome="not-found")
+                return JSONResponse({"error": f"workflow '{workflow_name}' not found in AWX", "request_id": request_id}, status_code=404)
             job_id = launch_job(
                 api_url=settings.awx.api_url,
                 api_token=settings.awx.api_token,
                 job_template_id=template["id"],
                 ssl_verify=settings.awx.ssl_verify,
             )
-            return JSONResponse({"job_id": job_id, "status": "launched"})
+            _audit_awx_write(request, user, action="launch", target=workflow_name, request_id=request_id, reason=reason, outcome="launched")
+            return JSONResponse({"job_id": job_id, "status": "launched", "request_id": request_id})
         except AWXAPIError as exc:
-            return JSONResponse({"error": f"AWX API error: {exc.body}"}, status_code=exc.status)
+            _audit_awx_write(request, user, action="launch", target=workflow_name, request_id=request_id, reason=reason, outcome=f"awx-error:{exc.status}")
+            return JSONResponse({"error": f"AWX API error: {exc.body}", "request_id": request_id}, status_code=exc.status)
 
     @app.get("/api/workflows/jobs/{job_id}")
     async def api_workflow_job_status(request: Request, job_id: int):
@@ -1461,23 +1562,39 @@ def create_app(settings: Settings | None = None, contract: AppContract | None = 
 
     @app.post("/api/catalog/{key}/deploy")
     async def api_catalog_deploy(request: Request, key: str):
-        """Launch the AWX job template for this catalog entry."""
-        if not _require_user(request):
-            return JSONResponse({"error": "unauthorized"}, status_code=401)
+        """Launch the AWX job template for this catalog entry (Provision/Configure).
+
+        Operator+ gated with the C5 quartet (reason mandatory, request_id echoed
+        + audited on every path): a viewer can no longer deploy by curl.
+        """
+        user, err = _require_min_role(request, "operator")
+        if err is not None:
+            return err
+        assert user is not None
+        # C5: reason + request_id before any early return (config 503s included).
+        reason, rerr = await _require_reason(request)
+        if rerr is not None:
+            return rerr
+        assert reason is not None
+        request_id = uuid.uuid4().hex
         if not settings.awx.configured:
-            return JSONResponse({"error": "AWX API not configured"}, status_code=503)
+            _audit_awx_write(request, user, action="deploy", target=key, request_id=request_id, reason=reason, outcome="awx-not-configured")
+            return JSONResponse({"error": "AWX API not configured", "request_id": request_id}, status_code=503)
         index = _catalog_index()
         entry = index.get(key)
         if entry is None:
-            return JSONResponse({"error": f"catalog entry '{key}' not found"}, status_code=404)
+            _audit_awx_write(request, user, action="deploy", target=key, request_id=request_id, reason=reason, outcome="entry-not-found")
+            return JSONResponse({"error": f"catalog entry '{key}' not found", "request_id": request_id}, status_code=404)
         jt_name = (entry.configure or {}).get("awx_job_template")
         if not jt_name:
-            return JSONResponse({"error": f"entry '{key}' has no configure.awx_job_template"}, status_code=500)
+            _audit_awx_write(request, user, action="deploy", target=key, request_id=request_id, reason=reason, outcome="no-job-template")
+            return JSONResponse({"error": f"entry '{key}' has no configure.awx_job_template", "request_id": request_id}, status_code=500)
 
         # Async operation flow (when autoscale enabled)
         if settings.awx_autoscale.enabled:
             if not settings.awx_autoscale.configured:
-                return JSONResponse({"error": "AWX autoscale enabled but misconfigured"}, status_code=503)
+                _audit_awx_write(request, user, action="deploy", target=key, request_id=request_id, reason=reason, outcome="autoscale-misconfigured")
+                return JSONResponse({"error": "AWX autoscale enabled but misconfigured", "request_id": request_id}, status_code=503)
 
             ops_store = request.app.state.operations
 
@@ -1488,7 +1605,8 @@ def create_app(settings: Settings | None = None, contract: AppContract | None = 
                 # Existing operation found - return it without spawning new task
                 # v1 behavior: browser refresh loses live spinner but re-clicking
                 # safely reattaches via get_or_create (no double launch)
-                return JSONResponse(op.to_dict(), status_code=200)
+                _audit_awx_write(request, user, action="deploy", target=key, request_id=request_id, reason=reason, outcome="reattached")
+                return JSONResponse({**op.to_dict(), "request_id": request_id}, status_code=200)
 
             # Spawn background task with tracking
             task = asyncio.create_task(_run_deploy_operation(
@@ -1497,7 +1615,8 @@ def create_app(settings: Settings | None = None, contract: AppContract | None = 
             request.app.state.operation_tasks.add(task)
             task.add_done_callback(request.app.state.operation_tasks.discard)
 
-            return JSONResponse(op.to_dict(), status_code=202)
+            _audit_awx_write(request, user, action="deploy", target=key, request_id=request_id, reason=reason, outcome="dispatched")
+            return JSONResponse({**op.to_dict(), "request_id": request_id}, status_code=202)
 
         # Sync flow (autoscale disabled)
         try:
@@ -1508,7 +1627,8 @@ def create_app(settings: Settings | None = None, contract: AppContract | None = 
                 ssl_verify=settings.awx.ssl_verify,
             )
             if template is None:
-                return JSONResponse({"error": f"AWX job template '{jt_name}' not found"}, status_code=404)
+                _audit_awx_write(request, user, action="deploy", target=key, request_id=request_id, reason=reason, outcome="template-not-found")
+                return JSONResponse({"error": f"AWX job template '{jt_name}' not found", "request_id": request_id}, status_code=404)
             # Idempotency guard: if a deploy job for this template is already
             # in-flight, return it instead of launching a duplicate (defends
             # against double-click / two tabs / slow render — the real guard,
@@ -1520,36 +1640,55 @@ def create_app(settings: Settings | None = None, contract: AppContract | None = 
                 ssl_verify=settings.awx.ssl_verify,
             )
             if active is not None:
-                return JSONResponse({"job_id": active, "status": "already-active"})
+                _audit_awx_write(request, user, action="deploy", target=key, request_id=request_id, reason=reason, outcome="already-active")
+                return JSONResponse({"job_id": active, "status": "already-active", "request_id": request_id})
             job_id = launch_job(
                 api_url=settings.awx.api_url,
                 api_token=settings.awx.api_token,
                 job_template_id=template["id"],
                 ssl_verify=settings.awx.ssl_verify,
             )
-            return JSONResponse({"job_id": job_id, "status": "launched"})
+            _audit_awx_write(request, user, action="deploy", target=key, request_id=request_id, reason=reason, outcome="launched")
+            return JSONResponse({"job_id": job_id, "status": "launched", "request_id": request_id})
         except AWXAPIError as exc:
-            return JSONResponse({"error": f"AWX API error: {exc.body}"}, status_code=exc.status)
+            _audit_awx_write(request, user, action="deploy", target=key, request_id=request_id, reason=reason, outcome=f"awx-error:{exc.status}")
+            return JSONResponse({"error": f"AWX API error: {exc.body}", "request_id": request_id}, status_code=exc.status)
 
     @app.post("/api/catalog/{key}/teardown")
     async def api_catalog_teardown(request: Request, key: str):
-        """Launch the finalise (teardown) AWX job template for this catalog entry."""
-        if not _require_user(request):
-            return JSONResponse({"error": "unauthorized"}, status_code=401)
+        """Launch the finalise (teardown) AWX job template for this catalog entry.
+
+        Operator+ gated with the C5 quartet (reason mandatory, request_id echoed
+        + audited on every path): a viewer can no longer teardown by curl.
+        """
+        user, err = _require_min_role(request, "operator")
+        if err is not None:
+            return err
+        assert user is not None
+        # C5: reason + request_id before any early return (config 503s included).
+        reason, rerr = await _require_reason(request)
+        if rerr is not None:
+            return rerr
+        assert reason is not None
+        request_id = uuid.uuid4().hex
         if not settings.awx.configured:
-            return JSONResponse({"error": "AWX API not configured"}, status_code=503)
+            _audit_awx_write(request, user, action="teardown", target=key, request_id=request_id, reason=reason, outcome="awx-not-configured")
+            return JSONResponse({"error": "AWX API not configured", "request_id": request_id}, status_code=503)
         index = _catalog_index()
         entry = index.get(key)
         if entry is None:
-            return JSONResponse({"error": f"catalog entry '{key}' not found"}, status_code=404)
+            _audit_awx_write(request, user, action="teardown", target=key, request_id=request_id, reason=reason, outcome="entry-not-found")
+            return JSONResponse({"error": f"catalog entry '{key}' not found", "request_id": request_id}, status_code=404)
         jt_name = (entry.finalise or {}).get("awx_job_template")
         if not jt_name:
-            return JSONResponse({"error": f"entry '{key}' has no finalise.awx_job_template"}, status_code=500)
+            _audit_awx_write(request, user, action="teardown", target=key, request_id=request_id, reason=reason, outcome="no-job-template")
+            return JSONResponse({"error": f"entry '{key}' has no finalise.awx_job_template", "request_id": request_id}, status_code=500)
 
         # Async operation flow (when autoscale enabled)
         if settings.awx_autoscale.enabled:
             if not settings.awx_autoscale.configured:
-                return JSONResponse({"error": "AWX autoscale enabled but misconfigured"}, status_code=503)
+                _audit_awx_write(request, user, action="teardown", target=key, request_id=request_id, reason=reason, outcome="autoscale-misconfigured")
+                return JSONResponse({"error": "AWX autoscale enabled but misconfigured", "request_id": request_id}, status_code=503)
 
             ops_store = request.app.state.operations
 
@@ -1560,7 +1699,8 @@ def create_app(settings: Settings | None = None, contract: AppContract | None = 
                 # Existing operation found - return it without spawning new task
                 # v1 behavior: browser refresh loses live spinner but re-clicking
                 # safely reattaches via get_or_create (no double launch)
-                return JSONResponse(op.to_dict(), status_code=200)
+                _audit_awx_write(request, user, action="teardown", target=key, request_id=request_id, reason=reason, outcome="reattached")
+                return JSONResponse({**op.to_dict(), "request_id": request_id}, status_code=200)
 
             # Spawn background task with tracking
             task = asyncio.create_task(_run_teardown_operation(
@@ -1569,7 +1709,8 @@ def create_app(settings: Settings | None = None, contract: AppContract | None = 
             request.app.state.operation_tasks.add(task)
             task.add_done_callback(request.app.state.operation_tasks.discard)
 
-            return JSONResponse(op.to_dict(), status_code=202)
+            _audit_awx_write(request, user, action="teardown", target=key, request_id=request_id, reason=reason, outcome="dispatched")
+            return JSONResponse({**op.to_dict(), "request_id": request_id}, status_code=202)
 
         # Sync flow (autoscale disabled)
         try:
@@ -1580,7 +1721,8 @@ def create_app(settings: Settings | None = None, contract: AppContract | None = 
                 ssl_verify=settings.awx.ssl_verify,
             )
             if template is None:
-                return JSONResponse({"error": f"AWX job template '{jt_name}' not found"}, status_code=404)
+                _audit_awx_write(request, user, action="teardown", target=key, request_id=request_id, reason=reason, outcome="template-not-found")
+                return JSONResponse({"error": f"AWX job template '{jt_name}' not found", "request_id": request_id}, status_code=404)
             # Idempotency guard (symmetric with deploy): return an in-flight
             # teardown job for this template instead of launching a duplicate.
             active = find_active_job_for_template(
@@ -1590,16 +1732,19 @@ def create_app(settings: Settings | None = None, contract: AppContract | None = 
                 ssl_verify=settings.awx.ssl_verify,
             )
             if active is not None:
-                return JSONResponse({"job_id": active, "status": "already-active"})
+                _audit_awx_write(request, user, action="teardown", target=key, request_id=request_id, reason=reason, outcome="already-active")
+                return JSONResponse({"job_id": active, "status": "already-active", "request_id": request_id})
             job_id = launch_job(
                 api_url=settings.awx.api_url,
                 api_token=settings.awx.api_token,
                 job_template_id=template["id"],
                 ssl_verify=settings.awx.ssl_verify,
             )
-            return JSONResponse({"job_id": job_id, "status": "launched"})
+            _audit_awx_write(request, user, action="teardown", target=key, request_id=request_id, reason=reason, outcome="launched")
+            return JSONResponse({"job_id": job_id, "status": "launched", "request_id": request_id})
         except AWXAPIError as exc:
-            return JSONResponse({"error": f"AWX API error: {exc.body}"}, status_code=exc.status)
+            _audit_awx_write(request, user, action="teardown", target=key, request_id=request_id, reason=reason, outcome=f"awx-error:{exc.status}")
+            return JSONResponse({"error": f"AWX API error: {exc.body}", "request_id": request_id}, status_code=exc.status)
 
     @app.get("/api/catalog/{key}/status/{job_id}")
     async def api_catalog_job_status(request: Request, key: str, job_id: int):

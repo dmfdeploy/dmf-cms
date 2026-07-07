@@ -1,5 +1,7 @@
 import { useState, useEffect } from 'react'
 import { useWorkflows, useLaunchWorkflow, useWorkflowJobStatus, useCurrentUser, useOperationStatus, isOperation } from '../../api/hooks'
+import ReasonConfirm from '../../components/ReasonConfirm'
+import { useActivityStore } from '../../store/activity'
 
 interface ActiveJob {
   workflowName: string
@@ -18,12 +20,23 @@ export default function JobsLane() {
   const { data: user } = useCurrentUser()
   const { data: workflowsData, isLoading } = useWorkflows()
   const launchMutation = useLaunchWorkflow()
+  const recordAwxWrite = useActivityStore((s) => s.recordAwxWrite)
   const [activeJobs, setActiveJobs] = useState<ActiveJob[]>([])
   const [pendingOps, setPendingOps] = useState<PendingOperation[]>([])
 
-  const handleLaunch = async (workflowName: string) => {
+  const handleLaunch = async (workflowName: string, reason: string) => {
     try {
-      const result = await launchMutation.mutateAsync(workflowName)
+      const result = await launchMutation.mutateAsync({ workflowName, reason })
+      // Console-local Activity record (plan §4a, #185 WP-E P2-3).
+      recordAwxWrite({
+        request_id: result.request_id ?? '',
+        action: 'launch',
+        target: workflowName,
+        reason,
+        actor: user?.subject ?? 'unknown',
+        role: user?.role ?? 'unknown',
+        outcome: isOperation(result) ? 'dispatched' : result.status,
+      })
       if (isOperation(result)) {
         // Async flow (202): track the operation
         setPendingOps(prev => [...prev, { workflowName, operationId: result.operation_id }])
@@ -57,8 +70,9 @@ export default function JobsLane() {
               <WorkflowCard
                 key={template.id}
                 template={template}
-                onLaunch={() => handleLaunch(template.name)}
-                isLaunching={launchMutation.isPending}
+                onLaunch={(reason) => handleLaunch(template.name, reason)}
+                isLaunching={launchMutation.isPending && launchMutation.variables?.workflowName === template.name}
+                launchError={launchMutation.variables?.workflowName === template.name ? launchMutation.error : null}
                 activeJob={activeJobs.find((j) => j.workflowName === template.name)}
                 pendingOp={pendingOps.find((op) => op.workflowName === template.name)}
                 onJobComplete={(jobId) => {
@@ -130,13 +144,15 @@ function WorkflowCard({
   template,
   onLaunch,
   isLaunching,
+  launchError,
   activeJob,
   pendingOp,
   onJobComplete,
 }: {
   template: any
-  onLaunch: () => void
+  onLaunch: (reason: string) => void
   isLaunching: boolean
+  launchError: unknown
   activeJob?: { workflowName: string; jobId: number }
   pendingOp?: { workflowName: string; operationId: string }
   onJobComplete: (jobId: number) => void
@@ -144,22 +160,42 @@ function WorkflowCard({
   // by the parent's pending-operations panel, not the card; accept, don't bind.
   onOpComplete: (operationId: string) => void
 }) {
+  // Graduated friction (hard gate 3): Launch arms a reason panel; the
+  // operator-gated launch fires only on Confirm with a non-empty reason.
+  const [arming, setArming] = useState(false)
+
   return (
-    <div className="panel flex items-start justify-between">
-      <div className="flex-1">
-        <h3 className="text-lg font-semibold mb-1">{template.name}</h3>
-        <p className="text-sm text-muted">{template.description}</p>
-        {activeJob && !pendingOp && (
-          <JobStatus jobId={activeJob.jobId} onComplete={() => onJobComplete(activeJob.jobId)} />
-        )}
+    <div className="panel">
+      <div className="flex items-start justify-between">
+        <div className="flex-1">
+          <h3 className="text-lg font-semibold mb-1">{template.name}</h3>
+          <p className="text-sm text-muted">{template.description}</p>
+          {activeJob && !pendingOp && (
+            <JobStatus jobId={activeJob.jobId} onComplete={() => onJobComplete(activeJob.jobId)} />
+          )}
+        </div>
+        <button
+          onClick={() => setArming(true)}
+          disabled={isLaunching || !!activeJob || !!pendingOp || arming}
+          className="btn btn-primary btn-sm ml-4"
+        >
+          {pendingOp ? '⏳ Waking...' : activeJob ? '⏳ Running...' : '▶ Launch'}
+        </button>
       </div>
-      <button
-        onClick={onLaunch}
-        disabled={isLaunching || !!activeJob || !!pendingOp}
-        className="btn btn-primary btn-sm ml-4"
-      >
-        {pendingOp ? '⏳ Waking...' : activeJob ? '⏳ Running...' : '▶ Launch'}
-      </button>
+      {arming && (
+        <div className="mt-3">
+          <ReasonConfirm
+            title={`Launch ${template.name}?`}
+            description="Runs this AWX workflow. The action is operator-gated and recorded in the audit trail with your reason."
+            confirmLabel="Confirm launch"
+            pendingLabel="Launching…"
+            pending={isLaunching}
+            error={launchError}
+            onConfirm={(reason) => { onLaunch(reason); setArming(false) }}
+            onCancel={() => setArming(false)}
+          />
+        </div>
+      )}
     </div>
   )
 }

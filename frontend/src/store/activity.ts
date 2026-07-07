@@ -10,17 +10,40 @@ import type { ClearForDeploymentResult } from '../api/types'
  * never claims to show other operators' actions. A server-side audit
  * surface arrives with the Audit/Event-Log spec, not this store.
  */
+export type ConsoleActionType =
+  | 'clear-for-deployment'
+  | 'deploy'
+  | 'teardown'
+  | 'launch'
+
 export interface ConsoleActionRecord {
   request_id: string
-  action: 'clear-for-deployment'
+  action: ConsoleActionType
   target: string
   reason: string
   actor: string
   role: string
   at: string
-  requested_state: string
-  previous_state: string
-  reconcile_expectation: string
+  // clear-for-deployment carries the NetBox desired-state transition; the AWX
+  // writes (deploy/teardown/launch) don't, so these stay optional. AWX writes
+  // instead carry `outcome` (the launch result: launched / already-active / …).
+  requested_state?: string
+  previous_state?: string
+  reconcile_expectation?: string
+  outcome?: string
+}
+
+/** A console-originated AWX write (deploy / teardown / launch) for the Activity
+ * lane. request_id + reason come from the write; actor/role from the current
+ * (effective) user — the record is explicitly browser-local (see file docstring). */
+export interface AwxWriteRecord {
+  request_id: string
+  action: 'deploy' | 'teardown' | 'launch'
+  target: string
+  reason: string
+  actor: string
+  role: string
+  outcome: string
 }
 
 export const MAX_CONSOLE_ACTION_RECORDS = 50
@@ -28,6 +51,7 @@ export const MAX_CONSOLE_ACTION_RECORDS = 50
 interface ActivityStore {
   records: ConsoleActionRecord[]
   recordClear: (result: ClearForDeploymentResult) => void
+  recordAwxWrite: (record: AwxWriteRecord) => void
 }
 
 export const useActivityStore = create<ActivityStore>()(
@@ -49,6 +73,13 @@ export const useActivityStore = create<ActivityStore>()(
               previous_state: result.previous_state,
               reconcile_expectation: result.reconcile.expectation,
             },
+            ...state.records,
+          ].slice(0, MAX_CONSOLE_ACTION_RECORDS),
+        })),
+      recordAwxWrite: (record) =>
+        set((state) => ({
+          records: [
+            { ...record, at: new Date().toISOString() },
             ...state.records,
           ].slice(0, MAX_CONSOLE_ACTION_RECORDS),
         })),

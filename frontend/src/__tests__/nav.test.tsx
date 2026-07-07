@@ -163,7 +163,6 @@ describe('sidebar rails + role-gated secondaries (IA §3/§7)', () => {
       'Facilities',
       'Monitoring',
       'Activity',
-      'Settings',
     ])
   })
 
@@ -175,7 +174,6 @@ describe('sidebar rails + role-gated secondaries (IA §3/§7)', () => {
       'Catalog',
       'Monitoring',
       'Activity',
-      'Settings',
     ])
   })
 
@@ -201,7 +199,14 @@ describe('sidebar rails + role-gated secondaries (IA §3/§7)', () => {
       'Monitoring',
       'Activity',
       'Admin',
-      'Settings',
     ])
+  })
+
+  it('never surfaces Settings in the sidebar — it lives in the avatar menu (#185 WP-E)', async () => {
+    for (const role of ['viewer', 'operator', 'engineer', 'admin'] as const) {
+      cleanup()
+      renderSidebar(identity({ role }))
+      expect(await visibleLabels()).not.toContain('Settings')
+    }
   })
 })

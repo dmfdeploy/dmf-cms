@@ -1,6 +1,21 @@
 import { useChangesJobs, useChangesCommits, useChangesPulls } from '@/api/hooks'
 import { GitCommit, GitPullRequest, MousePointerClick, Zap, ExternalLink } from 'lucide-react'
-import { useActivityStore } from '../../store/activity'
+import { useActivityStore, type ConsoleActionType } from '../../store/activity'
+
+// Human title per console-originated action (#185 WP-E: AWX writes join the
+// clear record in this lane).
+function actionTitle(action: ConsoleActionType, target: string): string {
+  switch (action) {
+    case 'clear-for-deployment':
+      return `Cleared ${target} for deployment`
+    case 'deploy':
+      return `Deployed ${target}`
+    case 'teardown':
+      return `Tore down ${target}`
+    case 'launch':
+      return `Launched ${target}`
+  }
+}
 
 // History lane — "what just changed" (IA §5): the audit/history lens the
 // merge condition protects. The former /changes page body plus the
@@ -43,15 +58,20 @@ export default function HistoryLane() {
                 <div className="flex items-start justify-between gap-4">
                   <div className="flex-1 min-w-0">
                     <h3 className="font-semibold text-sm">
-                      Cleared {rec.target} for deployment
+                      {actionTitle(rec.action, rec.target)}
                     </h3>
                     <p className="text-xs text-muted mt-1">
-                      {rec.previous_state} → {rec.requested_state} · “{rec.reason}”
+                      {rec.requested_state
+                        ? `${rec.previous_state} → ${rec.requested_state}`
+                        : rec.outcome}{' '}
+                      · “{rec.reason}”
                     </p>
                     <p className="text-xs text-muted mt-1">
                       {rec.actor} ({rec.role}) · request {rec.request_id.slice(0, 8)}
                     </p>
-                    <p className="text-xs text-muted mt-1">{rec.reconcile_expectation}</p>
+                    {rec.reconcile_expectation && (
+                      <p className="text-xs text-muted mt-1">{rec.reconcile_expectation}</p>
+                    )}
                   </div>
                   <div className="text-right text-xs text-muted shrink-0">
                     {new Date(rec.at).toLocaleString()}

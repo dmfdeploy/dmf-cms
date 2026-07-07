@@ -63,4 +63,31 @@ describe('activity store', () => {
     expect(raw).toBeTruthy()
     expect(JSON.parse(raw as string).state.records[0].request_id).toBe('persisted')
   })
+
+  it('records an AWX write (deploy/teardown/launch) alongside clears (#185 WP-E)', () => {
+    useActivityStore.getState().recordClear(clearResult({ request_id: 'clear-1' }))
+    useActivityStore.getState().recordAwxWrite({
+      request_id: 'deploy-1',
+      action: 'deploy',
+      target: 'mxl-videotest-view',
+      reason: 'scheduled provision',
+      actor: 'ops',
+      role: 'operator',
+      outcome: 'launched',
+    })
+    const records = useActivityStore.getState().records
+    // Newest first — the AWX write is on top of the earlier clear.
+    expect(records.map((r) => r.request_id)).toEqual(['deploy-1', 'clear-1'])
+    expect(records[0]).toMatchObject({
+      action: 'deploy',
+      target: 'mxl-videotest-view',
+      reason: 'scheduled provision',
+      actor: 'ops',
+      role: 'operator',
+      outcome: 'launched',
+    })
+    // AWX writes carry no NetBox state transition.
+    expect(records[0].requested_state).toBeUndefined()
+    expect(records[0].at).toBeTruthy()
+  })
 })

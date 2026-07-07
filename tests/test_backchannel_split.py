@@ -87,6 +87,31 @@ def test_authorize_url_forced_to_public_origin_even_with_internal_discovery():
     assert "code_challenge_method=S256" in url
 
 
+def test_end_session_url_forced_to_public_origin_with_hint():
+    discovery = {
+        **INTERNAL_DISCOVERY,
+        "end_session_endpoint": f"{INTERNAL_BASE}/application/o/dmf-console/end-session/",
+    }
+    url = security.build_end_session_url(
+        discovery,
+        _oidc(),
+        post_logout_redirect_uri="https://console.example.invalid/",
+        id_token_hint="the-id-token",
+    )
+    assert url is not None
+    # RP-initiated logout must hit the PUBLIC host (browser front-channel).
+    assert url.startswith("https://auth.example.invalid/application/o/dmf-console/end-session/")
+    assert "svc.cluster.local" not in url
+    assert "id_token_hint=the-id-token" in url
+    assert "post_logout_redirect_uri=https%3A%2F%2Fconsole.example.invalid%2F" in url
+    assert "client_id=dmf-console" in url
+
+
+def test_end_session_url_none_when_idp_advertises_no_endpoint():
+    # No end_session_endpoint in discovery → caller falls back to the plain landing.
+    assert security.build_end_session_url(INTERNAL_DISCOVERY, _oidc()) is None
+
+
 def test_token_exchange_hits_internal_endpoint(monkeypatch):
     seen = {}
 
