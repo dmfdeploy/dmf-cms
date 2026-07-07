@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react'
+import { useEffect, useRef, useState } from 'react'
 import { useInstanceMxlStatus } from '../../api/hooks'
 import type { MediaWorkloadInstance } from '../../api/types'
 import MxlDetailPanel from './MxlDetailPanel'
@@ -109,6 +109,8 @@ export default function InstanceLiveModal({
   displayName: string
   onClose: () => void
 }) {
+  const panelRef = useRef<HTMLDivElement>(null)
+
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
       if (e.key === 'Escape') onClose()
@@ -116,6 +118,50 @@ export default function InstanceLiveModal({
     document.addEventListener('keydown', onKey)
     return () => document.removeEventListener('keydown', onKey)
   }, [onClose])
+
+  // Focus management for aria-modal (codex P3): pull focus into the dialog on
+  // open, keep Tab within it, and restore focus to the opener on close so
+  // keyboard users are never left interacting with inert background controls.
+  useEffect(() => {
+    const opener = document.activeElement as HTMLElement | null
+    const panel = panelRef.current
+    const focusables = () =>
+      panel
+        ? Array.from(
+            panel.querySelectorAll<HTMLElement>(
+              'a[href], button:not([disabled]), textarea, input, select, [tabindex]:not([tabindex="-1"])',
+            ),
+          ).filter((el) => el.offsetParent !== null || el === document.activeElement)
+        : []
+
+    ;(focusables()[0] ?? panel)?.focus()
+
+    const onKeyDown = (e: KeyboardEvent) => {
+      if (e.key !== 'Tab') return
+      const items = focusables()
+      if (items.length === 0) {
+        e.preventDefault()
+        panel?.focus()
+        return
+      }
+      const first = items[0]
+      const last = items[items.length - 1]
+      const active = document.activeElement
+      if (e.shiftKey && active === first) {
+        e.preventDefault()
+        last.focus()
+      } else if (!e.shiftKey && active === last) {
+        e.preventDefault()
+        first.focus()
+      }
+    }
+
+    panel?.addEventListener('keydown', onKeyDown)
+    return () => {
+      panel?.removeEventListener('keydown', onKeyDown)
+      opener?.focus?.()
+    }
+  }, [])
 
   const live = instance.live_view ?? false
 
@@ -128,7 +174,9 @@ export default function InstanceLiveModal({
       aria-labelledby="live-modal-title"
     >
       <div
-        className="panel w-full max-w-2xl p-5"
+        ref={panelRef}
+        tabIndex={-1}
+        className="panel w-full max-w-2xl p-5 outline-none"
         onClick={(e) => e.stopPropagation()}
       >
         <header className="flex items-start justify-between gap-3">

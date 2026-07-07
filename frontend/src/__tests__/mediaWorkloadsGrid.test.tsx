@@ -13,7 +13,7 @@ import { act, cleanup, render, screen, fireEvent, within } from '@testing-librar
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query'
 import { MemoryRouter } from 'react-router-dom'
 import MediaWorkloads from '../pages/MediaWorkloads'
-import { LIVE_TILE_CAP, PREVIEW_TICK_MS } from '../pages/MediaWorkloads/liveView'
+import { LIVE_TILE_CAP, PREVIEW_TICK_MS, STATUS_POLL_MS } from '../pages/MediaWorkloads/liveView'
 import { useActivityStore } from '../store/activity'
 import type {
   CatalogEntry,
@@ -97,11 +97,22 @@ function mkFetch(opts: HarnessOpts) {
   }
   const statusCalls: Record<string, number> = {}
   const clearCalls: Array<{ url: string; init?: RequestInit }> = []
+  // The legacy aggregate endpoint (MxlDetailPanel). After the R1 P1 fix nothing
+  // should hit it unless the modal fallback is explicitly opened.
+  const counters = { aggregateStatus: 0, aggregatePreview: 0 }
 
   const fetchMock = vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
     const url = (typeof input === 'string' ? input : (input as Request).url).toString()
     if (url.endsWith('/api/catalog')) return json({ entries: opts.catalog ?? [catalogEntry()] })
     if (url.endsWith('/api/media-workloads')) return json(workloads)
+    if (url.match(/\/api\/mxl\/status$/)) {
+      counters.aggregateStatus += 1
+      return json({ configured: true, reachable: true, nodes: [], flow: {}, transport: {} })
+    }
+    if (url.match(/\/api\/mxl\/preview/)) {
+      counters.aggregatePreview += 1
+      return json({})
+    }
     const m = url.match(/\/api\/media-workloads\/([^/]+)\/mxl\/status/)
     if (m) {
       const name = decodeURIComponent(m[1])
@@ -127,7 +138,7 @@ function mkFetch(opts: HarnessOpts) {
     return json({})
   })
   vi.stubGlobal('fetch', fetchMock)
-  return { statusCalls, clearCalls, fetchMock }
+  return { statusCalls, clearCalls, counters, fetchMock }
 }
 
 function renderPage() {
@@ -247,14 +258,17 @@ describe('polling bounds (codex P2/P3)', () => {
       dispatchEvent: () => false,
     }))
     vi.useFakeTimers()
-    mkFetch({})
+    const rm = mkFetch({})
     renderPage()
     await settle()
 
     const img2 = screen.getByAltText(/Live preview of/) as HTMLImageElement
     const r0 = srcTick(img2)
-    await settle(PREVIEW_TICK_MS * 3)
+    const statusAfterLoad = rm.statusCalls['mxl-a'] ?? 0
+    await settle(STATUS_POLL_MS * 3)
+    // No churn AND no auto-refetch: status was fetched once, not on an interval.
     expect(srcTick(screen.getByAltText(/Live preview of/) as HTMLImageElement)).toBe(r0)
+    expect(rm.statusCalls['mxl-a'] ?? 0).toBe(statusAfterLoad)
     expect(screen.getByRole('button', { name: 'Refresh' })).toBeTruthy()
   })
 
@@ -263,21 +277,70 @@ describe('polling bounds (codex P2/P3)', () => {
     const many = Array.from({ length: LIVE_TILE_CAP + 1 }, (_, i) =>
       inst({ instance: `mxl-${String(i).padStart(2, '0')}` }),
     )
-    mkFetch({ instances: many })
+    const cap = mkFetch({ instances: many })
     renderPage()
     await settle()
 
     const imgs = screen.getAllByAltText(/Live preview of/) as HTMLImageElement[]
     expect(imgs).toHaveLength(LIVE_TILE_CAP + 1)
     const before = imgs.map(srcTick)
-    await settle(PREVIEW_TICK_MS + 20)
+    const capName = `mxl-${String(LIVE_TILE_CAP).padStart(2, '0')}` // the (cap+1)th tile
+    const cappedCallsBefore = cap.statusCalls[capName] ?? 0
+    await settle(STATUS_POLL_MS + PREVIEW_TICK_MS + 20)
     const after = (screen.getAllByAltText(/Live preview of/) as HTMLImageElement[]).map(srcTick)
 
     // First LIVE_TILE_CAP advanced; the last (beyond cap) held its frame.
     for (let i = 0; i < LIVE_TILE_CAP; i++) expect(after[i]).toBeGreaterThan(before[i])
     expect(after[LIVE_TILE_CAP]).toBe(before[LIVE_TILE_CAP])
+    // And the capped tile never auto-refetches status (fetched once, then held) —
+    // proves the cap bounds the ACTUAL polling, not just the image churn.
+    expect(cap.statusCalls[capName] ?? 0).toBe(cappedCallsBefore)
+    for (let i = 0; i < LIVE_TILE_CAP; i++) {
+      const name = `mxl-${String(i).padStart(2, '0')}`
+      expect(cap.statusCalls[name] ?? 0).toBeGreaterThan(1)
+    }
     // Exactly one Refresh affordance (the capped tile).
     expect(screen.getAllByRole('button', { name: 'Refresh' })).toHaveLength(1)
+  })
+
+  it('pauses tile polling while the modal is open (the single fast-cadence surface)', async () => {
+    vi.useFakeTimers()
+    const h = mkFetch({
+      instances: [inst({ instance: 'mxl-a' }), inst({ instance: 'mxl-b' })],
+    })
+    renderPage()
+    await settle()
+    await settle(STATUS_POLL_MS * 2)
+    const bBefore = h.statusCalls['mxl-b'] ?? 0
+    expect(bBefore).toBeGreaterThan(1) // tile B was actively polling
+
+    // Open the modal for A → every tile query is disabled.
+    const tileA = screen.getAllByText('MXL Video Test View')[0].closest('[role="button"]')!
+    fireEvent.click(tileA)
+    await settle(STATUS_POLL_MS * 3)
+
+    expect(screen.getByRole('dialog')).toBeTruthy()
+    // B's tile stopped polling entirely while the modal owns the fast cadence.
+    expect(h.statusCalls['mxl-b'] ?? 0).toBe(bBefore)
+  })
+
+  it('table view never hits the legacy aggregate; its Live view opens the same modal', async () => {
+    window.localStorage.setItem('dmf-console-mw-view', 'table') // start in table
+    vi.useFakeTimers()
+    const h = mkFetch({})
+    renderPage()
+    await settle(STATUS_POLL_MS * 3)
+
+    // No inline live panel: neither the aggregate endpoint nor per-instance polling runs.
+    expect(h.counters.aggregateStatus).toBe(0)
+    expect(h.statusCalls['mxl-a'] ?? 0).toBe(0)
+
+    // The table Live view opens the SAME per-instance modal, not the aggregate panel.
+    fireEvent.click(screen.getByRole('button', { name: 'Live view' }))
+    await settle(STATUS_POLL_MS)
+    expect(screen.getByRole('dialog')).toBeTruthy()
+    expect(h.counters.aggregateStatus).toBe(0)
+    expect(h.statusCalls['mxl-a'] ?? 0).toBeGreaterThan(0)
   })
 })
 
@@ -312,6 +375,16 @@ describe('live modal', () => {
 
     fireEvent.keyDown(document, { key: 'Escape' })
     expect(screen.queryByRole('dialog')).toBeNull()
+  })
+
+  it('moves focus into the dialog on open (aria-modal focus management)', async () => {
+    mkFetch({})
+    renderPage()
+    const tile = (await screen.findByText('MXL Video Test View')).closest('[role="button"]')!
+    fireEvent.click(tile)
+    const dialog = await screen.findByRole('dialog')
+    // Focus is pulled into the dialog rather than left on background controls.
+    expect(dialog.contains(document.activeElement)).toBe(true)
   })
 })
 

@@ -1,6 +1,5 @@
 import { useEffect, useMemo, useState } from 'react'
 import { useCatalog, useMediaWorkloads } from '../../api/hooks'
-import MxlDetailPanel from './MxlDetailPanel'
 import ClearForDeployment from './ClearForDeployment'
 import WorkloadTile from './WorkloadTile'
 import InstanceLiveModal from './InstanceLiveModal'
@@ -47,9 +46,9 @@ export default function MediaWorkloads() {
   const [functionFilter, setFunctionFilter] = useState<string>('')
   const [view, setView] = useState<ViewMode>(loadView)
   const [lastResult, setLastResult] = useState<ClearForDeploymentResult | null>(null)
-  // WP4: the retired MXL Flows page lives on as a per-instance live view (table
-  // path). The grid path opens the richer InstanceLiveModal instead.
-  const [expanded, setExpanded] = useState<string | null>(null)
+  // Both the grid tiles and the table's Live view open the SAME detail surface
+  // (InstanceLiveModal) — the single place the fast 200ms cadence runs. There
+  // is no always-mounted inline live panel, so no view leaks unbounded polling.
   const [openInstance, setOpenInstance] = useState<MediaWorkloadInstance | null>(null)
 
   const visible = useDocumentVisible()
@@ -241,11 +240,9 @@ export default function MediaWorkloads() {
                         {inst.function_key?.startsWith('mxl') && (
                           <button
                             className="btn btn-secondary btn-sm ml-2"
-                            onClick={() =>
-                              setExpanded(expanded === inst.instance ? null : inst.instance)
-                            }
+                            onClick={() => setOpenInstance(inst)}
                           >
-                            {expanded === inst.instance ? 'Hide live view' : 'Live view'}
+                            Live view
                           </button>
                         )}
                       </td>
@@ -277,13 +274,6 @@ export default function MediaWorkloads() {
                       </td>
                     </tr>
                   ))}
-                  {expanded != null && (
-                    <tr key="__mxl-live-view" className="border-b border-white/5">
-                      <td colSpan={6} className="px-4 py-3">
-                        <MxlDetailPanel />
-                      </td>
-                    </tr>
-                  )}
                 </tbody>
               </table>
             </div>
