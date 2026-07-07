@@ -13,7 +13,12 @@ import { act, cleanup, render, screen, fireEvent, within } from '@testing-librar
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query'
 import { MemoryRouter } from 'react-router-dom'
 import MediaWorkloads from '../pages/MediaWorkloads'
-import { LIVE_TILE_CAP, PREVIEW_TICK_MS, STATUS_POLL_MS } from '../pages/MediaWorkloads/liveView'
+import {
+  LIVE_TILE_CAP,
+  MODAL_STATUS_POLL_MS,
+  PREVIEW_TICK_MS,
+  STATUS_POLL_MS,
+} from '../pages/MediaWorkloads/liveView'
 import { useActivityStore } from '../store/activity'
 import type {
   CatalogEntry,
@@ -385,6 +390,24 @@ describe('live modal', () => {
     const dialog = await screen.findByRole('dialog')
     // Focus is pulled into the dialog rather than left on background controls.
     expect(dialog.contains(document.activeElement)).toBe(true)
+  })
+
+  it('polls the modal flow stats at the fast 200ms cadence', async () => {
+    expect(MODAL_STATUS_POLL_MS).toBe(200) // the flow stats/head index must tick at 200ms, not slower
+    vi.useFakeTimers()
+    const h = mkFetch({})
+    renderPage()
+    await settle()
+
+    const tile = screen.getByText('MXL Video Test View').closest('[role="button"]')!
+    fireEvent.click(tile)
+    await settle(0)
+    const base = h.statusCalls['mxl-a'] ?? 0 // after the modal's initial fetch
+
+    await settle(MODAL_STATUS_POLL_MS * 5)
+    // ~5 refetches over 5 windows (allow slack) — proves the status endpoint,
+    // not just the preview image, ticks at 200ms while the modal is open.
+    expect((h.statusCalls['mxl-a'] ?? 0) - base).toBeGreaterThanOrEqual(4)
   })
 })
 
