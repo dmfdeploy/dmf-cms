@@ -147,9 +147,9 @@ def test_shape_status_admits_real_values_and_omits_node():
 def test_shape_status_drops_locator_smuggling():
     # A compromised sidecar tries to leak a URL / coord / oversized blob.
     raw = {
-        "role": "http://10.0.0.1/",           # not a slug -> dropped
+        "role": "http://192.0.2.1/",           # not a slug -> dropped
         "provider": "a b c",                   # space -> not a slug -> dropped
-        "node": "10.0.0.1",                    # never relayed at all
+        "node": "192.0.2.1",                    # never relayed at all
         "mxl_version": "v\n1.0",              # control char -> dropped
         "preview": True,
         "flow": {"head_index": "not-a-number", "active": "yes", "format": "y" * 999},
@@ -167,7 +167,7 @@ def test_shape_status_drops_locator_smuggling():
 def test_shape_status_rejects_short_locator_strings():
     # codex R2: the exact short-locator cases a length cap alone let through.
     raw = {
-        "mxl_version": "10.0.0.2",                       # IPv4-shaped -> dropped
+        "mxl_version": "192.0.2.2",                       # IPv4-shaped -> dropped
         "flow": {"format": "netbox.mxl.svc.cluster.local", "grain_rate": "http://x"},
     }
     out = mxl.shape_status("mxl-x", raw)
