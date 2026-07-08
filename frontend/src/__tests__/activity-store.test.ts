@@ -12,7 +12,7 @@ import type { ClearForDeploymentResult } from '../api/types'
 
 function clearResult(overrides: Partial<ClearForDeploymentResult> = {}): ClearForDeploymentResult {
   return {
-    instance: 'mxl-hello',
+    instance: 'mxl-videotest',
     requested_state: 'active',
     previous_state: 'bootstrapped',
     request_id: `req-${Math.random().toString(36).slice(2)}`,
@@ -40,7 +40,7 @@ describe('activity store', () => {
     expect(records.map((r) => r.request_id)).toEqual(['second', 'first'])
     expect(records[0]).toMatchObject({
       action: 'clear-for-deployment',
-      target: 'mxl-hello',
+      target: 'mxl-videotest',
       actor: 'operator',
       role: 'engineer',
       reason: 'ready for demo',
