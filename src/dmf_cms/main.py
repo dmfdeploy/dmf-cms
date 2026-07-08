@@ -1533,6 +1533,7 @@ def create_app(settings: Settings | None = None, contract: AppContract | None = 
             "summary": entry.summary,
             "ebu_layer": ebu.get("layer"),
             "ebu_vertical": ebu.get("vertical"),
+            "ebu_media_function_type": ebu.get("media_function_type"),
             "ebu_lifecycle_owner": ebu.get("lifecycle_owner"),
             "lifecycle": lifecycle_status,
             "provision_image": provision.get("image", {}).get("repository") if provision.get("image") else None,

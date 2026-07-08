@@ -225,19 +225,20 @@ function EntryCard({
             <span className={`badge text-xs ${deployBadge}`}>{entry.lifecycle}</span>
           </div>
           <p className="text-sm text-muted">{entry.summary}</p>
-          {/* EBU layer/vertical ontology is expert-tier vocabulary (UX
+          {/* EBU layer/vertical/type ontology is expert-tier vocabulary (UX
               Constitution Art. 3) — collapsed behind an explicit affordance,
               never a default-level line. */}
-          {(entry.ebu_layer || entry.ebu_vertical || entry.ebu_lifecycle_owner) && (
+          {(entry.ebu_layer || entry.ebu_vertical || entry.ebu_media_function_type || entry.ebu_lifecycle_owner) && (
             <details className="mt-1 text-xs text-muted">
               <summary className="cursor-pointer select-none opacity-80 hover:opacity-100">
                 System details
               </summary>
               <p className="mt-1 pl-4">
                 {entry.ebu_layer ? `EBU layer ${entry.ebu_layer}` : ''}
-                {entry.ebu_layer && entry.ebu_vertical ? ' · ' : ''}
+                {entry.ebu_layer && (entry.ebu_vertical || entry.ebu_media_function_type) ? ' · ' : ''}
                 {entry.ebu_vertical ? <span className="capitalize">{entry.ebu_vertical}</span> : ''}
-                {(entry.ebu_layer || entry.ebu_vertical) && entry.ebu_lifecycle_owner ? ' · ' : ''}
+                {entry.ebu_media_function_type ? <span className="capitalize">{entry.ebu_media_function_type}</span> : ''}
+                {(entry.ebu_layer || entry.ebu_vertical || entry.ebu_media_function_type) && entry.ebu_lifecycle_owner ? ' · ' : ''}
                 {entry.ebu_lifecycle_owner ? <span className="capitalize">{entry.ebu_lifecycle_owner}</span> : ''}
               </p>
             </details>

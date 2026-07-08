@@ -49,6 +49,7 @@ function catalogEntry(overrides: Partial<CatalogEntry> = {}): CatalogEntry {
     summary: '',
     ebu_layer: null,
     ebu_vertical: null,
+    ebu_media_function_type: null,
     ebu_lifecycle_owner: null,
     lifecycle: 'active',
     provision_image: null,

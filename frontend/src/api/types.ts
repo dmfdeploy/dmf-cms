@@ -276,6 +276,7 @@ export interface CatalogEntry {
   summary: string
   ebu_layer: number | null
   ebu_vertical: string | null
+  ebu_media_function_type: string | null
   ebu_lifecycle_owner: string | null
   lifecycle: 'bootstrapped' | 'active' | 'unknown' | 'error'
   provision_image: string | null
