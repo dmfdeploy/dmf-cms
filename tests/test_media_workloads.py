@@ -103,7 +103,7 @@ def test_single_mode_lists_instances_with_desired_vs_observed(monkeypatch):
         assert "tag=dmf-catalog" in path
         return {
             "results": [
-                _service("mxl-hello", ["dmf-catalog", "app:mxl-hello", "lifecycle:active"]),
+                _service("mxl-videotestsrc", ["dmf-catalog", "app:mxl-videotestsrc", "lifecycle:active"]),
                 _service("nmos-cpp", ["dmf-catalog", "app:nmos-cpp", "lifecycle:bootstrapped"]),
             ]
         }
@@ -114,14 +114,14 @@ def test_single_mode_lists_instances_with_desired_vs_observed(monkeypatch):
     assert body["configured"] is True and body["degraded"] is False
     assert body["scope"] == "all"
     by_name = {i["instance"]: i for i in body["instances"]}
-    hello = by_name["mxl-hello"]
+    hello = by_name["mxl-videotestsrc"]
     # No prometheus configured: observed stays honest-unknown, and an
     # active-desired instance without runtime proof is reconcile_pending.
     assert hello["requested_state"] == "active"
     assert hello["observed_state"] == "unknown"
     assert hello["reconcile_pending"] is True
     assert by_name["nmos-cpp"]["reconcile_pending"] is False
-    assert {f["function_key"] for f in body["functions"]} == {"mxl-hello", "nmos-cpp"}
+    assert {f["function_key"] for f in body["functions"]} == {"mxl-videotestsrc", "nmos-cpp"}
 
 
 def test_scoped_mode_unmapped_group_sees_nothing(monkeypatch):
@@ -150,7 +150,7 @@ def test_scoped_mode_filters_by_mapped_tenant_devices(monkeypatch):
             assert "tenant=tenant-a" in path
             return {"results": []}
         assert "device_id=7" in path
-        return {"results": [_service("mxl-hello", ["dmf-catalog", "app:mxl-hello", "lifecycle:active"])]}
+        return {"results": [_service("mxl-videotestsrc", ["dmf-catalog", "app:mxl-videotestsrc", "lifecycle:active"])]}
 
     monkeypatch.setattr(netbox_module, "_request", fake_request)
     client = _client(
@@ -161,7 +161,7 @@ def test_scoped_mode_filters_by_mapped_tenant_devices(monkeypatch):
     )
     body = client.get("/api/media-workloads").json()
     assert body["scope"] == ["tenant-a"]
-    assert [i["instance"] for i in body["instances"]] == ["mxl-hello"]
+    assert [i["instance"] for i in body["instances"]] == ["mxl-videotestsrc"]
     # BOTH parent kinds must be consulted (services attach to devices OR VMs).
     assert any(p.startswith("/api/dcim/devices/") for p in calls)
     assert any(p.startswith("/api/virtualization/virtual-machines/") for p in calls)
@@ -291,10 +291,10 @@ def test_clear_media_engineers_group_grants_write_without_role(monkeypatch):
     # record still reports the member's true capability role (viewer).
     calls = _patch_recorder(
         monkeypatch,
-        [_service("mxl-hello", ["dmf-catalog", "app:mxl-hello", "lifecycle:bootstrapped"])],
+        [_service("mxl-videotestsrc", ["dmf-catalog", "app:mxl-videotestsrc", "lifecycle:bootstrapped"])],
     )
     client = _writer_client(groups=MEDIA_ENGINEERS)
-    resp = client.post("/api/media-workloads/mxl-hello/clear", json={"reason": "go"})
+    resp = client.post("/api/media-workloads/mxl-videotestsrc/clear", json={"reason": "go"})
     assert resp.status_code == 200
     assert resp.json()["role"] == "viewer"
     assert len(calls["patches"]) == 1
@@ -321,21 +321,21 @@ def test_clear_tenancy_undeclared_is_503(monkeypatch):
 def test_clear_out_of_scope_404_no_side_effect(monkeypatch):
     # Scoped user with no mapped tenants: instance invisible -> 404, no PATCH,
     # indistinguishable from nonexistent (no existence leak).
-    calls = _patch_recorder(monkeypatch, [_service("mxl-hello", ["dmf-catalog", "app:mxl-hello", "lifecycle:bootstrapped"])])
+    calls = _patch_recorder(monkeypatch, [_service("mxl-videotestsrc", ["dmf-catalog", "app:mxl-videotestsrc", "lifecycle:bootstrapped"])])
     client = _writer_client(
         tenancy=MediaTenancySettings(mode="scoped", group_tenant_map=(("other", ("t1",)),))
     )
-    resp = client.post("/api/media-workloads/mxl-hello/clear", json={"reason": "go"})
+    resp = client.post("/api/media-workloads/mxl-videotestsrc/clear", json={"reason": "go"})
     assert resp.status_code == 404
     assert calls["patches"] == []
 
 
 def test_clear_already_active_409_no_side_effect(monkeypatch):
     calls = _patch_recorder(
-        monkeypatch, [_service("mxl-hello", ["dmf-catalog", "app:mxl-hello", "lifecycle:active"])]
+        monkeypatch, [_service("mxl-videotestsrc", ["dmf-catalog", "app:mxl-videotestsrc", "lifecycle:active"])]
     )
     client = _writer_client()
-    resp = client.post("/api/media-workloads/mxl-hello/clear", json={"reason": "go"})
+    resp = client.post("/api/media-workloads/mxl-videotestsrc/clear", json={"reason": "go"})
     assert resp.status_code == 409
     assert calls["patches"] == []
 
@@ -343,10 +343,10 @@ def test_clear_already_active_409_no_side_effect(monkeypatch):
 def test_clear_flips_tag_with_writer_token_and_c5(monkeypatch):
     calls = _patch_recorder(
         monkeypatch,
-        [_service("mxl-hello", ["dmf-catalog", "app:mxl-hello", "lifecycle:bootstrapped"])],
+        [_service("mxl-videotestsrc", ["dmf-catalog", "app:mxl-videotestsrc", "lifecycle:bootstrapped"])],
     )
     client = _writer_client()
-    resp = client.post("/api/media-workloads/mxl-hello/clear", json={"reason": "ready for demo"})
+    resp = client.post("/api/media-workloads/mxl-videotestsrc/clear", json={"reason": "ready for demo"})
     assert resp.status_code == 200
     body = resp.json()
     # C5 quartet echoed at the point of action.
@@ -362,7 +362,7 @@ def test_clear_flips_tag_with_writer_token_and_c5(monkeypatch):
     tag_names = [t["name"] for t in patch["payload"]["tags"]]
     assert "lifecycle:active" in tag_names
     assert "lifecycle:bootstrapped" not in tag_names
-    assert "dmf-catalog" in tag_names and "app:mxl-hello" in tag_names
+    assert "dmf-catalog" in tag_names and "app:mxl-videotestsrc" in tag_names
 
 
 # ---------------------------------------------------------------------------
@@ -451,7 +451,7 @@ def test_list_instances_exposes_live_view_without_leaking_coords(monkeypatch):
         return {
             "results": [
                 _svc_cf("mxl-videotestsrc", _GOOD_CF),
-                _svc_cf("mxl-hello", {}),  # no sidecar coords
+                _svc_cf("mxl-mock-nosidecar", {}),  # no sidecar coords
             ]
         }
 
@@ -462,7 +462,7 @@ def test_list_instances_exposes_live_view_without_leaking_coords(monkeypatch):
     body = resp.json()
     by_name = {i["instance"]: i for i in body["instances"]}
     assert by_name["mxl-videotestsrc"]["live_view"] is True
-    assert by_name["mxl-hello"]["live_view"] is False
+    assert by_name["mxl-mock-nosidecar"]["live_view"] is False
     # The coords / composed URL must NEVER appear anywhere in the JSON.
     raw = resp.text
     for leak in ("cluster_service", "cluster_namespace", "cluster_port", "svc.cluster.local", "custom_fields"):
@@ -470,14 +470,14 @@ def test_list_instances_exposes_live_view_without_leaking_coords(monkeypatch):
 
 
 def test_resolve_sidecar_target_scope_and_states(monkeypatch):
-    services = [_svc_cf("mxl-videotestsrc", _GOOD_CF), _svc_cf("mxl-hello", {})]
+    services = [_svc_cf("mxl-videotestsrc", _GOOD_CF), _svc_cf("mxl-mock-nosidecar", {})]
     monkeypatch.setattr(netbox_module, "_request", lambda *a, **k: {"results": services})
 
     ok = resolve_sidecar_target("http://nb", "tok", False, None, "mxl-videotestsrc")
     assert ok["status"] == "ok"
     assert ok["base_url"] == "http://mxl-videotestsrc.mxl.svc.cluster.local:9000"
 
-    no_sidecar = resolve_sidecar_target("http://nb", "tok", False, None, "mxl-hello")
+    no_sidecar = resolve_sidecar_target("http://nb", "tok", False, None, "mxl-mock-nosidecar")
     assert no_sidecar["status"] == "no-sidecar"
 
     absent = resolve_sidecar_target("http://nb", "tok", False, None, "nope")
