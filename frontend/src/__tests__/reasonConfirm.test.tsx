@@ -69,6 +69,7 @@ function entry(overrides: Partial<CatalogEntry> = {}): CatalogEntry {
     summary: 'A shipped MXL pair',
     ebu_layer: null,
     ebu_vertical: null,
+    ebu_media_function_type: null,
     ebu_lifecycle_owner: null,
     lifecycle: 'bootstrapped',
     provision_image: null,

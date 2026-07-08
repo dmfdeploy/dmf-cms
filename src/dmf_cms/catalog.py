@@ -15,6 +15,14 @@ logger = logging.getLogger(__name__)
 
 CATALOG_DIR = "/etc/dmf-cms/catalog/"
 
+# ADR-0046 decision 6 — fail-closed classification enums.
+# Exactly one of vertical or media_function_type must be set per entry.
+VALID_VERTICALS = frozenset({"orchestration", "control", "monitoring", "security"})
+VALID_MEDIA_FUNCTION_TYPES = frozenset({
+    "source", "view", "processor", "mixer",
+    "output", "render", "gfx", "multiviewer",
+})
+
 
 @dataclass(frozen=True)
 class CatalogEntry:
@@ -34,10 +42,67 @@ class CatalogEntry:
     ingress: Optional[dict[str, Any]] = None
 
 
+def _validate_ebu(key: str, ebu: Any) -> bool:
+    """Validate the ebu block per ADR-0046 decision 6 (fail-closed).
+
+    Exactly one of ``vertical`` or ``media_function_type`` must be set,
+    each within its enum.  Returns True if valid, False (with error log)
+    if the entry must be rejected.
+    """
+    if not isinstance(ebu, dict):
+        logger.error(
+            "catalog: entry '%s' REJECTED — ebu block is missing or not a mapping",
+            key,
+        )
+        return False
+
+    has_vertical = "vertical" in ebu
+    has_mft = "media_function_type" in ebu
+
+    if has_vertical and has_mft:
+        logger.error(
+            "catalog: entry '%s' REJECTED — ebu has both vertical and "
+            "media_function_type (exactly one required, ADR-0046 §6)",
+            key,
+        )
+        return False
+
+    if not has_vertical and not has_mft:
+        logger.error(
+            "catalog: entry '%s' REJECTED — ebu has neither vertical nor "
+            "media_function_type (exactly one required, ADR-0046 §6)",
+            key,
+        )
+        return False
+
+    if has_vertical:
+        val = ebu["vertical"]
+        if not isinstance(val, str) or val not in VALID_VERTICALS:
+            logger.error(
+                "catalog: entry '%s' REJECTED — ebu.vertical %r is not a "
+                "valid string in %s",
+                key, val, sorted(VALID_VERTICALS),
+            )
+            return False
+
+    if has_mft:
+        val = ebu["media_function_type"]
+        if not isinstance(val, str) or val not in VALID_MEDIA_FUNCTION_TYPES:
+            logger.error(
+                "catalog: entry '%s' REJECTED — ebu.media_function_type %r "
+                "is not a valid string in %s",
+                key, val, sorted(VALID_MEDIA_FUNCTION_TYPES),
+            )
+            return False
+
+    return True
+
+
 def _load_one_yaml(path: Path) -> Optional[CatalogEntry]:
     """Parse a single catalog YAML file into a CatalogEntry.
 
-    Returns None when the file is unparseable or lacks a ``key`` field.
+    Returns None when the file is unparseable, lacks a ``key`` field, or
+    violates the ADR-0046 ebu classification rule (fail-closed).
     """
     try:
         raw = yaml.safe_load(path.read_text())
@@ -54,11 +119,15 @@ def _load_one_yaml(path: Path) -> Optional[CatalogEntry]:
         logger.warning("catalog: %s lacks 'key' — skipping", path)
         return None
 
+    ebu = raw.get("ebu")
+    if not _validate_ebu(str(key), ebu):
+        return None
+
     return CatalogEntry(
         key=str(key),
         display_name=str(raw.get("display_name", key)),
         summary=str(raw.get("summary", "")),
-        ebu=raw.get("ebu"),
+        ebu=ebu,
         provision=raw.get("provision"),
         configure=raw.get("configure"),
         finalise=raw.get("finalise"),
