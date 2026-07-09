@@ -112,6 +112,7 @@ function mkFetch(opts: HarnessOpts) {
         functions: [],
       },
     ],
+    invalid_instances: [],
   }
   const statusCalls: Record<string, number> = {}
   const clearCalls: Array<{ url: string; init?: RequestInit }> = []
@@ -459,5 +460,68 @@ describe('clear-for-deployment from a tile (C5)', () => {
     // C5: the console-local Activity record landed, correlated by request_id.
     const records = useActivityStore.getState().records
     expect(records.some((r) => r.request_id === 'req-xyz')).toBe(true)
+  })
+})
+
+describe('grouped endpoint + degraded rendering (P3)', () => {
+  it('requests /api/media-workloads/grouped (not the flat endpoint)', async () => {
+    const { fetchMock } = mkFetch({})
+    renderPage()
+    await screen.findByText('MXL Video Test View')
+
+    const urls = fetchMock.mock.calls.map(
+      (c: [RequestInfo | URL, RequestInit?]) =>
+        (typeof c[0] === 'string' ? c[0] : (c[0] as Request).url).toString(),
+    )
+    expect(urls.some((u: string) => u.endsWith('/api/media-workloads/grouped'))).toBe(true)
+    // The page must NOT fall back to the flat endpoint
+    const flatCalls = urls.filter(
+      (u: string) => u.endsWith('/api/media-workloads') && !u.includes('grouped'),
+    )
+    expect(flatCalls).toHaveLength(0)
+  })
+
+  it('renders valid workloads alongside invalid instances (degraded does not blank page)', async () => {
+    // Override the mock to include an invalid instance + a valid workload
+    vi.stubGlobal('fetch', vi.fn(async (input: RequestInfo | URL) => {
+      const url = (typeof input === 'string' ? input : (input as Request).url).toString()
+      if (url.endsWith('/api/catalog')) {
+        return json({ entries: [catalogEntry()] })
+      }
+      if (url.endsWith('/api/media-workloads/grouped')) {
+        return json({
+          configured: true,
+          degraded: true,
+          scope: [],
+          workloads: [
+            {
+              slug: 'videotest',
+              name: 'videotest',
+              lifecycle: 'operate',
+              health: 'ok',
+              instances: [{ ...inst(), workload_assignment: 'ok' }],
+              functions: [],
+            },
+          ],
+          invalid_instances: [
+            {
+              instance: 'bad-svc',
+              function_key: 'mxl-videotestsrc',
+              workload_assignment: 'invalid-multiple',
+              conflicting_workloads: ['alpha', 'beta'],
+            },
+          ],
+        })
+      }
+      return json({})
+    }))
+    renderPage()
+
+    // Valid workload still renders (NOT hidden behind degraded banner)
+    expect(await screen.findByText('videotest')).toBeTruthy()
+    // Invalid instances section appears
+    expect(screen.getByText('Invalid workload assignments')).toBeTruthy()
+    expect(screen.getByText(/bad-svc/)).toBeTruthy()
+    expect(screen.getByText(/alpha, beta/)).toBeTruthy()
   })
 })

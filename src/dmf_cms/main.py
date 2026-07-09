@@ -1906,6 +1906,7 @@ def create_app(settings: Settings | None = None, contract: AppContract | None = 
                     "configured": False,
                     "reason": "media-tenancy-not-configured",
                     "workloads": [],
+                    "invalid_instances": [],
                 }
             )
         if not settings.netbox.configured:
@@ -1915,6 +1916,7 @@ def create_app(settings: Settings | None = None, contract: AppContract | None = 
                     "degraded": True,
                     "reason": "netbox-not-configured",
                     "workloads": [],
+                    "invalid_instances": [],
                 }
             )
         assert user is not None
