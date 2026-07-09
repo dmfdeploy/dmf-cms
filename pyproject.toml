@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "dmf-cms"
-version = "0.13.0"
+version = "0.14.0"
 description = "DMF Console - operator-facing control surface for the DMF platform"
 readme = "README.md"
 requires-python = ">=3.12"
