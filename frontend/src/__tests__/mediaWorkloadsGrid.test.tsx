@@ -23,7 +23,7 @@ import { useActivityStore } from '../store/activity'
 import type {
   CatalogEntry,
   MediaWorkloadInstance,
-  MediaWorkloadsResponse,
+  MediaWorkloadsGroupedResponse,
 } from '../api/types'
 
 // ---- fixtures --------------------------------------------------------------
@@ -94,12 +94,24 @@ interface HarnessOpts {
 }
 
 function mkFetch(opts: HarnessOpts) {
-  const workloads: MediaWorkloadsResponse = {
+  const instances = (opts.instances ?? [inst()]).map((i) => ({
+    ...i,
+    workload_assignment: 'ok',
+  }))
+  const groupedResponse: MediaWorkloadsGroupedResponse = {
     configured: true,
     degraded: false,
     scope: [],
-    instances: opts.instances ?? [inst()],
-    functions: [],
+    workloads: [
+      {
+        slug: 'test',
+        name: 'test',
+        lifecycle: 'operate',
+        health: 'ok',
+        instances,
+        functions: [],
+      },
+    ],
   }
   const statusCalls: Record<string, number> = {}
   const clearCalls: Array<{ url: string; init?: RequestInit }> = []
@@ -110,7 +122,8 @@ function mkFetch(opts: HarnessOpts) {
   const fetchMock = vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
     const url = (typeof input === 'string' ? input : (input as Request).url).toString()
     if (url.endsWith('/api/catalog')) return json({ entries: opts.catalog ?? [catalogEntry()] })
-    if (url.endsWith('/api/media-workloads')) return json(workloads)
+    if (url.endsWith('/api/media-workloads/grouped')) return json(groupedResponse)
+    if (url.endsWith('/api/media-workloads')) return json(groupedResponse)
     if (url.match(/\/api\/mxl\/status$/)) {
       counters.aggregateStatus += 1
       return json({ configured: true, reachable: true, nodes: [], flow: {}, transport: {} })

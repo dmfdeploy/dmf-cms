@@ -1888,6 +1888,51 @@ def create_app(settings: Settings | None = None, contract: AppContract | None = 
         payload["scope"] = "all" if tenant_slugs is None else list(tenant_slugs)
         return JSONResponse(payload)
 
+    @app.get("/api/media-workloads/grouped")
+    async def api_media_workloads_grouped(request: Request):
+        """Workload-first grouped inventory (ADR-0046 decisions 3 + 5).
+
+        Additive endpoint: the flat /api/media-workloads stays untouched.
+        Groups instances by workload:<slug> tag, derives per-workload
+        lifecycle, and joins observed state by per-instance identity
+        (not the collapsing app-label rollup).
+        """
+        user, err = _require_media_workloads_access(request)
+        if err is not None:
+            return err
+        if not settings.media_tenancy.configured:
+            return JSONResponse(
+                {
+                    "configured": False,
+                    "reason": "media-tenancy-not-configured",
+                    "workloads": [],
+                }
+            )
+        if not settings.netbox.configured:
+            return JSONResponse(
+                {
+                    "configured": True,
+                    "degraded": True,
+                    "reason": "netbox-not-configured",
+                    "workloads": [],
+                }
+            )
+        assert user is not None
+        tenant_slugs = settings.media_tenancy.tenants_for(user.groups)
+        payload = await run_in_threadpool(
+            media_workloads.list_workloads_grouped,
+            settings.netbox.api_url,
+            settings.netbox.api_token,
+            settings.netbox.ssl_verify,
+            tenant_slugs,
+            settings.prometheus.url if settings.prometheus.configured else "",
+            settings.mxl.sidecar_namespaces,
+            settings.mxl.sidecar_ports,
+        )
+        payload["configured"] = True
+        payload["scope"] = "all" if tenant_slugs is None else list(tenant_slugs)
+        return JSONResponse(payload)
+
     @app.post("/api/media-workloads/{instance}/clear")
     async def api_media_workloads_clear(request: Request, instance: str):
         """Clear for deployment — the ONE consequential media-workloads write.

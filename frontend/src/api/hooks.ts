@@ -25,6 +25,7 @@ import type {
   MxlStatusResponse,
   MxlInstanceStatus,
   MediaWorkloadsResponse,
+  MediaWorkloadsGroupedResponse,
   ClearForDeploymentResult,
   Operation,
 } from './types'
@@ -323,6 +324,16 @@ export function useMediaWorkloads() {
   return useQuery({
     queryKey: ['media-workloads'],
     queryFn: () => apiCall<MediaWorkloadsResponse>('/api/media-workloads'),
+    refetchInterval: 15000,
+  })
+}
+
+// ADR-0046: workload-first grouped inventory. Additive — the flat hook stays.
+export function useMediaWorkloadsGrouped() {
+  return useQuery({
+    queryKey: ['media-workloads-grouped'],
+    queryFn: () =>
+      apiCall<MediaWorkloadsGroupedResponse>('/api/media-workloads/grouped'),
     refetchInterval: 15000,
   })
 }

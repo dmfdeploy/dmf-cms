@@ -303,6 +303,194 @@ def list_instances(
     }
 
 
+# ── ADR-0046 decisions 3 + 5: workload-first grouping ──────────────────────
+
+
+def _observed_by_identity(prometheus_url: str) -> dict[str, float]:
+    """Map promsd-stamped per-instance identity -> probe_success (ADR-0046 §3).
+
+    Unlike ``_observed_by_app`` (which collapses by shared ``app`` label),
+    this joins on the unique per-instance identity label. The promsd contract
+    (ADR-0038) stamps ``cluster_service`` as the per-release service name —
+    which equals the NetBox service name. Falls back to ``instance`` label
+    if ``cluster_service`` is absent. Two instances of the same function_key
+    in different workloads do NOT collapse.
+
+    Empty dict on any failure — observed degrades to "unknown", never breaks.
+    """
+    from . import prometheus as _prometheus
+
+    try:
+        rows = _prometheus.query(url=prometheus_url, expr='probe_success{job="netbox-probe"}')
+    except Exception as exc:
+        logger.warning("media-workloads: identity prometheus overlay failed: %s", exc)
+        return {}
+    out: dict[str, float] = {}
+    for row in rows or []:
+        metric = row.get("metric") or {}
+        # Prefer cluster_service (per-instance); fall back to instance label.
+        identity = metric.get("cluster_service") or metric.get("instance")
+        try:
+            value = float(row["value"][1])
+        except (KeyError, IndexError, TypeError, ValueError):
+            continue
+        if identity:
+            out[identity] = min(out.get(identity, 1.0), value)
+    return out
+
+
+def _workload_assignment(names: list[str]) -> tuple[str, str]:
+    """Determine workload assignment from tag names (ADR-0046 §2).
+
+    Returns (slug, status) where status is one of:
+      "ok"               — exactly one workload:<slug> tag
+      "unassigned"       — zero workload:* tags → goes to "unassigned" bucket
+      "invalid-multiple"  — more than one workload:* tag → degraded
+    """
+    slugs = [
+        name.split(":", 1)[1]
+        for name in names
+        if name.startswith("workload:")
+    ]
+    if len(slugs) == 0:
+        return "unassigned", "unassigned"
+    if len(slugs) == 1:
+        return slugs[0], "ok"
+    return slugs[0], "invalid-multiple"
+
+
+def _derive_workload_lifecycle(instances: list[dict[str, Any]]) -> str:
+    """Derive workload lifecycle from member instances (ADR-0046 §3).
+
+    v0.2 derives only:
+      provision — members exist / bootstrapped (no active intent yet)
+      configure — active intent exists but observed/flow incomplete
+      operate   — required members active AND observed healthy
+
+    Design / Plan / Finalise → declared/unknown.
+    NEVER infer finalise from absence.
+    """
+    if not instances:
+        return "unknown"
+
+    requested = {inst["requested_state"] for inst in instances}
+    observed = {inst["observed_state"] for inst in instances}
+
+    all_bootstrapped = requested <= {"bootstrapped", "unknown"}
+    any_active = "active" in requested
+    all_active = requested >= {"active"} and "bootstrapped" not in requested and "unknown" not in requested
+    all_healthy = all(inst["observed_state"] == "running" for inst in instances if inst["requested_state"] == "active")
+    any_reconcile = any(inst["reconcile_pending"] for inst in instances)
+
+    if all_bootstrapped:
+        return "provision"
+    if all_active and all_healthy and not any_reconcile:
+        return "operate"
+    if any_active:
+        return "configure"
+    return "unknown"
+
+
+def list_workloads_grouped(
+    netbox_url: str,
+    netbox_token: str,
+    ssl_verify: bool,
+    tenant_slugs: Optional[tuple[str, ...]],
+    prometheus_url: str = "",
+    sidecar_namespaces: frozenset[str] = _DEFAULT_SIDECAR_NAMESPACES,
+    sidecar_ports: frozenset[int] = _DEFAULT_SIDECAR_PORTS,
+) -> dict[str, Any]:
+    """Grouped workload-first payload (ADR-0046 decisions 3 + 5).
+
+    Returns workloads grouped by ``workload:<slug>`` tag, with per-workload
+    lifecycle derivation and identity-joined observed state. The flat
+    instance shape within each workload is identical to ``list_instances``
+    for frontend reuse.
+    """
+    from . import netbox as _netbox
+
+    try:
+        services = _fetch_services(netbox_url, netbox_token, ssl_verify, tenant_slugs)
+    except _netbox.NetboxAPIError as exc:
+        logger.warning("media-workloads: NetBox query failed: %s", exc)
+        return {"degraded": True, "reason": "netbox-unreachable", "workloads": []}
+    except Exception as exc:
+        logger.warning("media-workloads: unexpected NetBox error: %s", exc)
+        return {"degraded": True, "reason": "netbox-error", "workloads": []}
+
+    instances = [
+        _service_to_instance(
+            svc, sidecar_namespaces=sidecar_namespaces, sidecar_ports=sidecar_ports
+        )
+        for svc in services
+    ]
+
+    # Identity-join: per-instance observed state (ADR-0046 §3)
+    observed = _observed_by_identity(prometheus_url) if prometheus_url else {}
+    for inst in instances:
+        identity = inst["instance"]
+        if identity in observed:
+            inst["observed_state"] = "running" if observed[identity] >= 1.0 else "failing"
+        inst["reconcile_pending"] = (
+            inst["requested_state"] == "active" and inst["observed_state"] != "running"
+        )
+
+    # Build a name→tags lookup from the raw service records for grouping.
+    svc_tags_by_name: dict[str, list[str]] = {
+        svc.get("name", ""): _tag_names(svc) for svc in services
+    }
+
+    # Group by workload assignment
+    workload_groups: dict[str, list[dict[str, Any]]] = {}
+    degraded_instances: list[dict[str, Any]] = []
+
+    for inst in instances:
+        names = svc_tags_by_name.get(inst["instance"], [])
+        slug, status = _workload_assignment(names)
+
+        if status == "invalid-multiple":
+            inst["workload_assignment"] = "invalid-multiple"
+            degraded_instances.append(inst)
+            # Do NOT place in multiple workloads (ADR-0046 §2).
+            continue
+
+        inst["workload_assignment"] = status
+        workload_groups.setdefault(slug, []).append(inst)
+
+    # Build workload objects
+    workloads: list[dict[str, Any]] = []
+    for slug, members in sorted(workload_groups.items()):
+        members_sorted = sorted(members, key=lambda i: i["instance"])
+        lifecycle = _derive_workload_lifecycle(members_sorted)
+
+        # Per-workload function rollup within this workload
+        functions: dict[str, dict[str, Any]] = {}
+        for inst in members_sorted:
+            key = inst["function_key"] or "(untagged)"
+            agg = functions.setdefault(
+                key, {"function_key": key, "count": 0, "running": 0, "reconcile_pending": 0}
+            )
+            agg["count"] += 1
+            if inst["observed_state"] == "running":
+                agg["running"] += 1
+            if inst["reconcile_pending"]:
+                agg["reconcile_pending"] += 1
+
+        has_invalid = any(m.get("workload_assignment") == "invalid-multiple" for m in members_sorted)
+        workloads.append({
+            "slug": slug,
+            "name": "Unassigned" if slug == "unassigned" else slug,
+            "lifecycle": lifecycle,
+            "health": "degraded" if has_invalid else "ok",
+            "instances": members_sorted,
+            "functions": sorted(functions.values(), key=lambda f: f["function_key"]),
+        })
+
+    return {
+        "degraded": len(degraded_instances) > 0,
+        "workloads": workloads,
+    }
+
 def clear_for_deployment(
     netbox_url: str,
     writer_token: str,

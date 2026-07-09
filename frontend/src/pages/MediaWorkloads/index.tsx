@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useState } from 'react'
-import { useCatalog, useMediaWorkloads } from '../../api/hooks'
+import { useCatalog, useMediaWorkloadsGrouped } from '../../api/hooks'
 import ClearForDeployment from './ClearForDeployment'
 import WorkloadTile from './WorkloadTile'
 import InstanceLiveModal from './InstanceLiveModal'
@@ -14,19 +14,21 @@ import {
   requestedBadge,
   REQUESTED_TITLE,
 } from './stateBadges'
-import type { ClearForDeploymentResult, MediaWorkloadInstance } from '../../api/types'
+import type {
+  ClearForDeploymentResult,
+  MediaWorkload,
+  MediaWorkloadInstance,
+} from '../../api/types'
 
 /**
- * Media Workloads (ADR-0037): Media Function instance inventory from NetBox
- * with live status overlaid. WP-C makes the media-native tile grid the default
- * view (small live thumbnails + click-open preview modal) behind a Grid|Table
- * toggle; the proven table + clear-for-deployment flow stays intact.
+ * Media Workloads (ADR-0037 + ADR-0046): workload-first grouped inventory.
  *
- * Hard gate 5: instances are keyed by stable identity and sorted
- * deterministically, so a poll that changes nothing semantic never reflows the
- * list. Desired (requested_state) and observed (observed_state) are rendered as
- * SEPARATE facts — intent is never shown as running. Node is always the NetBox
- * placement, never a sidecar self-report (WP-D R2).
+ * Consumes the additive /api/media-workloads/grouped endpoint which groups
+ * instances by workload:<slug> tag, derives per-workload lifecycle, and
+ * joins observed state by per-instance identity (ADR-0046 §3).
+ *
+ * Hard gate 5: workloads keyed by slug, instances by name — deterministic
+ * sort so a no-op poll never reflows. Desired vs observed rendered separately.
  */
 
 type ViewMode = 'grid' | 'table'
@@ -40,15 +42,18 @@ function loadView(): ViewMode {
   }
 }
 
+const LIFECYCLE_BADGE: Record<string, string> = {
+  provision: 'bg-blue-500/20 text-blue-300',
+  configure: 'bg-amber-500/20 text-amber-300',
+  operate: 'bg-green-500/20 text-green-300',
+  unknown: 'bg-white/10 text-muted',
+}
+
 export default function MediaWorkloads() {
-  const { data, isLoading, error, refetch } = useMediaWorkloads()
+  const { data, isLoading, error, refetch } = useMediaWorkloadsGrouped()
   const { data: catalog } = useCatalog()
-  const [functionFilter, setFunctionFilter] = useState<string>('')
   const [view, setView] = useState<ViewMode>(loadView)
   const [lastResult, setLastResult] = useState<ClearForDeploymentResult | null>(null)
-  // Both the grid tiles and the table's Live view open the SAME detail surface
-  // (InstanceLiveModal) — the single place the fast 200ms cadence runs. There
-  // is no always-mounted inline live panel, so no view leaks unbounded polling.
   const [openInstance, setOpenInstance] = useState<MediaWorkloadInstance | null>(null)
 
   const visible = useDocumentVisible()
@@ -58,11 +63,10 @@ export default function MediaWorkloads() {
     try {
       window.localStorage.setItem(VIEW_KEY, view)
     } catch {
-      /* private mode / storage disabled — the toggle just won't persist */
+      /* private mode / storage disabled */
     }
   }, [view])
 
-  // Catalog display_name join, keyed by function_key (fallback to the key).
   const displayNames = useMemo(() => {
     const map = new Map<string, string>()
     for (const entry of catalog?.entries ?? []) {
@@ -72,48 +76,53 @@ export default function MediaWorkloads() {
   }, [catalog?.entries])
 
   const onCleared = (result: ClearForDeploymentResult) => {
-    // WP3 (#174): the C5 record already landed in Activity inside the control;
-    // here we surface the page-level confirmation banner and refetch inventory.
     setLastResult(result)
     refetch()
   }
 
-  const instances = useMemo(() => {
-    const rows = (data?.instances ?? []).filter(
-      (i) => !functionFilter || i.function_key === functionFilter,
-    )
-    // Deterministic order by stable identity: unchanged data -> unchanged DOM.
-    return [...rows].sort((a, b) => a.instance.localeCompare(b.instance))
-  }, [data?.instances, functionFilter])
+  // Deterministic workload order: sorted by slug, unassigned last.
+  const workloads = useMemo(() => {
+    const wls = data?.workloads ?? []
+    return [...wls].sort((a, b) => {
+      if (a.slug === 'unassigned') return 1
+      if (b.slug === 'unassigned') return -1
+      return a.slug.localeCompare(b.slug)
+    })
+  }, [data?.workloads])
 
-  // Live-tile cap (codex P2): only the first LIVE_TILE_CAP tiles that actually
-  // resolve a sidecar auto-refresh at once; the rest hold a last frame with a
-  // Refresh affordance. Computed over the deterministic order so it's stable.
+  // Flatten all instances across workloads for the live-tile cap calculation.
+  const allInstances = useMemo(() => {
+    const out: (MediaWorkloadInstance & { workload_assignment: string; _workload_slug: string })[] = []
+    for (const wl of workloads) {
+      for (const inst of wl.instances) {
+        out.push({ ...inst, _workload_slug: wl.slug })
+      }
+    }
+    return out
+  }, [workloads])
+
   const motionTiles = useMemo(() => {
     const set = new Set<string>()
     let n = 0
-    for (const inst of instances) {
+    for (const inst of allInstances) {
       if (inst.live_view && n < LIVE_TILE_CAP) {
         set.add(inst.instance)
         n += 1
       }
     }
     return set
-  }, [instances])
+  }, [allInstances])
 
-  // Tile polling is allowed only in grid view, with a visible tab, and while no
-  // modal is open (the open modal is the single fast-cadence surface).
   const tilesActive = view === 'grid' && visible && openInstance === null
 
   return (
     <div className="flex-1 overflow-y-auto p-6">
       <div className="hero">
-        <p className="kicker">Media Functions in operation</p>
+        <p className="kicker">Media Workloads</p>
         <h1>Media Workloads</h1>
         <p>
-          Deployed Media Function instances — what is requested, how many, and where.
-          Placement and requested state come from the facility source of truth; the
-          running state is proven separately by live monitoring.
+          Workload-first view of deployed Media Function instances — grouped by
+          workload identity with per-workload lifecycle and health rollup.
         </p>
       </div>
 
@@ -132,8 +141,8 @@ export default function MediaWorkloads() {
 
       {!isLoading && data?.configured && data.degraded && (
         <div className="panel mt-6 border border-amber-500/20 bg-amber-500/10 px-4 py-3 text-sm text-amber-200">
-          Inventory is degraded ({data.reason ?? 'unknown reason'}) — the facility
-          source of truth is unreachable. Showing nothing rather than stale guesses.
+          Inventory is degraded ({data.reason ?? 'unknown reason'}) — some instances
+          have invalid workload assignments or the source of truth is unreachable.
         </div>
       )}
 
@@ -145,7 +154,7 @@ export default function MediaWorkloads() {
           </div>
           <p className="mt-1 text-green-200/80">{lastResult.reconcile.expectation}</p>
           <p className="mt-1 text-xs text-green-200/60">
-            Recorded: {lastResult.actor} ({lastResult.role}) · reason: “{lastResult.reason}” ·
+            Recorded: {lastResult.actor} ({lastResult.role}) · reason: "{lastResult.reason}" ·
             ref {lastResult.request_id}
           </p>
         </div>
@@ -154,29 +163,11 @@ export default function MediaWorkloads() {
       {data?.configured && !data.degraded && (
         <>
           <div className="mt-6 flex flex-wrap items-center gap-3">
-            <label className="text-sm text-muted" htmlFor="function-filter">
-              Function
-            </label>
-            <select
-              id="function-filter"
-              className="rounded-md border border-white/10 bg-black/20 px-2 py-1 text-sm"
-              value={functionFilter}
-              onChange={(e) => setFunctionFilter(e.target.value)}
-            >
-              <option value="">All functions</option>
-              {(data.functions ?? []).map((f) => (
-                <option key={f.function_key} value={f.function_key}>
-                  {f.function_key} ({f.running}/{f.count} running)
-                </option>
-              ))}
-            </select>
             {Array.isArray(data.scope) && (
               <span className="text-xs text-muted">
                 Scope: {data.scope.length > 0 ? data.scope.join(', ') : 'none'}
               </span>
             )}
-
-            {/* Grid|Table segmented toggle (persisted). */}
             <div
               className="ml-auto inline-flex overflow-hidden rounded-md border border-white/10"
               role="group"
@@ -199,83 +190,132 @@ export default function MediaWorkloads() {
             </div>
           </div>
 
-          {instances.length === 0 ? (
+          {workloads.length === 0 ? (
             <div className="panel mt-4 py-10 text-center text-sm text-muted">
-              No Media Function instances
-              {functionFilter ? ` for ${functionFilter}` : ''} in your scope.
-            </div>
-          ) : view === 'grid' ? (
-            <div className="mt-4 grid grid-cols-1 gap-4 md:grid-cols-2 xl:grid-cols-3">
-              {instances.map((inst) => (
-                <WorkloadTile
-                  key={inst.instance}
-                  instance={inst}
-                  displayName={displayNames.get(inst.function_key ?? '') ?? inst.function_key ?? '—'}
-                  active={tilesActive}
-                  motionAllowed={motionTiles.has(inst.instance) && !reducedMotion}
-                  onOpen={setOpenInstance}
-                  onCleared={onCleared}
-                />
-              ))}
+              No Media Function instances in your scope.
             </div>
           ) : (
-            <div className="panel mt-4 overflow-x-auto p-0">
-              <table className="w-full text-sm">
-                <thead>
-                  <tr className="border-b border-white/10 text-left text-xs uppercase tracking-wide text-muted">
-                    <th className="px-4 py-3">Instance</th>
-                    <th className="px-4 py-3">Function</th>
-                    <th className="px-4 py-3">Node</th>
-                    <th className="px-4 py-3">Requested</th>
-                    <th className="px-4 py-3">Observed</th>
-                    <th className="px-4 py-3" />
-                  </tr>
-                </thead>
-                <tbody>
-                  {instances.map((inst: MediaWorkloadInstance) => (
-                    <tr key={inst.instance} className="border-b border-white/5">
-                      <td className="px-4 py-3 font-mono text-xs">{inst.instance}</td>
-                      <td className="px-4 py-3">
-                        {inst.function_key ?? '—'}
-                        {inst.function_key?.startsWith('mxl') && (
-                          <button
-                            className="btn btn-secondary btn-sm ml-2"
-                            onClick={() => setOpenInstance(inst)}
-                          >
-                            Live view
-                          </button>
-                        )}
-                      </td>
-                      <td className="px-4 py-3">{inst.placement.node ?? '—'}</td>
-                      <td className="px-4 py-3">
-                        <span
-                          className={`badge text-xs ${requestedBadge[inst.requested_state] ?? requestedBadge.unknown}`}
-                          title={REQUESTED_TITLE}
-                        >
-                          {inst.requested_state}
-                        </span>
-                      </td>
-                      <td className="px-4 py-3">
-                        <span
-                          className={`badge text-xs ${observedBadge[inst.observed_state] ?? observedBadge.unknown}`}
-                          title={OBSERVED_TITLE}
-                        >
-                          {inst.observed_state}
-                        </span>
-                      </td>
-                      <td className="px-4 py-3 text-xs text-muted">
-                        {inst.reconcile_pending ? (
-                          'Waiting to converge'
-                        ) : inst.requested_state === 'bootstrapped' ? (
-                          <ClearForDeployment instance={inst.instance} onCleared={onCleared} />
-                        ) : (
-                          ''
-                        )}
-                      </td>
-                    </tr>
-                  ))}
-                </tbody>
-              </table>
+            <div className="mt-4 space-y-6">
+              {workloads.map((wl: MediaWorkload) => (
+                <div key={wl.slug} className="panel">
+                  {/* Workload header */}
+                  <div className="flex items-center gap-3 border-b border-white/10 px-4 py-3">
+                    <h2 className="text-lg font-semibold capitalize">{wl.name}</h2>
+                    <span
+                      className={`badge text-xs ${LIFECYCLE_BADGE[wl.lifecycle] ?? LIFECYCLE_BADGE.unknown}`}
+                    >
+                      {wl.lifecycle}
+                    </span>
+                    {wl.health === 'degraded' && (
+                      <span className="badge bg-red-500/20 text-xs text-red-300">
+                        degraded
+                      </span>
+                    )}
+                    <span className="text-xs text-muted">
+                      {wl.instances.length} instance{wl.instances.length !== 1 ? 's' : ''} ·{' '}
+                      {wl.functions.map((f) => `${f.function_key}(${f.running}/${f.count})`).join(', ')}
+                    </span>
+                  </div>
+
+                  {/* Instances within this workload */}
+                  {view === 'grid' ? (
+                    <div className="grid grid-cols-1 gap-4 p-4 md:grid-cols-2 xl:grid-cols-3">
+                      {[...wl.instances].sort((a, b) => a.instance.localeCompare(b.instance)).map((inst) => (
+                        <WorkloadTile
+                          key={inst.instance}
+                          instance={inst}
+                          displayName={
+                            displayNames.get(inst.function_key ?? '') ??
+                            inst.function_key ??
+                            '—'
+                          }
+                          active={tilesActive}
+                          motionAllowed={
+                            motionTiles.has(inst.instance) && !reducedMotion
+                          }
+                          onOpen={setOpenInstance}
+                          onCleared={onCleared}
+                        />
+                      ))}
+                    </div>
+                  ) : (
+                    <div className="overflow-x-auto p-0">
+                      <table className="w-full text-sm">
+                        <thead>
+                          <tr className="border-b border-white/10 text-left text-xs uppercase tracking-wide text-muted">
+                            <th className="px-4 py-3">Instance</th>
+                            <th className="px-4 py-3">Function</th>
+                            <th className="px-4 py-3">Node</th>
+                            <th className="px-4 py-3">Requested</th>
+                            <th className="px-4 py-3">Observed</th>
+                            <th className="px-4 py-3" />
+                          </tr>
+                        </thead>
+                        <tbody>
+                          {[...wl.instances].sort((a, b) => a.instance.localeCompare(b.instance)).map((inst) => (
+                            <tr
+                              key={inst.instance}
+                              className="border-b border-white/5"
+                            >
+                              <td className="px-4 py-3 font-mono text-xs">
+                                {inst.instance}
+                              </td>
+                              <td className="px-4 py-3">
+                                {inst.function_key ?? '—'}
+                                {inst.function_key?.startsWith('mxl') && (
+                                  <button
+                                    className="btn btn-secondary btn-sm ml-2"
+                                    onClick={() => setOpenInstance(inst)}
+                                  >
+                                    Live view
+                                  </button>
+                                )}
+                              </td>
+                              <td className="px-4 py-3">
+                                {inst.placement.node ?? '—'}
+                              </td>
+                              <td className="px-4 py-3">
+                                <span
+                                  className={`badge text-xs ${
+                                    requestedBadge[inst.requested_state] ??
+                                    requestedBadge.unknown
+                                  }`}
+                                  title={REQUESTED_TITLE}
+                                >
+                                  {inst.requested_state}
+                                </span>
+                              </td>
+                              <td className="px-4 py-3">
+                                <span
+                                  className={`badge text-xs ${
+                                    observedBadge[inst.observed_state] ??
+                                    observedBadge.unknown
+                                  }`}
+                                  title={OBSERVED_TITLE}
+                                >
+                                  {inst.observed_state}
+                                </span>
+                              </td>
+                              <td className="px-4 py-3 text-xs text-muted">
+                                {inst.reconcile_pending ? (
+                                  'Waiting to converge'
+                                ) : inst.requested_state === 'bootstrapped' ? (
+                                  <ClearForDeployment
+                                    instance={inst.instance}
+                                    onCleared={onCleared}
+                                  />
+                                ) : (
+                                  ''
+                                )}
+                              </td>
+                            </tr>
+                          ))}
+                        </tbody>
+                      </table>
+                    </div>
+                  )}
+                </div>
+              ))}
             </div>
           )}
         </>

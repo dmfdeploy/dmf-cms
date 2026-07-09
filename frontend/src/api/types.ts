@@ -423,6 +423,25 @@ export interface MediaWorkloadsResponse {
   functions: MediaWorkloadFunction[]
 }
 
+// ADR-0046 decisions 3 + 5: workload-first grouped API.
+// The flat MediaWorkloadsResponse stays; this is the additive grouped shape.
+export interface MediaWorkload {
+  slug: string
+  name: string
+  lifecycle: 'provision' | 'configure' | 'operate' | 'unknown'
+  health: 'ok' | 'degraded'
+  instances: (MediaWorkloadInstance & { workload_assignment: string })[]
+  functions: MediaWorkloadFunction[]
+}
+
+export interface MediaWorkloadsGroupedResponse {
+  configured: boolean
+  reason?: string
+  degraded?: boolean
+  scope?: 'all' | string[]
+  workloads: MediaWorkload[]
+}
+
 export interface ClearForDeploymentResult {
   instance: string
   requested_state: string
