@@ -434,12 +434,20 @@ export interface MediaWorkload {
   functions: MediaWorkloadFunction[]
 }
 
+export interface InvalidInstance {
+  instance: string
+  function_key: string | null
+  workload_assignment: 'invalid-multiple'
+  conflicting_workloads: string[]
+}
+
 export interface MediaWorkloadsGroupedResponse {
   configured: boolean
   reason?: string
   degraded?: boolean
   scope?: 'all' | string[]
   workloads: MediaWorkload[]
+  invalid_instances: InvalidInstance[]
 }
 
 export interface ClearForDeploymentResult {

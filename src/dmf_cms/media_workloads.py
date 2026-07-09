@@ -306,15 +306,46 @@ def list_instances(
 # ── ADR-0046 decisions 3 + 5: workload-first grouping ──────────────────────
 
 
+def _cluster_service_from_target(instance_target: str) -> Optional[str]:
+    """Extract the cluster_service name from a Prometheus ``instance`` target.
+
+    The real label shape (confirmed via dmf-promsd + dmf-infra blackbox
+    relabel configs): ``instance`` = the full probe target URL host+port+path,
+    e.g. ``mxl-videotestsrc.mxl.svc.cluster.local:9000/status``.  The leading
+    DNS label is the ``cluster_service`` value that dmf-promsd used to compose
+    the target (ADR-0038 target construction).
+
+    Returns the leading DNS label, or None if the target is unparseable.
+    """
+    if not isinstance(instance_target, str) or not instance_target:
+        return None
+    # Strip any scheme (e.g. "http://...")
+    host = instance_target
+    if "://" in host:
+        host = host.split("://", 1)[1]
+    # Strip path (e.g. ":9000/status" -> ":9000")
+    host = host.split("/", 1)[0]
+    # Strip port (e.g. "svc.ns.svc.cluster.local:9000" -> "svc.ns.svc.cluster.local")
+    host = host.rsplit(":", 1)[0]
+    # Leading DNS label = cluster_service
+    if not host:
+        return None
+    return host.split(".", 1)[0]
+
+
 def _observed_by_identity(prometheus_url: str) -> dict[str, float]:
-    """Map promsd-stamped per-instance identity -> probe_success (ADR-0046 §3).
+    """Map cluster_service (from probe target) -> probe_success (ADR-0046 §3).
 
     Unlike ``_observed_by_app`` (which collapses by shared ``app`` label),
-    this joins on the unique per-instance identity label. The promsd contract
-    (ADR-0038) stamps ``cluster_service`` as the per-release service name —
-    which equals the NetBox service name. Falls back to ``instance`` label
-    if ``cluster_service`` is absent. Two instances of the same function_key
-    in different workloads do NOT collapse.
+    this extracts the per-instance identity from the Prometheus ``instance``
+    label — which is the full probe target URL. The leading DNS label of the
+    target host is the ``cluster_service`` value (dmf-promsd composes the
+    target as ``<cluster_service>.<namespace>.svc.cluster.local:<port>``).
+
+    The returned dict maps ``cluster_service -> probe_success value``.
+    Callers join this to instances via the NetBox ``cluster_service`` custom
+    field, NOT the service name (they may differ, e.g. nmos-cpp service has
+    cluster_service=nmos-cpp-registry).
 
     Empty dict on any failure — observed degrades to "unknown", never breaks.
     """
@@ -328,14 +359,14 @@ def _observed_by_identity(prometheus_url: str) -> dict[str, float]:
     out: dict[str, float] = {}
     for row in rows or []:
         metric = row.get("metric") or {}
-        # Prefer cluster_service (per-instance); fall back to instance label.
-        identity = metric.get("cluster_service") or metric.get("instance")
+        instance_target = metric.get("instance", "")
+        cluster_svc = _cluster_service_from_target(instance_target)
         try:
             value = float(row["value"][1])
         except (KeyError, IndexError, TypeError, ValueError):
             continue
-        if identity:
-            out[identity] = min(out.get(identity, 1.0), value)
+        if cluster_svc:
+            out[cluster_svc] = min(out.get(cluster_svc, 1.0), value)
     return out
 
 
@@ -413,10 +444,10 @@ def list_workloads_grouped(
         services = _fetch_services(netbox_url, netbox_token, ssl_verify, tenant_slugs)
     except _netbox.NetboxAPIError as exc:
         logger.warning("media-workloads: NetBox query failed: %s", exc)
-        return {"degraded": True, "reason": "netbox-unreachable", "workloads": []}
+        return {"degraded": True, "reason": "netbox-unreachable", "workloads": [], "invalid_instances": []}
     except Exception as exc:
         logger.warning("media-workloads: unexpected NetBox error: %s", exc)
-        return {"degraded": True, "reason": "netbox-error", "workloads": []}
+        return {"degraded": True, "reason": "netbox-error", "workloads": [], "invalid_instances": []}
 
     instances = [
         _service_to_instance(
@@ -425,12 +456,24 @@ def list_workloads_grouped(
         for svc in services
     ]
 
-    # Identity-join: per-instance observed state (ADR-0046 §3)
+    # Build a name→cluster_service lookup from NetBox custom fields.
+    # The Prometheus instance label contains the cluster_service (leading DNS
+    # label of the probe target), NOT the NetBox service name. They may differ
+    # (e.g. nmos-cpp service → cluster_service=nmos-cpp-registry).
+    svc_cluster_service: dict[str, str] = {}
+    for svc in services:
+        cf = svc.get("custom_fields")
+        if isinstance(cf, dict):
+            cs = cf.get("cluster_service")
+            if isinstance(cs, str) and cs:
+                svc_cluster_service[svc.get("name", "")] = cs
+
+    # Identity-join: per-instance observed state via cluster_service (ADR-0046 §3)
     observed = _observed_by_identity(prometheus_url) if prometheus_url else {}
     for inst in instances:
-        identity = inst["instance"]
-        if identity in observed:
-            inst["observed_state"] = "running" if observed[identity] >= 1.0 else "failing"
+        cs = svc_cluster_service.get(inst["instance"], inst["instance"])
+        if cs in observed:
+            inst["observed_state"] = "running" if observed[cs] >= 1.0 else "failing"
         inst["reconcile_pending"] = (
             inst["requested_state"] == "active" and inst["observed_state"] != "running"
         )
@@ -442,15 +485,23 @@ def list_workloads_grouped(
 
     # Group by workload assignment
     workload_groups: dict[str, list[dict[str, Any]]] = {}
-    degraded_instances: list[dict[str, Any]] = []
+    invalid_instances: list[dict[str, Any]] = []
 
     for inst in instances:
         names = svc_tags_by_name.get(inst["instance"], [])
         slug, status = _workload_assignment(names)
 
         if status == "invalid-multiple":
-            inst["workload_assignment"] = "invalid-multiple"
-            degraded_instances.append(inst)
+            # Surface the conflicting workload slugs so the operator can
+            # identify and fix the mis-tagged service (ADR-0046 §2).
+            conflicting = [
+                n.split(":", 1)[1] for n in names if n.startswith("workload:")
+            ]
+            invalid_instances.append({
+                **inst,
+                "workload_assignment": "invalid-multiple",
+                "conflicting_workloads": conflicting,
+            })
             # Do NOT place in multiple workloads (ADR-0046 §2).
             continue
 
@@ -476,19 +527,19 @@ def list_workloads_grouped(
             if inst["reconcile_pending"]:
                 agg["reconcile_pending"] += 1
 
-        has_invalid = any(m.get("workload_assignment") == "invalid-multiple" for m in members_sorted)
         workloads.append({
             "slug": slug,
             "name": "Unassigned" if slug == "unassigned" else slug,
             "lifecycle": lifecycle,
-            "health": "degraded" if has_invalid else "ok",
+            "health": "ok",
             "instances": members_sorted,
             "functions": sorted(functions.values(), key=lambda f: f["function_key"]),
         })
 
     return {
-        "degraded": len(degraded_instances) > 0,
+        "degraded": len(invalid_instances) > 0,
         "workloads": workloads,
+        "invalid_instances": invalid_instances,
     }
 
 def clear_for_deployment(

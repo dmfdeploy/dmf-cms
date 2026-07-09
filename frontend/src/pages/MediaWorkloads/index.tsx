@@ -139,10 +139,10 @@ export default function MediaWorkloads() {
         </div>
       )}
 
-      {!isLoading && data?.configured && data.degraded && (
+      {!isLoading && data?.configured && data.degraded && (!data.workloads || data.workloads.length === 0) && (
         <div className="panel mt-6 border border-amber-500/20 bg-amber-500/10 px-4 py-3 text-sm text-amber-200">
-          Inventory is degraded ({data.reason ?? 'unknown reason'}) — some instances
-          have invalid workload assignments or the source of truth is unreachable.
+          Inventory is degraded ({data.reason ?? 'unknown reason'}) — the source
+          of truth is unreachable.
         </div>
       )}
 
@@ -160,7 +160,7 @@ export default function MediaWorkloads() {
         </div>
       )}
 
-      {data?.configured && !data.degraded && (
+      {data?.configured && (
         <>
           <div className="mt-6 flex flex-wrap items-center gap-3">
             {Array.isArray(data.scope) && (
@@ -316,6 +316,34 @@ export default function MediaWorkloads() {
                   )}
                 </div>
               ))}
+            </div>
+          )}
+
+          {/* Invalid instances section (ADR-0046 §2) */}
+          {data.invalid_instances && data.invalid_instances.length > 0 && (
+            <div className="panel mt-4 border border-red-500/20 bg-red-500/5">
+              <div className="flex items-center gap-3 border-b border-red-500/20 px-4 py-3">
+                <h2 className="text-lg font-semibold text-red-300">
+                  Invalid workload assignments
+                </h2>
+                <span className="badge bg-red-500/20 text-xs text-red-300">
+                  {data.invalid_instances.length} instance{data.invalid_instances.length !== 1 ? 's' : ''}
+                </span>
+              </div>
+              <div className="p-4 text-sm">
+                <p className="text-red-200/80 mb-3">
+                  These services have more than one workload:* tag. Each service must
+                  belong to exactly one workload. Fix the NetBox tags to resolve.
+                </p>
+                <ul className="space-y-1 font-mono text-xs">
+                  {data.invalid_instances.map((inv) => (
+                    <li key={inv.instance} className="text-red-200/70">
+                      {inv.instance} ({inv.function_key ?? '?'}): conflicting workloads{' '}
+                      {inv.conflicting_workloads.join(', ')}
+                    </li>
+                  ))}
+                </ul>
+              </div>
             </div>
           )}
         </>

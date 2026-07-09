@@ -44,7 +44,13 @@ def _client(tenancy: MediaTenancySettings, groups=ENGINEER, netbox=True) -> Test
     return client
 
 
-def _service(name: str, tags: list[str], device: str = "node-1", svc_id: int = 1) -> dict:
+def _service(
+    name: str,
+    tags: list[str],
+    device: str = "node-1",
+    svc_id: int = 1,
+    custom_fields: dict | None = None,
+) -> dict:
     return {
         "id": svc_id,
         "name": name,
@@ -52,6 +58,7 @@ def _service(name: str, tags: list[str], device: str = "node-1", svc_id: int = 1
         "device": {"name": device},
         "ports": [9000],
         "protocol": {"value": "tcp"},
+        "custom_fields": custom_fields or {},
     }
 
 
@@ -164,7 +171,7 @@ def test_grouped_basic_workload_grouping(monkeypatch):
 
 
 def test_grouped_invalid_multiple_not_multi_placed(monkeypatch):
-    """Instance with >1 workload:* tag → degraded, NOT placed in any workload."""
+    """Instance with >1 workload:* tag → degraded, surfaced with conflicting slugs."""
     def fake_request(*args, **kwargs):
         return {
             "results": [
@@ -183,13 +190,19 @@ def test_grouped_invalid_multiple_not_multi_placed(monkeypatch):
 
     assert result["degraded"] is True
 
-    # The invalid-multiple instance must NOT appear in any workload
+    # Invalid instances surfaced with conflicting workload slugs
+    assert len(result["invalid_instances"]) == 1
+    bad = result["invalid_instances"][0]
+    assert bad["instance"] == "bad-svc"
+    assert set(bad["conflicting_workloads"]) == {"alpha", "beta"}
+
+    # The invalid instance must NOT appear in any workload
     all_instances = []
     for w in result["workloads"]:
         all_instances.extend(i["instance"] for i in w["instances"])
     assert "bad-svc" not in all_instances
 
-    # The good workload still appears
+    # The good workload still appears (valid workloads NOT hidden)
     ok_wl = next((w for w in result["workloads"] if w["slug"] == "ok"), None)
     assert ok_wl is not None
     assert len(ok_wl["instances"]) == 1
@@ -197,26 +210,38 @@ def test_grouped_invalid_multiple_not_multi_placed(monkeypatch):
 
 def test_grouped_identity_join_no_collapse(monkeypatch):
     """DISCRIMINATING: two instances of the same function_key in DIFFERENT
-    workloads must NOT collapse in observed state (fails on app-label rollup).
+    workloads must NOT collapse in observed state.
+
+    Uses the REAL Prometheus label shape: instance = full probe target URL
+    (e.g. 'src-prod.mxl.svc.cluster.local:9000/status'). No cluster_service
+    label exists on the metric. The join goes through NetBox custom_fields
+    cluster_service → extracted leading DNS label of the instance target.
+
+    Must FAIL on app-label rollup (both would be failing since min(1,0)=0)
+    AND on the old cluster_service-label-only code (would match nothing).
     """
     def fake_netbox(*args, **kwargs):
         return {
             "results": [
                 _service("src-prod",
                          ["dmf-catalog", "app:mxl-videotestsrc", "lifecycle:active", "workload:production"],
-                         svc_id=1),
+                         svc_id=1,
+                         custom_fields={"cluster_service": "src-prod", "cluster_namespace": "mxl", "cluster_port": 9000}),
                 _service("src-staging",
                          ["dmf-catalog", "app:mxl-videotestsrc", "lifecycle:active", "workload:staging"],
-                         svc_id=2),
+                         svc_id=2,
+                         custom_fields={"cluster_service": "src-staging", "cluster_namespace": "mxl", "cluster_port": 9000}),
             ]
         }
 
     def fake_prometheus(*args, **kwargs):
-        # Per-instance identity: src-prod is healthy, src-staging is failing
+        # Real label shape: instance = full probe target, app = shared key
         return [
-            {"metric": {"cluster_service": "src-prod", "job": "netbox-probe"},
+            {"metric": {"instance": "src-prod.mxl.svc.cluster.local:9000/status",
+                        "app": "mxl-videotestsrc", "job": "netbox-probe"},
              "value": [0, "1"]},
-            {"metric": {"cluster_service": "src-staging", "job": "netbox-probe"},
+            {"metric": {"instance": "src-staging.mxl.svc.cluster.local:9000/status",
+                        "app": "mxl-videotestsrc", "job": "netbox-probe"},
              "value": [0, "0"]},
         ]
 
@@ -236,6 +261,41 @@ def test_grouped_identity_join_no_collapse(monkeypatch):
     # If we used app-label rollup, BOTH would be "failing" (min of the two)
 
 
+def test_grouped_single_service_operate_with_real_labels(monkeypatch):
+    """A single healthy active service resolves to operate with real-shaped labels.
+
+    This is the today-bug repro: with the old cluster_service-label code,
+    the join would match nothing → observed stays unknown → lifecycle=configure
+    instead of operate.
+    """
+    def fake_netbox(*args, **kwargs):
+        return {
+            "results": [
+                _service("mxl-videotestsrc",
+                         ["dmf-catalog", "app:mxl-videotestsrc", "lifecycle:active", "workload:videotest"],
+                         svc_id=1,
+                         custom_fields={"cluster_service": "mxl-videotestsrc", "cluster_namespace": "mxl", "cluster_port": 9000}),
+            ]
+        }
+
+    def fake_prometheus(*args, **kwargs):
+        return [
+            {"metric": {"instance": "mxl-videotestsrc.mxl.svc.cluster.local:9000/status",
+                        "app": "mxl-videotestsrc", "job": "netbox-probe"},
+             "value": [0, "1"]},
+        ]
+
+    monkeypatch.setattr(netbox_module, "_request", fake_netbox)
+    monkeypatch.setattr(prometheus_module, "query", fake_prometheus)
+
+    result = list_workloads_grouped("http://nb", "tok", True, None, prometheus_url="http://prom")
+
+    wl = result["workloads"][0]
+    assert wl["slug"] == "videotest"
+    assert wl["instances"][0]["observed_state"] == "running"
+    assert wl["lifecycle"] == "operate"
+
+
 def test_grouped_lifecycle_derivation(monkeypatch):
     """Workload lifecycle derived from member states."""
     def fake_request(*args, **kwargs):
@@ -245,13 +305,15 @@ def test_grouped_lifecycle_derivation(monkeypatch):
                 _service("a1", ["dmf-catalog", "app:a", "lifecycle:bootstrapped", "workload:prov-wl"], svc_id=1),
                 _service("a2", ["dmf-catalog", "app:a", "lifecycle:bootstrapped", "workload:prov-wl"], svc_id=2),
                 # All active + healthy → operate
-                _service("b1", ["dmf-catalog", "app:b", "lifecycle:active", "workload:op-wl"], svc_id=3),
+                _service("b1", ["dmf-catalog", "app:b", "lifecycle:active", "workload:op-wl"], svc_id=3,
+                         custom_fields={"cluster_service": "b1", "cluster_namespace": "mxl", "cluster_port": 9000}),
             ]
         }
 
     def fake_prometheus(*args, **kwargs):
+        # Real label shape: instance = full probe target
         return [
-            {"metric": {"cluster_service": "b1", "job": "netbox-probe"}, "value": [0, "1"]},
+            {"metric": {"instance": "b1.mxl.svc.cluster.local:9000", "app": "b", "job": "netbox-probe"}, "value": [0, "1"]},
         ]
 
     monkeypatch.setattr(netbox_module, "_request", fake_request)
@@ -287,13 +349,13 @@ def test_grouped_unassigned_bucket_name(monkeypatch):
 def test_grouped_netbox_unreachable_degrades(monkeypatch):
     """NetBox failure → degraded payload, never raw 500."""
     def boom(*args, **kwargs):
-        raise netbox_module.NetboxAPIError("down")
+        raise netbox_module.NetboxAPIError(502, "service unavailable")
 
     monkeypatch.setattr(netbox_module, "_request", boom)
     result = list_workloads_grouped("http://nb", "tok", True, None)
 
     assert result["degraded"] is True
-    assert result["reason"] == "netbox-error"
+    assert result["reason"] == "netbox-unreachable"
     assert result["workloads"] == []
 
 
