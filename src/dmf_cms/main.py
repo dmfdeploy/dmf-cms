@@ -727,13 +727,25 @@ def create_app(settings: Settings | None = None, contract: AppContract | None = 
             return JSONResponse({"error": "unauthorized"}, status_code=401)
         if not settings.awx.configured:
             return JSONResponse({"error": "AWX API not configured"}, status_code=503)
+        # Default: the catalog-launcher allow-list only, so internal/spike AWX
+        # templates never render on any default surface (Art. 3). An ADMIN may
+        # opt into the full, unfiltered AWX inventory (the expert view) with
+        # ?all=true — nothing is lost, it just isn't the default. A non-admin
+        # passing ?all=true is still filtered (fail-closed).
+        want_all = request.query_params.get("all", "").strip().lower() in ("1", "true", "yes")
+        user = effective_user(request.session)
+        show_all = want_all and user is not None and role_at_least(user.role, "admin")
         try:
             templates = list_job_templates(
                 api_url=settings.awx.api_url,
                 api_token=settings.awx.api_token,
                 ssl_verify=settings.awx.ssl_verify,
             )
+            if not show_all:
+                allowed = _catalog_launcher_jt_names()
+                templates = [t for t in templates if t.get("name") in allowed]
             return JSONResponse({
+                "filtered": not show_all,
                 "templates": [
                     {
                         "id": t["id"],
@@ -1085,6 +1097,15 @@ def create_app(settings: Settings | None = None, contract: AppContract | None = 
             ssl_verify=settings.awx.ssl_verify,
         )
 
+        # Mirror the /api/workflows contract: filtered to catalog launchers by
+        # default; an admin (this endpoint is already admin-gated on the
+        # effective role, so a view-as downgrade is 403 above) may opt into the
+        # full history with ?all=true. Response carries filtered:bool.
+        want_all = request.query_params.get("all", "").strip().lower() in ("1", "true", "yes")
+        if not want_all:
+            allowed = _catalog_launcher_jt_names()
+            raw_jobs = [j for j in raw_jobs if j.get("name", "") in allowed]
+
         jobs_out = [
             {
                 "id": j.get("id"),
@@ -1098,7 +1119,7 @@ def create_app(settings: Settings | None = None, contract: AppContract | None = 
             for j in raw_jobs
         ]
 
-        return JSONResponse({"jobs": jobs_out})
+        return JSONResponse({"filtered": not want_all, "jobs": jobs_out})
 
     # ------------------------------------------------------------------
     # Admin groups endpoint
@@ -1411,6 +1432,12 @@ def create_app(settings: Settings | None = None, contract: AppContract | None = 
                 ssl_verify=settings.awx.ssl_verify,
             )
 
+            # This is an ALL-ROLES default surface (Activity → History and the
+            # Workspace "Recent changes" widget), so the catalog-launcher
+            # allow-list is applied UNCONDITIONALLY — there is no ?all here. A
+            # historical run of an internal/spike template must not render at
+            # default, humanised or raw (Art. 3).
+            allowed = _catalog_launcher_jt_names()
             jobs = [
                 {
                     "id": j.get("id"),
@@ -1422,6 +1449,7 @@ def create_app(settings: Settings | None = None, contract: AppContract | None = 
                     "failed": j.get("failed", False),
                 }
                 for j in jobs_data
+                if j.get("name", "") in allowed
             ]
 
             return JSONResponse({"jobs": jobs})
@@ -1528,6 +1556,24 @@ def create_app(settings: Settings | None = None, contract: AppContract | None = 
         """Return {key: CatalogEntry} for all loaded entries."""
         entries = load_catalog_entries()
         return {e.key: e for e in entries}
+
+    def _catalog_launcher_jt_names() -> set[str]:
+        """The AWX job-template names the catalog actually declares as
+        launchers — its ``configure`` and ``finalise`` stages
+        (``awx_job_template``). Derived from catalog DATA, not a hardcoded
+        naming regex: the exposed workflow list is then exactly the facility's
+        catalog launchers, so internal/spike templates (e.g.
+        ``eso-openbao-health-check``) never render on a default surface
+        (Constitution Art. 3). Empty when no catalog is loaded → the default
+        list is empty (fail-closed: better to show nothing than raw internals;
+        admins can still see the full inventory via ?all=true)."""
+        names: set[str] = set()
+        for entry in load_catalog_entries():
+            for stage in (entry.configure, entry.finalise):
+                jt = (stage or {}).get("awx_job_template")
+                if jt:
+                    names.add(str(jt))
+        return names
 
     def _entry_to_dict(entry: CatalogEntry, lifecycle_status: str = "unknown") -> dict:
         """Convert a CatalogEntry + NetBox lifecycle status into a JSON-serialisable dict."""
