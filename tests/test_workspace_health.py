@@ -95,12 +95,51 @@ def test_alerts_flattened_and_sorted_by_severity(monkeypatch):
     body = _client().get("/api/workspace/health").json()
     assert body["reachable"] is True and body["watchdog_firing"] is True
     names = [a["name"] for a in body["alerts"]]
-    assert names == ["NodeDown", "HostMemoryPressure", "HostFanMaxed"]
+    # Info is floored out of "Current problems" (see the severity-floor test);
+    # only critical + warning remain, critical-first.
+    assert names == ["NodeDown", "HostMemoryPressure"]
     node_down = body["alerts"][0]
     assert node_down["severity"] == "critical"
     assert node_down["summary"] == "node gone"
     assert node_down["runbook_url"] == "https://runbooks.test#nodedown"
     assert node_down["instance"] == "node-1"
+
+
+def test_below_warning_severities_are_floored_out_of_problems(monkeypatch):
+    # Constitution Art. 4 / Alarm Philosophy: the below-warning advisory tiers
+    # (info / advisory / notice) are not classified operator "problems" (not
+    # necessary/unique/actionable). The "are we OK?" core drops them; they
+    # live on the expert Monitoring lane (/api/monitoring/alerts), not here.
+    monkeypatch.setattr(
+        prometheus_module,
+        "list_alerts",
+        lambda *, url: [
+            _alert("Watchdog", "none"),
+            _alert("ContainerCPUThrottling", "info"),
+            _alert("ContainerCPUThrottling", "info", extra_labels={"pod": "b"}),
+            _alert("DiskFillingSlowly", "advisory"),
+            _alert("CertExpiringSoon", "notice"),
+        ],
+    )
+    body = _client().get("/api/workspace/health").json()
+    assert body["alerts"] == []
+    assert body["watchdog_firing"] is True
+
+
+def test_unknown_severity_stays_fail_safe(monkeypatch):
+    # A firing alert with a missing/unknown severity label must NOT be hidden
+    # by the floor — never silence a real condition on a bad label.
+    monkeypatch.setattr(
+        prometheus_module,
+        "list_alerts",
+        lambda *, url: [
+            _alert("Watchdog", "none"),
+            _alert("MysteryCondition", ""),
+        ],
+    )
+    body = _client().get("/api/workspace/health").json()
+    names = [a["name"] for a in body["alerts"]]
+    assert names == ["MysteryCondition"]
 
 
 def test_pending_alerts_are_not_current_problems(monkeypatch):

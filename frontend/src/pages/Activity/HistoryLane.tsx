@@ -1,6 +1,7 @@
 import { useChangesJobs, useChangesCommits, useChangesPulls } from '@/api/hooks'
 import { GitCommit, GitPullRequest, MousePointerClick, Zap, ExternalLink } from 'lucide-react'
 import { useActivityStore, type ConsoleActionType } from '../../store/activity'
+import { describeJob, jobOutcome } from '../../lib/labels'
 
 // Human title per console-originated action (#185 WP-E: AWX writes join the
 // clear record in this lane).
@@ -88,7 +89,7 @@ export default function HistoryLane() {
         <div className="px-6 py-4 border-b border-panel">
           <h2 className="text-lg font-semibold flex items-center gap-2">
             <Zap className="w-5 h-5 text-amber-500" />
-            Recent AWX Jobs
+            Recent automation runs
           </h2>
         </div>
         <div className="divide-y divide-panel">
@@ -101,7 +102,12 @@ export default function HistoryLane() {
               <div key={job.id} className="px-6 py-4 hover:bg-panel/30 transition">
                 <div className="flex items-start justify-between">
                   <div className="flex-1">
-                    <h3 className="font-semibold text-sm">{job.name}</h3>
+                    {/* Operator language leads (Art. 3/8); the raw AWX
+                        template name stays as a muted expert line — the
+                        History lane still surfaces the catalog key (demo
+                        runbook §7a), just no longer as the headline. */}
+                    <h3 className="font-semibold text-sm">{describeJob(job.name)}</h3>
+                    <p className="text-xs text-muted/70 mt-0.5">{job.name}</p>
                     <div className="flex items-center gap-2 mt-2 text-xs text-muted">
                       <span className={`inline-block px-2 py-1 rounded font-semibold ${
                         job.status === 'successful' ? 'bg-green-500/20 text-green-400' :
@@ -109,9 +115,9 @@ export default function HistoryLane() {
                         job.status === 'running' ? 'bg-blue-500/20 text-blue-400' :
                         'bg-gray-500/20 text-gray-400'
                       }`}>
-                        {job.status}
+                        {jobOutcome(job.status)}
                       </span>
-                      <span>Job #{job.id}</span>
+                      <span>Run {job.id}</span>
                       {job.elapsed && <span>{job.elapsed.toFixed(1)}s</span>}
                     </div>
                   </div>

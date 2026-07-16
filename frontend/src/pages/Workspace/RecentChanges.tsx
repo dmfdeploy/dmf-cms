@@ -1,5 +1,6 @@
 import { Link } from 'react-router-dom'
 import { useChangesJobs } from '../../api/hooks'
+import { describeJob, jobOutcome } from '../../lib/labels'
 
 const statusColor: Record<string, string> = {
   new: 'badge-status-new',
@@ -40,11 +41,15 @@ export default function RecentChanges() {
           recent.map((job) => (
             <div key={job.id} className="px-6 py-3 flex items-center justify-between gap-4">
               <div className="flex-1 min-w-0">
-                <p className="text-sm font-medium truncate">{job.name}</p>
+                {/* Operator language at default (Art. 3/8): "what changed" +
+                    plain outcome. The raw AWX template name is system jargon —
+                    demoted to a muted secondary line, not the headline. */}
+                <p className="text-sm font-medium truncate">{describeJob(job.name)}</p>
+                <p className="text-xs text-muted/70 truncate">{job.name}</p>
               </div>
               <div className="flex items-center gap-3 shrink-0 text-xs text-muted">
                 <span className={`badge text-xs ${statusColor[job.status] || 'badge-status-pending'}`}>
-                  {job.status}
+                  {jobOutcome(job.status)}
                 </span>
                 {job.started && <span>{new Date(job.started).toLocaleString()}</span>}
               </div>

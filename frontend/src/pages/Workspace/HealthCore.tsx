@@ -1,7 +1,10 @@
+import { useState } from 'react'
 import { Link } from 'react-router-dom'
 import { ExternalLink } from 'lucide-react'
 import { useWorkspaceHealth } from '../../api/hooks'
 import type { WorkspaceAlert } from '../../api/types'
+import { humanizeAlertName, humanizeContext } from '../../lib/labels'
+import { classifyWorkspaceHealth } from '../../lib/workspaceHealth'
 
 // The pinned, non-removable "are we OK?" core (IA §4.1/§6.1, #174 WP2).
 // Every state is designed (Art. 9): loading, dark (not configured),
@@ -11,8 +14,11 @@ import type { WorkspaceAlert } from '../../api/types'
 // rows carry non-mutating Investigate links only (plan OQ-2 resolution).
 export default function HealthCore() {
   const health = useWorkspaceHealth()
+  // Shared "are we OK?" classifier — same source of truth as the shell bell
+  // (Art. 1: the two must never disagree).
+  const state = classifyWorkspaceHealth(health)
 
-  if (health.isLoading && !health.data) {
+  if (state.phase === 'loading') {
     return (
       <div className="panel text-center py-8 mb-6">
         <p className="text-muted text-sm">Checking facility health…</p>
@@ -20,7 +26,7 @@ export default function HealthCore() {
     )
   }
 
-  if (health.data && !health.data.configured) {
+  if (state.phase === 'not-configured') {
     return (
       <div className="panel py-6 px-6 mb-6">
         <h2 className="font-bold text-text mb-1">Facility health</h2>
@@ -32,13 +38,13 @@ export default function HealthCore() {
     )
   }
 
-  const stale = health.isError
+  const stale = state.stale
   const staleAgeSeconds =
     stale && health.dataUpdatedAt
       ? Math.max(0, Math.round((Date.now() - health.dataUpdatedAt) / 1000))
       : null
 
-  if (stale && !health.data) {
+  if (state.phase === 'unknown') {
     return (
       <div className="panel py-6 px-6 mb-6 border-warn/40">
         <h2 className="font-bold text-text mb-1">Facility health — unknown</h2>
@@ -50,14 +56,18 @@ export default function HealthCore() {
     )
   }
 
-  const alerts = health.data?.alerts ?? []
+  // The core carries classified problems only — the backend applies the
+  // severity floor (info/advisory → expert Monitoring lane, not a "problem";
+  // Art. 4). So the tiles classify Critical vs everything-else-that-is-a-
+  // problem (Warning); there is no Info tile (an info count here would imply
+  // info-level problems exist, which contradicts the floor).
+  const alerts = state.alerts
   const counts = {
     critical: alerts.filter((a) => a.severity === 'critical').length,
-    warning: alerts.filter((a) => a.severity !== 'critical' && a.severity !== 'info').length,
-    info: alerts.filter((a) => a.severity === 'info').length,
+    warning: alerts.filter((a) => a.severity !== 'critical').length,
   }
-  const allQuiet = alerts.length === 0
-  const verified = health.data?.watchdog_firing ?? false
+  const allQuiet = !state.hasProblems
+  const verified = state.verified
 
   return (
     <div className="mb-6">
@@ -71,10 +81,9 @@ export default function HealthCore() {
         </div>
       )}
 
-      <div className="grid grid-cols-3 gap-4 mb-4">
+      <div className="grid grid-cols-2 gap-4 mb-4">
         <SeverityTile label="Critical" count={counts.critical} tone="critical" />
         <SeverityTile label="Warning" count={counts.warning} tone="warning" />
-        <SeverityTile label="Info" count={counts.info} tone="info" />
       </div>
 
       <div className="panel">
@@ -143,6 +152,13 @@ const severityBadge: Record<string, string> = {
 }
 
 function ProblemRow({ alert }: { alert: WorkspaceAlert }) {
+  const [showDetails, setShowDetails] = useState(false)
+  // Default level speaks the operator's language (Art. 3): a readable title
+  // and a readable scope line. The raw rule name + key=value label blob are
+  // system jargon — demoted behind an expert "Details" affordance, never
+  // shown at default (and never destroyed).
+  const title = humanizeAlertName(alert.name)
+  const scope = humanizeContext(alert.context)
   return (
     <div className="px-6 py-4 hover:bg-panel/30 transition">
       <div className="flex items-start justify-between gap-4">
@@ -155,14 +171,30 @@ function ProblemRow({ alert }: { alert: WorkspaceAlert }) {
             >
               {alert.severity || 'unclassified'}
             </span>
-            <h3 className="font-semibold text-sm">{alert.name}</h3>
+            <h3 className="font-semibold text-sm">{title}</h3>
             {alert.instance && <span className="text-xs text-muted">{alert.instance}</span>}
           </div>
-          {alert.context && (
-            <p className="text-xs text-muted mt-1 font-mono">{alert.context}</p>
-          )}
+          {scope && <p className="text-xs text-muted mt-1">{scope}</p>}
           {(alert.summary || alert.description) && (
             <p className="text-xs text-muted mt-1">{alert.summary || alert.description}</p>
+          )}
+          {(alert.name || alert.context) && (
+            <>
+              <button
+                type="button"
+                onClick={() => setShowDetails((v) => !v)}
+                className="text-xs text-muted/70 hover:text-muted mt-1 cursor-pointer"
+                aria-expanded={showDetails}
+              >
+                {showDetails ? 'Hide details' : 'Details'}
+              </button>
+              {showDetails && (
+                <p className="text-xs text-muted/70 mt-1 font-mono break-all">
+                  {alert.name}
+                  {alert.context ? ` · ${alert.context}` : ''}
+                </p>
+              )}
+            </>
           )}
         </div>
         <div className="flex items-center gap-3 shrink-0 text-xs">
