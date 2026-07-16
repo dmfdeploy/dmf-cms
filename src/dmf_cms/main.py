@@ -56,6 +56,13 @@ from .settings import Settings, load_settings
 logger = logging.getLogger(__name__)
 
 
+# Below-warning alert severities floored out of the Workspace "Current
+# problems" core (Constitution Art. 4 / Alarm Philosophy sub-warning tiers).
+# Blank/unknown severities are deliberately NOT listed here — they stay
+# visible (fail-safe). Info/advisory/notice surface only on the expert
+# Monitoring lane (/api/monitoring/alerts, unfiltered).
+_BELOW_WARNING_SEVERITIES = frozenset({"info", "advisory", "notice"})
+
 PACKAGE_ROOT = Path(__file__).resolve().parent
 
 
@@ -1192,6 +1199,18 @@ def create_app(settings: Settings | None = None, contract: AppContract | None = 
                 # The core contracts on firing alerts only (plan §3 WP2;
                 # GATE-22 P2): an alert inside its for: pending window is
                 # not yet a current problem.
+                continue
+            if severity in _BELOW_WARNING_SEVERITIES:
+                # Severity floor (Constitution Art. 4 / Alarm Philosophy):
+                # "Current problems" carries classified operator conditions
+                # only. The below-warning advisory classes (info / advisory /
+                # notice — the Alarm Philosophy stub's sub-warning tiers) are
+                # not problems: not necessary/unique/actionable (EEMUA 191).
+                # They belong on the expert Monitoring lane
+                # (/api/monitoring/alerts, unfiltered), not the "are we OK?"
+                # core. A firing alert with a blank/UNKNOWN severity is NOT
+                # dropped (fail-safe: never hide a real condition on a bad or
+                # missing label).
                 continue
             # Identity is the full label set, not alertname+instance — one
             # rule can fire per namespace/pod with a shared or blank

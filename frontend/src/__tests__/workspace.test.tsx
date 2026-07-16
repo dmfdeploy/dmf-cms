@@ -92,24 +92,41 @@ describe('Workspace health core states (plan §6)', () => {
     expect(screen.getByText(/Treat this as unknown, not green/)).toBeTruthy()
   })
 
-  it('warning-only state fills the warning tile and lists the problem', async () => {
+  it('warning-only state fills the warning tile and lists the problem in operator language', async () => {
     renderWorkspace(health({ alerts: [alert('HostMemoryPressure', 'warning', 'memory tight')] }))
-    expect(await screen.findByText('HostMemoryPressure')).toBeTruthy()
+    // Operator-language title at default (Art. 3); raw rule name is demoted
+    // behind Details, not shown at default.
+    expect(await screen.findByText('Host memory pressure')).toBeTruthy()
+    expect(screen.queryByText('HostMemoryPressure')).toBeNull()
     expect(screen.getByText('memory tight')).toBeTruthy()
     expect(screen.getByText('warning')).toBeTruthy()
     // Non-mutating actions only: Investigate link, no Ack anywhere.
     expect(screen.getByRole('link', { name: 'Investigate' })).toBeTruthy()
     expect(screen.queryByText(/ack/i)).toBeNull()
+    // No Info tile — the tile row classifies problems only (Critical/Warning).
+    expect(screen.queryByText('Info')).toBeNull()
+    expect(screen.getByText('Critical')).toBeTruthy()
+    expect(screen.getByText('Warning')).toBeTruthy()
+  })
+
+  it('raw rule name + key=value context are available behind an expert Details toggle', async () => {
+    renderWorkspace(
+      health({ alerts: [alert('HostMemoryPressure', 'warning', 'memory tight', '', 'namespace=mxl')] }),
+    )
+    const btn = await screen.findByRole('button', { name: 'Details' })
+    expect(screen.queryByText(/HostMemoryPressure/)).toBeNull()
+    btn.click()
+    expect(await screen.findByText(/HostMemoryPressure/)).toBeTruthy()
   })
 
   it('critical state lists the problem with severity and runbook link', async () => {
     renderWorkspace(health({ alerts: [alert('NodeDown', 'critical', 'node gone')] }))
-    expect(await screen.findByText('NodeDown')).toBeTruthy()
+    expect(await screen.findByText('Node down')).toBeTruthy()
     expect(screen.getByText('critical')).toBeTruthy()
     expect(screen.getByRole('link', { name: /Runbook/ })).toBeTruthy()
   })
 
-  it('renders two rows for the same alert name with distinct identities', async () => {
+  it('renders two rows for the same alert name with distinct readable scopes', async () => {
     renderWorkspace(
       health({
         alerts: [
@@ -118,9 +135,11 @@ describe('Workspace health core states (plan §6)', () => {
         ],
       }),
     )
-    expect(await screen.findAllByText('PodCrashLooping')).toHaveLength(2)
-    expect(screen.getByText('namespace=mxl pod=a')).toBeTruthy()
-    expect(screen.getByText('namespace=nmos pod=b')).toBeTruthy()
+    expect(await screen.findAllByText('Pods restarting repeatedly')).toHaveLength(2)
+    // key=value jargon humanised at default; raw blob is expert-only (Details).
+    expect(screen.getByText('mxl · pod a')).toBeTruthy()
+    expect(screen.getByText('nmos · pod b')).toBeTruthy()
+    expect(screen.queryByText('namespace=mxl pod=a')).toBeNull()
   })
 
   it('unreachable monitoring with no prior data renders unknown as content, no raw error', async () => {
