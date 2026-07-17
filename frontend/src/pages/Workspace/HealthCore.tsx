@@ -5,6 +5,7 @@ import { useWorkspaceHealth } from '../../api/hooks'
 import type { WorkspaceAlert } from '../../api/types'
 import { humanizeAlertName, humanizeContext } from '../../lib/labels'
 import { classifyWorkspaceHealth } from '../../lib/workspaceHealth'
+import { formatDuration } from '../../lib/duration'
 
 // The pinned, non-removable "are we OK?" core (IA §4.1/§6.1, #174 WP2).
 // Every state is designed (Art. 9): loading, dark (not configured),
@@ -159,6 +160,11 @@ function ProblemRow({ alert }: { alert: WorkspaceAlert }) {
   // shown at default (and never destroyed).
   const title = humanizeAlertName(alert.name)
   const scope = humanizeContext(alert.context)
+  // Recomputed on each render from Date.now() — no per-second ticker. A
+  // ticker would be Zabbix-faithful but at our 30s health-poll cadence it
+  // buys no operator value for the re-render churn it costs; the row is
+  // already fresh enough on each poll/interaction render.
+  const duration = formatDuration(alert.active_at, Date.now())
   return (
     <div className="px-6 py-4 hover:bg-panel/30 transition">
       <div className="flex items-start justify-between gap-4">
@@ -198,6 +204,7 @@ function ProblemRow({ alert }: { alert: WorkspaceAlert }) {
           )}
         </div>
         <div className="flex items-center gap-3 shrink-0 text-xs">
+          {duration && <span className="text-muted whitespace-nowrap">for {duration}</span>}
           {/* Non-mutating actions only (no Ack until the Alarm Philosophy
               lifecycle exists — plan OQ-2). */}
           <Link to="/monitoring" className="text-accent-blue hover:underline">
