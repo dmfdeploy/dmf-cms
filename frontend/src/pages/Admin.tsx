@@ -1,5 +1,74 @@
 import { useAdminUsers, useAdminGroups, useAdminHealth } from '@/api/hooks'
-import { Users, Activity } from 'lucide-react'
+import { Users, Bot, Activity } from 'lucide-react'
+import type { AdminUser } from '@/api/types'
+
+// A single Users table body. The People / Machine-identities split (ADR-0028
+// C4/D8) renders two of these over the human vs machine partitions rather than
+// one flat roster, so human and non-human principals never blur together.
+function UsersTable({ users, isLoading, emptyLabel }: {
+  users: AdminUser[]
+  isLoading: boolean
+  emptyLabel: string
+}) {
+  return (
+    <div className="overflow-x-auto">
+      <table className="w-full text-sm">
+        <thead className="border-b border-panel bg-panel/30">
+          <tr>
+            <th className="px-6 py-3 text-left font-semibold text-muted">Username</th>
+            <th className="px-6 py-3 text-left font-semibold text-muted">Name</th>
+            <th className="px-6 py-3 text-left font-semibold text-muted">Email</th>
+            <th className="px-6 py-3 text-left font-semibold text-muted">Role</th>
+            <th className="px-6 py-3 text-left font-semibold text-muted">Status</th>
+          </tr>
+        </thead>
+        <tbody className="divide-y divide-panel">
+          {isLoading ? (
+            <tr>
+              <td colSpan={5} className="px-6 py-8 text-center text-muted text-sm">Loading users...</td>
+            </tr>
+          ) : users.length === 0 ? (
+            <tr>
+              <td colSpan={5} className="px-6 py-8 text-center text-muted text-sm">{emptyLabel}</td>
+            </tr>
+          ) : (
+            users.map((user) => (
+              <tr key={user.username} className="hover:bg-panel/30 transition">
+                <td className="px-6 py-3 font-mono text-xs">
+                  <span className="flex items-center gap-2">
+                    {user.username}
+                    {user.is_break_glass && (
+                      <span
+                        className="inline-block px-2 py-0.5 rounded text-[10px] font-semibold bg-amber-500/20 text-amber-400 border border-amber-500/40"
+                        title="Sanctioned emergency identity (ADR-0028 C4) — audited, not for routine use."
+                      >
+                        Break-glass
+                      </span>
+                    )}
+                  </span>
+                </td>
+                <td className="px-6 py-3 text-sm">{user.display_name}</td>
+                <td className="px-6 py-3 text-xs text-muted">{user.email}</td>
+                <td className="px-6 py-3">
+                  <span className="inline-block px-2 py-1 rounded text-xs font-semibold bg-blue-500/20 text-blue-400">
+                    {user.role}
+                  </span>
+                </td>
+                <td className="px-6 py-3">
+                  <span className={`inline-block px-2 py-1 rounded text-xs font-semibold ${
+                    user.is_active ? 'bg-green-500/20 text-green-400' : 'bg-gray-500/20 text-gray-400'
+                  }`}>
+                    {user.is_active ? 'Active' : 'Inactive'}
+                  </span>
+                </td>
+              </tr>
+            ))
+          )}
+        </tbody>
+      </table>
+    </div>
+  )
+}
 
 export default function Admin() {
   const users = useAdminUsers()
@@ -7,6 +76,10 @@ export default function Admin() {
   const health = useAdminHealth()
 
   const isLoading = users.isLoading || groups.isLoading || health.isLoading
+
+  const allUsers: AdminUser[] = users.data?.users ?? []
+  const humanUsers = allUsers.filter((u) => u.user_type === 'human')
+  const machineUsers = allUsers.filter((u) => u.user_type === 'machine')
 
   return (
     <div className="flex-1 overflow-y-auto p-6">
@@ -49,58 +122,27 @@ export default function Admin() {
         </div>
       </div>
 
-      {/* User Management */}
+      {/* People — human identities (ADR-0028 C4/D8 human/machine split) */}
       <div className="panel mb-6">
         <div className="px-6 py-4 border-b border-panel">
           <h2 className="text-lg font-semibold flex items-center gap-2">
             <Users className="w-5 h-5 text-purple-500" />
-            Users
+            People
           </h2>
         </div>
-        <div className="overflow-x-auto">
-          <table className="w-full text-sm">
-            <thead className="border-b border-panel bg-panel/30">
-              <tr>
-                <th className="px-6 py-3 text-left font-semibold text-muted">Username</th>
-                <th className="px-6 py-3 text-left font-semibold text-muted">Name</th>
-                <th className="px-6 py-3 text-left font-semibold text-muted">Email</th>
-                <th className="px-6 py-3 text-left font-semibold text-muted">Role</th>
-                <th className="px-6 py-3 text-left font-semibold text-muted">Status</th>
-              </tr>
-            </thead>
-            <tbody className="divide-y divide-panel">
-              {isLoading ? (
-                <tr>
-                  <td colSpan={5} className="px-6 py-8 text-center text-muted text-sm">Loading users...</td>
-                </tr>
-              ) : users.data?.users?.length === 0 ? (
-                <tr>
-                  <td colSpan={5} className="px-6 py-8 text-center text-muted text-sm">No users</td>
-                </tr>
-              ) : (
-                users.data?.users?.map((user: typeof users.data.users[0], i: number) => (
-                  <tr key={i} className="hover:bg-panel/30 transition">
-                    <td className="px-6 py-3 font-mono text-xs">{user.username}</td>
-                    <td className="px-6 py-3 text-sm">{user.display_name}</td>
-                    <td className="px-6 py-3 text-xs text-muted">{user.email}</td>
-                    <td className="px-6 py-3">
-                      <span className="inline-block px-2 py-1 rounded text-xs font-semibold bg-blue-500/20 text-blue-400">
-                        {user.role}
-                      </span>
-                    </td>
-                    <td className="px-6 py-3">
-                      <span className={`inline-block px-2 py-1 rounded text-xs font-semibold ${
-                        user.is_active ? 'bg-green-500/20 text-green-400' : 'bg-gray-500/20 text-gray-400'
-                      }`}>
-                        {user.is_active ? 'Active' : 'Inactive'}
-                      </span>
-                    </td>
-                  </tr>
-                ))
-              )}
-            </tbody>
-          </table>
+        <UsersTable users={humanUsers} isLoading={isLoading} emptyLabel="No people" />
+      </div>
+
+      {/* Machine identities — service / automation principals, kept distinct
+          from People so a non-human login never reads as a person. */}
+      <div className="panel mb-6">
+        <div className="px-6 py-4 border-b border-panel">
+          <h2 className="text-lg font-semibold flex items-center gap-2">
+            <Bot className="w-5 h-5 text-cyan-500" />
+            Machine identities
+          </h2>
         </div>
+        <UsersTable users={machineUsers} isLoading={isLoading} emptyLabel="No machine identities" />
       </div>
 
       {/* Groups Management */}
