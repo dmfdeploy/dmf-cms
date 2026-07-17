@@ -63,6 +63,24 @@ logger = logging.getLogger(__name__)
 # Monitoring lane (/api/monitoring/alerts, unfiltered).
 _BELOW_WARNING_SEVERITIES = frozenset({"info", "advisory", "notice"})
 
+# Platform-seeded sealed emergency admin(s). Membership here flags a user as a
+# break-glass identity in the admin Users surface — a sanctioned exception, not
+# a routine role (ADR-0028 C4: no routine operation may require break-glass).
+# akadmin is the Authentik-seeded superuser we keep sealed for emergencies.
+BREAK_GLASS_USERNAMES = {"akadmin"}
+
+# Platform-seeded break-glass group (dmf-infra k3s-lab-bootstrap authentik
+# role: authentik_breakglass_username defaults to a member of this group, e.g.
+# "break-glass"). Membership here is an independent, group-based signal from
+# BREAK_GLASS_USERNAMES — the seeded rescue admin need not be named "akadmin".
+BREAK_GLASS_GROUP = "break-glass"
+
+# Authentik user "type" values classed as human identities (ADR-0028 C4/D8:
+# human/machine split is a first-class distinction). The machine side
+# (service_account, internal_service_account) is derived by exclusion so that
+# an unknown/novel type fails safe to machine — see _user_type below.
+_HUMAN_USER_TYPES = {"internal", "external"}
+
 PACKAGE_ROOT = Path(__file__).resolve().parent
 
 
@@ -1057,25 +1075,46 @@ def create_app(settings: Settings | None = None, contract: AppContract | None = 
             api_token=settings.authentik.api_token,
         )
 
-        def _dmf_role(groups: list[dict]) -> str:
-            group_names = {g.get("name", "") for g in groups}
+        def _dmf_role(group_names: set[str]) -> str:
             for role in reversed(ROLE_ORDER):
                 if group_names & ROLE_GROUPS[role]:
                     return role
             return "viewer"
 
+        def _user_type(raw_type: str) -> str:
+            # human = a person's login; machine = a service/automation principal.
+            # Fail-safe default for unknown/missing type is "machine": a novel
+            # Authentik type is far more likely a new automation kind than a new
+            # human kind, and mislabeling a machine as human is the worse failure
+            # (it invites casual trust of a non-human principal). So anything not
+            # explicitly a known human type stays on the machine side.
+            if raw_type in _HUMAN_USER_TYPES:
+                return "human"
+            return "machine"
+
         users_out = []
         for u in raw_users:
             if not u.get("is_active", True):
                 continue
-            groups = u.get("groups_obj", [])
+            group_names = {g.get("name", "") for g in u.get("groups_obj", [])}
+            username = u.get("username", "")
             users_out.append({
-                "username": u.get("username", ""),
+                "username": username,
                 "display_name": u.get("name", ""),
                 "email": u.get("email", ""),
-                "role": _dmf_role(groups),
+                "role": _dmf_role(group_names),
                 "last_login": u.get("last_login"),
                 "is_active": u.get("is_active", True),
+                "user_type": _user_type(u.get("type", "")),
+                # ADR-0028 C4: break-glass is a sanctioned exception, never a
+                # routine role — flag it so the UI can mark it distinctly.
+                # Two independent signals: a known username anchor (akadmin)
+                # and membership in the platform-seeded break-glass group (the
+                # dmf-infra-seeded rescue admin need not be named "akadmin").
+                "is_break_glass": (
+                    username in BREAK_GLASS_USERNAMES
+                    or BREAK_GLASS_GROUP in group_names
+                ),
             })
 
         return JSONResponse({"users": users_out})

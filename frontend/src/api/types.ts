@@ -105,6 +105,8 @@ export interface AdminUser {
   role: 'viewer' | 'operator' | 'engineer' | 'admin'
   last_login: string | null
   is_active: boolean
+  user_type: 'human' | 'machine'
+  is_break_glass: boolean
 }
 
 export interface AdminUsersResponse {

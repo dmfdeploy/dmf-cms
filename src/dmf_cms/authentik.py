@@ -113,7 +113,9 @@ def list_users(*, api_url: str, api_token: str) -> list[dict]:
     """Fetch all active users from Authentik.
 
     Returns raw Authentik user objects from /api/v3/core/users/.
-    Fields used downstream: username, name, email, is_active, last_login, groups_obj
+    Fields used downstream: username, name, email, is_active, last_login,
+    groups_obj, type (internal/external/service_account/internal_service_account
+    — mapped to a human/machine split in the admin Users surface).
     """
     result = _request(api_url, api_token, "GET", "/api/v3/core/users/?page_size=100")
     return result.get("results", [])
