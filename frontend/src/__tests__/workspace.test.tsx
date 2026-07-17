@@ -34,7 +34,7 @@ function health(overrides: Partial<WorkspaceHealth> = {}): WorkspaceHealth {
   }
 }
 
-function alert(name: string, severity: string, summary = '', id = '', context = '') {
+function alert(name: string, severity: string, summary = '', id = '', context = '', activeAt = '2026-07-05T12:00:00Z') {
   return {
     id: id || `fp-${name}`,
     name,
@@ -45,7 +45,7 @@ function alert(name: string, severity: string, summary = '', id = '', context = 
     summary,
     description: '',
     runbook_url: severity === 'critical' ? 'https://runbooks.test#x' : '',
-    active_at: '2026-07-05T12:00:00Z',
+    active_at: activeAt,
   }
 }
 
@@ -77,6 +77,7 @@ function renderWorkspace(healthBody: WorkspaceHealth) {
 afterEach(() => {
   cleanup()
   vi.unstubAllGlobals()
+  vi.restoreAllMocks()
 })
 
 describe('Workspace health core states (plan §6)', () => {
@@ -152,5 +153,24 @@ describe('Workspace health core states (plan §6)', () => {
   it('not-configured renders the explicit dark state', async () => {
     renderWorkspace(health({ configured: false, reachable: false, watchdog_firing: false }))
     expect(await screen.findByText(/Monitoring is not configured in this environment/)).toBeTruthy()
+  })
+})
+
+describe('Problem row duration (Zabbix Problems model, #243 follow-up)', () => {
+  it('shows how long the problem has been active', async () => {
+    // Fix Date.now() only (not fake timers — those would also pause the
+    // async fetch/query machinery this test's findByText waits on).
+    // active_at (fixture default) + exactly 2h14m.
+    vi.spyOn(Date, 'now').mockReturnValue(Date.parse('2026-07-05T14:14:00Z'))
+    renderWorkspace(health({ alerts: [alert('HostMemoryPressure', 'warning', 'memory tight')] }))
+    expect(await screen.findByText('for 2h 14m')).toBeTruthy()
+  })
+
+  it('omits the duration cleanly when active_at is empty', async () => {
+    renderWorkspace(
+      health({ alerts: [alert('HostMemoryPressure', 'warning', 'memory tight', '', '', '')] }),
+    )
+    expect(await screen.findByText('Host memory pressure')).toBeTruthy()
+    expect(screen.queryByText(/^for /)).toBeNull()
   })
 })
