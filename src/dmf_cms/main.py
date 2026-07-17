@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import hashlib
 import logging
+import re
 import time
 import uuid
 from contextlib import asynccontextmanager
@@ -80,6 +81,10 @@ BREAK_GLASS_GROUP = "break-glass"
 # (service_account, internal_service_account) is derived by exclusion so that
 # an unknown/novel type fails safe to machine — see _user_type below.
 _HUMAN_USER_TYPES = {"internal", "external"}
+
+# Workload-tag slug (#239 trio: dmf-cms + dmf-runbooks + dmf-infra). k8s-label-ish,
+# max 40 chars — fixed across all three PRs, do not rename or relax.
+WORKLOAD_SLUG_RE = re.compile(r"^[a-z0-9]([a-z0-9-]{0,38}[a-z0-9])?$")
 
 PACKAGE_ROOT = Path(__file__).resolve().parent
 
@@ -169,10 +174,19 @@ async def _require_reason(request: Request) -> tuple[str | None, JSONResponse | 
     present, else ``(None, error_response)`` — a 400 that must short-circuit the
     handler *before* any actuator call (no AWX launch on a missing reason).
     Mirrors the clear-for-deployment precondition (ADR-0028 C5).
+
+    A non-object JSON body (a bare list/string/number) is treated the same as
+    a missing body — ``.get`` only makes sense on a dict, and any other JSON
+    top-level shape has no ``reason`` field to find — so it falls straight
+    into the existing "reason-required" 400, not an unhandled AttributeError.
+    Every caller of this shared helper (deploy, teardown, launch, and via
+    ``_extract_workload``) gets this for free.
     """
     try:
         body = await request.json()
     except Exception:
+        body = None
+    if not isinstance(body, dict):
         body = None
     reason = (body or {}).get("reason", "")
     if not isinstance(reason, str) or not reason.strip():
@@ -181,6 +195,46 @@ async def _require_reason(request: Request) -> tuple[str | None, JSONResponse | 
             status_code=400,
         )
     return reason.strip(), None
+
+
+async def _extract_workload(request: Request, request_id: str) -> tuple[str | None, JSONResponse | None]:
+    """Extract + validate the optional #239 ``workload`` slug from a request body.
+
+    Returns ``(None, None)`` when the operator supplied no workload — an
+    absent key, JSON ``null``, or ``""`` are all "legitimately omitted" (the
+    common case — deploy stays bit-compatible with pre-#239 behavior). Any
+    OTHER non-string value (a number, boolean, array, or object — including
+    falsy ones like ``0``, ``false``, ``[]``) is a malformed request, not an
+    omission: it returns ``(None, error)``, a 400 that must short-circuit the
+    handler before any AWX call. Same for a string that doesn't fullmatch the
+    slug rule. A non-object JSON body (list/string/number) is treated as no
+    body at all, same as ``_require_reason``.
+
+    ``fullmatch`` (not ``match``) is deliberate: with ``match``, Python's
+    trailing ``$`` anchor matches immediately before a final newline, so
+    "studio-a\\n" would pass validation, reach AWX extra_vars verbatim, and
+    inject a newline into the audit log line (log-splitting surface).
+    ``fullmatch`` requires the entire string to be consumed, so any trailing
+    newline (or CRLF) correctly fails.
+
+    Body is re-read via ``request.json()``, which Starlette caches, so this
+    is safe to call after ``_require_reason`` already parsed the same body.
+    """
+    try:
+        body = await request.json()
+    except Exception:
+        body = None
+    if not isinstance(body, dict):
+        body = None
+    workload = body.get("workload") if body is not None else None
+    if workload is None or workload == "":
+        return None, None
+    if not isinstance(workload, str) or not WORKLOAD_SLUG_RE.fullmatch(workload):
+        return None, JSONResponse(
+            {"error": "invalid workload slug", "request_id": request_id},
+            status_code=400,
+        )
+    return workload, None
 
 
 def _audit_awx_write(
@@ -192,6 +246,7 @@ def _audit_awx_write(
     request_id: str,
     reason: str,
     outcome: str,
+    workload: str | None = None,
 ) -> None:
     """Emit the C5 quartet audit line for a DMF-initiated AWX write.
 
@@ -206,11 +261,15 @@ def _audit_awx_write(
     the console-local Activity record), NOT injected into AWX job ``extra_vars``.
     This matches clear-for-deployment: the console is the authoritative audit
     surface (ADR-0028); threading C5 into AWX itself is deferred.
+
+    ``workload`` (#239) records what was requested, not just target=key — an
+    optional trailing field, blank when omitted, so existing callers (launch,
+    teardown) need no changes.
     """
     real = session_user(request.session)
     real_role = real.role if (real is not None and request.session.get("view_as")) else ""
     logger.info(
-        "awx write: action=%s actor=%s role=%s real_role=%s request_id=%s target=%s reason=%r outcome=%s",
+        "awx write: action=%s actor=%s role=%s real_role=%s request_id=%s target=%s reason=%r outcome=%s workload=%s",
         action,
         user.subject,
         user.role,
@@ -219,6 +278,7 @@ def _audit_awx_write(
         target,
         reason,
         outcome,
+        workload or "",
     )
 
 
@@ -362,8 +422,14 @@ async def _run_launch_operation(app: FastAPI, operation_id: str, workflow_name: 
         )
 
 
-async def _run_deploy_operation(app: FastAPI, operation_id: str, key: str, jt_name: str) -> None:
-    """Background task to wake AWX and deploy a catalog entry."""
+async def _run_deploy_operation(
+    app: FastAPI, operation_id: str, key: str, jt_name: str, workload: str | None = None,
+) -> None:
+    """Background task to wake AWX and deploy a catalog entry.
+
+    workload (#239) is the validated slug, if the operator supplied one; it
+    rides through to AWX as extra_vars={"workload_slug": workload}.
+    """
     settings = app.state.settings
     ops_store = app.state.operations
 
@@ -418,6 +484,7 @@ async def _run_deploy_operation(app: FastAPI, operation_id: str, key: str, jt_na
             api_token=settings.awx.api_token,
             job_template_id=template["id"],
             ssl_verify=settings.awx.ssl_verify,
+            extra_vars={"workload_slug": workload} if workload else None,
         )
 
         ops_store.update(
@@ -1685,6 +1752,12 @@ def create_app(settings: Settings | None = None, contract: AppContract | None = 
             return rerr
         assert reason is not None
         request_id = uuid.uuid4().hex
+        # #239: optional workload slug, validated before any AWX/config check —
+        # same "validate all input up front" posture as the C5 reason gate.
+        workload, werr = await _extract_workload(request, request_id)
+        if werr is not None:
+            _audit_awx_write(request, user, action="deploy", target=key, request_id=request_id, reason=reason, outcome="invalid-workload")
+            return werr
         if not settings.awx.configured:
             _audit_awx_write(request, user, action="deploy", target=key, request_id=request_id, reason=reason, outcome="awx-not-configured")
             return JSONResponse({"error": "AWX API not configured", "request_id": request_id}, status_code=503)
@@ -1706,7 +1779,12 @@ def create_app(settings: Settings | None = None, contract: AppContract | None = 
 
             ops_store = request.app.state.operations
 
-            # Atomic dedupe: find existing or create new under one lock
+            # Atomic dedupe: find existing or create new under one lock.
+            # #239 caveat: this keys on (action, target) only, not workload — a
+            # second deploy for the same key with a DIFFERENT workload while one
+            # is already in-flight reattaches to the first op (and its original
+            # workload), not a new one. Acceptable for v1; revisit if workload
+            # becomes a first-class dedupe axis.
             op, created = ops_store.get_or_create(action="deploy", target=key)
 
             if not created:
@@ -1718,12 +1796,12 @@ def create_app(settings: Settings | None = None, contract: AppContract | None = 
 
             # Spawn background task with tracking
             task = asyncio.create_task(_run_deploy_operation(
-                request.app, op.operation_id, key, jt_name
+                request.app, op.operation_id, key, jt_name, workload
             ))
             request.app.state.operation_tasks.add(task)
             task.add_done_callback(request.app.state.operation_tasks.discard)
 
-            _audit_awx_write(request, user, action="deploy", target=key, request_id=request_id, reason=reason, outcome="dispatched")
+            _audit_awx_write(request, user, action="deploy", target=key, request_id=request_id, reason=reason, outcome="dispatched", workload=workload)
             return JSONResponse({**op.to_dict(), "request_id": request_id}, status_code=202)
 
         # Sync flow (autoscale disabled)
@@ -1755,8 +1833,9 @@ def create_app(settings: Settings | None = None, contract: AppContract | None = 
                 api_token=settings.awx.api_token,
                 job_template_id=template["id"],
                 ssl_verify=settings.awx.ssl_verify,
+                extra_vars={"workload_slug": workload} if workload else None,
             )
-            _audit_awx_write(request, user, action="deploy", target=key, request_id=request_id, reason=reason, outcome="launched")
+            _audit_awx_write(request, user, action="deploy", target=key, request_id=request_id, reason=reason, outcome="launched", workload=workload)
             return JSONResponse({"job_id": job_id, "status": "launched", "request_id": request_id})
         except AWXAPIError as exc:
             _audit_awx_write(request, user, action="deploy", target=key, request_id=request_id, reason=reason, outcome=f"awx-error:{exc.status}")
@@ -2058,16 +2137,17 @@ def create_app(settings: Settings | None = None, contract: AppContract | None = 
             return JSONResponse({"error": "media-tenancy-not-configured"}, status_code=503)
         if not settings.netbox.write_configured:
             return JSONResponse({"error": "netbox-writer-not-configured"}, status_code=503)
-        try:
-            body = await request.json()
-        except Exception:
-            body = None
-        reason = (body or {}).get("reason", "")
-        if not isinstance(reason, str) or not reason.strip():
-            return JSONResponse(
-                {"error": "reason-required", "detail": "a non-empty 'reason' field is mandatory (C5)"},
-                status_code=400,
-            )
+        # fix-round P3 (codex GATE-239CMS-R2): this endpoint used to parse the
+        # body inline with its own (body or {}).get("reason", ...), which
+        # crashed with an unhandled AttributeError on a non-object JSON body
+        # (bare list/string/number) — the exact bug _require_reason's dict
+        # guard already fixes for every OTHER C5 write. Routed through the
+        # shared helper instead of re-adding the guard locally: one parser,
+        # one place to keep this safe.
+        reason, rerr = await _require_reason(request)
+        if rerr is not None:
+            return rerr
+        assert reason is not None
         request_id = uuid.uuid4().hex
         tenant_slugs = settings.media_tenancy.tenants_for(user.groups)
         result = await run_in_threadpool(
@@ -2088,7 +2168,7 @@ def create_app(settings: Settings | None = None, contract: AppContract | None = 
             user.role,
             request_id,
             instance,
-            reason.strip(),
+            reason,
             result.get("error", "ok"),
         )
         if result.get("error") == "not-found":
@@ -2112,7 +2192,7 @@ def create_app(settings: Settings | None = None, contract: AppContract | None = 
                 "request_id": request_id,
                 "actor": user.subject,
                 "role": user.role,
-                "reason": reason.strip(),
+                "reason": reason,
                 "reconcile": {
                     "expectation": (
                         "Desired state recorded in the facility source of truth. The "

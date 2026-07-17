@@ -120,13 +120,26 @@ def launch_job(
     api_token: str,
     job_template_id: int,
     ssl_verify: bool = True,
+    extra_vars: dict | None = None,
 ) -> int:
-    """Launch a job from a job template. Returns the job id."""
+    """Launch a job from a job template. Returns the job id.
+
+    extra_vars is a generic passthrough dict, not a workload-only channel —
+    #239 threads workload_slug through it today, but the future v0.2b
+    topology_params object (WP3a) rides the same param, so this stays a
+    plain dict rather than growing dedicated keyword args per feature.
+
+    AWX silently ignores launch-time extra_vars unless the job template has
+    ask_variables_on_launch=true; the dmf-infra side of the #239 trio flips
+    that flag on the catalog job templates. Until then, passing extra_vars
+    here is a no-op on AWX's end, not an error.
+    """
     ctx = _ssl_context(ssl_verify)
+    body = {"extra_vars": extra_vars} if extra_vars else {}
     result = _request(
         api_url, api_token, "POST",
         f"/api/v2/job_templates/{job_template_id}/launch/",
-        body={},
+        body=body,
         ssl_context=ctx,
     )
     # AWX returns the job id in the 'job' key for launch responses
