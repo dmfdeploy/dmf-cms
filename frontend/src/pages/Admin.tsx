@@ -1,6 +1,8 @@
-import { useAdminUsers, useAdminGroups, useAdminHealth } from '@/api/hooks'
+import { useState } from 'react'
+import { QRCodeSVG } from 'qrcode.react'
+import { useAdminUsers, useAdminGroups, useAdminHealth, useCreatePasskeyInvitation } from '@/api/hooks'
 import { Users, Bot, Activity } from 'lucide-react'
-import type { AdminUser } from '@/api/types'
+import type { AdminUser, PasskeyInvitationResponse } from '@/api/types'
 
 // A single Users table body. The People / Machine-identities split (ADR-0028
 // C4/D8) renders two of these over the human vs machine partitions rather than
@@ -74,12 +76,25 @@ export default function Admin() {
   const users = useAdminUsers()
   const groups = useAdminGroups()
   const health = useAdminHealth()
+  const inviteMutation = useCreatePasskeyInvitation()
+  const [showQR, setShowQR] = useState(false)
+  const [inviteResult, setInviteResult] = useState<PasskeyInvitationResponse | null>(null)
 
   const isLoading = users.isLoading || groups.isLoading || health.isLoading
 
   const allUsers: AdminUser[] = users.data?.users ?? []
   const humanUsers = allUsers.filter((u) => u.user_type === 'human')
   const machineUsers = allUsers.filter((u) => u.user_type === 'machine')
+
+  const handleInviteClick = async () => {
+    try {
+      const result = await inviteMutation.mutateAsync()
+      setInviteResult(result)
+      setShowQR(true)
+    } catch (error) {
+      console.error('Failed to create invitation:', error)
+    }
+  }
 
   return (
     <div className="flex-1 overflow-y-auto p-6">
@@ -122,14 +137,50 @@ export default function Admin() {
         </div>
       </div>
 
-      {/* People — human identities (ADR-0028 C4/D8 human/machine split) */}
+      {/* People — human identities (ADR-0028 C4/D8 human/machine split).
+          Invite affordance lives here (not on Machine identities): People is
+          the human roster, and invitations mint human enrollment links. */}
       <div className="panel mb-6">
-        <div className="px-6 py-4 border-b border-panel">
+        <div className="px-6 py-4 border-b border-panel flex items-center justify-between">
           <h2 className="text-lg font-semibold flex items-center gap-2">
             <Users className="w-5 h-5 text-purple-500" />
             People
           </h2>
+          <button
+            onClick={handleInviteClick}
+            disabled={inviteMutation.isPending}
+            className="btn btn-primary btn-sm"
+          >
+            {inviteMutation.isPending ? '...' : '+ Invite new user'}
+          </button>
         </div>
+
+        {showQR && inviteResult && (
+          <div className="bg-panel/30 border-b border-panel p-4">
+            <div className="flex justify-center p-4 bg-panel border border-panel rounded inline-block">
+              <QRCodeSVG value={inviteResult.enrollment_url} size={180} level="M" />
+            </div>
+            <div className="mt-4">
+              <p className="text-sm text-muted mb-2">Or copy the enrollment URL:</p>
+              <input
+                type="text"
+                value={inviteResult.enrollment_url}
+                readOnly
+                className="w-full bg-panel border border-panel rounded px-3 py-2 text-sm font-mono"
+              />
+              <p className="text-xs text-muted mt-2">
+                Expires: {new Date(inviteResult.expires).toLocaleString()}
+              </p>
+            </div>
+            <button
+              onClick={() => setShowQR(false)}
+              className="btn btn-secondary btn-sm mt-4"
+            >
+              Close
+            </button>
+          </div>
+        )}
+
         <UsersTable users={humanUsers} isLoading={isLoading} emptyLabel="No people" />
       </div>
 

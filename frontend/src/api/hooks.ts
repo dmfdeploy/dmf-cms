@@ -140,15 +140,6 @@ export function useAdminUsers() {
   })
 }
 
-export function useAdminJobs() {
-  return useQuery({
-    queryKey: ['admin', 'jobs'],
-    queryFn: () => apiCall<AdminJobsResponse>('/api/admin/jobs'),
-    refetchInterval: 15_000,
-    retry: false,
-  })
-}
-
 // ------------------------------------------------------------------
 // Monitoring
 // ------------------------------------------------------------------
