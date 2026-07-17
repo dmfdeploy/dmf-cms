@@ -2,6 +2,7 @@ import { useState, useEffect } from 'react'
 import { useQueryClient } from '@tanstack/react-query'
 import type { CatalogEntry } from '../../api/types'
 import ReasonConfirm from '../../components/ReasonConfirm'
+import { isValidWorkloadSlug } from '../../lib/workloadSlug'
 import {
   useCatalog,
   useCurrentUser,
@@ -56,9 +57,9 @@ export default function Catalog() {
       outcome,
     })
 
-  const handleDeploy = async (entry: CatalogEntry, reason: string) => {
+  const handleDeploy = async (entry: CatalogEntry, reason: string, workload?: string) => {
     try {
-      const result = await deployMutation.mutateAsync({ key: entry.key, reason })
+      const result = await deployMutation.mutateAsync({ key: entry.key, reason, workload })
       record('deploy', entry.key, reason, result, isOperation(result) ? 'dispatched' : result.status)
       if (isOperation(result)) {
         // Async flow (202): track the operation
@@ -191,7 +192,7 @@ function EntryCard({
 }: {
   entry: CatalogEntry
   actionState: EntryActionState
-  onDeploy: (entry: CatalogEntry, reason: string) => void
+  onDeploy: (entry: CatalogEntry, reason: string, workload?: string) => void
   onTeardown: (entry: CatalogEntry, reason: string) => void
   isDeploying: boolean
   isTearingDown: boolean
@@ -204,6 +205,11 @@ function EntryCard({
   // Graduated friction (hard gate 3): the Deploy/Teardown buttons arm a
   // reason panel; the write fires only on Confirm with a non-empty reason.
   const [arming, setArming] = useState<'deploy' | 'teardown' | null>(null)
+  // #239: optional workload tag, deploy-only (not teardown/launch). Empty is
+  // valid (omitted from the request); a non-empty value must match the slug
+  // rule or Confirm stays disabled.
+  const [workload, setWorkload] = useState('')
+  const workloadInvalid = workload.trim() !== '' && !isValidWorkloadSlug(workload.trim())
 
   // A job or operation is in-flight while its id is set (launch → cleared on completion).
   // Gate the buttons on this, not just the sub-second launch mutation
@@ -282,8 +288,21 @@ function EntryCard({
             pendingLabel="Launching…"
             pending={isDeploying}
             error={deployError}
-            onConfirm={(reason) => { onDeploy(entry, reason); setArming(null) }}
-            onCancel={() => setArming(null)}
+            onConfirm={(reason) => {
+              onDeploy(entry, reason, workload.trim() || undefined)
+              setArming(null)
+              setWorkload('')
+            }}
+            onCancel={() => { setArming(null); setWorkload('') }}
+            extraField={{
+              label: 'Workload (optional)',
+              placeholder: 'e.g. studio-a',
+              helperText: 'Groups this deploy under a named workload in Media Workloads',
+              value: workload,
+              onChange: setWorkload,
+              invalid: workloadInvalid,
+              invalidHint: 'Lowercase letters, numbers, and hyphens only (not at the ends), max 40 characters',
+            }}
           />
         </div>
       )}

@@ -278,6 +278,21 @@ def test_clear_requires_reason(monkeypatch):
     assert calls["patches"] == []
 
 
+def test_clear_non_object_body_is_clean_400_not_a_crash(monkeypatch):
+    # fix-round P3 (codex GATE-239CMS-R2): this endpoint used to parse the
+    # body inline with its own (body or {}).get("reason", ...), which raised
+    # an unhandled AttributeError on a non-object JSON body (dict.get doesn't
+    # exist on a list/str/int) — a live-probed 500, not a clean 400. Now
+    # routed through the shared _require_reason parser, which guards this.
+    calls = _patch_recorder(monkeypatch, [])
+    client = _writer_client()
+    for bad_body in [["x"], "str", 5]:
+        resp = client.post("/api/media-workloads/x/clear", json=bad_body)
+        assert resp.status_code == 400, bad_body
+        assert resp.json()["error"] == "reason-required"
+    assert calls["patches"] == []  # zero NetBox side effects on any bad body
+
+
 def test_clear_below_engineer_403_no_side_effect(monkeypatch):
     calls = _patch_recorder(monkeypatch, [])
     client = _writer_client(groups=OPERATOR)

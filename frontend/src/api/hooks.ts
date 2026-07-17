@@ -271,11 +271,13 @@ export function useCatalog() {
 
 export function useDeployCatalog() {
   return useMutation({
-    mutationFn: ({ key, reason }: { key: string; reason: string }) =>
+    // workload (#239) is sent only when non-empty — omitted keeps the request
+    // body bit-compatible with pre-#239 behaviour.
+    mutationFn: ({ key, reason, workload }: { key: string; reason: string; workload?: string }) =>
       apiCall<CatalogActionResult>(`/api/catalog/${key}/deploy`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ reason }),
+        body: JSON.stringify(workload ? { reason, workload } : { reason }),
       }),
   })
 }

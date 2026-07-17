@@ -48,6 +48,41 @@ describe('ReasonConfirm component', () => {
     expect(onCancel).toHaveBeenCalledOnce()
     expect(onConfirm).not.toHaveBeenCalled()
   })
+
+  it('extraField: an invalid value disables Confirm even with a valid reason', () => {
+    render(
+      <ReasonConfirm
+        title="T"
+        description="D"
+        onConfirm={vi.fn()}
+        onCancel={() => {}}
+        extraField={{
+          label: 'Extra',
+          value: 'bad value',
+          onChange: () => {},
+          invalid: true,
+          invalidHint: 'nope',
+        }}
+      />,
+    )
+    fireEvent.change(screen.getByPlaceholderText(/Reason \(required/), { target: { value: 'a reason' } })
+    expect((screen.getByRole('button', { name: 'Confirm' }) as HTMLButtonElement).disabled).toBe(true)
+    expect(screen.getByText('nope')).toBeTruthy()
+  })
+
+  it('extraField: a valid (or absent) value leaves Confirm gated on reason alone', () => {
+    render(
+      <ReasonConfirm
+        title="T"
+        description="D"
+        onConfirm={vi.fn()}
+        onCancel={() => {}}
+        extraField={{ label: 'Extra', value: 'fine', onChange: () => {}, invalid: false }}
+      />,
+    )
+    fireEvent.change(screen.getByPlaceholderText(/Reason \(required/), { target: { value: 'a reason' } })
+    expect((screen.getByRole('button', { name: 'Confirm' }) as HTMLButtonElement).disabled).toBe(false)
+  })
 })
 
 const OPERATOR: UserIdentity = {
@@ -119,11 +154,13 @@ describe('Catalog deploy — reason-gated flow', () => {
     fireEvent.click(deployBtn)
 
     // Panel armed; nothing sent yet.
-    expect(await screen.findByRole('textbox')).toBeTruthy()
+    const reasonBox = await screen.findByPlaceholderText(/Reason \(required/)
+    expect(reasonBox).toBeTruthy()
     expect(deployFetch).not.toHaveBeenCalled()
 
-    // Enter a reason and confirm → POST fires with the reason in the body.
-    fireEvent.change(screen.getByRole('textbox'), { target: { value: 'scheduled provision' } })
+    // Enter a reason and confirm → POST fires with the reason in the body,
+    // no workload key (it was left empty — omitted, not sent as "").
+    fireEvent.change(reasonBox, { target: { value: 'scheduled provision' } })
     fireEvent.click(screen.getByRole('button', { name: 'Confirm deploy' }))
 
     await waitFor(() => expect(deployFetch).toHaveBeenCalledOnce())
@@ -131,5 +168,41 @@ describe('Catalog deploy — reason-gated flow', () => {
     expect(url).toContain('/api/catalog/mxl-videotest-view/deploy')
     expect(init?.method).toBe('POST')
     expect(JSON.parse(init?.body as string)).toEqual({ reason: 'scheduled provision' })
+  })
+
+  it('renders an optional workload field on the deploy panel', async () => {
+    renderCatalog(vi.fn(async () => json({ job_id: 1, status: 'launched', request_id: 'r1' })))
+    fireEvent.click(await screen.findByRole('button', { name: /Deploy/ }))
+    expect(await screen.findByText('Workload (optional)')).toBeTruthy()
+    expect(screen.getByPlaceholderText('e.g. studio-a')).toBeTruthy()
+  })
+
+  it('blocks Confirm with an inline hint on an invalid workload slug, valid reason notwithstanding', async () => {
+    renderCatalog(vi.fn(async () => json({ job_id: 1, status: 'launched', request_id: 'r1' })))
+    fireEvent.click(await screen.findByRole('button', { name: /Deploy/ }))
+    fireEvent.change(await screen.findByPlaceholderText(/Reason \(required/), { target: { value: 'x' } })
+
+    fireEvent.change(screen.getByPlaceholderText('e.g. studio-a'), { target: { value: 'Not Valid!' } })
+    const confirm = screen.getByRole('button', { name: 'Confirm deploy' }) as HTMLButtonElement
+    expect(confirm.disabled).toBe(true)
+    expect(screen.getByText(/Lowercase letters, numbers, and hyphens only/)).toBeTruthy()
+  })
+
+  it('sends the workload slug in the POST body when valid', async () => {
+    const deployFetch = vi.fn(
+      async (_url: string, _init?: RequestInit) => json({ job_id: 1, status: 'launched', request_id: 'r1' }),
+    )
+    renderCatalog(deployFetch)
+    fireEvent.click(await screen.findByRole('button', { name: /Deploy/ }))
+    fireEvent.change(await screen.findByPlaceholderText(/Reason \(required/), { target: { value: 'x' } })
+    fireEvent.change(screen.getByPlaceholderText('e.g. studio-a'), { target: { value: 'studio-a' } })
+
+    const confirm = screen.getByRole('button', { name: 'Confirm deploy' }) as HTMLButtonElement
+    expect(confirm.disabled).toBe(false)
+    fireEvent.click(confirm)
+
+    await waitFor(() => expect(deployFetch).toHaveBeenCalledOnce())
+    const [, init] = deployFetch.mock.calls[0]
+    expect(JSON.parse(init?.body as string)).toEqual({ reason: 'x', workload: 'studio-a' })
   })
 })
