@@ -182,6 +182,62 @@ class OperationStore:
             self._operations[operation_id] = op
             return (op, True)
 
+    def get_or_create_exclusive(
+        self,
+        action: str,
+        target: str,
+        initial_state: OperationState = OperationState.WAKING,
+        conflicts: tuple[str, ...] = (),
+    ) -> tuple[Operation | None, bool, Operation | None]:
+        """Atomically find/create an operation, exclusive of conflicting actions.
+
+        Same reattach behavior as get_or_create for (action, target), but
+        additionally refuses to create a new operation while an active
+        (non-terminal) operation exists for the same target under a
+        conflicting action (e.g. deploy vs. teardown of the same catalog
+        entry, #24).
+
+        Args:
+            action: Operation type (deploy|teardown)
+            target: Catalog key
+            initial_state: Initial state for new operation (default: WAKING)
+            conflicts: Actions that block creation for the same target
+
+        Returns:
+            Tuple of (operation, created, conflict):
+              - (op, False, None): reattached to an existing same-action op
+              - (None, False, conflict_op): blocked by a conflicting active op
+              - (new_op, True, None): created
+        """
+        with self._lock:
+            self._gc()
+            for op in self._operations.values():
+                if (
+                    op.action == action
+                    and op.target == target
+                    and op.state in (OperationState.WAKING, OperationState.LAUNCHING)
+                ):
+                    return (op, False, None)
+            for op in self._operations.values():
+                if (
+                    op.action in conflicts
+                    and op.target == target
+                    and op.state in (OperationState.WAKING, OperationState.LAUNCHING)
+                ):
+                    return (None, False, op)
+            operation_id = str(uuid.uuid4())
+            now = datetime.now(timezone.utc)
+            op = Operation(
+                operation_id=operation_id,
+                action=action,
+                target=target,
+                state=initial_state,
+                created_at=now,
+                updated_at=now,
+            )
+            self._operations[operation_id] = op
+            return (op, True, None)
+
     def update(
         self,
         operation_id: str,
