@@ -426,11 +426,16 @@ async def _run_launch_operation(app: FastAPI, operation_id: str, workflow_name: 
 
 async def _run_deploy_operation(
     app: FastAPI, operation_id: str, key: str, jt_name: str, workload: str | None = None,
+    opposite_jt_name: str | None = None,
 ) -> None:
     """Background task to wake AWX and deploy a catalog entry.
 
     workload (#239) is the validated slug, if the operator supplied one; it
     rides through to AWX as extra_vars={"workload_slug": workload}.
+
+    opposite_jt_name (#24) is the finalise (teardown) job template for this
+    same catalog entry, if any — used for the cross-JT running-job guard
+    below.
     """
     settings = app.state.settings
     ops_store = app.state.operations
@@ -482,6 +487,42 @@ async def _run_deploy_operation(
             )
             return
 
+        # Cross-JT guard (#24): a teardown job for this same catalog entry may
+        # be running under the finalise job template. Checked here, after the
+        # own-JT idempotency reattach (unchanged) and before launch. Plain
+        # lookup, not the transient-retry wrapper — this isn't the first
+        # post-wake AWX call. Residual check-to-launch TOCTOU window; the
+        # AWX-layer concurrency cap (umbrella #254) is the backstop, not
+        # closed here.
+        if opposite_jt_name:
+            opposite_template = await run_in_threadpool(
+                lookup_job_template_by_name,
+                api_url=settings.awx.api_url,
+                api_token=settings.awx.api_token,
+                name=opposite_jt_name,
+                ssl_verify=settings.awx.ssl_verify,
+            )
+            if opposite_template is not None:
+                opposite_active = await run_in_threadpool(
+                    find_active_job_for_template,
+                    api_url=settings.awx.api_url,
+                    api_token=settings.awx.api_token,
+                    job_template_id=opposite_template["id"],
+                    ssl_verify=settings.awx.ssl_verify,
+                )
+                if opposite_active is not None:
+                    ops_store.update(
+                        operation_id,
+                        state=OperationState.ERROR,
+                        error="Conflicting lifecycle operation in progress",
+                    )
+                    return
+            else:
+                logger.debug(
+                    "Opposite job template '%s' not found in AWX; skipping cross-JT guard for deploy operation %s",
+                    opposite_jt_name, operation_id,
+                )
+
         # Launch job
         job_id = await run_in_threadpool(
             launch_job,
@@ -529,8 +570,16 @@ async def _run_deploy_operation(
         )
 
 
-async def _run_teardown_operation(app: FastAPI, operation_id: str, key: str, jt_name: str) -> None:
-    """Background task to wake AWX and teardown a catalog entry."""
+async def _run_teardown_operation(
+    app: FastAPI, operation_id: str, key: str, jt_name: str,
+    opposite_jt_name: str | None = None,
+) -> None:
+    """Background task to wake AWX and teardown a catalog entry.
+
+    opposite_jt_name (#24) is the configure (deploy) job template for this
+    same catalog entry, if any — used for the cross-JT running-job guard
+    below.
+    """
     settings = app.state.settings
     ops_store = app.state.operations
 
@@ -580,6 +629,42 @@ async def _run_teardown_operation(app: FastAPI, operation_id: str, key: str, jt_
                 job_id=active_job_id,
             )
             return
+
+        # Cross-JT guard (#24, symmetric with deploy): a deploy job for this
+        # same catalog entry may be running under the configure job template.
+        # Checked here, after the own-JT idempotency reattach (unchanged) and
+        # before launch. Plain lookup, not the transient-retry wrapper — this
+        # isn't the first post-wake AWX call. Residual check-to-launch TOCTOU
+        # window; the AWX-layer concurrency cap (umbrella #254) is the
+        # backstop, not closed here.
+        if opposite_jt_name:
+            opposite_template = await run_in_threadpool(
+                lookup_job_template_by_name,
+                api_url=settings.awx.api_url,
+                api_token=settings.awx.api_token,
+                name=opposite_jt_name,
+                ssl_verify=settings.awx.ssl_verify,
+            )
+            if opposite_template is not None:
+                opposite_active = await run_in_threadpool(
+                    find_active_job_for_template,
+                    api_url=settings.awx.api_url,
+                    api_token=settings.awx.api_token,
+                    job_template_id=opposite_template["id"],
+                    ssl_verify=settings.awx.ssl_verify,
+                )
+                if opposite_active is not None:
+                    ops_store.update(
+                        operation_id,
+                        state=OperationState.ERROR,
+                        error="Conflicting lifecycle operation in progress",
+                    )
+                    return
+            else:
+                logger.debug(
+                    "Opposite job template '%s' not found in AWX; skipping cross-JT guard for teardown operation %s",
+                    opposite_jt_name, operation_id,
+                )
 
         # Launch job
         job_id = await run_in_threadpool(
@@ -884,6 +969,24 @@ def create_app(settings: Settings | None = None, contract: AppContract | None = 
         if not settings.awx.configured:
             _audit_awx_write(request, user, action="launch", target=workflow_name, request_id=request_id, reason=reason, outcome="awx-not-configured")
             return JSONResponse({"error": "AWX API not configured", "request_id": request_id}, status_code=503)
+        # #24: a catalog lifecycle JT (configure/finalise) launched through
+        # this generic endpoint must resolve to the SAME per-entry lock as
+        # /api/catalog/{key}/deploy|teardown — see _catalog_jt_lifecycle_map.
+        # Applies uniformly ahead of the async/sync split below, since
+        # ambiguity is a static catalog-data property independent of
+        # autoscale configuration.
+        lifecycle_jt_map, ambiguous_lifecycle_jts = _catalog_jt_lifecycle_map()
+        if workflow_name in ambiguous_lifecycle_jts:
+            # Fail-closed (codex GATE-24R2 finding 1): refuse rather than
+            # guess which catalog entry/action this JT name belongs to.
+            # Never falls through to the plain launch path below — that
+            # would reintroduce the #24 bypass for exactly the ambiguous JTs.
+            _audit_awx_write(request, user, action="launch", target=workflow_name, request_id=request_id, reason=reason, outcome="ambiguous-lifecycle-jt")
+            return JSONResponse(
+                {"error": "ambiguous catalog lifecycle mapping for this job template", "request_id": request_id},
+                status_code=500,
+            )
+        lifecycle = lifecycle_jt_map.get(workflow_name)
 
         # Async operation flow (when autoscale enabled)
         if settings.awx_autoscale.enabled:
@@ -892,6 +995,48 @@ def create_app(settings: Settings | None = None, contract: AppContract | None = 
                 return JSONResponse({"error": "AWX autoscale enabled but misconfigured", "request_id": request_id}, status_code=503)
 
             ops_store = request.app.state.operations
+
+            if lifecycle is not None:
+                catalog_key, mapped_action, opposite_jt_name = lifecycle
+                opposite_action = "teardown" if mapped_action == "deploy" else "deploy"
+                # Same lock namespace as the catalog endpoints (#24): the C5
+                # audit record below intentionally reflects the EFFECTIVE
+                # action on the catalog entry (deploy/teardown), not the
+                # "launch" wrapper — deliberate, not an oversight.
+                op, created, conflict = ops_store.get_or_create_exclusive(
+                    action=mapped_action, target=catalog_key, conflicts=(opposite_action,)
+                )
+
+                if conflict is not None:
+                    _audit_awx_write(request, user, action=mapped_action, target=catalog_key, request_id=request_id, reason=reason, outcome="conflict-active-operation")
+                    return JSONResponse(
+                        {
+                            "error": "conflicting lifecycle operation in progress",
+                            "conflicting_operation": conflict.to_dict(),
+                            "request_id": request_id,
+                        },
+                        status_code=409,
+                    )
+
+                if not created:
+                    _audit_awx_write(request, user, action=mapped_action, target=catalog_key, request_id=request_id, reason=reason, outcome="reattached")
+                    return JSONResponse({**op.to_dict(), "request_id": request_id}, status_code=200)
+
+                # Dispatch through the same runner the catalog endpoint uses
+                # (not _run_launch_operation), so the cross-JT guard applies.
+                if mapped_action == "deploy":
+                    task = asyncio.create_task(_run_deploy_operation(
+                        request.app, op.operation_id, catalog_key, workflow_name, None, opposite_jt_name
+                    ))
+                else:
+                    task = asyncio.create_task(_run_teardown_operation(
+                        request.app, op.operation_id, catalog_key, workflow_name, opposite_jt_name
+                    ))
+                request.app.state.operation_tasks.add(task)
+                task.add_done_callback(request.app.state.operation_tasks.discard)
+
+                _audit_awx_write(request, user, action=mapped_action, target=catalog_key, request_id=request_id, reason=reason, outcome="dispatched")
+                return JSONResponse({**op.to_dict(), "request_id": request_id}, status_code=202)
 
             # Atomic dedupe: find existing or create new under one lock
             op, created = ops_store.get_or_create(action="launch", target=workflow_name)
@@ -924,6 +1069,55 @@ def create_app(settings: Settings | None = None, contract: AppContract | None = 
             if template is None:
                 _audit_awx_write(request, user, action="launch", target=workflow_name, request_id=request_id, reason=reason, outcome="not-found")
                 return JSONResponse({"error": f"workflow '{workflow_name}' not found in AWX", "request_id": request_id}, status_code=404)
+
+            if lifecycle is not None:
+                catalog_key, mapped_action, opposite_jt_name = lifecycle
+                # Own-JT idempotency guard, mirroring the catalog deploy/
+                # teardown sync flow (the generic launch sync path has no
+                # such check for non-catalog JTs today; a catalog lifecycle
+                # JT gets the same protection here as via the catalog route).
+                active = find_active_job_for_template(
+                    api_url=settings.awx.api_url,
+                    api_token=settings.awx.api_token,
+                    job_template_id=template["id"],
+                    ssl_verify=settings.awx.ssl_verify,
+                )
+                if active is not None:
+                    _audit_awx_write(request, user, action=mapped_action, target=catalog_key, request_id=request_id, reason=reason, outcome="already-active")
+                    return JSONResponse({"job_id": active, "status": "already-active", "request_id": request_id})
+                # Cross-JT guard (#24): see the catalog deploy/teardown sync
+                # flow for the same check. Residual check-to-launch TOCTOU
+                # window; the AWX-layer concurrency cap (umbrella #254) is the
+                # backstop, not closed here.
+                if opposite_jt_name:
+                    opposite_template = lookup_job_template_by_name(
+                        api_url=settings.awx.api_url,
+                        api_token=settings.awx.api_token,
+                        name=opposite_jt_name,
+                        ssl_verify=settings.awx.ssl_verify,
+                    )
+                    if opposite_template is not None:
+                        opposite_active = find_active_job_for_template(
+                            api_url=settings.awx.api_url,
+                            api_token=settings.awx.api_token,
+                            job_template_id=opposite_template["id"],
+                            ssl_verify=settings.awx.ssl_verify,
+                        )
+                        if opposite_active is not None:
+                            _audit_awx_write(request, user, action=mapped_action, target=catalog_key, request_id=request_id, reason=reason, outcome="conflict-active-job")
+                            return JSONResponse(
+                                {"error": "conflicting lifecycle operation in progress", "request_id": request_id},
+                                status_code=409,
+                            )
+                job_id = launch_job(
+                    api_url=settings.awx.api_url,
+                    api_token=settings.awx.api_token,
+                    job_template_id=template["id"],
+                    ssl_verify=settings.awx.ssl_verify,
+                )
+                _audit_awx_write(request, user, action=mapped_action, target=catalog_key, request_id=request_id, reason=reason, outcome="launched")
+                return JSONResponse({"job_id": job_id, "status": "launched", "request_id": request_id})
+
             job_id = launch_job(
                 api_url=settings.awx.api_url,
                 api_token=settings.awx.api_token,
@@ -1703,6 +1897,53 @@ def create_app(settings: Settings | None = None, contract: AppContract | None = 
                     names.add(str(jt))
         return names
 
+    def _catalog_jt_lifecycle_map() -> tuple[dict[str, tuple[str, str, str | None]], frozenset[str]]:
+        """Map a catalog lifecycle AWX job-template name to the entry it drives.
+
+        jt_name -> (catalog_key, action, opposite_jt_name): a configure JT
+        maps to ("deploy", opposite=finalise JT); a finalise JT maps to
+        ("teardown", opposite=configure JT).
+
+        Used so a catalog lifecycle JT launched via the generic
+        /api/workflows/{name}/launch endpoint (the default surface the
+        Activity JobsLane and the /api/workflows list use) resolves to the
+        SAME per-entry lifecycle lock as /api/catalog/{key}/deploy|teardown —
+        otherwise that path bypasses the #24 exclusion entirely (codex
+        GATE-24 P1). Non-catalog JTs are simply absent from this map.
+
+        Fail-closed (codex GATE-24R2 finding 1): a JT name is ambiguous when
+        it maps to more than one (catalog_key, action) candidate — either two
+        entries share it, or a single entry reuses it for both configure and
+        finalise. Locking against just one candidate in that case would pick
+        the WRONG lock namespace and make the C5 audit record misattribute
+        the action. Ambiguous names are excluded from the returned map and
+        reported separately, so the caller can refuse the launch instead of
+        silently guessing.
+
+        Returns (jt_map, ambiguous_jt_names).
+        """
+        candidates: dict[str, list[tuple[str, str, str | None]]] = {}
+        for entry in load_catalog_entries():
+            configure_jt = (entry.configure or {}).get("awx_job_template")
+            finalise_jt = (entry.finalise or {}).get("awx_job_template")
+            if configure_jt:
+                candidates.setdefault(str(configure_jt), []).append(
+                    (entry.key, "deploy", finalise_jt)
+                )
+            if finalise_jt:
+                candidates.setdefault(str(finalise_jt), []).append(
+                    (entry.key, "teardown", configure_jt)
+                )
+
+        jt_map: dict[str, tuple[str, str, str | None]] = {}
+        ambiguous: set[str] = set()
+        for jt_name, mappings in candidates.items():
+            if len(mappings) > 1:
+                ambiguous.add(jt_name)
+            else:
+                jt_map[jt_name] = mappings[0]
+        return jt_map, frozenset(ambiguous)
+
     def _entry_to_dict(entry: CatalogEntry, lifecycle_status: str = "unknown") -> dict:
         """Convert a CatalogEntry + NetBox lifecycle status into a JSON-serialisable dict."""
         ebu = entry.ebu or {}
@@ -1792,6 +2033,9 @@ def create_app(settings: Settings | None = None, contract: AppContract | None = 
         if not jt_name:
             _audit_awx_write(request, user, action="deploy", target=key, request_id=request_id, reason=reason, outcome="no-job-template")
             return JSONResponse({"error": f"entry '{key}' has no configure.awx_job_template", "request_id": request_id}, status_code=500)
+        # #24: the opposite lifecycle stage's job template, for the cross-JT
+        # running-job guard below (may be None if the entry has no finalise).
+        opposite_jt_name = (entry.finalise or {}).get("awx_job_template")
 
         # Async operation flow (when autoscale enabled)
         if settings.awx_autoscale.enabled:
@@ -1801,13 +2045,29 @@ def create_app(settings: Settings | None = None, contract: AppContract | None = 
 
             ops_store = request.app.state.operations
 
-            # Atomic dedupe: find existing or create new under one lock.
+            # Atomic dedupe + cross-action exclusion (#24): a teardown already
+            # in flight for this catalog entry blocks a new deploy (and vice
+            # versa) — deploy/teardown are different actions so get_or_create's
+            # (action, target) dedupe alone would let both proceed.
             # #239 caveat: this keys on (action, target) only, not workload — a
             # second deploy for the same key with a DIFFERENT workload while one
             # is already in-flight reattaches to the first op (and its original
             # workload), not a new one. Acceptable for v1; revisit if workload
             # becomes a first-class dedupe axis.
-            op, created = ops_store.get_or_create(action="deploy", target=key)
+            op, created, conflict = ops_store.get_or_create_exclusive(
+                action="deploy", target=key, conflicts=("teardown",)
+            )
+
+            if conflict is not None:
+                _audit_awx_write(request, user, action="deploy", target=key, request_id=request_id, reason=reason, outcome="conflict-active-operation")
+                return JSONResponse(
+                    {
+                        "error": "conflicting lifecycle operation in progress",
+                        "conflicting_operation": conflict.to_dict(),
+                        "request_id": request_id,
+                    },
+                    status_code=409,
+                )
 
             if not created:
                 # Existing operation found - return it without spawning new task
@@ -1818,7 +2078,7 @@ def create_app(settings: Settings | None = None, contract: AppContract | None = 
 
             # Spawn background task with tracking
             task = asyncio.create_task(_run_deploy_operation(
-                request.app, op.operation_id, key, jt_name, workload
+                request.app, op.operation_id, key, jt_name, workload, opposite_jt_name
             ))
             request.app.state.operation_tasks.add(task)
             task.add_done_callback(request.app.state.operation_tasks.discard)
@@ -1850,6 +2110,31 @@ def create_app(settings: Settings | None = None, contract: AppContract | None = 
             if active is not None:
                 _audit_awx_write(request, user, action="deploy", target=key, request_id=request_id, reason=reason, outcome="already-active")
                 return JSONResponse({"job_id": active, "status": "already-active", "request_id": request_id})
+            # Cross-JT guard (#24): the sync flow has no store to lock across
+            # actions, so check whether the OPPOSITE stage's job template has
+            # an in-flight job before launching this one. Residual
+            # check-to-launch TOCTOU window; the AWX-layer concurrency cap
+            # (umbrella #254) is the backstop, not closed here.
+            if opposite_jt_name:
+                opposite_template = lookup_job_template_by_name(
+                    api_url=settings.awx.api_url,
+                    api_token=settings.awx.api_token,
+                    name=opposite_jt_name,
+                    ssl_verify=settings.awx.ssl_verify,
+                )
+                if opposite_template is not None:
+                    opposite_active = find_active_job_for_template(
+                        api_url=settings.awx.api_url,
+                        api_token=settings.awx.api_token,
+                        job_template_id=opposite_template["id"],
+                        ssl_verify=settings.awx.ssl_verify,
+                    )
+                    if opposite_active is not None:
+                        _audit_awx_write(request, user, action="deploy", target=key, request_id=request_id, reason=reason, outcome="conflict-active-job")
+                        return JSONResponse(
+                            {"error": "conflicting lifecycle operation in progress", "request_id": request_id},
+                            status_code=409,
+                        )
             job_id = launch_job(
                 api_url=settings.awx.api_url,
                 api_token=settings.awx.api_token,
@@ -1892,6 +2177,9 @@ def create_app(settings: Settings | None = None, contract: AppContract | None = 
         if not jt_name:
             _audit_awx_write(request, user, action="teardown", target=key, request_id=request_id, reason=reason, outcome="no-job-template")
             return JSONResponse({"error": f"entry '{key}' has no finalise.awx_job_template", "request_id": request_id}, status_code=500)
+        # #24: the opposite lifecycle stage's job template (configure), for
+        # the cross-JT running-job guard below.
+        opposite_jt_name = (entry.configure or {}).get("awx_job_template")
 
         # Async operation flow (when autoscale enabled)
         if settings.awx_autoscale.enabled:
@@ -1901,8 +2189,22 @@ def create_app(settings: Settings | None = None, contract: AppContract | None = 
 
             ops_store = request.app.state.operations
 
-            # Atomic dedupe: find existing or create new under one lock
-            op, created = ops_store.get_or_create(action="teardown", target=key)
+            # Atomic dedupe + cross-action exclusion (#24): a deploy already
+            # in flight for this catalog entry blocks a new teardown.
+            op, created, conflict = ops_store.get_or_create_exclusive(
+                action="teardown", target=key, conflicts=("deploy",)
+            )
+
+            if conflict is not None:
+                _audit_awx_write(request, user, action="teardown", target=key, request_id=request_id, reason=reason, outcome="conflict-active-operation")
+                return JSONResponse(
+                    {
+                        "error": "conflicting lifecycle operation in progress",
+                        "conflicting_operation": conflict.to_dict(),
+                        "request_id": request_id,
+                    },
+                    status_code=409,
+                )
 
             if not created:
                 # Existing operation found - return it without spawning new task
@@ -1913,7 +2215,7 @@ def create_app(settings: Settings | None = None, contract: AppContract | None = 
 
             # Spawn background task with tracking
             task = asyncio.create_task(_run_teardown_operation(
-                request.app, op.operation_id, key, jt_name
+                request.app, op.operation_id, key, jt_name, opposite_jt_name
             ))
             request.app.state.operation_tasks.add(task)
             task.add_done_callback(request.app.state.operation_tasks.discard)
@@ -1943,6 +2245,31 @@ def create_app(settings: Settings | None = None, contract: AppContract | None = 
             if active is not None:
                 _audit_awx_write(request, user, action="teardown", target=key, request_id=request_id, reason=reason, outcome="already-active")
                 return JSONResponse({"job_id": active, "status": "already-active", "request_id": request_id})
+            # Cross-JT guard (#24, symmetric with deploy): the sync flow has
+            # no store to lock across actions, so check whether the OPPOSITE
+            # stage's job template has an in-flight job before launching this
+            # one. Residual check-to-launch TOCTOU window; the AWX-layer
+            # concurrency cap (umbrella #254) is the backstop, not closed here.
+            if opposite_jt_name:
+                opposite_template = lookup_job_template_by_name(
+                    api_url=settings.awx.api_url,
+                    api_token=settings.awx.api_token,
+                    name=opposite_jt_name,
+                    ssl_verify=settings.awx.ssl_verify,
+                )
+                if opposite_template is not None:
+                    opposite_active = find_active_job_for_template(
+                        api_url=settings.awx.api_url,
+                        api_token=settings.awx.api_token,
+                        job_template_id=opposite_template["id"],
+                        ssl_verify=settings.awx.ssl_verify,
+                    )
+                    if opposite_active is not None:
+                        _audit_awx_write(request, user, action="teardown", target=key, request_id=request_id, reason=reason, outcome="conflict-active-job")
+                        return JSONResponse(
+                            {"error": "conflicting lifecycle operation in progress", "request_id": request_id},
+                            status_code=409,
+                        )
             job_id = launch_job(
                 api_url=settings.awx.api_url,
                 api_token=settings.awx.api_token,

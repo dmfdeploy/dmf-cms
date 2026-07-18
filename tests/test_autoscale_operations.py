@@ -1,7 +1,9 @@
 """Tests for WS5 autoscale operation tracking."""
 
 import asyncio
+import logging
 import os
+import threading
 import time
 import urllib.error
 from unittest.mock import AsyncMock, MagicMock, patch
@@ -308,7 +310,9 @@ def test_async_deploy_recovers_from_transient_5xx_then_success(enabled_settings)
          patch("dmf_cms.main.launch_job", return_value=999), \
          patch(
              "dmf_cms.main.lookup_job_template_by_name",
-             side_effect=[AWXAPIError(500, "boom"), {"id": 7}],
+             # 3rd element: #24's opposite-JT cross-guard lookup (finalise JT),
+             # after the own-JT (configure) retry-then-succeed above.
+             side_effect=[AWXAPIError(500, "boom"), {"id": 7}, {"id": 8}],
          ):
         app = create_app(settings=enabled_settings)
         with TestClient(app) as client:
@@ -332,7 +336,8 @@ def test_async_deploy_recovers_from_urlerror_then_success(enabled_settings):
          patch("dmf_cms.main.launch_job", return_value=999), \
          patch(
              "dmf_cms.main.lookup_job_template_by_name",
-             side_effect=[urllib.error.URLError("reset"), {"id": 7}],
+             # 3rd element: #24's opposite-JT cross-guard lookup (finalise JT).
+             side_effect=[urllib.error.URLError("reset"), {"id": 7}, {"id": 8}],
          ):
         app = create_app(settings=enabled_settings)
         with TestClient(app) as client:
@@ -356,7 +361,8 @@ def test_async_teardown_recovers_from_transient_5xx_then_success(enabled_setting
          patch("dmf_cms.main.launch_job", return_value=999), \
          patch(
              "dmf_cms.main.lookup_job_template_by_name",
-             side_effect=[AWXAPIError(500, "boom"), {"id": 7}],
+             # 3rd element: #24's opposite-JT cross-guard lookup (configure JT).
+             side_effect=[AWXAPIError(500, "boom"), {"id": 7}, {"id": 8}],
          ):
         app = create_app(settings=enabled_settings)
         with TestClient(app) as client:
@@ -391,3 +397,557 @@ def test_async_deploy_urlerror_sanitizes_error_field(enabled_settings):
     assert op is not None and op.state == OperationState.ERROR
     assert op.error == "AWX unreachable while deploying"
     assert secret_detail not in op.error
+
+
+# --------------------------------------------------------------------------
+# #24 — per-entry lifecycle lock (OperationStore.get_or_create_exclusive)
+# --------------------------------------------------------------------------
+
+def test_exclusive_blocks_on_conflicting_active_op():
+    store = OperationStore(ttl_seconds=3600)
+    deploy_op, _ = store.get_or_create("deploy", "key-a")
+
+    op, created, conflict = store.get_or_create_exclusive(
+        "teardown", "key-a", conflicts=("deploy",)
+    )
+
+    assert op is None
+    assert created is False
+    assert conflict is not None and conflict.operation_id == deploy_op.operation_id
+
+
+def test_exclusive_reattach_unchanged():
+    store = OperationStore(ttl_seconds=3600)
+    deploy_op, _ = store.get_or_create("deploy", "key-a")
+
+    op, created, conflict = store.get_or_create_exclusive(
+        "deploy", "key-a", conflicts=("teardown",)
+    )
+
+    assert created is False
+    assert conflict is None
+    assert op is not None and op.operation_id == deploy_op.operation_id
+
+
+def test_exclusive_terminal_ops_never_conflict():
+    store = OperationStore(ttl_seconds=3600)
+
+    launched = store.create("deploy", "key-launched")
+    store.update(launched.operation_id, state=OperationState.LAUNCHED, job_id=1)
+    op1, created1, conflict1 = store.get_or_create_exclusive(
+        "teardown", "key-launched", conflicts=("deploy",)
+    )
+    assert created1 is True
+    assert conflict1 is None
+
+    errored = store.create("deploy", "key-errored")
+    store.update(errored.operation_id, state=OperationState.ERROR, error="boom")
+    op2, created2, conflict2 = store.get_or_create_exclusive(
+        "teardown", "key-errored", conflicts=("deploy",)
+    )
+    assert created2 is True
+    assert conflict2 is None
+
+
+# --------------------------------------------------------------------------
+# #24 — endpoint-level cross-action 409 (discriminating: 202 on fa78cd6)
+# --------------------------------------------------------------------------
+
+def test_async_deploy_409_when_teardown_active(enabled_settings):
+    from fastapi.testclient import TestClient
+    from dmf_cms.main import create_app
+
+    entry = _catalog_entry_134()
+    with patch("dmf_cms.main.load_catalog_entries", return_value=[entry]):
+        app = create_app(settings=enabled_settings)
+        with TestClient(app) as client:
+            client.get("/auth/login", follow_redirects=False)
+            client.app.state.operations.get_or_create("teardown", entry.key)
+            resp = client.post(f"/api/catalog/{entry.key}/deploy", json={"reason": "test"})
+
+    assert resp.status_code == 409, resp.text
+    body = resp.json()
+    assert body["error"] == "conflicting lifecycle operation in progress"
+    assert body["conflicting_operation"]["action"] == "teardown"
+    assert body["conflicting_operation"]["target"] == entry.key
+
+
+def test_async_teardown_409_when_deploy_active(enabled_settings):
+    from fastapi.testclient import TestClient
+    from dmf_cms.main import create_app
+
+    entry = _catalog_entry_134()
+    with patch("dmf_cms.main.load_catalog_entries", return_value=[entry]):
+        app = create_app(settings=enabled_settings)
+        with TestClient(app) as client:
+            client.get("/auth/login", follow_redirects=False)
+            client.app.state.operations.get_or_create("deploy", entry.key)
+            resp = client.post(f"/api/catalog/{entry.key}/teardown", json={"reason": "test"})
+
+    assert resp.status_code == 409, resp.text
+    body = resp.json()
+    assert body["error"] == "conflicting lifecycle operation in progress"
+    assert body["conflicting_operation"]["action"] == "deploy"
+    assert body["conflicting_operation"]["target"] == entry.key
+
+
+def test_async_deploy_conflict_audit_outcome(enabled_settings, caplog):
+    from fastapi.testclient import TestClient
+    from dmf_cms.main import create_app
+
+    entry = _catalog_entry_134()
+    with patch("dmf_cms.main.load_catalog_entries", return_value=[entry]):
+        app = create_app(settings=enabled_settings)
+        with TestClient(app) as client:
+            client.get("/auth/login", follow_redirects=False)
+            client.app.state.operations.get_or_create("teardown", entry.key)
+            with caplog.at_level(logging.INFO, logger="dmf_cms.main"):
+                resp = client.post(f"/api/catalog/{entry.key}/deploy", json={"reason": "test"})
+
+    assert resp.status_code == 409
+    lines = [r.getMessage() for r in caplog.records if r.getMessage().startswith("awx write:")]
+    assert any("outcome=conflict-active-operation" in m for m in lines)
+
+
+# --------------------------------------------------------------------------
+# #24 — runner-level cross-JT guard (discriminating: LAUNCHED on fa78cd6)
+# --------------------------------------------------------------------------
+
+def test_async_deploy_runner_blocked_by_active_opposite_job(enabled_settings):
+    from fastapi.testclient import TestClient
+    from dmf_cms.main import create_app
+
+    entry = _catalog_entry_134()
+    launch_mock = MagicMock(return_value=999)
+    with patch("dmf_cms.main.load_catalog_entries", return_value=[entry]), \
+         patch("dmf_cms.main.ensure_awx_awake"), \
+         patch("dmf_cms.main.launch_job", launch_mock), \
+         patch(
+             "dmf_cms.main.lookup_job_template_by_name",
+             side_effect=[{"id": 7}, {"id": 8}],
+         ), \
+         patch(
+             "dmf_cms.main.find_active_job_for_template",
+             side_effect=lambda **k: {7: None, 8: 4321}[k["job_template_id"]],
+         ):
+        app = create_app(settings=enabled_settings)
+        with TestClient(app) as client:
+            client.get("/auth/login", follow_redirects=False)
+            resp = client.post(f"/api/catalog/{entry.key}/deploy", json={"reason": "test"})
+            assert resp.status_code == 202, resp.text
+            op = _wait_for_state(client.app, resp.json()["operation_id"], OperationState.ERROR)
+
+    assert op is not None and op.state == OperationState.ERROR
+    assert op.error == "Conflicting lifecycle operation in progress"
+    launch_mock.assert_not_called()
+
+
+# --------------------------------------------------------------------------
+# #24 fix round 1 (codex GATE-24 P1) — generic /api/workflows/{name}/launch
+# on a catalog lifecycle JT must resolve to the same per-entry lock, not the
+# unlocked "launch" action namespace.
+# --------------------------------------------------------------------------
+
+def test_workflow_launch_of_finalise_jt_conflicts_with_active_deploy(enabled_settings):
+    from fastapi.testclient import TestClient
+    from dmf_cms.main import create_app
+
+    entry = _catalog_entry_134()
+    with patch("dmf_cms.main.load_catalog_entries", return_value=[entry]):
+        app = create_app(settings=enabled_settings)
+        with TestClient(app) as client:
+            client.get("/auth/login", follow_redirects=False)
+            client.app.state.operations.get_or_create("deploy", entry.key)
+            resp = client.post(
+                f"/api/workflows/{entry.finalise['awx_job_template']}/launch",
+                json={"reason": "test"},
+            )
+
+    assert resp.status_code == 409, resp.text
+    body = resp.json()
+    assert body["error"] == "conflicting lifecycle operation in progress"
+    assert body["conflicting_operation"]["action"] == "deploy"
+    assert body["conflicting_operation"]["target"] == entry.key
+
+
+def test_workflow_launch_of_configure_jt_conflicts_with_active_teardown(enabled_settings):
+    from fastapi.testclient import TestClient
+    from dmf_cms.main import create_app
+
+    entry = _catalog_entry_134()
+    with patch("dmf_cms.main.load_catalog_entries", return_value=[entry]):
+        app = create_app(settings=enabled_settings)
+        with TestClient(app) as client:
+            client.get("/auth/login", follow_redirects=False)
+            client.app.state.operations.get_or_create("teardown", entry.key)
+            resp = client.post(
+                f"/api/workflows/{entry.configure['awx_job_template']}/launch",
+                json={"reason": "test"},
+            )
+
+    assert resp.status_code == 409, resp.text
+    body = resp.json()
+    assert body["error"] == "conflicting lifecycle operation in progress"
+    assert body["conflicting_operation"]["action"] == "teardown"
+    assert body["conflicting_operation"]["target"] == entry.key
+
+
+def test_workflow_launch_conflict_audit_uses_effective_action(enabled_settings, caplog):
+    from fastapi.testclient import TestClient
+    from dmf_cms.main import create_app
+
+    entry = _catalog_entry_134()
+    with patch("dmf_cms.main.load_catalog_entries", return_value=[entry]):
+        app = create_app(settings=enabled_settings)
+        with TestClient(app) as client:
+            client.get("/auth/login", follow_redirects=False)
+            client.app.state.operations.get_or_create("deploy", entry.key)
+            with caplog.at_level(logging.INFO, logger="dmf_cms.main"):
+                resp = client.post(
+                    f"/api/workflows/{entry.finalise['awx_job_template']}/launch",
+                    json={"reason": "test"},
+                )
+
+    assert resp.status_code == 409
+    lines = [r.getMessage() for r in caplog.records if r.getMessage().startswith("awx write:")]
+    # The C5 record must reflect the EFFECTIVE action/target on the catalog
+    # entry (deploy vs. teardown), not the generic "launch" wrapper.
+    assert any(
+        "action=teardown" in m and f"target={entry.key}" in m and "outcome=conflict-active-operation" in m
+        for m in lines
+    )
+    assert not any("action=launch" in m and "outcome=conflict-active-operation" in m for m in lines)
+
+
+def test_workflow_launch_and_catalog_deploy_share_lock_namespace(enabled_settings):
+    from fastapi.testclient import TestClient
+    from dmf_cms.main import create_app
+
+    entry = _catalog_entry_134()
+    hold = threading.Event()
+
+    def _blocking_ensure_awake(**kwargs):
+        hold.wait(timeout=5)
+
+    with patch("dmf_cms.main.load_catalog_entries", return_value=[entry]), \
+         patch("dmf_cms.main.ensure_awx_awake", side_effect=_blocking_ensure_awake):
+        app = create_app(settings=enabled_settings)
+        with TestClient(app) as client:
+            client.get("/auth/login", follow_redirects=False)
+            resp1 = client.post(
+                f"/api/workflows/{entry.configure['awx_job_template']}/launch",
+                json={"reason": "test"},
+            )
+            assert resp1.status_code == 202, resp1.text
+            op1 = resp1.json()
+
+            # ensure_awx_awake is still blocked, so the operation dispatched
+            # above is still active (WAKING) — the deploy endpoint must
+            # reattach to it rather than creating a second one.
+            resp2 = client.post(f"/api/catalog/{entry.key}/deploy", json={"reason": "test"})
+            hold.set()
+
+    assert op1["action"] == "deploy"
+    assert op1["target"] == entry.key
+    assert resp2.status_code == 200, resp2.text
+    body2 = resp2.json()
+    assert body2["operation_id"] == op1["operation_id"]
+    assert body2["action"] == "deploy"
+
+
+def test_workflow_launch_non_catalog_jt_unaffected_by_active_catalog_op(enabled_settings):
+    from fastapi.testclient import TestClient
+    from dmf_cms.main import create_app
+
+    entry = _catalog_entry_134()
+    with patch("dmf_cms.main.load_catalog_entries", return_value=[entry]), \
+         patch("dmf_cms.main.ensure_awx_awake"), \
+         patch("dmf_cms.main.lookup_job_template_by_name", return_value=None):
+        app = create_app(settings=enabled_settings)
+        with TestClient(app) as client:
+            client.get("/auth/login", follow_redirects=False)
+            client.app.state.operations.get_or_create("deploy", entry.key)
+            resp = client.post(
+                "/api/workflows/some-internal-spike-jt/launch",
+                json={"reason": "test"},
+            )
+
+    assert resp.status_code == 202, resp.text
+    body = resp.json()
+    assert body["action"] == "launch"
+    assert body["target"] == "some-internal-spike-jt"
+
+
+def test_sync_deploy_conflict_active_opposite_job_returns_409(disabled_settings):
+    from fastapi.testclient import TestClient
+    from dmf_cms.main import create_app
+
+    entry = _catalog_entry_134()
+    templates_by_name = {"dmf-configure": {"id": 7}, "dmf-finalise": {"id": 8}}
+    active_by_id = {7: None, 8: 4321}
+    with patch("dmf_cms.main.load_catalog_entries", return_value=[entry]), \
+         patch(
+             "dmf_cms.main.lookup_job_template_by_name",
+             side_effect=lambda **k: templates_by_name[k["name"]],
+         ), \
+         patch(
+             "dmf_cms.main.find_active_job_for_template",
+             side_effect=lambda **k: active_by_id[k["job_template_id"]],
+         ):
+        app = create_app(settings=disabled_settings)
+        with TestClient(app) as client:
+            client.get("/auth/login", follow_redirects=False)
+            resp = client.post(f"/api/catalog/{entry.key}/deploy", json={"reason": "test"})
+
+    assert resp.status_code == 409, resp.text
+    assert resp.json()["error"] == "conflicting lifecycle operation in progress"
+
+
+def test_sync_teardown_conflict_active_opposite_job_returns_409(disabled_settings):
+    from fastapi.testclient import TestClient
+    from dmf_cms.main import create_app
+
+    entry = _catalog_entry_134()
+    templates_by_name = {"dmf-configure": {"id": 7}, "dmf-finalise": {"id": 8}}
+    active_by_id = {7: 1234, 8: None}
+    with patch("dmf_cms.main.load_catalog_entries", return_value=[entry]), \
+         patch(
+             "dmf_cms.main.lookup_job_template_by_name",
+             side_effect=lambda **k: templates_by_name[k["name"]],
+         ), \
+         patch(
+             "dmf_cms.main.find_active_job_for_template",
+             side_effect=lambda **k: active_by_id[k["job_template_id"]],
+         ):
+        app = create_app(settings=disabled_settings)
+        with TestClient(app) as client:
+            client.get("/auth/login", follow_redirects=False)
+            resp = client.post(f"/api/catalog/{entry.key}/teardown", json={"reason": "test"})
+
+    assert resp.status_code == 409, resp.text
+    assert resp.json()["error"] == "conflicting lifecycle operation in progress"
+
+
+# --------------------------------------------------------------------------
+# #24 fix round 2 (codex GATE-24R2 finding 2) — the generic
+# /api/workflows/{name}/launch sync path's cross-JT guard was untested;
+# these are written against that endpoint, not the catalog routes, so they
+# fail if the generic sync guard block is deleted.
+# --------------------------------------------------------------------------
+
+def test_workflow_launch_sync_finalise_jt_conflict_active_configure_job(disabled_settings, caplog):
+    from fastapi.testclient import TestClient
+    from dmf_cms.main import create_app
+
+    entry = _catalog_entry_134()
+    templates_by_name = {"dmf-configure": {"id": 7}, "dmf-finalise": {"id": 8}}
+    active_by_id = {7: 1234, 8: None}
+    with patch("dmf_cms.main.load_catalog_entries", return_value=[entry]), \
+         patch(
+             "dmf_cms.main.lookup_job_template_by_name",
+             side_effect=lambda **k: templates_by_name[k["name"]],
+         ), \
+         patch(
+             "dmf_cms.main.find_active_job_for_template",
+             side_effect=lambda **k: active_by_id[k["job_template_id"]],
+         ):
+        app = create_app(settings=disabled_settings)
+        with TestClient(app) as client:
+            client.get("/auth/login", follow_redirects=False)
+            with caplog.at_level(logging.INFO, logger="dmf_cms.main"):
+                resp = client.post(
+                    f"/api/workflows/{entry.finalise['awx_job_template']}/launch",
+                    json={"reason": "test"},
+                )
+
+    assert resp.status_code == 409, resp.text
+    assert resp.json()["error"] == "conflicting lifecycle operation in progress"
+    lines = [r.getMessage() for r in caplog.records if r.getMessage().startswith("awx write:")]
+    assert any(
+        "action=teardown" in m and f"target={entry.key}" in m and "outcome=conflict-active-job" in m
+        for m in lines
+    )
+
+
+def test_workflow_launch_sync_configure_jt_conflict_active_finalise_job(disabled_settings, caplog):
+    from fastapi.testclient import TestClient
+    from dmf_cms.main import create_app
+
+    entry = _catalog_entry_134()
+    templates_by_name = {"dmf-configure": {"id": 7}, "dmf-finalise": {"id": 8}}
+    active_by_id = {7: None, 8: 4321}
+    with patch("dmf_cms.main.load_catalog_entries", return_value=[entry]), \
+         patch(
+             "dmf_cms.main.lookup_job_template_by_name",
+             side_effect=lambda **k: templates_by_name[k["name"]],
+         ), \
+         patch(
+             "dmf_cms.main.find_active_job_for_template",
+             side_effect=lambda **k: active_by_id[k["job_template_id"]],
+         ):
+        app = create_app(settings=disabled_settings)
+        with TestClient(app) as client:
+            client.get("/auth/login", follow_redirects=False)
+            with caplog.at_level(logging.INFO, logger="dmf_cms.main"):
+                resp = client.post(
+                    f"/api/workflows/{entry.configure['awx_job_template']}/launch",
+                    json={"reason": "test"},
+                )
+
+    assert resp.status_code == 409, resp.text
+    assert resp.json()["error"] == "conflicting lifecycle operation in progress"
+    lines = [r.getMessage() for r in caplog.records if r.getMessage().startswith("awx write:")]
+    assert any(
+        "action=deploy" in m and f"target={entry.key}" in m and "outcome=conflict-active-job" in m
+        for m in lines
+    )
+
+
+# --------------------------------------------------------------------------
+# #24 fix round 2 (codex GATE-24R2 finding 1) — ambiguous lifecycle JT names
+# must fail closed, not silently last-win to the wrong lock namespace.
+# --------------------------------------------------------------------------
+
+def _catalog_entries_shared_configure_jt():
+    entry_a = CatalogEntry(
+        key="entry-a",
+        display_name="Entry A",
+        summary="Entry A",
+        configure={"awx_job_template": "shared-configure-jt"},
+        finalise={"awx_job_template": "dmf-finalise-a"},
+    )
+    entry_b = CatalogEntry(
+        key="entry-b",
+        display_name="Entry B",
+        summary="Entry B",
+        configure={"awx_job_template": "shared-configure-jt"},
+        finalise={"awx_job_template": "dmf-finalise-b"},
+    )
+    return [entry_a, entry_b]
+
+
+def _catalog_entry_same_jt_both_stages():
+    return CatalogEntry(
+        key="entry-same-jt",
+        display_name="Entry same JT",
+        summary="Entry same JT",
+        configure={"awx_job_template": "same-jt"},
+        finalise={"awx_job_template": "same-jt"},
+    )
+
+
+def test_workflow_launch_shared_configure_jt_is_ambiguous_async(enabled_settings, caplog):
+    from fastapi.testclient import TestClient
+    from dmf_cms.main import create_app
+
+    entries = _catalog_entries_shared_configure_jt()
+    with patch("dmf_cms.main.load_catalog_entries", return_value=entries):
+        app = create_app(settings=enabled_settings)
+        with TestClient(app) as client:
+            client.get("/auth/login", follow_redirects=False)
+            with caplog.at_level(logging.INFO, logger="dmf_cms.main"):
+                resp = client.post(
+                    "/api/workflows/shared-configure-jt/launch", json={"reason": "test"}
+                )
+
+    assert resp.status_code == 500, resp.text
+    assert resp.json()["error"] == "ambiguous catalog lifecycle mapping for this job template"
+    lines = [r.getMessage() for r in caplog.records if r.getMessage().startswith("awx write:")]
+    assert any(
+        "action=launch" in m
+        and "target=shared-configure-jt" in m
+        and "outcome=ambiguous-lifecycle-jt" in m
+        for m in lines
+    )
+
+
+def test_workflow_launch_shared_configure_jt_is_ambiguous_sync(disabled_settings):
+    from fastapi.testclient import TestClient
+    from dmf_cms.main import create_app
+
+    entries = _catalog_entries_shared_configure_jt()
+    with patch("dmf_cms.main.load_catalog_entries", return_value=entries), \
+         patch("dmf_cms.main.launch_job") as launch_mock:
+        app = create_app(settings=disabled_settings)
+        with TestClient(app) as client:
+            client.get("/auth/login", follow_redirects=False)
+            resp = client.post(
+                "/api/workflows/shared-configure-jt/launch", json={"reason": "test"}
+            )
+
+    assert resp.status_code == 500, resp.text
+    assert resp.json()["error"] == "ambiguous catalog lifecycle mapping for this job template"
+    launch_mock.assert_not_called()
+
+
+def test_workflow_launch_same_jt_both_stages_is_ambiguous(enabled_settings):
+    from fastapi.testclient import TestClient
+    from dmf_cms.main import create_app
+
+    entry = _catalog_entry_same_jt_both_stages()
+    with patch("dmf_cms.main.load_catalog_entries", return_value=[entry]):
+        app = create_app(settings=enabled_settings)
+        with TestClient(app) as client:
+            client.get("/auth/login", follow_redirects=False)
+            resp = client.post("/api/workflows/same-jt/launch", json={"reason": "test"})
+
+    assert resp.status_code == 500, resp.text
+    assert resp.json()["error"] == "ambiguous catalog lifecycle mapping for this job template"
+
+
+def test_workflow_launch_unambiguous_jt_still_maps_alongside_ambiguous(enabled_settings):
+    from fastapi.testclient import TestClient
+    from dmf_cms.main import create_app
+
+    clean_entry = _catalog_entry_134()
+    entries = _catalog_entries_shared_configure_jt() + [clean_entry]
+    with patch("dmf_cms.main.load_catalog_entries", return_value=entries):
+        app = create_app(settings=enabled_settings)
+        with TestClient(app) as client:
+            client.get("/auth/login", follow_redirects=False)
+
+            resp_ambiguous = client.post(
+                "/api/workflows/shared-configure-jt/launch", json={"reason": "test"}
+            )
+            assert resp_ambiguous.status_code == 500, resp_ambiguous.text
+
+            # The ambiguous entries must not poison the rest of the map: a
+            # clean entry's JT still maps normally to its own catalog key.
+            client.app.state.operations.get_or_create("teardown", clean_entry.key)
+            resp_ok = client.post(
+                f"/api/workflows/{clean_entry.configure['awx_job_template']}/launch",
+                json={"reason": "test"},
+            )
+
+    assert resp_ok.status_code == 409, resp_ok.text
+    assert resp_ok.json()["conflicting_operation"]["action"] == "teardown"
+    assert resp_ok.json()["conflicting_operation"]["target"] == clean_entry.key
+
+
+def test_async_teardown_runner_blocked_by_active_opposite_job(enabled_settings):
+    from fastapi.testclient import TestClient
+    from dmf_cms.main import create_app
+
+    entry = _catalog_entry_134()
+    launch_mock = MagicMock(return_value=999)
+    with patch("dmf_cms.main.load_catalog_entries", return_value=[entry]), \
+         patch("dmf_cms.main.ensure_awx_awake"), \
+         patch("dmf_cms.main.launch_job", launch_mock), \
+         patch(
+             "dmf_cms.main.lookup_job_template_by_name",
+             side_effect=[{"id": 8}, {"id": 7}],
+         ), \
+         patch(
+             "dmf_cms.main.find_active_job_for_template",
+             side_effect=lambda **k: {7: 1234, 8: None}[k["job_template_id"]],
+         ):
+        app = create_app(settings=enabled_settings)
+        with TestClient(app) as client:
+            client.get("/auth/login", follow_redirects=False)
+            resp = client.post(f"/api/catalog/{entry.key}/teardown", json={"reason": "test"})
+            assert resp.status_code == 202, resp.text
+            op = _wait_for_state(client.app, resp.json()["operation_id"], OperationState.ERROR)
+
+    assert op is not None and op.state == OperationState.ERROR
+    assert op.error == "Conflicting lifecycle operation in progress"
+    launch_mock.assert_not_called()
