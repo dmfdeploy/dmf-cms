@@ -1,9 +1,11 @@
 from __future__ import annotations
 
+import functools
 import hashlib
 import logging
 import re
 import time
+import urllib.error
 import uuid
 from contextlib import asynccontextmanager
 from pathlib import Path
@@ -23,7 +25,7 @@ from .authentik import (
     list_groups,
     list_users,
 )
-from .awx import AWXAPIError, AWXAutoscaleError, AWXJobInfo, list_job_templates, launch_job, get_job_status, wait_for_job, lookup_job_template_by_name, list_recent_jobs, find_active_job_for_template, ensure_awx_awake
+from .awx import AWXAPIError, AWXAutoscaleError, AWXJobInfo, list_job_templates, launch_job, get_job_status, wait_for_job, lookup_job_template_by_name, list_recent_jobs, find_active_job_for_template, ensure_awx_awake, call_with_transient_retry
 from .catalog import CatalogEntry, load_catalog_entries, get_lifecycle_status
 from .contracts import AppContract, load_app_contract
 from .operations import OperationStore, OperationState
@@ -447,11 +449,14 @@ async def _run_deploy_operation(
 
         # Lookup job template
         template = await run_in_threadpool(
-            lookup_job_template_by_name,
-            api_url=settings.awx.api_url,
-            api_token=settings.awx.api_token,
-            name=jt_name,
-            ssl_verify=settings.awx.ssl_verify,
+            call_with_transient_retry,
+            functools.partial(
+                lookup_job_template_by_name,
+                api_url=settings.awx.api_url,
+                api_token=settings.awx.api_token,
+                name=jt_name,
+                ssl_verify=settings.awx.ssl_verify,
+            ),
         )
         if template is None:
             ops_store.update(
@@ -508,6 +513,13 @@ async def _run_deploy_operation(
             state=OperationState.ERROR,
             error="AWX API error while deploying",
         )
+    except urllib.error.URLError as exc:
+        logger.error("AWX unreachable in deploy operation %s: %s", operation_id, exc.reason)
+        ops_store.update(
+            operation_id,
+            state=OperationState.ERROR,
+            error="AWX unreachable while deploying",
+        )
     except Exception as exc:
         logger.exception("Unexpected error in deploy operation %s", operation_id)
         ops_store.update(
@@ -536,11 +548,14 @@ async def _run_teardown_operation(app: FastAPI, operation_id: str, key: str, jt_
 
         # Lookup job template
         template = await run_in_threadpool(
-            lookup_job_template_by_name,
-            api_url=settings.awx.api_url,
-            api_token=settings.awx.api_token,
-            name=jt_name,
-            ssl_verify=settings.awx.ssl_verify,
+            call_with_transient_retry,
+            functools.partial(
+                lookup_job_template_by_name,
+                api_url=settings.awx.api_url,
+                api_token=settings.awx.api_token,
+                name=jt_name,
+                ssl_verify=settings.awx.ssl_verify,
+            ),
         )
         if template is None:
             ops_store.update(
@@ -595,6 +610,13 @@ async def _run_teardown_operation(app: FastAPI, operation_id: str, key: str, jt_
             operation_id,
             state=OperationState.ERROR,
             error="AWX API error while tearing down",
+        )
+    except urllib.error.URLError as exc:
+        logger.error("AWX unreachable in teardown operation %s: %s", operation_id, exc.reason)
+        ops_store.update(
+            operation_id,
+            state=OperationState.ERROR,
+            error="AWX unreachable while tearing down",
         )
     except Exception as exc:
         logger.exception("Unexpected error in teardown operation %s", operation_id)

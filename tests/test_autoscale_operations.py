@@ -2,10 +2,14 @@
 
 import asyncio
 import os
+import time
+import urllib.error
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
+from dmf_cms.awx import AWXAPIError, call_with_transient_retry
+from dmf_cms.catalog import CatalogEntry
 from dmf_cms.operations import OperationState, OperationStore
 from dmf_cms.settings import Settings, load_settings
 
@@ -234,3 +238,156 @@ def test_operation_error_sanitization(enabled_settings):
             # Verify error message is sanitized (not the raw body)
             assert op.error == "AWX wake failed"
             assert raw_error_body not in op.error
+
+
+# --------------------------------------------------------------------------
+# #134 — call_with_transient_retry helper
+# --------------------------------------------------------------------------
+
+def test_transient_retry_recovers_after_two_5xx():
+    fn = MagicMock(side_effect=[AWXAPIError(500, "x"), AWXAPIError(502, "x"), "value"])
+    result = call_with_transient_retry(fn, sleep=lambda s: None)
+    assert result == "value"
+    assert fn.call_count == 3
+
+
+def test_transient_retry_recovers_after_urlerror():
+    fn = MagicMock(side_effect=[urllib.error.URLError("refused"), "value"])
+    result = call_with_transient_retry(fn, sleep=lambda s: None)
+    assert result == "value"
+    assert fn.call_count == 2
+
+
+def test_transient_retry_does_not_retry_4xx():
+    fn = MagicMock(side_effect=AWXAPIError(404, "x"))
+    with pytest.raises(AWXAPIError):
+        call_with_transient_retry(fn, sleep=lambda s: None)
+    assert fn.call_count == 1
+
+
+def test_transient_retry_exhausts_attempts_and_reraises():
+    fn = MagicMock(side_effect=[AWXAPIError(500, "x")] * 3)
+    with pytest.raises(AWXAPIError):
+        call_with_transient_retry(fn, attempts=3, sleep=lambda s: None)
+    assert fn.call_count == 3
+
+
+# --------------------------------------------------------------------------
+# #134 — post-wake transient retry, runner level (deploy/teardown)
+# --------------------------------------------------------------------------
+
+def _catalog_entry_134():
+    return CatalogEntry(
+        key="test-postwake-entry",
+        display_name="Test postwake entry",
+        summary="Test postwake entry",
+        configure={"awx_job_template": "dmf-configure"},
+        finalise={"awx_job_template": "dmf-finalise"},
+    )
+
+
+def _wait_for_state(app, op_id, state, timeout=5.0):
+    deadline = time.time() + timeout
+    while time.time() < deadline:
+        op = app.state.operations.get(op_id)
+        if op and op.state == state:
+            return op
+        time.sleep(0.1)
+    return app.state.operations.get(op_id)
+
+
+def test_async_deploy_recovers_from_transient_5xx_then_success(enabled_settings):
+    from fastapi.testclient import TestClient
+    from dmf_cms.main import create_app
+
+    entry = _catalog_entry_134()
+    with patch("dmf_cms.main.load_catalog_entries", return_value=[entry]), \
+         patch("dmf_cms.awx.time.sleep"), \
+         patch("dmf_cms.main.ensure_awx_awake"), \
+         patch("dmf_cms.main.find_active_job_for_template", return_value=None), \
+         patch("dmf_cms.main.launch_job", return_value=999), \
+         patch(
+             "dmf_cms.main.lookup_job_template_by_name",
+             side_effect=[AWXAPIError(500, "boom"), {"id": 7}],
+         ):
+        app = create_app(settings=enabled_settings)
+        with TestClient(app) as client:
+            client.get("/auth/login", follow_redirects=False)
+            resp = client.post(f"/api/catalog/{entry.key}/deploy", json={"reason": "test"})
+            assert resp.status_code == 202, resp.text
+            op = _wait_for_state(client.app, resp.json()["operation_id"], OperationState.LAUNCHED)
+
+    assert op is not None and op.state == OperationState.LAUNCHED
+
+
+def test_async_deploy_recovers_from_urlerror_then_success(enabled_settings):
+    from fastapi.testclient import TestClient
+    from dmf_cms.main import create_app
+
+    entry = _catalog_entry_134()
+    with patch("dmf_cms.main.load_catalog_entries", return_value=[entry]), \
+         patch("dmf_cms.awx.time.sleep"), \
+         patch("dmf_cms.main.ensure_awx_awake"), \
+         patch("dmf_cms.main.find_active_job_for_template", return_value=None), \
+         patch("dmf_cms.main.launch_job", return_value=999), \
+         patch(
+             "dmf_cms.main.lookup_job_template_by_name",
+             side_effect=[urllib.error.URLError("reset"), {"id": 7}],
+         ):
+        app = create_app(settings=enabled_settings)
+        with TestClient(app) as client:
+            client.get("/auth/login", follow_redirects=False)
+            resp = client.post(f"/api/catalog/{entry.key}/deploy", json={"reason": "test"})
+            assert resp.status_code == 202, resp.text
+            op = _wait_for_state(client.app, resp.json()["operation_id"], OperationState.LAUNCHED)
+
+    assert op is not None and op.state == OperationState.LAUNCHED
+
+
+def test_async_teardown_recovers_from_transient_5xx_then_success(enabled_settings):
+    from fastapi.testclient import TestClient
+    from dmf_cms.main import create_app
+
+    entry = _catalog_entry_134()
+    with patch("dmf_cms.main.load_catalog_entries", return_value=[entry]), \
+         patch("dmf_cms.awx.time.sleep"), \
+         patch("dmf_cms.main.ensure_awx_awake"), \
+         patch("dmf_cms.main.find_active_job_for_template", return_value=None), \
+         patch("dmf_cms.main.launch_job", return_value=999), \
+         patch(
+             "dmf_cms.main.lookup_job_template_by_name",
+             side_effect=[AWXAPIError(500, "boom"), {"id": 7}],
+         ):
+        app = create_app(settings=enabled_settings)
+        with TestClient(app) as client:
+            client.get("/auth/login", follow_redirects=False)
+            resp = client.post(f"/api/catalog/{entry.key}/teardown", json={"reason": "test"})
+            assert resp.status_code == 202, resp.text
+            op = _wait_for_state(client.app, resp.json()["operation_id"], OperationState.LAUNCHED)
+
+    assert op is not None and op.state == OperationState.LAUNCHED
+
+
+def test_async_deploy_urlerror_sanitizes_error_field(enabled_settings):
+    from fastapi.testclient import TestClient
+    from dmf_cms.main import create_app
+
+    entry = _catalog_entry_134()
+    secret_detail = "secret-host-detail"
+    with patch("dmf_cms.main.load_catalog_entries", return_value=[entry]), \
+         patch("dmf_cms.awx.time.sleep"), \
+         patch("dmf_cms.main.ensure_awx_awake"), \
+         patch(
+             "dmf_cms.main.lookup_job_template_by_name",
+             side_effect=urllib.error.URLError(secret_detail),
+         ):
+        app = create_app(settings=enabled_settings)
+        with TestClient(app) as client:
+            client.get("/auth/login", follow_redirects=False)
+            resp = client.post(f"/api/catalog/{entry.key}/deploy", json={"reason": "test"})
+            assert resp.status_code == 202, resp.text
+            op = _wait_for_state(client.app, resp.json()["operation_id"], OperationState.ERROR)
+
+    assert op is not None and op.state == OperationState.ERROR
+    assert op.error == "AWX unreachable while deploying"
+    assert secret_detail not in op.error

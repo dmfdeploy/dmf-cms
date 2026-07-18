@@ -75,6 +75,26 @@ def _request(
         raise AWXAPIError(exc.code, error_body) from exc
 
 
+def call_with_transient_retry(fn, *, attempts=3, delay=3.0, sleep=None):
+    """Call fn(), retrying transient AWX failures (HTTP 5xx or URLError).
+
+    Covers the post-wake window where AWX is Ready but its API briefly
+    returns 5xx or resets connections (#134).
+    """
+    if sleep is None:
+        sleep = time.sleep
+    for attempt in range(attempts):
+        try:
+            return fn()
+        except (AWXAPIError, urllib.error.URLError) as exc:
+            transient = isinstance(exc, urllib.error.URLError) or (
+                isinstance(exc, AWXAPIError) and exc.status >= 500
+            )
+            if not transient or attempt == attempts - 1:
+                raise
+            sleep(delay)
+
+
 def _ssl_context(verify: bool) -> ssl.SSLContext | None:
     if not verify:
         ctx = ssl.create_default_context()
