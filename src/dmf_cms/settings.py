@@ -2,7 +2,10 @@ from __future__ import annotations
 
 from dataclasses import dataclass, field
 from pathlib import Path
+import logging
 import os
+
+logger = logging.getLogger(__name__)
 
 
 def _env_bool(name: str, default: bool) -> bool:
@@ -10,6 +13,57 @@ def _env_bool(name: str, default: bool) -> bool:
     if value is None:
         return default
     return value.strip().lower() in {"1", "true", "yes", "on"}
+
+
+def _env_l3_enabled(name: str, default: bool = True) -> bool:
+    """Strict tri-state parser for the L3 kill switch (codex #202 WP1 R3-3).
+
+    Deliberately narrower than the generic ``_env_bool`` above — that
+    helper treats ANY unrecognized token as False, so a typo'd 'tru' would
+    silently DISABLE L3, activating the kill switch by accident. This one
+    fails SAFE-ON: ``'false'``/``'0'``/``'no'`` (case-insensitive) are the
+    only ways to turn it off; ``'true'``/``'1'``/``'yes'`` or an unset/blank
+    value keep it on; any OTHER token also keeps it on (never silently
+    disables a security/capacity-relevant gate on a typo) but logs a loud
+    warning naming the bad value so the typo is visible, not silent.
+    """
+    value = os.getenv(name)
+    if value is None or not value.strip():
+        return default
+    normalized = value.strip().lower()
+    if normalized in {"false", "0", "no"}:
+        return False
+    if normalized in {"true", "1", "yes"}:
+        return True
+    logger.warning(
+        "%s=%r is not a recognized true/false token — defaulting to enabled "
+        "(the L3 kill switch fails safe-ON: a typo must never silently "
+        "disable the capacity preflight)",
+        name, value,
+    )
+    return True
+
+
+def _env_positive_int(name: str, default: int) -> int:
+    """Parse a positive-int env var; unset/blank uses ``default`` silently.
+
+    An unparseable value OR a value <= 0 falls back to ``default`` WITH a
+    logged warning — a zero/negative L3 EE floor would silently defeat the
+    §3.2(b) conservative-reserve contract (umbrella #202 WP1 R2-9), so a
+    misconfiguration here must be visible, not just quietly ignored.
+    """
+    value = os.getenv(name)
+    if value is None or not value.strip():
+        return default
+    try:
+        parsed = int(value.strip())
+    except ValueError:
+        logger.warning("%s=%r is not a valid integer; using default %d", name, value, default)
+        return default
+    if parsed <= 0:
+        logger.warning("%s=%d must be > 0; using default %d", name, parsed, default)
+        return default
+    return parsed
 
 
 def _env_tuple(name: str, default: tuple[str, ...]) -> tuple[str, ...]:
@@ -183,6 +237,40 @@ class MediaTenancySettings:
 
 
 @dataclass(frozen=True)
+class L3Settings:
+    """L3 console capacity preflight (umbrella dmfdeploy/dmfdeploy#202 WP1).
+
+    The early operator-facing gate: budgets a run's incremental demand +
+    an AWX EE job pod reserve against node allocatable, over
+    ``prometheus.query()`` (no k8s client in the console).
+
+    ``enabled`` is THE one documented kill switch (codex R2-1) — an
+    explicit, operator-chosen "this tier does not run here". Setting it
+    False is fail-OPEN by design: every deploy proceeds exactly as it did
+    pre-#202. It is NOT the same knob as an unconfigured ``prometheus`` —
+    with ``enabled=True`` but Prometheus unconfigured, the handler refuses
+    (fail-CLOSED, 409 ``budget-unavailable``), because the console tier has
+    exactly one seam to supply data and "enabled but can't read supply"
+    must never silently pass as a no-op. Loaded via ``_env_l3_enabled``
+    (codex R3-3): a KILL SWITCH must fail safe-ON — an unrecognized env
+    token (a typo like ``'tru'``) logs a loud warning and stays enabled,
+    never silently disables the gate the way the generic ``_env_bool``
+    would.
+
+    ``ee_floor_cpu_millicores``/``ee_floor_memory_mib`` are the §3.2(b)
+    conservative floor applied when the AWX EE Container Group's declared
+    worker+init+overhead sum is absent, zero, or unparseable — never
+    reserve nothing for the run's own executor pod. Loaded via
+    ``_env_positive_int``: an unparseable or non-positive env value falls
+    back to the default with a logged warning, never silently to 0.
+    """
+
+    enabled: bool = True
+    ee_floor_cpu_millicores: int = 250
+    ee_floor_memory_mib: int = 512
+
+
+@dataclass(frozen=True)
 class ForgejoSettings:
     api_url: str = ""
     api_token: str = ""
@@ -292,6 +380,7 @@ class Settings:
     awx_autoscale: AWXAutoscaleSettings = field(default_factory=AWXAutoscaleSettings)
     netbox: NetboxSettings = field(default_factory=NetboxSettings)
     prometheus: PrometheusSettings = field(default_factory=PrometheusSettings)
+    l3: L3Settings = field(default_factory=L3Settings)
     forgejo: ForgejoSettings = field(default_factory=ForgejoSettings)
     mxl: MXLSettings = field(default_factory=MXLSettings)
     media_tenancy: MediaTenancySettings = field(default_factory=MediaTenancySettings)
@@ -368,6 +457,11 @@ def load_settings() -> Settings:
         ),
         prometheus=PrometheusSettings(
             url=os.getenv("DMF_CONSOLE_PROMETHEUS_URL", ""),
+        ),
+        l3=L3Settings(
+            enabled=_env_l3_enabled("DMF_CONSOLE_L3_ENABLED", True),
+            ee_floor_cpu_millicores=_env_positive_int("DMF_CONSOLE_L3_EE_FLOOR_CPU_MILLICORES", 250),
+            ee_floor_memory_mib=_env_positive_int("DMF_CONSOLE_L3_EE_FLOOR_MEMORY_MIB", 512),
         ),
         forgejo=ForgejoSettings(
             api_url=os.getenv("DMF_CONSOLE_FORGEJO_API_URL", ""),

@@ -29,7 +29,7 @@ from .awx import AWXAPIError, AWXAutoscaleError, AWXJobInfo, list_job_templates,
 from .catalog import CatalogEntry, load_catalog_entries, get_lifecycle_status
 from .contracts import AppContract, load_app_contract
 from .operations import OperationStore, OperationState
-from . import netbox, prometheus, forgejo, mxl, media_workloads
+from . import netbox, prometheus, forgejo, mxl, media_workloads, capacity
 from starlette.concurrency import run_in_threadpool
 import asyncio
 from .security import (
@@ -239,6 +239,248 @@ async def _extract_workload(request: Request, request_id: str) -> tuple[str | No
     return workload, None
 
 
+async def _extract_l3_override(request: Request, request_id: str) -> tuple[bool, JSONResponse | None]:
+    """Extract + strictly validate the optional L3 override flag (#202 WP1 R2-5, plan §3.3).
+
+    Mirrors ``_require_reason``/``_extract_workload``'s body-read pattern —
+    Starlette caches the raw request body, so re-parsing here (after those
+    helpers already ran) is safe and cheap, not a second stream read.
+
+    Coercion is deliberately narrow: an absent key or JSON ``false`` both
+    mean "not overriding" (legitimate omission-equivalents, same as
+    ``_extract_workload``'s null/""/absent trio) — returns ``(False,
+    None)``. JSON ``true`` means override — returns ``(True, None)``. ANY
+    other value (the string ``"false"``, ``1``, ``[]``, ``"yes"``, ...) is a
+    malformed request, not a silent coercion: a client mistakenly sending a
+    truthy-looking non-bool must never accidentally slip an over-budget
+    launch past capacity refusal. Returns ``(False, response)`` — a 400
+    ``invalid-l3-override`` — for that case.
+    """
+    try:
+        body = await request.json()
+    except Exception:
+        body = None
+    if not isinstance(body, dict) or "l3_override" not in body:
+        return False, None
+    value = body["l3_override"]
+    if value is True:
+        return True, None
+    if value is False:
+        return False, None
+    return False, JSONResponse(
+        {"error": "invalid-l3-override", "request_id": request_id}, status_code=400,
+    )
+
+
+def _capacity_audit_summary(
+    result: "capacity.PreflightResult | None" = None, *, refusal_kind: str | None = None
+) -> str:
+    """Compact budget-numbers string for the C5 audit line's ``capacity`` field."""
+    if result is not None:
+        return (
+            f"verdict={result.verdict} "
+            f"cpu={result.total_cpu_m}m/{result.headroom_cpu_m}m "
+            f"mem={result.total_mem_b}B/{result.headroom_mem_b}B"
+        )
+    if refusal_kind:
+        return f"kind={refusal_kind}"
+    return ""
+
+
+async def _l3_preflight(
+    request: Request,
+    user: UserIdentity,
+    *,
+    settings: Settings,
+    entry: CatalogEntry,
+    key: str,
+    request_id: str,
+    reason: str,
+) -> tuple[dict | None, JSONResponse | None]:
+    """L3 console capacity preflight gate (umbrella #202 WP1, plan §3.1-§3.4).
+
+    The early operator-facing gate — the launcher tier (WP3) recomputes
+    in-cluster and stays authoritative; this tier's unique job is refusing
+    BEFORE any AWX side effect, including before the AWX EE job pod itself
+    would be scheduled (the console reserves it, §3.2 table).
+
+    Fail-open vs fail-closed posture (codex R2-1, load-bearing — do not
+    conflate the two conditions below):
+
+    * ``settings.l3.enabled is False`` is THE one documented kill switch —
+      an explicit, operator-chosen "this tier does not run here". Skips
+      with an audited ``capacity-skipped`` outcome (so a disabled tier is
+      still visible in the C5 trail, not silently invisible) and an
+      envelope carrying ``l3_preflight_verdict: 'skipped'``.
+    * ``l3.enabled`` is True but ``settings.prometheus.configured`` is
+      False is a MISCONFIGURATION, not an opt-out — the console tier's
+      supply numbers have exactly one seam (``prometheus.query()``, §3.2),
+      so "enabled but no way to read supply" can never silently pass. This
+      refuses with a 409 ``kind='budget-unavailable'``, exactly like a live
+      Prometheus read returning no data — same failure mode, same handling.
+
+    Returns ``(envelope, None)`` to proceed. ``envelope`` carries
+    ``l3_request_id``/``l3_preflight_verdict`` always, plus
+    ``l3_override``/``l3_override_reason`` when the operator overrode a
+    refusal — these four keys are the WP3 launcher contract, never rename.
+    Returns ``(None, response)`` — a 409 ``capacity-preflight-refused`` (or a
+    400 ``invalid-l3-override`` for a malformed override flag) — to refuse.
+    Never returns a refusal when overriding (that's the point of an
+    override): any budget error while overriding is folded into the audit
+    summary and the run proceeds anyway.
+    """
+    if not settings.l3.enabled:
+        _audit_awx_write(
+            request, user, action="deploy", target=key, request_id=request_id, reason=reason,
+            outcome="capacity-skipped",
+        )
+        return {"l3_request_id": request_id, "l3_preflight_verdict": "skipped"}, None
+
+    if not settings.prometheus.configured:
+        _audit_awx_write(
+            request, user, action="deploy", target=key, request_id=request_id, reason=reason,
+            outcome="capacity-denied", capacity=_capacity_audit_summary(refusal_kind="budget-unavailable"),
+        )
+        return None, JSONResponse(
+            {"error": "capacity-preflight-refused", "kind": "budget-unavailable", "request_id": request_id},
+            status_code=409,
+        )
+
+    override, override_err = await _extract_l3_override(request, request_id)
+    if override_err is not None:
+        _audit_awx_write(
+            request, user, action="deploy", target=key, request_id=request_id, reason=reason,
+            outcome="invalid-override",
+        )
+        return None, override_err
+
+    demand, demand_reason = capacity.read_entry_demand(entry.provision)
+
+    if override:
+        result = None
+        refusal_kind = demand_reason
+        if demand is not None:
+            # R3-6: these are blocking urllib/HTTP reads — never call them
+            # directly on the event loop from this async handler.
+            ee_reserve = await run_in_threadpool(
+                capacity.read_ee_reserve,
+                api_url=settings.awx.api_url,
+                api_token=settings.awx.api_token,
+                ssl_verify=settings.awx.ssl_verify,
+                floor_cpu_m=settings.l3.ee_floor_cpu_millicores,
+                floor_mem_b=settings.l3.ee_floor_memory_mib * 1024 * 1024,
+            )
+            supply = await run_in_threadpool(capacity.read_node_supply, prom_url=settings.prometheus.url)
+            if isinstance(supply, capacity.NodeSupply):
+                cpu_m, mem_b = demand
+                result = capacity.evaluate_preflight(
+                    demand_items=[(key, cpu_m, mem_b)],
+                    ee_reserve=ee_reserve,
+                    supply=supply,
+                )
+                refusal_kind = None
+            else:
+                refusal_kind = supply
+        _audit_awx_write(
+            request, user, action="deploy", target=key, request_id=request_id, reason=reason,
+            outcome="capacity-override",
+            capacity=_capacity_audit_summary(result, refusal_kind=refusal_kind),
+        )
+        return {
+            "l3_request_id": request_id,
+            "l3_preflight_verdict": "override",
+            "l3_override": True,
+            "l3_override_reason": reason,
+        }, None
+
+    if demand is None:
+        kind = "invalid-budget" if demand_reason.startswith("invalid-budget") else demand_reason
+        _audit_awx_write(
+            request, user, action="deploy", target=key, request_id=request_id, reason=reason,
+            outcome="capacity-denied", capacity=_capacity_audit_summary(refusal_kind=demand_reason),
+        )
+        return None, JSONResponse(
+            {
+                "error": "capacity-preflight-refused",
+                "kind": kind,
+                "detail": demand_reason,
+                "request_id": request_id,
+            },
+            status_code=409,
+        )
+    cpu_m, mem_b = demand
+
+    # R3-6: blocking urllib/HTTP reads — offload to the threadpool so the
+    # event loop isn't blocked for the duration of the AWX/Prometheus calls.
+    ee_reserve = await run_in_threadpool(
+        capacity.read_ee_reserve,
+        api_url=settings.awx.api_url,
+        api_token=settings.awx.api_token,
+        ssl_verify=settings.awx.ssl_verify,
+        floor_cpu_m=settings.l3.ee_floor_cpu_millicores,
+        floor_mem_b=settings.l3.ee_floor_memory_mib * 1024 * 1024,
+    )
+
+    supply = await run_in_threadpool(capacity.read_node_supply, prom_url=settings.prometheus.url)
+    if not isinstance(supply, capacity.NodeSupply):
+        # Fail-closed: no supply data is never treated as fit.
+        _audit_awx_write(
+            request, user, action="deploy", target=key, request_id=request_id, reason=reason,
+            outcome="capacity-denied", capacity=_capacity_audit_summary(refusal_kind=supply),
+        )
+        return None, JSONResponse(
+            {"error": "capacity-preflight-refused", "kind": supply, "request_id": request_id},
+            status_code=409,
+        )
+
+    result = capacity.evaluate_preflight(
+        demand_items=[(key, cpu_m, mem_b)], ee_reserve=ee_reserve, supply=supply,
+    )
+
+    if result.verdict == "no-fit":
+        _audit_awx_write(
+            request, user, action="deploy", target=key, request_id=request_id, reason=reason,
+            outcome="capacity-denied", capacity=_capacity_audit_summary(result),
+        )
+        return None, JSONResponse(
+            {
+                "error": "capacity-preflight-refused",
+                "kind": "no-fit",
+                "report": result.report,
+                "text": result.text,
+                "request_id": request_id,
+            },
+            status_code=409,
+        )
+
+    return {"l3_request_id": request_id, "l3_preflight_verdict": "fit"}, None
+
+
+def _build_launch_extra_vars(workload: str | None, envelope: dict | None) -> dict | None:
+    """Merge the #239 workload_slug and the #202 L3 envelope into one extra_vars dict.
+
+    Mirrors the pre-existing ``{"workload_slug": workload} if workload else
+    None`` contract: an empty result stays ``None`` (bit-compatible with
+    pre-#239 launches when L3 itself is disabled), not an empty dict.
+
+    The envelope merges in ALWAYS, including a ``skipped`` verdict —
+    ``l3.enabled=False`` is the ONLY condition that produces ``skipped``
+    (R2-1/R3-5: an unconfigured Prometheus with L3 enabled is a
+    fail-closed REFUSAL, never a skip). Every catalog JT already has
+    ``ask_variables_on_launch`` (#239), so an unreferenced var is a no-op
+    for playbooks that don't read it. Omitting the envelope on skip would
+    mean the launcher can't tell "console run, preflight skipped" from
+    "direct run, no console at all", breaking the §3.2 divergence-report's
+    request_id correlation.
+    """
+    extra_vars: dict[str, Any] = {}
+    if workload:
+        extra_vars["workload_slug"] = workload
+    if envelope:
+        extra_vars.update(envelope)
+    return extra_vars or None
+
+
 def _audit_awx_write(
     request: Request,
     user: UserIdentity,
@@ -249,6 +491,7 @@ def _audit_awx_write(
     reason: str,
     outcome: str,
     workload: str | None = None,
+    capacity: str | None = None,
 ) -> None:
     """Emit the C5 quartet audit line for a DMF-initiated AWX write.
 
@@ -267,11 +510,16 @@ def _audit_awx_write(
     ``workload`` (#239) records what was requested, not just target=key — an
     optional trailing field, blank when omitted, so existing callers (launch,
     teardown) need no changes.
+
+    ``capacity`` (#202 WP1) is a compact budget-numbers summary for
+    ``capacity-override``/``capacity-denied`` outcomes (plan §3.3: "the C5
+    quartet ... + the budget numbers") — same optional-trailing-field pattern
+    as ``workload``, blank when omitted.
     """
     real = session_user(request.session)
     real_role = real.role if (real is not None and request.session.get("view_as")) else ""
     logger.info(
-        "awx write: action=%s actor=%s role=%s real_role=%s request_id=%s target=%s reason=%r outcome=%s workload=%s",
+        "awx write: action=%s actor=%s role=%s real_role=%s request_id=%s target=%s reason=%r outcome=%s workload=%s capacity=%s",
         action,
         user.subject,
         user.role,
@@ -281,6 +529,7 @@ def _audit_awx_write(
         reason,
         outcome,
         workload or "",
+        capacity or "",
     )
 
 
@@ -426,7 +675,7 @@ async def _run_launch_operation(app: FastAPI, operation_id: str, workflow_name: 
 
 async def _run_deploy_operation(
     app: FastAPI, operation_id: str, key: str, jt_name: str, workload: str | None = None,
-    opposite_jt_name: str | None = None,
+    opposite_jt_name: str | None = None, l3_envelope: dict | None = None,
 ) -> None:
     """Background task to wake AWX and deploy a catalog entry.
 
@@ -436,6 +685,12 @@ async def _run_deploy_operation(
     opposite_jt_name (#24) is the finalise (teardown) job template for this
     same catalog entry, if any — used for the cross-JT running-job guard
     below.
+
+    l3_envelope (#202 WP1) is the capacity preflight's result, computed
+    synchronously by the caller (api_catalog_deploy) BEFORE this background
+    task is even spawned — the gate must refuse before dispatch, not after.
+    Merged into extra_vars alongside workload_slug via
+    _build_launch_extra_vars.
     """
     settings = app.state.settings
     ops_store = app.state.operations
@@ -530,7 +785,7 @@ async def _run_deploy_operation(
             api_token=settings.awx.api_token,
             job_template_id=template["id"],
             ssl_verify=settings.awx.ssl_verify,
-            extra_vars={"workload_slug": workload} if workload else None,
+            extra_vars=_build_launch_extra_vars(workload, l3_envelope),
         )
 
         ops_store.update(
@@ -2037,6 +2292,13 @@ def create_app(settings: Settings | None = None, contract: AppContract | None = 
         # running-job guard below (may be None if the entry has no finalise).
         opposite_jt_name = (entry.finalise or {}).get("awx_job_template")
 
+        # #202 WP1 R2-7: the L3 capacity preflight gate runs AFTER the
+        # dedupe/reattach checks in each flow below, not here — a reattach
+        # to an already-in-flight operation or an already-active AWX job
+        # must never re-run (or re-audit) a preflight; it was already run
+        # (or the check is moot) for the original launch. See the gate call
+        # inside each flow.
+
         # Async operation flow (when autoscale enabled)
         if settings.awx_autoscale.enabled:
             if not settings.awx_autoscale.configured:
@@ -2072,13 +2334,28 @@ def create_app(settings: Settings | None = None, contract: AppContract | None = 
             if not created:
                 # Existing operation found - return it without spawning new task
                 # v1 behavior: browser refresh loses live spinner but re-clicking
-                # safely reattaches via get_or_create (no double launch)
+                # safely reattaches via get_or_create (no double launch). No
+                # preflight here (#202 R2-7): the original create already ran it.
                 _audit_awx_write(request, user, action="deploy", target=key, request_id=request_id, reason=reason, outcome="reattached")
                 return JSONResponse({**op.to_dict(), "request_id": request_id}, status_code=200)
 
+            # #202 WP1 R2-7: preflight runs only for a freshly created op, right
+            # before dispatch — the earliest point after which an AWX side
+            # effect could follow. A refusal here must mark the just-created op
+            # terminal (ERROR) before returning, or it wedges the (action,
+            # target) exclusive lock and blocks every subsequent deploy attempt
+            # for this catalog entry until TTL GC.
+            l3_envelope, l3_err = await _l3_preflight(
+                request, user, settings=settings, entry=entry, key=key,
+                request_id=request_id, reason=reason,
+            )
+            if l3_err is not None:
+                ops_store.update(op.operation_id, state=OperationState.ERROR, error="Capacity preflight refused")
+                return l3_err
+
             # Spawn background task with tracking
             task = asyncio.create_task(_run_deploy_operation(
-                request.app, op.operation_id, key, jt_name, workload, opposite_jt_name
+                request.app, op.operation_id, key, jt_name, workload, opposite_jt_name, l3_envelope
             ))
             request.app.state.operation_tasks.add(task)
             task.add_done_callback(request.app.state.operation_tasks.discard)
@@ -2135,12 +2412,22 @@ def create_app(settings: Settings | None = None, contract: AppContract | None = 
                             {"error": "conflicting lifecycle operation in progress", "request_id": request_id},
                             status_code=409,
                         )
+            # #202 WP1 R2-7: preflight runs here — after both idempotency
+            # guards (already-active reattach, cross-JT conflict), immediately
+            # before the actual AWX side effect. Neither guard above re-runs
+            # or re-audits a preflight; only a genuinely new launch does.
+            l3_envelope, l3_err = await _l3_preflight(
+                request, user, settings=settings, entry=entry, key=key,
+                request_id=request_id, reason=reason,
+            )
+            if l3_err is not None:
+                return l3_err
             job_id = launch_job(
                 api_url=settings.awx.api_url,
                 api_token=settings.awx.api_token,
                 job_template_id=template["id"],
                 ssl_verify=settings.awx.ssl_verify,
-                extra_vars={"workload_slug": workload} if workload else None,
+                extra_vars=_build_launch_extra_vars(workload, l3_envelope),
             )
             _audit_awx_write(request, user, action="deploy", target=key, request_id=request_id, reason=reason, outcome="launched", workload=workload)
             return JSONResponse({"job_id": job_id, "status": "launched", "request_id": request_id})

@@ -13,7 +13,15 @@ import pytest
 from dmf_cms.awx import AWXAPIError, call_with_transient_retry
 from dmf_cms.catalog import CatalogEntry
 from dmf_cms.operations import OperationState, OperationStore
-from dmf_cms.settings import Settings, load_settings
+from dmf_cms.settings import L3Settings, Settings, load_settings
+
+# This file exercises autoscale/operation-store/conflict logic, not the L3
+# capacity preflight (#202 WP1) — none of these fixtures configure
+# Prometheus, and since R2-1 made "l3.enabled=True but prometheus
+# unconfigured" a fail-closed 409 (not a skip), every deploy fixture here
+# must explicitly disable L3 (the one documented kill switch) to keep
+# testing what it was written to test.
+_L3_DISABLED = L3Settings(enabled=False)
 
 
 @pytest.fixture
@@ -35,7 +43,8 @@ def enabled_settings():
             helper_url="http://helper.test",
             bearer_token="bearer-token",
             max_startup_wait=1260
-        )
+        ),
+        l3=_L3_DISABLED,
     )
 
 
@@ -53,7 +62,8 @@ def disabled_settings():
             api_token="test-token",
             ssl_verify=False
         ),
-        awx_autoscale=AWXAutoscaleSettings(enabled=False)
+        awx_autoscale=AWXAutoscaleSettings(enabled=False),
+        l3=_L3_DISABLED,
     )
 
 
@@ -76,9 +86,9 @@ def misconfigured_settings():
             enabled=True,
             helper_url="",
             bearer_token=""
-        )
+        ),
+        l3=_L3_DISABLED,
     )
-    return settings
 
 
 def test_load_settings_default_max_startup_wait():
