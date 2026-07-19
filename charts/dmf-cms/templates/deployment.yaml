@@ -170,6 +170,12 @@ spec:
             - name: DMF_CONSOLE_PROMETHEUS_URL
               value: {{ .Values.prometheus.url | quote }}
             {{- end }}
+            - name: DMF_CONSOLE_L3_ENABLED
+              value: {{ .Values.l3.enabled | quote }}
+            - name: DMF_CONSOLE_L3_EE_FLOOR_CPU_MILLICORES
+              value: {{ .Values.l3.eeFloorCpuMillicores | quote }}
+            - name: DMF_CONSOLE_L3_EE_FLOOR_MEMORY_MIB
+              value: {{ .Values.l3.eeFloorMemoryMib | quote }}
             {{- if .Values.media.tenancy }}
             - name: DMF_CONSOLE_MEDIA_TENANCY
               value: {{ .Values.media.tenancy | quote }}

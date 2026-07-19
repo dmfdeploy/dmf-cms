@@ -81,6 +81,15 @@ netbox:
 prometheus:
   url: "http://prometheus-server.monitoring.svc.cluster.local/prometheus"
 
+# L3 console capacity preflight (umbrella dmfdeploy/dmfdeploy#202 WP1).
+# enabled is THE kill switch (fail-open when false); with it true but
+# prometheus.url unset the handler fails CLOSED (409 budget-unavailable),
+# not silently skipped — see settings.py L3Settings for the full posture.
+l3:
+  enabled: true
+  eeFloorCpuMillicores: 250
+  eeFloorMemoryMib: 512
+
 # Media Workloads page (dmfdeploy/dmfdeploy#173): fail-closed — the page stays
 # dark unless tenancy is "single" or "scoped" (scoped additionally needs the
 # group→tenant map, format "group=tenant|tenant;...").

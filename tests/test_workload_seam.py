@@ -10,6 +10,16 @@ Two layers:
 * integration — /api/catalog/{key}/deploy, both the sync (autoscale-disabled)
   and async (autoscale-enabled) flows, via the launch_job spy pattern already
   established in test_awx_write_gate.py.
+
+Umbrella #202 WP1-B note: this file's fixtures explicitly set
+``l3=L3Settings(enabled=False)`` — L3's one documented kill switch (R2-1) —
+since R2-1 made "l3.enabled=True but Prometheus unconfigured" a fail-closed
+409 rather than a skip, and this file tests the #239 workload seam, not L3.
+A skipped envelope (l3_request_id + l3_preflight_verdict='skipped') still
+merges into extra_vars alongside workload_slug (or alone, when no workload
+was sent), per the plan §3.2 divergence-report's need to correlate a
+"console run, preflight skipped" launch by request_id. See
+_assert_skipped_l3_envelope.
 """
 
 import logging
@@ -23,7 +33,7 @@ from dmf_cms import awx
 from dmf_cms.catalog import CatalogEntry
 from dmf_cms.main import create_app
 from dmf_cms.operations import OperationState
-from dmf_cms.settings import AWXAutoscaleSettings, AWXSettings, Settings
+from dmf_cms.settings import AWXAutoscaleSettings, AWXSettings, L3Settings, Settings
 
 
 OPERATOR = ("dmf-console-operator",)
@@ -82,6 +92,7 @@ def _client(groups) -> TestClient:
         dev_groups=groups,
         awx=AWXSettings(api_url="http://awx.test", api_token="t"),
         awx_autoscale=AWXAutoscaleSettings(enabled=False),
+        l3=L3Settings(enabled=False),
     )
     client = TestClient(create_app(settings=settings))
     client.get("/auth/login", follow_redirects=False)  # dev login -> session
@@ -116,6 +127,24 @@ def _audit_lines(caplog):
     return [r.getMessage() for r in caplog.records if r.getMessage().startswith("awx write:")]
 
 
+def _assert_skipped_l3_envelope(extra_vars, *, workload_slug=None):
+    """Assert extra_vars carries exactly the skipped L3 envelope (+ workload_slug if given).
+
+    This file's Settings() never configure Prometheus, so every launch's L3
+    preflight is 'skipped' (#202 WP1-B) — but the envelope still merges in
+    (see module docstring). l3_request_id is a random uuid4 hex per request,
+    so it's checked for presence, not an exact value.
+    """
+    assert extra_vars is not None
+    assert extra_vars.get("l3_preflight_verdict") == "skipped"
+    assert extra_vars.get("l3_request_id")
+    expected_keys = {"l3_request_id", "l3_preflight_verdict"}
+    if workload_slug is not None:
+        assert extra_vars.get("workload_slug") == workload_slug
+        expected_keys.add("workload_slug")
+    assert set(extra_vars.keys()) == expected_keys
+
+
 # ---- sync flow (autoscale disabled) ----
 
 def test_sync_deploy_with_valid_workload_passes_extra_vars(awx_spy):
@@ -126,15 +155,17 @@ def test_sync_deploy_with_valid_workload_passes_extra_vars(awx_spy):
     )
     assert resp.status_code == 200, resp.text
     assert resp.json()["status"] == "launched"
-    assert awx_spy[-1]["extra_vars"] == {"workload_slug": "studio-a"}
+    _assert_skipped_l3_envelope(awx_spy[-1]["extra_vars"], workload_slug="studio-a")
 
 
 def test_sync_deploy_without_workload_omits_extra_vars(awx_spy):
-    # Regression pin: pre-#239 behaviour is unchanged when no workload is sent.
+    # Pre-#239 behaviour (no workload_slug key) is unchanged when no workload
+    # is sent; #202 WP1-B adds the skipped L3 envelope regardless (this
+    # file's fixtures never configure Prometheus).
     client = _client(OPERATOR)
     resp = client.post("/api/catalog/mxl-videotest-view/deploy", json={"reason": "x"})
     assert resp.status_code == 200, resp.text
-    assert awx_spy[-1].get("extra_vars") is None
+    _assert_skipped_l3_envelope(awx_spy[-1].get("extra_vars"))
 
 
 def test_sync_deploy_invalid_slug_is_400_and_no_awx_call(awx_spy, caplog):
@@ -161,7 +192,7 @@ def test_sync_deploy_accepts_boundary_slugs(awx_spy):
             json={"reason": "x", "workload": ok},
         )
         assert resp.status_code == 200, ok
-        assert awx_spy[-1]["extra_vars"] == {"workload_slug": ok}
+        _assert_skipped_l3_envelope(awx_spy[-1]["extra_vars"], workload_slug=ok)
 
 
 def test_sync_deploy_rejects_trailing_newline_slugs(awx_spy, caplog):
@@ -212,7 +243,7 @@ def test_sync_deploy_treats_null_and_empty_string_workload_as_omitted(awx_spy):
             json={"reason": "x", "workload": omitted},
         )
         assert resp.status_code == 200, omitted
-        assert awx_spy[-1].get("extra_vars") is None
+        _assert_skipped_l3_envelope(awx_spy[-1].get("extra_vars"))
 
 
 def test_sync_deploy_non_object_body_is_clean_400_not_a_crash(awx_spy):
@@ -242,6 +273,7 @@ def _autoscale_settings() -> Settings:
         awx_autoscale=AWXAutoscaleSettings(
             enabled=True, helper_url="http://helper.test", bearer_token="b"
         ),
+        l3=L3Settings(enabled=False),
     )
 
 
@@ -266,7 +298,7 @@ def test_async_deploy_with_valid_workload_passes_extra_vars(monkeypatch, awx_spy
         op = _wait_for_launch(client.app, resp.json()["operation_id"])
         assert op is not None and op.state == OperationState.LAUNCHED
 
-    assert awx_spy[-1]["extra_vars"] == {"workload_slug": "studio-b"}
+    _assert_skipped_l3_envelope(awx_spy[-1]["extra_vars"], workload_slug="studio-b")
 
 
 def test_async_deploy_without_workload_omits_extra_vars(monkeypatch, awx_spy):
@@ -278,7 +310,7 @@ def test_async_deploy_without_workload_omits_extra_vars(monkeypatch, awx_spy):
         op = _wait_for_launch(client.app, resp.json()["operation_id"])
         assert op is not None and op.state == OperationState.LAUNCHED
 
-    assert awx_spy[-1].get("extra_vars") is None
+    _assert_skipped_l3_envelope(awx_spy[-1].get("extra_vars"))
 
 
 def test_async_deploy_invalid_slug_is_400_and_no_dispatch(awx_spy, caplog):

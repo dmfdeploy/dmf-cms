@@ -283,6 +283,33 @@ def ensure_awx_awake(
         raise AWXAutoscaleError(0, f"network error: {exc.reason}") from exc
 
 
+def get_instance_group_pod_spec(
+    *,
+    api_url: str,
+    api_token: str,
+    name: str,
+    ssl_verify: bool = True,
+) -> str | None:
+    """Look up an AWX Container Group's pod_spec_override by name.
+
+    Returns the raw pod_spec_override string, or None if no group with that
+    name exists or it carries no override. Kept here (rather than in
+    capacity.py) so the L3 capacity preflight's ee_reserve reader stays
+    http-free — capacity.py has no k8s client and no direct HTTP calls,
+    only prometheus.query() and this wrapper (umbrella #202 WP1).
+    """
+    ctx = _ssl_context(ssl_verify)
+    result = _request(
+        api_url, api_token, "GET",
+        f"/api/v2/instance_groups/?name={urllib.parse.quote(name)}",
+        ssl_context=ctx,
+    )
+    results = result.get("results", [])
+    if not results:
+        return None
+    return results[0].get("pod_spec_override") or None
+
+
 def list_recent_jobs(
     *, api_url: str, api_token: str, page_size: int = 20, ssl_verify: bool = True
 ) -> list[dict]:

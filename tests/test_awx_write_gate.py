@@ -20,7 +20,7 @@ import dmf_cms.main as main
 from dmf_cms.awx import AWXAPIError
 from dmf_cms.catalog import CatalogEntry
 from dmf_cms.main import create_app
-from dmf_cms.settings import AWXAutoscaleSettings, AWXSettings, Settings
+from dmf_cms.settings import AWXAutoscaleSettings, AWXSettings, L3Settings, Settings
 
 
 OPERATOR = ("dmf-console-operator",)
@@ -37,6 +37,11 @@ def _client(groups, *, awx=True, autoscale=False) -> TestClient:
         awx_autoscale=AWXAutoscaleSettings(
             enabled=True, helper_url="http://helper.test", bearer_token="b"
         ) if autoscale else AWXAutoscaleSettings(enabled=False),
+        # This file tests the operator+C5 write gate, not the L3 capacity
+        # preflight (#202 WP1) — no Prometheus is configured, and since
+        # R2-1 that combination fail-closes (409), not skips, unless L3 is
+        # explicitly disabled here.
+        l3=L3Settings(enabled=False),
     )
     client = TestClient(create_app(settings=settings))
     client.get("/auth/login", follow_redirects=False)  # dev login -> session
