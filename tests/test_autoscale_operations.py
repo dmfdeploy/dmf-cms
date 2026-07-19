@@ -308,6 +308,17 @@ def _wait_for_state(app, op_id, state, timeout=5.0):
     return app.state.operations.get(op_id)
 
 
+def _wait_for_predicate(predicate, timeout=5.0):
+    deadline = time.time() + timeout
+    result = None
+    while time.time() < deadline:
+        result = predicate()
+        if result:
+            return result
+        time.sleep(0.1)
+    return result
+
+
 def test_async_deploy_recovers_from_transient_5xx_then_success(enabled_settings):
     from fastapi.testclient import TestClient
     from dmf_cms.main import create_app
@@ -442,21 +453,39 @@ def test_exclusive_reattach_unchanged():
 def test_exclusive_terminal_ops_never_conflict():
     store = OperationStore(ttl_seconds=3600)
 
+    # umbrella #202 WP2 (deliberate semantic change): LAUNCHED is no longer
+    # terminal for deploy/teardown/rollback — it means "handed to AWX,
+    # watcher attached", not "done". A LAUNCHED deploy op now DOES conflict
+    # with a new teardown attempt (the run is still being watched; surfaces
+    # may still be mid-mutation) — this closes the exact gap #24's cross-JT
+    # AWX read was papering over: a re-click during job execution used to
+    # be able to slip a conflicting teardown past the exclusive lock.
     launched = store.create("deploy", "key-launched")
     store.update(launched.operation_id, state=OperationState.LAUNCHED, job_id=1)
     op1, created1, conflict1 = store.get_or_create_exclusive(
         "teardown", "key-launched", conflicts=("deploy",)
     )
-    assert created1 is True
-    assert conflict1 is None
+    assert created1 is False
+    assert conflict1 is launched
 
-    errored = store.create("deploy", "key-errored")
-    store.update(errored.operation_id, state=OperationState.ERROR, error="boom")
+    # A job-terminal state (RUN_COMPLETE et al, #202 WP2) IS genuinely
+    # terminal — once the deploy job has actually finished, a new teardown
+    # is unblocked.
+    completed = store.create("deploy", "key-completed")
+    store.update(completed.operation_id, state=OperationState.RUN_COMPLETE, job_id=2)
     op2, created2, conflict2 = store.get_or_create_exclusive(
-        "teardown", "key-errored", conflicts=("deploy",)
+        "teardown", "key-completed", conflicts=("deploy",)
     )
     assert created2 is True
     assert conflict2 is None
+
+    errored = store.create("deploy", "key-errored")
+    store.update(errored.operation_id, state=OperationState.ERROR, error="boom")
+    op3, created3, conflict3 = store.get_or_create_exclusive(
+        "teardown", "key-errored", conflicts=("deploy",)
+    )
+    assert created3 is True
+    assert conflict3 is None
 
 
 # --------------------------------------------------------------------------
@@ -554,11 +583,16 @@ def test_async_deploy_runner_blocked_by_active_opposite_job(enabled_settings):
 
 # --------------------------------------------------------------------------
 # #24 fix round 1 (codex GATE-24 P1) — generic /api/workflows/{name}/launch
-# on a catalog lifecycle JT must resolve to the same per-entry lock, not the
-# unlocked "launch" action namespace.
+# on a catalog lifecycle JT used to resolve to the same per-entry lock as
+# the catalog endpoints. codex R2-2 supersedes that entirely: a lifecycle
+# JT is now REFUSED outright at this endpoint (409 use-catalog-endpoint),
+# regardless of whether a conflicting op is in flight — the #202 WP2
+# run-tracking/facility-lock/auto-rollback machinery only exists on the
+# catalog endpoints, and the old #24 fix was a working bypass around all of
+# it. These tests now prove the refusal instead of the old lock-sharing.
 # --------------------------------------------------------------------------
 
-def test_workflow_launch_of_finalise_jt_conflicts_with_active_deploy(enabled_settings):
+def test_workflow_launch_of_finalise_jt_is_refused_even_with_active_deploy(enabled_settings):
     from fastapi.testclient import TestClient
     from dmf_cms.main import create_app
 
@@ -575,12 +609,11 @@ def test_workflow_launch_of_finalise_jt_conflicts_with_active_deploy(enabled_set
 
     assert resp.status_code == 409, resp.text
     body = resp.json()
-    assert body["error"] == "conflicting lifecycle operation in progress"
-    assert body["conflicting_operation"]["action"] == "deploy"
-    assert body["conflicting_operation"]["target"] == entry.key
+    assert body["error"] == "use-catalog-endpoint"
+    assert body["catalog_key"] == entry.key
 
 
-def test_workflow_launch_of_configure_jt_conflicts_with_active_teardown(enabled_settings):
+def test_workflow_launch_of_configure_jt_is_refused_even_with_active_teardown(enabled_settings):
     from fastapi.testclient import TestClient
     from dmf_cms.main import create_app
 
@@ -597,12 +630,11 @@ def test_workflow_launch_of_configure_jt_conflicts_with_active_teardown(enabled_
 
     assert resp.status_code == 409, resp.text
     body = resp.json()
-    assert body["error"] == "conflicting lifecycle operation in progress"
-    assert body["conflicting_operation"]["action"] == "teardown"
-    assert body["conflicting_operation"]["target"] == entry.key
+    assert body["error"] == "use-catalog-endpoint"
+    assert body["catalog_key"] == entry.key
 
 
-def test_workflow_launch_conflict_audit_uses_effective_action(enabled_settings, caplog):
+def test_workflow_launch_refusal_audit_uses_effective_action(enabled_settings, caplog):
     from fastapi.testclient import TestClient
     from dmf_cms.main import create_app
 
@@ -611,7 +643,6 @@ def test_workflow_launch_conflict_audit_uses_effective_action(enabled_settings, 
         app = create_app(settings=enabled_settings)
         with TestClient(app) as client:
             client.get("/auth/login", follow_redirects=False)
-            client.app.state.operations.get_or_create("deploy", entry.key)
             with caplog.at_level(logging.INFO, logger="dmf_cms.main"):
                 resp = client.post(
                     f"/api/workflows/{entry.finalise['awx_job_template']}/launch",
@@ -623,13 +654,17 @@ def test_workflow_launch_conflict_audit_uses_effective_action(enabled_settings, 
     # The C5 record must reflect the EFFECTIVE action/target on the catalog
     # entry (deploy vs. teardown), not the generic "launch" wrapper.
     assert any(
-        "action=teardown" in m and f"target={entry.key}" in m and "outcome=conflict-active-operation" in m
+        "action=teardown" in m and f"target={entry.key}" in m and "outcome=lifecycle-jt-refused" in m
         for m in lines
     )
-    assert not any("action=launch" in m and "outcome=conflict-active-operation" in m for m in lines)
+    assert not any("action=launch" in m for m in lines)
 
 
-def test_workflow_launch_and_catalog_deploy_share_lock_namespace(enabled_settings):
+def test_workflow_launch_never_touches_ops_store_for_lifecycle_jt(enabled_settings):
+    # codex R2-2: the refusal happens BEFORE any ops-store interaction — a
+    # lifecycle JT launched via the generic endpoint must never create,
+    # reattach to, or otherwise touch an Operation; the catalog endpoint's
+    # own dispatch is completely independent and still works normally.
     from fastapi.testclient import TestClient
     from dmf_cms.main import create_app
 
@@ -648,21 +683,18 @@ def test_workflow_launch_and_catalog_deploy_share_lock_namespace(enabled_setting
                 f"/api/workflows/{entry.configure['awx_job_template']}/launch",
                 json={"reason": "test"},
             )
-            assert resp1.status_code == 202, resp1.text
-            op1 = resp1.json()
+            assert resp1.status_code == 409, resp1.text
+            assert resp1.json()["error"] == "use-catalog-endpoint"
+            assert client.app.state.operations.list_all() == []
 
-            # ensure_awx_awake is still blocked, so the operation dispatched
-            # above is still active (WAKING) — the deploy endpoint must
-            # reattach to it rather than creating a second one.
+            # The catalog endpoint's own dispatch is untouched by the above.
             resp2 = client.post(f"/api/catalog/{entry.key}/deploy", json={"reason": "test"})
             hold.set()
 
-    assert op1["action"] == "deploy"
-    assert op1["target"] == entry.key
-    assert resp2.status_code == 200, resp2.text
+    assert resp2.status_code == 202, resp2.text
     body2 = resp2.json()
-    assert body2["operation_id"] == op1["operation_id"]
     assert body2["action"] == "deploy"
+    assert body2["target"] == entry.key
 
 
 def test_workflow_launch_non_catalog_jt_unaffected_by_active_catalog_op(enabled_settings):
@@ -739,28 +771,124 @@ def test_sync_teardown_conflict_active_opposite_job_returns_409(disabled_setting
 
 
 # --------------------------------------------------------------------------
-# #24 fix round 2 (codex GATE-24R2 finding 2) — the generic
-# /api/workflows/{name}/launch sync path's cross-JT guard was untested;
-# these are written against that endpoint, not the catalog routes, so they
-# fail if the generic sync guard block is deleted.
+# codex R2-5 — the sync (autoscale-disabled) flow now ALSO tracks its
+# launch as an Operation and attaches the job watcher, so the advisory
+# facility check / auto-rollback / outcome surfacing have teeth in the
+# shipped default mode too, not just when autoscale is on. Requires a
+# lifespan'd `with TestClient(...)` (bare TestClient() never populates
+# app.state.operations at all — see the getattr-guard in the sync branches).
 # --------------------------------------------------------------------------
 
-def test_workflow_launch_sync_finalise_jt_conflict_active_configure_job(disabled_settings, caplog):
+def test_sync_deploy_creates_a_tracked_operation(disabled_settings):
     from fastapi.testclient import TestClient
     from dmf_cms.main import create_app
 
     entry = _catalog_entry_134()
-    templates_by_name = {"dmf-configure": {"id": 7}, "dmf-finalise": {"id": 8}}
-    active_by_id = {7: 1234, 8: None}
     with patch("dmf_cms.main.load_catalog_entries", return_value=[entry]), \
-         patch(
-             "dmf_cms.main.lookup_job_template_by_name",
-             side_effect=lambda **k: templates_by_name[k["name"]],
-         ), \
-         patch(
-             "dmf_cms.main.find_active_job_for_template",
-             side_effect=lambda **k: active_by_id[k["job_template_id"]],
-         ):
+         patch("dmf_cms.main.lookup_job_template_by_name", return_value={"id": 7}), \
+         patch("dmf_cms.main.find_active_job_for_template", return_value=None), \
+         patch("dmf_cms.main.launch_job", return_value=4242), \
+         patch("dmf_cms.main.get_job", return_value={"status": "successful", "started": "t0", "finished": "t1"}):
+        app = create_app(settings=disabled_settings)
+        with TestClient(app) as client:
+            client.get("/auth/login", follow_redirects=False)
+            resp = client.post(f"/api/catalog/{entry.key}/deploy", json={"reason": "test"})
+            assert resp.status_code == 200, resp.text
+            assert resp.json()["job_id"] == 4242
+            # codex R3-4: the response gains an ADDITIVE "operation_id" key
+            # (a prior draft kept the shape unchanged; R3-4 requires it for
+            # sync-flow observability).
+            assert resp.json()["operation_id"]
+
+            def _resolved():
+                ops = client.app.state.operations.list_all()
+                return ops if ops and ops[0].state == OperationState.RUN_COMPLETE else None
+
+            ops = _wait_for_predicate(_resolved)
+
+    assert ops is not None and len(ops) == 1
+    assert ops[0].operation_id == resp.json()["operation_id"]
+    assert ops[0].action == "deploy"
+    assert ops[0].target == entry.key
+    assert ops[0].job_id == 4242
+    assert ops[0].request_id == resp.json()["request_id"]
+    assert ops[0].run_id == resp.json()["request_id"]  # codex R3-3: fresh dispatch identity
+
+
+def test_sync_teardown_creates_a_tracked_operation(disabled_settings):
+    from fastapi.testclient import TestClient
+    from dmf_cms.main import create_app
+
+    entry = _catalog_entry_134()
+    with patch("dmf_cms.main.load_catalog_entries", return_value=[entry]), \
+         patch("dmf_cms.main.lookup_job_template_by_name", return_value={"id": 8}), \
+         patch("dmf_cms.main.find_active_job_for_template", return_value=None), \
+         patch("dmf_cms.main.launch_job", return_value=5252), \
+         patch("dmf_cms.main.get_job", return_value={"status": "successful", "started": "t0", "finished": "t1"}):
+        app = create_app(settings=disabled_settings)
+        with TestClient(app) as client:
+            client.get("/auth/login", follow_redirects=False)
+            resp = client.post(f"/api/catalog/{entry.key}/teardown", json={"reason": "test"})
+            assert resp.status_code == 200, resp.text
+            assert resp.json()["operation_id"]  # codex R3-4
+
+            def _resolved():
+                ops = client.app.state.operations.list_all()
+                return ops if ops and ops[0].state == OperationState.RUN_COMPLETE else None
+
+            ops = _wait_for_predicate(_resolved)
+
+    assert ops is not None and len(ops) == 1
+    assert ops[0].operation_id == resp.json()["operation_id"]
+    assert ops[0].action == "teardown"
+    assert ops[0].target == entry.key
+    assert ops[0].job_id == 5252
+    assert ops[0].run_id == resp.json()["request_id"]
+
+
+def test_sync_deploy_without_lifespan_still_launches_no_op_tracking(disabled_settings):
+    # The getattr-guard (codex R2-5/prior WP2-B bugfix): a bare TestClient()
+    # with no lifespan must still launch successfully (no AttributeError),
+    # it just skips operation tracking entirely — this is the test-only
+    # path the guard exists for, never production (uvicorn always runs the
+    # lifespan).
+    from fastapi.testclient import TestClient
+    from dmf_cms.main import create_app
+
+    entry = _catalog_entry_134()
+    with patch("dmf_cms.main.load_catalog_entries", return_value=[entry]), \
+         patch("dmf_cms.main.lookup_job_template_by_name", return_value={"id": 7}), \
+         patch("dmf_cms.main.find_active_job_for_template", return_value=None), \
+         patch("dmf_cms.main.launch_job", return_value=4242):
+        app = create_app(settings=disabled_settings)
+        client = TestClient(app)  # no `with` — lifespan never runs
+        client.get("/auth/login", follow_redirects=False)
+        resp = client.post(f"/api/catalog/{entry.key}/deploy", json={"reason": "test"})
+
+    assert resp.status_code == 200, resp.text
+    assert resp.json()["job_id"] == 4242
+
+
+# --------------------------------------------------------------------------
+# #24 fix round 2 (codex GATE-24R2 finding 2) — the generic
+# /api/workflows/{name}/launch sync path used to have its own cross-JT
+# guard. codex R2-2 supersedes it: the refusal (409 use-catalog-endpoint)
+# now applies BEFORE the async/sync split, so these sync-flow JTs are
+# refused unconditionally too — the AWX mocks below are never even called.
+# --------------------------------------------------------------------------
+
+def test_workflow_launch_sync_finalise_jt_is_refused_without_touching_awx(disabled_settings, caplog):
+    from fastapi.testclient import TestClient
+    from dmf_cms.main import create_app
+
+    entry = _catalog_entry_134()
+
+    def boom(**k):
+        raise AssertionError("no AWX call may happen before a use-catalog-endpoint refusal")
+
+    with patch("dmf_cms.main.load_catalog_entries", return_value=[entry]), \
+         patch("dmf_cms.main.lookup_job_template_by_name", side_effect=boom), \
+         patch("dmf_cms.main.find_active_job_for_template", side_effect=boom):
         app = create_app(settings=disabled_settings)
         with TestClient(app) as client:
             client.get("/auth/login", follow_redirects=False)
@@ -771,30 +899,28 @@ def test_workflow_launch_sync_finalise_jt_conflict_active_configure_job(disabled
                 )
 
     assert resp.status_code == 409, resp.text
-    assert resp.json()["error"] == "conflicting lifecycle operation in progress"
+    body = resp.json()
+    assert body["error"] == "use-catalog-endpoint"
+    assert body["catalog_key"] == entry.key
     lines = [r.getMessage() for r in caplog.records if r.getMessage().startswith("awx write:")]
     assert any(
-        "action=teardown" in m and f"target={entry.key}" in m and "outcome=conflict-active-job" in m
+        "action=teardown" in m and f"target={entry.key}" in m and "outcome=lifecycle-jt-refused" in m
         for m in lines
     )
 
 
-def test_workflow_launch_sync_configure_jt_conflict_active_finalise_job(disabled_settings, caplog):
+def test_workflow_launch_sync_configure_jt_is_refused_without_touching_awx(disabled_settings, caplog):
     from fastapi.testclient import TestClient
     from dmf_cms.main import create_app
 
     entry = _catalog_entry_134()
-    templates_by_name = {"dmf-configure": {"id": 7}, "dmf-finalise": {"id": 8}}
-    active_by_id = {7: None, 8: 4321}
+
+    def boom(**k):
+        raise AssertionError("no AWX call may happen before a use-catalog-endpoint refusal")
+
     with patch("dmf_cms.main.load_catalog_entries", return_value=[entry]), \
-         patch(
-             "dmf_cms.main.lookup_job_template_by_name",
-             side_effect=lambda **k: templates_by_name[k["name"]],
-         ), \
-         patch(
-             "dmf_cms.main.find_active_job_for_template",
-             side_effect=lambda **k: active_by_id[k["job_template_id"]],
-         ):
+         patch("dmf_cms.main.lookup_job_template_by_name", side_effect=boom), \
+         patch("dmf_cms.main.find_active_job_for_template", side_effect=boom):
         app = create_app(settings=disabled_settings)
         with TestClient(app) as client:
             client.get("/auth/login", follow_redirects=False)
@@ -805,10 +931,12 @@ def test_workflow_launch_sync_configure_jt_conflict_active_finalise_job(disabled
                 )
 
     assert resp.status_code == 409, resp.text
-    assert resp.json()["error"] == "conflicting lifecycle operation in progress"
+    body = resp.json()
+    assert body["error"] == "use-catalog-endpoint"
+    assert body["catalog_key"] == entry.key
     lines = [r.getMessage() for r in caplog.records if r.getMessage().startswith("awx write:")]
     assert any(
-        "action=deploy" in m and f"target={entry.key}" in m and "outcome=conflict-active-job" in m
+        "action=deploy" in m and f"target={entry.key}" in m and "outcome=lifecycle-jt-refused" in m
         for m in lines
     )
 
@@ -906,6 +1034,12 @@ def test_workflow_launch_same_jt_both_stages_is_ambiguous(enabled_settings):
 
 
 def test_workflow_launch_unambiguous_jt_still_maps_alongside_ambiguous(enabled_settings):
+    # The ambiguous entries must not poison the rest of the map: a clean
+    # entry's JT still resolves to its own catalog key — codex R2-2 means
+    # that resolution now surfaces as a use-catalog-endpoint refusal
+    # (rather than the old lock-conflict 409), but the map lookup itself
+    # (jt_name -> the RIGHT catalog_key, not a poisoned/ambiguous one) is
+    # exactly what this test is still proving.
     from fastapi.testclient import TestClient
     from dmf_cms.main import create_app
 
@@ -921,17 +1055,15 @@ def test_workflow_launch_unambiguous_jt_still_maps_alongside_ambiguous(enabled_s
             )
             assert resp_ambiguous.status_code == 500, resp_ambiguous.text
 
-            # The ambiguous entries must not poison the rest of the map: a
-            # clean entry's JT still maps normally to its own catalog key.
-            client.app.state.operations.get_or_create("teardown", clean_entry.key)
             resp_ok = client.post(
                 f"/api/workflows/{clean_entry.configure['awx_job_template']}/launch",
                 json={"reason": "test"},
             )
 
     assert resp_ok.status_code == 409, resp_ok.text
-    assert resp_ok.json()["conflicting_operation"]["action"] == "teardown"
-    assert resp_ok.json()["conflicting_operation"]["target"] == clean_entry.key
+    body = resp_ok.json()
+    assert body["error"] == "use-catalog-endpoint"
+    assert body["catalog_key"] == clean_entry.key
 
 
 def test_async_teardown_runner_blocked_by_active_opposite_job(enabled_settings):
