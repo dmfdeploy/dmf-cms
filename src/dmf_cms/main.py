@@ -1,13 +1,63 @@
+"""dmf-cms backend (FastAPI) — the DMF Console.
+
+## L3 outcome marker contract (umbrella #202 WP2 §4.6)
+
+A launcher play that wants to hand the console a structured run outcome
+writes, as the LAST LINE of its stdout (nothing meaningful after it):
+
+    DMF_L3_OUTCOME: <token> [<space-separated key=value detail>]
+
+``<token>`` is one of: ``facility-busy``, ``no-snapshot``, ``stale-snapshot``,
+``rollback_complete``, ``rollback_incomplete``, ``no-fit``, ``missing-budget``
+— or any other token matching ``[a-z0-9_-]+``; unknown tokens are stored
+verbatim on the operation's ``l3_outcome`` field, forward-compatible with
+launcher changes that ship ahead of the console's token list (never refuse
+to record an outcome just because the console doesn't recognize it yet).
+The optional detail after the token is a space-separated ``key=value`` list;
+see ``_sanitize_kv`` — only ``surfaces`` (comma-joined subset of
+``netbox``/``helm``/``monitoring``), ``request_id``, and ``run_id`` (both:
+bare 32-char lowercase hex) survive into the operation's ``error`` field,
+each with its OWN strict per-key value rule — there is NO generic free-text
+key (codex R3-7 killed a prior draft's ``detail`` key entirely: no dots,
+colons, or slashes may ever ride into a public API response this way).
+codex R3-7: the marker line must be the FINAL non-empty line of stdout —
+"nothing meaningful after it" above is load-bearing, not decorative. A
+marker followed by further output (progress logging that continues past
+it, a later unrelated line) is IGNORED entirely, not treated as a stale-
+but-valid prior marker — only "the true last word on this run" counts.
+Only the last 64KiB of stdout is fetched/scanned, via a streamed, bounded
+read that never materializes the full body (``_request_text``'s tail
+window, codex R2-9/R3-6) — the marker is always the final line, so this is
+sufficient. See ``_fetch_l3_outcome``.
+
+``facility-busy``, ``no-fit``, ``missing-budget``, ``no-snapshot``, and
+``stale-snapshot`` are PRE-MUTATION tokens (``_PRE_MUTATION_TOKENS``,
+codex R2-3): the launcher refused before mutating anything, so a
+started-then-failed deploy carrying one of these never triggers
+FAILED_ROLLBACK_REQUIRED/auto-rollback — see ``_watch_job_operation``.
+
+A rollback op's own pass/fail is marker-authoritative, never a bare AWX
+job-status read (codex R2-1, "never false-green"): RUN_COMPLETE requires
+BOTH a successful job status AND an exact ``rollback_complete`` marker.
+Every other combination — job failed, marker missing, marker says
+``rollback_incomplete``, marker is some other token, or the stdout fetch
+itself failed — lands on ``OperationState.ROLLBACK_INCOMPLETE``, a DIRTY
+terminal state that keeps blocking new dispatches elsewhere on the
+facility (``_facility_busy_check``) until an operator/retry resolves it.
+"""
+
 from __future__ import annotations
 
 import functools
 import hashlib
+import json
 import logging
 import re
 import time
 import urllib.error
 import uuid
 from contextlib import asynccontextmanager
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import Any
 
@@ -25,10 +75,10 @@ from .authentik import (
     list_groups,
     list_users,
 )
-from .awx import AWXAPIError, AWXAutoscaleError, AWXJobInfo, list_job_templates, launch_job, get_job_status, wait_for_job, lookup_job_template_by_name, list_recent_jobs, find_active_job_for_template, ensure_awx_awake, call_with_transient_retry
+from .awx import AWXAPIError, AWXAutoscaleError, AWXJobInfo, list_job_templates, launch_job, get_job, get_job_status, get_job_stdout, wait_for_job, lookup_job_template_by_name, list_recent_jobs, find_active_job_for_template, ensure_awx_awake, call_with_transient_retry
 from .catalog import CatalogEntry, load_catalog_entries, get_lifecycle_status
 from .contracts import AppContract, load_app_contract
-from .operations import OperationStore, OperationState
+from .operations import Operation, OperationStore, OperationState, terminal_states, DIRTY_STATES
 from . import netbox, prometheus, forgejo, mxl, media_workloads, capacity
 from starlette.concurrency import run_in_threadpool
 import asyncio
@@ -481,6 +531,138 @@ def _build_launch_extra_vars(workload: str | None, envelope: dict | None) -> dic
     return extra_vars or None
 
 
+# uuid4().hex format — a run_id IS the originating deploy op's own
+# request_id (umbrella #202 WP2, plan §4.1's request_id correlation).
+_RUN_ID_RE = re.compile(r"^[0-9a-f]{32}$")
+
+
+def _facility_busy_check(
+    ops_store: OperationStore, *, current_target: str, current_action: str = "deploy",
+    current_operation_id: str | None = None,
+) -> Operation | None:
+    """Advisory single-facility lock (umbrella #202 WP2, plan §4.5 P2-2).
+
+    Console-local ONLY — no network IO, no AWX/Prometheus/k8s call. Scans
+    the in-memory ops store for any BLOCKING deploy/teardown/rollback op —
+    codex R3-1 REMOVED the old blanket same-target skip: plan §4.5 is
+    "one run at a time, full stop" — a DIRTY op (see below) now blocks a
+    new dispatch to its OWN target too, not just other targets (e.g. a
+    FAILED_ROLLBACK_REQUIRED deploy of catalog key K blocks a NEW
+    deploy/teardown of K until the dirty run is resolved). Wired into
+    deploy, teardown, AND rollback dispatch (codex R2-6/R3-5 — teardown's
+    prior cross-target exemption is also gone, see below).
+
+    The ONLY unconditional skip is the caller's own just-created op
+    (``current_operation_id``) — see "Ordering per flow" below for when
+    that's even needed at all.
+
+    A blocking op is one that is either genuinely non-terminal
+    (``state not in terminal_states(op.action)`` — a run actually in
+    flight), OR terminal but DIRTY (``operations.DIRTY_STATES``:
+    FAILED_ROLLBACK_REQUIRED / ROLLBACK_INCOMPLETE / RUN_STATUS_UNKNOWN — a
+    run that STOPPED but may have left surfaces inconsistent, or whose
+    outcome the console lost track of). Dirty blocks expire only with the
+    ops store's TTL GC (codex R2-6e) — this is console-advisory only; the
+    WP3 launcher lock + snapshot staleness checks are the authoritative,
+    non-expiring guard.
+
+    Two narrow exceptions, both scoped to ``current_action == "rollback"``
+    (codex R2-6d, refined by R3-1, corrected by R4-1, NARROWED by R5):
+
+    * a blocking op is exempted ONLY when it's the specific DIRTY-
+      RECOVERABLE DEPLOY that ``current_target`` (a run_id) is rolling
+      back — ALL FOUR must hold: ``op.action == "deploy"``, its OWN
+      ``run_id`` (the HYDRATED run identity, codex R3-3 — NOT
+      ``request_id``, which is only this console's own dispatch bookkeeping
+      id and can diverge from run_id on a reattach) equals
+      ``current_target``, AND ``op.state`` is FAILED_ROLLBACK_REQUIRED or
+      RUN_STATUS_UNKNOWN (the two states a rollback is actually meant to
+      recover from). codex R5: a prior draft exempted on run_id-match
+      alone, regardless of action/state — over-broad in three ways a
+      single "rollback of run R" dispatch could hit: (1) a RUNNING (still
+      LIVE, not yet dirty) deploy with run_id R would have been wrongly
+      exempted, letting a rollback proceed concurrently with a deploy
+      that hasn't even finished yet — one run at a time means a rollback
+      of a live run must wait for it to reach a terminal (dirty) state,
+      not race it; (2) a ROLLBACK_INCOMPLETE op (action=="rollback") whose
+      OWN run_id happens to COINCIDENTALLY equal some unrelated
+      current_target R (run_id is just that rollback's own dispatch
+      correlator, an arbitrary hex32 — see ``_run_rollback_operation``)
+      would have wrongly exempted itself from blocking a genuinely
+      unrelated new rollback of R; (3) same collision for a
+      RUN_STATUS_UNKNOWN teardown. Only a DEPLOY op's run_id is ever a
+      real snapshot-identity claim a rollback command legitimately
+      targets; a rollback/teardown op's run_id is just its own
+      housekeeping correlator and must never be treated as "the run it
+      recovers". Harmless for deploy/teardown dispatch, where
+      ``current_target`` is a catalog key and can never equal a run_id's
+      uuid4-hex shape.
+    * a blocking op that is ROLLBACK_INCOMPLETE AND shares the SAME target
+      (i.e. a PRIOR rollback attempt for this exact run_id) is exempted —
+      a retry of an incomplete rollback for the same run must not be
+      blocked by its own previous incomplete attempt. This is narrower
+      than the old blanket same-target skip: it applies ONLY to
+      ROLLBACK_INCOMPLETE + only when retrying that SAME rollback, not to
+      any other same-target dirty state.
+
+    Ordering per flow (codex R3-1 — prefer checking BEFORE creating an op,
+    which needs no self-skip and no un-wedge-on-refusal dance):
+
+    * Rollback (async + sync): the dedupe here is a plain (non-exclusive)
+      ``get_or_create`` — the caller peeks via ``ops_store.find_active``
+      first; if that WOULD reattach, the facility check is skipped
+      entirely (a reattach is never facility-gated) and ``get_or_create``
+      runs directly. If it would NOT reattach, the facility check runs
+      FIRST, with ``current_operation_id=None`` — nothing has been created
+      yet, so there's nothing to self-skip and nothing to un-wedge on a
+      refusal.
+    * Deploy/teardown (async): dedupe is ``get_or_create_exclusive``, which
+      atomically resolves reattach-vs-conflict-vs-create in one locked
+      pass — there's no race-free way to peek "would this create fresh"
+      without either duplicating that logic or introducing a genuine
+      TOCTOU gap in the conflict check itself. These flows keep the
+      pre-existing order (create first, then facility-check with
+      ``current_operation_id=op.operation_id`` to self-skip, un-wedging to
+      ERROR on a refusal) — the safer choice given get_or_create_exclusive
+      is the one place here that guards a genuine invariant (deploy XOR
+      teardown), not just advisory dedupe.
+    * Deploy/teardown (sync): no ops-store dedupe happens before dispatch
+      at all (the sync flow's own idempotency guard is AWX-side, via
+      ``find_active_job_for_template``) — an Operation is only created
+      AFTER a successful launch (codex R2-5). So the facility check
+      already runs before any op exists here; ``current_operation_id`` is
+      always None.
+
+    "Advisory" (plan §4.5): the launcher tier (WP3) recomputes and enforces
+    the real facility run-lock in-cluster; this is only the early,
+    best-effort, console-local heads-up — it can race (TOCTOU) and is
+    never the authoritative lock.
+    """
+    for op in ops_store.list_all():
+        if op.operation_id == current_operation_id:
+            continue
+        if op.action not in ("deploy", "teardown", "rollback"):
+            continue
+        if (
+            current_action == "rollback"
+            and op.action == "deploy"
+            and op.run_id == current_target
+            and op.state in (OperationState.FAILED_ROLLBACK_REQUIRED, OperationState.RUN_STATUS_UNKNOWN)
+        ):
+            continue
+        if (
+            current_action == "rollback"
+            and op.target == current_target
+            and op.state == OperationState.ROLLBACK_INCOMPLETE
+        ):
+            continue
+        is_dirty = op.state in DIRTY_STATES
+        if op.state in terminal_states(op.action) and not is_dirty:
+            continue
+        return op
+    return None
+
+
 def _audit_awx_write(
     request: Request,
     user: UserIdentity,
@@ -673,6 +855,647 @@ async def _run_launch_operation(app: FastAPI, operation_id: str, workflow_name: 
         )
 
 
+# AWX job statuses that are terminal — mirrors AWXJobInfo.is_done's set.
+_TERMINAL_JOB_STATUSES = {"successful", "failed", "canceled", "error"}
+
+# See the module docstring's "L3 outcome marker contract" (umbrella #202
+# WP2 §4.6) for the full shape this parses.
+_L3_OUTCOME_RE = re.compile(r"^DMF_L3_OUTCOME: (?P<token>[a-z0-9_-]+)(?: (?P<kv>.*))?$")
+
+# codex R2-3: tokens meaning the launcher refused BEFORE mutating anything —
+# a started-then-failed DEPLOY carrying one of these is not dirty, it just
+# never got past its own preflight. See _watch_job_operation.
+_PRE_MUTATION_TOKENS = frozenset({
+    "facility-busy", "no-fit", "missing-budget", "no-snapshot", "stale-snapshot",
+})
+
+# codex R2-9/R3-7 §6 public-safety: the outcome marker's optional kv
+# detail is free text straight from a job's own stdout — only these
+# specific keys, each with its OWN strict per-key value rule (never a
+# shared generic charset — R3-7 killed the prior draft's broad
+# [A-Za-z0-9_.,:/-] pattern, which let dot/colon-shaped values through and
+# could leak an IP-shaped string). Everything else is silently dropped,
+# never partially-included. The generic "detail" free-text key from a
+# prior draft is GONE entirely — there is no free-text kv key at all now.
+_KV_ALLOWED_KEYS = frozenset({"surfaces", "request_id", "run_id"})
+_HEX32_RE = re.compile(r"^[0-9a-f]{32}$")
+_KV_SURFACES_ALLOWED = frozenset({"netbox", "helm", "monitoring"})
+_KV_MAX_LEN = 500
+
+
+def _kv_value_ok(key: str, value: str) -> bool:
+    """Per-key strict value validation (codex R3-7) — no shared charset."""
+    if key in ("request_id", "run_id"):
+        return bool(_HEX32_RE.fullmatch(value))
+    if key == "surfaces":
+        parts = value.split(",")
+        return bool(parts) and all(p in _KV_SURFACES_ALLOWED for p in parts)
+    return False
+
+
+def _sanitize_kv(kv: str | None) -> str | None:
+    """Allow-list the outcome marker's kv detail with PER-KEY strict value
+    rules (codex R2-9, tightened by R3-7).
+
+    ``kv`` is space-separated ``key=value`` tokens straight from a job's
+    stdout — untrusted free text. Only tokens whose key is in
+    ``_KV_ALLOWED_KEYS`` AND whose value passes that key's OWN validator
+    (``_kv_value_ok`` — request_id/run_id must fullmatch a bare 32-char
+    lowercase hex uuid; surfaces must be a comma-joined subset of
+    ``_KV_SURFACES_ALLOWED``) survive; a malformed token (no ``=``,
+    disallowed key, or a value that fails its key's rule) is dropped, not
+    partially kept or escaped. The reassembled result is capped at
+    ``_KV_MAX_LEN`` chars. Returns ``None`` if nothing survives (an absent
+    kv, or a kv that was entirely noise).
+    """
+    if not kv:
+        return None
+    kept = []
+    for token in kv.split():
+        key, sep, value = token.partition("=")
+        if not sep or key not in _KV_ALLOWED_KEYS or not _kv_value_ok(key, value):
+            continue
+        kept.append(f"{key}={value}")
+    if not kept:
+        return None
+    return " ".join(kept)[:_KV_MAX_LEN]
+
+
+async def _fetch_l3_outcome(app: FastAPI, job_id: int) -> tuple[str | None, str | None]:
+    """Fetch a job's stdout and parse the ``DMF_L3_OUTCOME`` marker line.
+
+    See the module docstring for the full contract. Tolerates
+    ``get_job_stdout`` failure (network error, stdout not yet available,
+    the job template not writing a marker at all, ...): returns
+    ``(None, None)`` rather than raising — a missing outcome must never
+    crash the watcher; ``l3_outcome`` just stays unset and the AWX job
+    status remains the fallback source of truth.
+
+    codex R3-7: the marker line must be the FINAL non-empty line of the
+    (64KiB-tail-bounded, per R2-9/R3-6) stdout — trailing blank lines are
+    ignored, but ANY other meaningful output after a marker line means the
+    marker is NOT the last word and is ignored entirely (returns
+    ``(None, None)``, not the stale/mid-stream value). This is stricter
+    than a prior draft's "last MATCHING line wins" — a play that logs a
+    marker mid-run and then keeps going (e.g. cleanup steps, a later
+    unrelated log line) must not have that earlier marker mistaken for the
+    final word on the run's outcome.
+
+    The returned kv (if any) has already been through ``_sanitize_kv`` —
+    every caller gets the sanitized form for free, there is no raw-kv path.
+    """
+    settings = app.state.settings
+    try:
+        stdout = await run_in_threadpool(
+            get_job_stdout,
+            api_url=settings.awx.api_url,
+            api_token=settings.awx.api_token,
+            job_id=job_id,
+            ssl_verify=settings.awx.ssl_verify,
+        )
+    except Exception:
+        return None, None
+
+    non_empty_lines = [line.strip() for line in stdout.splitlines() if line.strip()]
+    if not non_empty_lines:
+        return None, None
+    m = _L3_OUTCOME_RE.match(non_empty_lines[-1])
+    if not m:
+        return None, None
+    token, kv = m.group("token"), m.group("kv")
+    return token, _sanitize_kv(kv)
+
+
+def _append_kv(base: str, kv: str | None) -> str:
+    return f"{base} {kv}" if kv else base
+
+
+def _extract_run_id_from_job(job: dict, *, action: str) -> str | None:
+    """Hydrate a run's identity from a raw AWX job detail (codex R3-3,
+    made ACTION-AWARE by R4-2).
+
+    Used ONLY when REATTACHING to an AWX job this console instance didn't
+    itself just launch (an already-active job found via
+    ``find_active_job_for_template``/AWX query, or the rollback JT's own
+    already-active check) — a fresh dispatch already knows its own
+    identity (its own request_id) without needing this.
+
+    codex R4-2: the wire contract differs by ACTION —
+    ``extra_vars.l3_request_id`` is a per-LAUNCH dispatch correlator (a
+    fresh one every time something is dispatched, including every
+    individual rollback attempt — see ``_run_rollback_operation``), while
+    ``extra_vars.l3_run_id`` is ONLY threaded into rollback launches and is
+    the actual snapshot-correlated target the rollback is acting on:
+
+    * ``action in ("deploy", "teardown")``: identity is
+      ``extra_vars.l3_request_id`` — for these actions that field IS this
+      run's stable identity (what a rollback command would target via
+      run_id, and what the launcher's snapshot ConfigMap is keyed by).
+    * ``action == "rollback"``: identity is ``extra_vars.l3_run_id`` — a
+      rollback job's OWN ``l3_request_id`` is just that particular launch
+      attempt's correlator, never the run being rolled back. Using
+      l3_request_id here would silently attribute a reattached rollback
+      job to the WRONG run (see the identity-verification gate in the
+      rollback already-active path, ``api_run_rollback``'s sync branch —
+      this function alone doesn't verify a match against any expected
+      value, it just extracts the right field for the caller to check).
+
+    AWX returns ``extra_vars`` as a JSON-ENCODED STRING field on the job
+    resource (not a nested object) — defensive throughout: any shape
+    mismatch, parse failure, absent/non-string value, or a value that
+    doesn't fullmatch the run_id shape (``_RUN_ID_RE`` — codex R4-4, the
+    SAME pattern the manual rollback endpoint validates against) yields
+    None, never raises. A run whose identity can't be recovered this way
+    is genuinely unknown to the console — see ``Operation.run_id`` and
+    ``_maybe_auto_trigger_rollback``'s "identity-unknown" handling; it is
+    NEVER guessed or defaulted to something else.
+    """
+    raw = job.get("extra_vars")
+    if not isinstance(raw, str):
+        return None
+    try:
+        parsed = json.loads(raw)
+    except (TypeError, ValueError):
+        return None
+    if not isinstance(parsed, dict):
+        return None
+    key = "l3_run_id" if action == "rollback" else "l3_request_id"
+    value = parsed.get(key)
+    if not isinstance(value, str) or not _RUN_ID_RE.fullmatch(value):
+        return None
+    return value
+
+
+def _track_sync_reattach(
+    app: FastAPI, ops_store: OperationStore, request_id: str, initiator: str, *,
+    action: str, target: str, job_id: int,
+) -> str:
+    """Bridge a sync-flow AWX-side already-active job into the ops store
+    (codex R3-4). DEPLOY/TEARDOWN only — rollback's shared job template
+    needs an identity check first; see ``_track_sync_rollback_reattach``.
+
+    The sync dispatch flow has no ops-store dedupe before checking AWX
+    directly for an in-flight job (``find_active_job_for_template``) — a
+    prior draft returned "already-active" with ZERO tracking when one was
+    found, meaning the facility check / auto-rollback / outcome surfacing
+    never saw that run at all. This bridges it: get_or_create (NOT
+    exclusive — this is retroactive observability of a run already
+    in-flight on AWX, not a new dispatch decision, so there's nothing to
+    conflict-check), hydrate run_id from the job's own extra_vars exactly
+    like an async reattach (this console didn't launch it, so its identity
+    — if any — lives on the AWX job, not in anything we already know), and
+    spawn the watcher. Returns the operation_id for the caller to echo in
+    its response.
+
+    codex R4-3: idempotent under a concurrent duplicate call — get_or_create
+    reattaches a SECOND already-active POST for the same (action, target)
+    to the SAME op the first call created; only the first (``created``
+    True) gets job_id/run_id set and a watcher spawned. A live op is never
+    retargeted or double-watched by a later call, even if the currently-
+    active AWX job_id somehow differs from what's already recorded on it —
+    that discrepancy resolves at the existing watcher's own terminality,
+    not by this function reaching into a running op's fields.
+    """
+    settings = app.state.settings
+    op, created = ops_store.get_or_create(
+        action=action, target=target, request_id=request_id, initiator=initiator,
+    )
+    if not created:
+        return op.operation_id
+    run_id = None
+    try:
+        job_detail = get_job(
+            api_url=settings.awx.api_url, api_token=settings.awx.api_token,
+            job_id=job_id, ssl_verify=settings.awx.ssl_verify,
+        )
+        run_id = _extract_run_id_from_job(job_detail, action=action)
+    except Exception:
+        pass  # identity stays unknown (None) — never guess
+    ops_store.update(op.operation_id, state=OperationState.LAUNCHED, job_id=job_id, run_id=run_id)
+    _spawn_job_watcher(app, op.operation_id, job_id, action, target)
+    return op.operation_id
+
+
+def _track_sync_rollback_reattach(
+    app: FastAPI, ops_store: OperationStore, request_id: str, initiator: str, *,
+    run_id: str, job_id: int,
+) -> tuple[str | None, bool]:
+    """Bridge a sync rollback dispatch's AWX-side already-active job into
+    the ops store — WITH an identity check first (codex R4-2b).
+
+    Unlike deploy/teardown (each with their own dedicated per-entry job
+    template), the rollback job template (``settings.l3.rollback_jt_name``)
+    is SHARED across every run being rolled back — "some rollback job is
+    active" doesn't mean it's rolling back THIS run_id. Fetches the active
+    job's own detail and requires its hydrated identity
+    (``_extract_run_id_from_job(..., action="rollback")`` —
+    extra_vars.l3_run_id, NOT l3_request_id, per that function's
+    action-aware wire contract) to equal ``run_id`` BEFORE ever creating or
+    reattaching an Operation. Anything short of a CONFIRMED match — a
+    different run_id, an unparseable/absent identity, or the job-detail
+    fetch itself failing — refuses: returns ``(None, True)`` and creates
+    nothing. The caller must turn that into a 409, never fall through to
+    blind attribution: silently reattaching to another run's job would let
+    THAT run's own outcome marker resolve THIS run's Operation — a
+    false-complete for a rollback that never actually ran against this
+    run's snapshot.
+
+    Returns ``(operation_id, False)`` on a confirmed match — same
+    get_or_create + R4-3 idempotent tracking as ``_track_sync_reattach``
+    otherwise (only a newly-created op gets job_id/run_id set + a watcher).
+    """
+    settings = app.state.settings
+    try:
+        job_detail = get_job(
+            api_url=settings.awx.api_url, api_token=settings.awx.api_token,
+            job_id=job_id, ssl_verify=settings.awx.ssl_verify,
+        )
+    except Exception:
+        return None, True  # can't verify identity at all -> refuse, never guess
+
+    active_run_id = _extract_run_id_from_job(job_detail, action="rollback")
+    if active_run_id != run_id:
+        return None, True
+
+    op, created = ops_store.get_or_create(
+        action="rollback", target=run_id, request_id=request_id, initiator=initiator,
+    )
+    if created:
+        ops_store.update(op.operation_id, state=OperationState.LAUNCHED, job_id=job_id, run_id=active_run_id)
+        _spawn_job_watcher(app, op.operation_id, job_id, "rollback", run_id)
+    return op.operation_id, False
+
+
+def _spawn_job_watcher(app: FastAPI, operation_id: str, job_id: int, action: str, key: str) -> None:
+    """Spawn the L3 job-terminal watcher (umbrella #202 WP2) as a background
+    task, registered in app.state.operation_tasks like every other
+    operation task so app shutdown can await it.
+    """
+    task = asyncio.create_task(_watch_job_operation(app, operation_id, job_id, action, key))
+    app.state.operation_tasks.add(task)
+    task.add_done_callback(app.state.operation_tasks.discard)
+
+
+def _watch_lost_terminal_state(action: str, seen_started: bool) -> OperationState:
+    """Conservative give-up terminal state (codex R2-4, remapped by R3-2).
+
+    When the watcher gives up WITHOUT a clean terminal job read (TTL
+    timeout, 3 consecutive ``get_job`` failures, or an unexpected crash —
+    see ``_watch_job_operation``'s outer try/except), it must still leave
+    the op in SOME terminal state, never stranded mid-flight.
+
+    codex R3-2: FAILED_ROLLBACK_REQUIRED is reserved EXCLUSIVELY for a
+    CONFIRMED terminal AWX job failure observed inside the main poll loop
+    (the branch that also calls ``_maybe_auto_trigger_rollback`` — the
+    auto-trigger contract must only fire when we actually KNOW the job
+    failed after starting). A give-up path never confirmed anything — the
+    job may still be running happily on AWX's side, unobserved. So:
+
+    * ``seen_started`` (remembered across every poll, not just the final
+      one — the give-up path usually has no fresh job dict to read
+      ``started`` from) AND ``action == "rollback"`` -> ROLLBACK_INCOMPLETE
+      (rollback's own fail-closed dirty terminal — consistent with its
+      marker-driven "never assume clean" posture from R2-1).
+    * ``seen_started`` and any OTHER action (deploy/teardown) ->
+      RUN_STATUS_UNKNOWN — dirty (blocks the facility, see
+      ``_facility_busy_check``) but explicitly NOT a confirmed failure:
+      never auto-triggers a rollback. A deploy stuck here surfaces to the
+      operator, who can dispatch a rollback manually once its run_id is
+      known (or once the run is confirmed one way or the other).
+    * never started -> RUN_FAILED (nothing observed to have mutated
+      anything; safe to just report, not dirty).
+    """
+    if seen_started:
+        return OperationState.ROLLBACK_INCOMPLETE if action == "rollback" else OperationState.RUN_STATUS_UNKNOWN
+    return OperationState.RUN_FAILED
+
+
+async def _watch_job_operation(app: FastAPI, operation_id: str, job_id: int, action: str, key: str) -> None:
+    """Poll an AWX job to its terminal state and resolve the operation (umbrella #202 WP2).
+
+    The pre-WP2 ops store terminated at LAUNCHED — the console never
+    observed AWX job completion. WP2's advisory facility lock and
+    failed_rollback_required auto-trigger (WP2-B) both need the run
+    tracked to its job-terminal state; this loop is that tracking.
+
+    Spawned for action in {"deploy", "teardown", "rollback"} from BOTH the
+    async (autoscale-enabled) and — since codex R2-5 — the sync
+    (autoscale-disabled) flow; see the call sites in
+    _run_deploy_operation/_run_teardown_operation/_run_rollback_operation
+    and the sync branches of api_catalog_deploy/api_catalog_teardown/
+    api_run_rollback.
+
+    Polls ``get_job`` every ``settings.l3.job_poll_interval_seconds``.  On
+    the first poll that finds the job still non-terminal, promotes the op
+    to RUNNING (idempotent — re-set on every non-terminal poll, harmless).
+    Every poll response is validated (dict with a string ``status``,
+    codex R2-4c) and, if it ever carries a truthy ``started``, that's
+    remembered for the lifetime of this watch (``seen_started`` — see
+    ``_watch_lost_terminal_state``), not just read fresh at the terminal
+    poll.
+
+    On a terminal job status (§4.6 outcome surfacing — ``_fetch_l3_outcome``
+    is called, and its token/detail stored on ``l3_outcome``/appended to
+    ``error``, for any FAILED terminal on a watched deploy/teardown op, and
+    for ANY terminal on a rollback op — BEFORE classifying the deploy case,
+    codex R2-3, since a pre-mutation refusal token changes the outcome):
+
+    * ``action != "rollback"``:
+        * ``successful`` -> RUN_COMPLETE (no outcome fetch — success never
+          needs a marker to explain itself).
+        * failed/error/canceled, job never started (no ``started``
+          timestamp) -> RUN_FAILED (nothing mutated, safe to just report).
+        * failed/error/canceled, job DID start, ``action == "deploy"``,
+          outcome token in ``_PRE_MUTATION_TOKENS`` -> RUN_FAILED, no
+          auto-trigger (codex R2-3: the launcher refused BEFORE mutating
+          anything — "started" here just means the AWX job process ran,
+          not that the play got past its own preflight).
+        * failed/error/canceled, job DID start, ``action == "deploy"``,
+          any other/no outcome token -> FAILED_ROLLBACK_REQUIRED (surfaces
+          may be dirty, plan §4.5's auto-rollback trigger state) — then
+          ``_maybe_auto_trigger_rollback``.
+        * failed/error/canceled, job DID start, ``action == "teardown"``
+          -> RUN_FAILED, not FAILED_ROLLBACK_REQUIRED — teardown is itself
+          an idempotent cleanup action; an operator retry is the recovery
+          path, not an auto-rollback of a cleanup.
+    * ``action == "rollback"``: the marker, not the bare AWX job status, is
+      authoritative (partial-failure posture §4.5 — never false-green a
+      rollback the job merely didn't error on, codex R2-1):
+        * ``successful`` status AND an exact ``rollback_complete`` marker
+          -> RUN_COMPLETE. This is the ONLY combination that completes.
+        * every other combination (job failed regardless of marker, no
+          marker found, the stdout fetch itself failed, or the marker is
+          any token other than ``rollback_complete``) -> ROLLBACK_INCOMPLETE,
+          a DIRTY terminal state (``operations.DIRTY_STATES`` —
+          ``_facility_busy_check`` keeps treating it as blocking).
+
+    Gives up via ``_watch_lost_terminal_state`` (never leaves the op
+    stranded mid-flight, codex R2-4):
+    * TTL timeout (op.created_at + the store's configured ttl_seconds
+      elapses) -> error="job-watch-timeout".
+    * 3 consecutive ``get_job`` failures (transient AWX hiccups tolerated
+      up to 2) -> error="job-watch-lost".
+    * ANY other unexpected exception in the loop body (a malformed
+      ``get_job`` response, per R2-4c's validation, included) ->
+      error="job-watch-crashed" (the STABLE token only — codex R3-7 §6:
+      the exception's own repr goes to the server-side logger via
+      ``logger.exception``, never into this public field) — the entire
+      loop runs inside a fail-closed outer try/except for exactly this
+      case.
+    """
+    settings = app.state.settings
+    ops_store = app.state.operations
+
+    op = ops_store.get(operation_id)
+    if op is None:
+        return
+    deadline = op.created_at + timedelta(seconds=ops_store.ttl_seconds)
+
+    poll_interval = settings.l3.job_poll_interval_seconds
+    consecutive_failures = 0
+    seen_running = False
+    seen_started = False
+
+    try:
+        while True:
+            if datetime.now(timezone.utc) > deadline:
+                ops_store.update(
+                    operation_id,
+                    state=_watch_lost_terminal_state(action, seen_started),
+                    error="job-watch-timeout",
+                )
+                return
+
+            try:
+                job = await run_in_threadpool(
+                    get_job,
+                    api_url=settings.awx.api_url,
+                    api_token=settings.awx.api_token,
+                    job_id=job_id,
+                    ssl_verify=settings.awx.ssl_verify,
+                )
+                consecutive_failures = 0
+            except Exception:
+                consecutive_failures += 1
+                logger.warning(
+                    "job watch: get_job failed for operation %s (job %s, target %s), attempt %d/3",
+                    operation_id, job_id, key, consecutive_failures,
+                )
+                if consecutive_failures >= 3:
+                    ops_store.update(
+                        operation_id,
+                        state=_watch_lost_terminal_state(action, seen_started),
+                        error="job-watch-lost",
+                    )
+                    return
+                await asyncio.sleep(poll_interval)
+                continue
+
+            # Capture started-evidence BEFORE the shape validation below —
+            # even a response that's malformed in its `status` can still
+            # carry a legitimate `started` timestamp, and seen_started must
+            # reflect every dict-shaped response that had one.
+            if isinstance(job, dict) and job.get("started"):
+                seen_started = True
+
+            # codex R2-4c: a malformed response (wrong shape entirely, or a
+            # non-string status) must never propagate into the status
+            # comparisons below — raise so the outer fail-closed handler
+            # terminalizes instead of the watcher silently misbehaving.
+            if not isinstance(job, dict) or not isinstance(job.get("status"), str):
+                raise ValueError(f"malformed get_job response: {job!r}")
+
+            status = job["status"]
+            if status in _TERMINAL_JOB_STATUSES:
+                started = job.get("started")
+
+                # §4.6: fetch + parse the outcome marker whenever it could
+                # matter — any failure on a watched op, or ANY terminal on a
+                # rollback op (rollback's real pass/fail is the marker, not
+                # just the job's own status). Fetched BEFORE classifying a
+                # started-then-failed deploy (codex R2-3): a pre-mutation
+                # refusal token changes that classification.
+                outcome_token = outcome_kv = None
+                if action == "rollback" or status != "successful":
+                    outcome_token, outcome_kv = await _fetch_l3_outcome(app, job_id)
+
+                if action == "rollback":
+                    # codex R2-1: RUN_COMPLETE requires BOTH a successful
+                    # job status AND the exact rollback_complete marker —
+                    # every other combination fails closed to
+                    # ROLLBACK_INCOMPLETE, never false-green.
+                    if status == "successful" and outcome_token == "rollback_complete":
+                        ops_store.update(operation_id, state=OperationState.RUN_COMPLETE, l3_outcome=outcome_token)
+                    elif outcome_token is None:
+                        # No marker at all (successful-but-silent job, a
+                        # failed job with no marker, or the stdout fetch
+                        # itself failed) — unverified, never assume clean.
+                        ops_store.update(
+                            operation_id, state=OperationState.ROLLBACK_INCOMPLETE,
+                            error="rollback-outcome-unverified", l3_outcome=outcome_token,
+                        )
+                    else:
+                        ops_store.update(
+                            operation_id, state=OperationState.ROLLBACK_INCOMPLETE,
+                            error=_append_kv(f"rollback-incomplete:{outcome_token}", outcome_kv),
+                            l3_outcome=outcome_token,
+                        )
+                    return
+
+                if status == "successful":
+                    ops_store.update(operation_id, state=OperationState.RUN_COMPLETE)
+                elif not started:
+                    ops_store.update(
+                        operation_id, state=OperationState.RUN_FAILED,
+                        error=_append_kv(f"job-{status}", outcome_kv), l3_outcome=outcome_token,
+                    )
+                elif action == "deploy":
+                    if outcome_token in _PRE_MUTATION_TOKENS:
+                        # codex R2-3: the launcher refused up front — the
+                        # job process "started" but nothing was mutated,
+                        # so this is a plain failure, not a dirty run.
+                        ops_store.update(
+                            operation_id, state=OperationState.RUN_FAILED,
+                            error=_append_kv(f"job-{status}", outcome_kv), l3_outcome=outcome_token,
+                        )
+                    else:
+                        ops_store.update(
+                            operation_id, state=OperationState.FAILED_ROLLBACK_REQUIRED,
+                            error=_append_kv(f"job-{status}", outcome_kv), l3_outcome=outcome_token,
+                        )
+                        await _maybe_auto_trigger_rollback(app, operation_id, key)
+                else:
+                    ops_store.update(
+                        operation_id, state=OperationState.RUN_FAILED,
+                        error=_append_kv(f"job-{status}", outcome_kv), l3_outcome=outcome_token,
+                    )
+                return
+
+            if not seen_running:
+                ops_store.update(operation_id, state=OperationState.RUNNING)
+                seen_running = True
+
+            await asyncio.sleep(poll_interval)
+    except Exception:
+        # codex R2-4b: fail-closed outer boundary — an AttributeError on a
+        # malformed get_job response (or any other unexpected crash) must
+        # never strand a LAUNCHED/RUNNING op mid-flight.
+        #
+        # codex R3-7 §6 public-safety: the exception's own repr (which may
+        # embed a job dict, a URL, or other server-internal detail) goes to
+        # the server-side logger ONLY, via logger.exception's traceback —
+        # never into op.error, which is a PUBLIC field surfaced through
+        # /api/operations/{id} to any authenticated user.
+        logger.exception(
+            "job watch: unexpected crash for operation %s (job %s, target %s)", operation_id, job_id, key,
+        )
+        ops_store.update(
+            operation_id,
+            state=_watch_lost_terminal_state(action, seen_started),
+            error="job-watch-crashed",
+        )
+
+
+async def _maybe_auto_trigger_rollback(app: FastAPI, operation_id: str, key: str) -> None:
+    """Auto-dispatch the rollback command on a deploy's failed_rollback_required
+    transition (umbrella #202 WP2, plan §4.5(a)), gated by settings.l3.auto_rollback.
+
+    codex R3-3: the rollback's run_id is the failed deploy op's ``run_id``
+    field, NOT its ``request_id`` — for a FRESH dispatch they're the same
+    value (run_id is set to request_id explicitly at launch), but for a
+    REATTACH to an AWX job this console didn't itself launch, request_id is
+    only THIS console instance's bookkeeping id, while run_id is hydrated
+    from the job's own extra_vars (or None if unknown — see Operation.run_id's
+    docstring). Auto-triggering against the wrong id would dispatch a
+    rollback correlated to nothing real. Dedupe is via ``get_or_create``,
+    not the exclusive variant: a concurrent MANUAL rollback of the same
+    run_id (same action, same target) reattaches to whichever dispatch won
+    the race, it never conflicts — there is nothing for it to conflict
+    with at this target (a run_id, not a catalog key).
+
+    Runs from inside the watcher (a background task, no ``Request``
+    object) — the C5 audit line is hand-assembled here in the same
+    "awx write:" shape ``_audit_awx_write`` emits, with actor
+    "system:auto-rollback" and a ``linked_request_id`` trailing field
+    tying it back to the failed deploy's own request_id for correlation.
+
+    codex R2-3: the outcome is recorded on the deploy op's ``auto_rollback``
+    field, kept SEPARATE from ``l3_outcome`` — ``l3_outcome`` always keeps
+    the RAW launcher marker token (set moments earlier by the watcher's
+    terminal-handling block) and is never overwritten here.
+
+    * ``deploy_op.run_id is None`` (codex R3-3): identity unknown — never
+      guess; no dispatch, ``auto_rollback="identity-unknown"``. The op
+      stays FAILED_ROLLBACK_REQUIRED/RUN_STATUS_UNKNOWN for an operator to
+      resolve manually (they can supply the real run_id once known — the
+      rollback command itself doesn't require an Operation to exist).
+    * ``settings.l3.auto_rollback`` False: no dispatch — the op stays
+      FAILED_ROLLBACK_REQUIRED for an operator to act on;
+      ``auto_rollback="disabled"``.
+    * A concurrent rollback already owns this run_id (``created`` False,
+      codex R2-8 — a prior manual POST, or a prior auto-trigger from a
+      race on the same op): no new dispatch; ``auto_rollback=
+      "already-in-progress"``. The audit line's ``request_id`` reflects the
+      EXISTING rollback op's own identity, not the freshly-minted id this
+      call generated and then discarded — that fresh id was never actually
+      used for anything.
+    * Otherwise: dispatch: ``auto_rollback="triggered"``.
+    """
+    settings = app.state.settings
+    ops_store = app.state.operations
+
+    deploy_op = ops_store.get(operation_id)
+    if deploy_op is None:
+        return
+
+    if deploy_op.run_id is None:
+        ops_store.update(operation_id, auto_rollback="identity-unknown")
+        return
+
+    if not settings.l3.auto_rollback:
+        ops_store.update(operation_id, auto_rollback="disabled")
+        return
+
+    run_id = deploy_op.run_id
+    fresh_request_id = uuid.uuid4().hex
+    reason = f"auto: deploy {key} failed after start (failed_rollback_required)"
+
+    rollback_op, created = ops_store.get_or_create(
+        action="rollback", target=run_id,
+        request_id=fresh_request_id, initiator="system:auto-rollback",
+    )
+
+    if not created:
+        # codex R2-8: reattached to an already-in-progress rollback (manual
+        # or a racing auto-trigger) — the fresh_request_id we minted above
+        # was never persisted anywhere, so the audit line must cite the
+        # EXISTING op's own request_id, not that discarded one.
+        ops_store.update(operation_id, auto_rollback="already-in-progress")
+        logger.info(
+            "awx write: action=rollback actor=system:auto-rollback role=system real_role= "
+            "request_id=%s target=%s reason=%r outcome=already-in-progress workload= capacity= linked_request_id=%s",
+            rollback_op.request_id, run_id, reason, deploy_op.request_id,
+        )
+        return
+
+    ops_store.update(operation_id, auto_rollback="triggered")
+
+    logger.info(
+        "awx write: action=rollback actor=system:auto-rollback role=system real_role= "
+        "request_id=%s target=%s reason=%r outcome=auto-triggered workload= capacity= linked_request_id=%s",
+        fresh_request_id, run_id, reason, deploy_op.request_id,
+    )
+
+    _spawn_rollback_task(app, rollback_op.operation_id, run_id, reason)
+
+
+def _spawn_rollback_task(app: FastAPI, operation_id: str, run_id: str, reason: str) -> None:
+    """Spawn _run_rollback_operation as a tracked background task."""
+    task = asyncio.create_task(_run_rollback_operation(app, operation_id, run_id, reason))
+    app.state.operation_tasks.add(task)
+    task.add_done_callback(app.state.operation_tasks.discard)
+
+
 async def _run_deploy_operation(
     app: FastAPI, operation_id: str, key: str, jt_name: str, workload: str | None = None,
     opposite_jt_name: str | None = None, l3_envelope: dict | None = None,
@@ -735,11 +1558,29 @@ async def _run_deploy_operation(
             ssl_verify=settings.awx.ssl_verify,
         )
         if active_job_id is not None:
+            # codex R3-3: this is a REATTACH to an AWX job this console
+            # didn't itself just launch — hydrate run_id from the job's own
+            # extra_vars rather than assuming it's this op's request_id
+            # (which is only this NEW dispatch attempt's bookkeeping id).
+            run_id = None
+            try:
+                active_job_detail = await run_in_threadpool(
+                    get_job,
+                    api_url=settings.awx.api_url,
+                    api_token=settings.awx.api_token,
+                    job_id=active_job_id,
+                    ssl_verify=settings.awx.ssl_verify,
+                )
+                run_id = _extract_run_id_from_job(active_job_detail, action="deploy")
+            except Exception:
+                pass  # identity stays unknown (None) — never guess
             ops_store.update(
                 operation_id,
                 state=OperationState.LAUNCHED,
                 job_id=active_job_id,
+                run_id=run_id,
             )
+            _spawn_job_watcher(app, operation_id, active_job_id, "deploy", key)
             return
 
         # Cross-JT guard (#24): a teardown job for this same catalog entry may
@@ -788,11 +1629,17 @@ async def _run_deploy_operation(
             extra_vars=_build_launch_extra_vars(workload, l3_envelope),
         )
 
+        # codex R3-3: a FRESH dispatch's run identity IS its own
+        # request_id, set explicitly here — not round-tripped through
+        # extra_vars (that's only needed for reattach, above).
+        op = ops_store.get(operation_id)
         ops_store.update(
             operation_id,
             state=OperationState.LAUNCHED,
             job_id=job_id,
+            run_id=(op.request_id if op is not None else None),
         )
+        _spawn_job_watcher(app, operation_id, job_id, "deploy", key)
     except AWXAutoscaleError as exc:
         # Log raw error server-side only, sanitize for client
         logger.error("AWX autoscale error in deploy operation %s: %s", operation_id, exc.body)
@@ -878,11 +1725,27 @@ async def _run_teardown_operation(
             ssl_verify=settings.awx.ssl_verify,
         )
         if active_job_id is not None:
+            # codex R3-3: reattach — hydrate run_id from the job's own
+            # extra_vars (see the matching comment in _run_deploy_operation).
+            run_id = None
+            try:
+                active_job_detail = await run_in_threadpool(
+                    get_job,
+                    api_url=settings.awx.api_url,
+                    api_token=settings.awx.api_token,
+                    job_id=active_job_id,
+                    ssl_verify=settings.awx.ssl_verify,
+                )
+                run_id = _extract_run_id_from_job(active_job_detail, action="teardown")
+            except Exception:
+                pass
             ops_store.update(
                 operation_id,
                 state=OperationState.LAUNCHED,
                 job_id=active_job_id,
+                run_id=run_id,
             )
+            _spawn_job_watcher(app, operation_id, active_job_id, "teardown", key)
             return
 
         # Cross-JT guard (#24, symmetric with deploy): a deploy job for this
@@ -930,11 +1793,15 @@ async def _run_teardown_operation(
             ssl_verify=settings.awx.ssl_verify,
         )
 
+        # codex R3-3: fresh dispatch — run_id is this op's own request_id.
+        op = ops_store.get(operation_id)
         ops_store.update(
             operation_id,
             state=OperationState.LAUNCHED,
             job_id=job_id,
+            run_id=(op.request_id if op is not None else None),
         )
+        _spawn_job_watcher(app, operation_id, job_id, "teardown", key)
     except AWXAutoscaleError as exc:
         # Log raw error server-side only, sanitize for client
         logger.error("AWX autoscale error in teardown operation %s: %s", operation_id, exc.body)
@@ -965,6 +1832,93 @@ async def _run_teardown_operation(
             state=OperationState.ERROR,
             error="Unexpected error while tearing down",
         )
+
+
+async def _run_rollback_operation(app: FastAPI, operation_id: str, run_id: str, reason: str) -> None:
+    """Background task to wake AWX and launch the rollback command for a run
+    (umbrella #202 WP2, plan §4.5/§4.6).
+
+    Simpler than _run_deploy_operation/_run_teardown_operation: rollback
+    targets a run_id, not a catalog entry, so there's no per-entry cross-JT
+    guard and no L3 capacity preflight (this is recovery, not new demand).
+    ``settings.l3.rollback_jt_name`` must be a REGISTERED AWX job template
+    (WP3 lands the actual play) — its absence is a loud ERROR, never a
+    silent no-op skip.
+
+    The ``l3_request_id`` threaded into extra_vars is the dispatching op's
+    OWN ``request_id`` (codex R2-7 — a prior draft minted a fresh id here;
+    that made the launcher-side extra_vars and the console's own audited/
+    dispatched request_id diverge for no reason). Falls back to a fresh
+    mint only if the op has somehow already been GC'd out from under this
+    background task by the time this runs (defensive, shouldn't happen —
+    the op is non-terminal for the op's own lifetime).
+    """
+    settings = app.state.settings
+    ops_store = app.state.operations
+
+    try:
+        await run_in_threadpool(
+            ensure_awx_awake,
+            helper_url=settings.awx_autoscale.helper_url,
+            bearer_token=settings.awx_autoscale.bearer_token,
+            max_startup_wait=settings.awx_autoscale.max_startup_wait,
+        )
+
+        ops_store.update(operation_id, state=OperationState.LAUNCHING)
+
+        template = await run_in_threadpool(
+            call_with_transient_retry,
+            functools.partial(
+                lookup_job_template_by_name,
+                api_url=settings.awx.api_url,
+                api_token=settings.awx.api_token,
+                name=settings.l3.rollback_jt_name,
+                ssl_verify=settings.awx.ssl_verify,
+            ),
+        )
+        if template is None:
+            ops_store.update(
+                operation_id,
+                state=OperationState.ERROR,
+                error="rollback-jt-not-registered",
+            )
+            return
+
+        op = ops_store.get(operation_id)
+        l3_request_id = op.request_id if (op is not None and op.request_id) else uuid.uuid4().hex
+
+        job_id = await run_in_threadpool(
+            launch_job,
+            api_url=settings.awx.api_url,
+            api_token=settings.awx.api_token,
+            job_template_id=template["id"],
+            ssl_verify=settings.awx.ssl_verify,
+            extra_vars={
+                "l3_run_id": run_id,
+                "l3_rollback_reason": reason,
+                "l3_request_id": l3_request_id,
+            },
+        )
+
+        # codex R3-3: rollback ops never reattach (no active-job idempotency
+        # check exists for this action) — always a fresh dispatch, so
+        # this OP's OWN run_id field (distinct from the `run_id` param
+        # above, which is the DEPLOY's identity this rollback targets) is
+        # simply its own request_id.
+        ops_store.update(operation_id, state=OperationState.LAUNCHED, job_id=job_id, run_id=l3_request_id)
+        _spawn_job_watcher(app, operation_id, job_id, "rollback", run_id)
+    except AWXAutoscaleError as exc:
+        logger.error("AWX autoscale error in rollback operation %s: %s", operation_id, exc.body)
+        ops_store.update(operation_id, state=OperationState.ERROR, error="AWX wake failed")
+    except AWXAPIError as exc:
+        logger.error("AWX API error in rollback operation %s: %s", operation_id, exc.body)
+        ops_store.update(operation_id, state=OperationState.ERROR, error="AWX API error while rolling back")
+    except urllib.error.URLError as exc:
+        logger.error("AWX unreachable in rollback operation %s: %s", operation_id, exc.reason)
+        ops_store.update(operation_id, state=OperationState.ERROR, error="AWX unreachable while rolling back")
+    except Exception:
+        logger.exception("Unexpected error in rollback operation %s", operation_id)
+        ops_store.update(operation_id, state=OperationState.ERROR, error="Unexpected error while rolling back")
 
 
 def create_app(settings: Settings | None = None, contract: AppContract | None = None) -> FastAPI:
@@ -1243,6 +2197,27 @@ def create_app(settings: Settings | None = None, contract: AppContract | None = 
             )
         lifecycle = lifecycle_jt_map.get(workflow_name)
 
+        # codex R2-2: a JT that maps to a catalog lifecycle action is
+        # REFUSED here outright — the #202 WP2 run-tracking/facility-lock/
+        # auto-rollback machinery only exists on the catalog endpoints
+        # (/api/catalog/{key}/deploy|teardown, /api/runs/{run_id}/rollback).
+        # A prior WP2-B draft instead dispatched a mapped JT through this
+        # generic endpoint using the SAME per-entry lock (#24's fix) but
+        # WITHOUT any of #202's tracking/lock/rollback wiring — a working
+        # bypass around every WP2 guarantee for exactly the JTs those
+        # guarantees exist to protect. Applies regardless of autoscale mode
+        # (checked before the async/sync split). Non-lifecycle JTs
+        # (Activity lane's generic launches, internal/spike templates) are
+        # entirely untouched — this only refuses JTs the catalog itself
+        # declares as a configure/finalise stage.
+        if lifecycle is not None:
+            catalog_key, mapped_action, _opposite_jt_name = lifecycle
+            _audit_awx_write(request, user, action=mapped_action, target=catalog_key, request_id=request_id, reason=reason, outcome="lifecycle-jt-refused")
+            return JSONResponse(
+                {"error": "use-catalog-endpoint", "catalog_key": catalog_key, "request_id": request_id},
+                status_code=409,
+            )
+
         # Async operation flow (when autoscale enabled)
         if settings.awx_autoscale.enabled:
             if not settings.awx_autoscale.configured:
@@ -1251,50 +2226,11 @@ def create_app(settings: Settings | None = None, contract: AppContract | None = 
 
             ops_store = request.app.state.operations
 
-            if lifecycle is not None:
-                catalog_key, mapped_action, opposite_jt_name = lifecycle
-                opposite_action = "teardown" if mapped_action == "deploy" else "deploy"
-                # Same lock namespace as the catalog endpoints (#24): the C5
-                # audit record below intentionally reflects the EFFECTIVE
-                # action on the catalog entry (deploy/teardown), not the
-                # "launch" wrapper — deliberate, not an oversight.
-                op, created, conflict = ops_store.get_or_create_exclusive(
-                    action=mapped_action, target=catalog_key, conflicts=(opposite_action,)
-                )
-
-                if conflict is not None:
-                    _audit_awx_write(request, user, action=mapped_action, target=catalog_key, request_id=request_id, reason=reason, outcome="conflict-active-operation")
-                    return JSONResponse(
-                        {
-                            "error": "conflicting lifecycle operation in progress",
-                            "conflicting_operation": conflict.to_dict(),
-                            "request_id": request_id,
-                        },
-                        status_code=409,
-                    )
-
-                if not created:
-                    _audit_awx_write(request, user, action=mapped_action, target=catalog_key, request_id=request_id, reason=reason, outcome="reattached")
-                    return JSONResponse({**op.to_dict(), "request_id": request_id}, status_code=200)
-
-                # Dispatch through the same runner the catalog endpoint uses
-                # (not _run_launch_operation), so the cross-JT guard applies.
-                if mapped_action == "deploy":
-                    task = asyncio.create_task(_run_deploy_operation(
-                        request.app, op.operation_id, catalog_key, workflow_name, None, opposite_jt_name
-                    ))
-                else:
-                    task = asyncio.create_task(_run_teardown_operation(
-                        request.app, op.operation_id, catalog_key, workflow_name, opposite_jt_name
-                    ))
-                request.app.state.operation_tasks.add(task)
-                task.add_done_callback(request.app.state.operation_tasks.discard)
-
-                _audit_awx_write(request, user, action=mapped_action, target=catalog_key, request_id=request_id, reason=reason, outcome="dispatched")
-                return JSONResponse({**op.to_dict(), "request_id": request_id}, status_code=202)
-
             # Atomic dedupe: find existing or create new under one lock
-            op, created = ops_store.get_or_create(action="launch", target=workflow_name)
+            op, created = ops_store.get_or_create(
+                action="launch", target=workflow_name,
+                request_id=request_id, initiator=user.subject,
+            )
 
             if not created:
                 # Existing operation found - return it without spawning new task
@@ -1325,54 +2261,9 @@ def create_app(settings: Settings | None = None, contract: AppContract | None = 
                 _audit_awx_write(request, user, action="launch", target=workflow_name, request_id=request_id, reason=reason, outcome="not-found")
                 return JSONResponse({"error": f"workflow '{workflow_name}' not found in AWX", "request_id": request_id}, status_code=404)
 
-            if lifecycle is not None:
-                catalog_key, mapped_action, opposite_jt_name = lifecycle
-                # Own-JT idempotency guard, mirroring the catalog deploy/
-                # teardown sync flow (the generic launch sync path has no
-                # such check for non-catalog JTs today; a catalog lifecycle
-                # JT gets the same protection here as via the catalog route).
-                active = find_active_job_for_template(
-                    api_url=settings.awx.api_url,
-                    api_token=settings.awx.api_token,
-                    job_template_id=template["id"],
-                    ssl_verify=settings.awx.ssl_verify,
-                )
-                if active is not None:
-                    _audit_awx_write(request, user, action=mapped_action, target=catalog_key, request_id=request_id, reason=reason, outcome="already-active")
-                    return JSONResponse({"job_id": active, "status": "already-active", "request_id": request_id})
-                # Cross-JT guard (#24): see the catalog deploy/teardown sync
-                # flow for the same check. Residual check-to-launch TOCTOU
-                # window; the AWX-layer concurrency cap (umbrella #254) is the
-                # backstop, not closed here.
-                if opposite_jt_name:
-                    opposite_template = lookup_job_template_by_name(
-                        api_url=settings.awx.api_url,
-                        api_token=settings.awx.api_token,
-                        name=opposite_jt_name,
-                        ssl_verify=settings.awx.ssl_verify,
-                    )
-                    if opposite_template is not None:
-                        opposite_active = find_active_job_for_template(
-                            api_url=settings.awx.api_url,
-                            api_token=settings.awx.api_token,
-                            job_template_id=opposite_template["id"],
-                            ssl_verify=settings.awx.ssl_verify,
-                        )
-                        if opposite_active is not None:
-                            _audit_awx_write(request, user, action=mapped_action, target=catalog_key, request_id=request_id, reason=reason, outcome="conflict-active-job")
-                            return JSONResponse(
-                                {"error": "conflicting lifecycle operation in progress", "request_id": request_id},
-                                status_code=409,
-                            )
-                job_id = launch_job(
-                    api_url=settings.awx.api_url,
-                    api_token=settings.awx.api_token,
-                    job_template_id=template["id"],
-                    ssl_verify=settings.awx.ssl_verify,
-                )
-                _audit_awx_write(request, user, action=mapped_action, target=catalog_key, request_id=request_id, reason=reason, outcome="launched")
-                return JSONResponse({"job_id": job_id, "status": "launched", "request_id": request_id})
-
+            # codex R2-2: lifecycle-mapped JTs are refused above, before the
+            # async/sync split — by construction, `lifecycle` is always
+            # None here. Non-catalog JTs only.
             job_id = launch_job(
                 api_url=settings.awx.api_url,
                 api_token=settings.awx.api_token,
@@ -2317,7 +3208,8 @@ def create_app(settings: Settings | None = None, contract: AppContract | None = 
             # workload), not a new one. Acceptable for v1; revisit if workload
             # becomes a first-class dedupe axis.
             op, created, conflict = ops_store.get_or_create_exclusive(
-                action="deploy", target=key, conflicts=("teardown",)
+                action="deploy", target=key, conflicts=("teardown",),
+                request_id=request_id, initiator=user.subject,
             )
 
             if conflict is not None:
@@ -2338,6 +3230,33 @@ def create_app(settings: Settings | None = None, contract: AppContract | None = 
                 # preflight here (#202 R2-7): the original create already ran it.
                 _audit_awx_write(request, user, action="deploy", target=key, request_id=request_id, reason=reason, outcome="reattached")
                 return JSONResponse({**op.to_dict(), "request_id": request_id}, status_code=200)
+
+            # #202 WP2 §4.5 P2-2: advisory facility check — after the
+            # per-entry guards above (a reattach must never be facility-
+            # gated), before the L3 preflight. Console-local only, no
+            # network IO. A refusal here must also un-wedge the just-created
+            # op, same reasoning as the preflight refusal below. codex R3-1:
+            # get_or_create_exclusive above already atomically resolved
+            # reattach-vs-conflict-vs-create — there's no race-free way to
+            # peek that without duplicating its lock-held scan, so this flow
+            # keeps create-then-check order (self-skip via
+            # current_operation_id, since R3-1 removed the blanket
+            # same-target skip that used to cover this for free).
+            blocking = _facility_busy_check(
+                ops_store, current_target=key, current_action="deploy", current_operation_id=op.operation_id,
+            )
+            if blocking is not None:
+                ops_store.update(op.operation_id, state=OperationState.ERROR, error="facility-busy")
+                _audit_awx_write(request, user, action="deploy", target=key, request_id=request_id, reason=reason, outcome="facility-busy")
+                return JSONResponse(
+                    {
+                        "error": "facility-busy",
+                        "advisory": True,
+                        "blocking_operation": blocking.to_dict(),
+                        "request_id": request_id,
+                    },
+                    status_code=409,
+                )
 
             # #202 WP1 R2-7: preflight runs only for a freshly created op, right
             # before dispatch — the earliest point after which an AWX side
@@ -2374,6 +3293,12 @@ def create_app(settings: Settings | None = None, contract: AppContract | None = 
             if template is None:
                 _audit_awx_write(request, user, action="deploy", target=key, request_id=request_id, reason=reason, outcome="template-not-found")
                 return JSONResponse({"error": f"AWX job template '{jt_name}' not found", "request_id": request_id}, status_code=404)
+            # app.state.operations is only populated by the lifespan
+            # startup — getattr-guard it (test-only bare-TestClient path;
+            # production always runs the lifespan). Retrieved here (rather
+            # than just before the facility check, as previously) since
+            # codex R3-4 needs it for the already-active branch too.
+            ops_store_for_check = getattr(request.app.state, "operations", None)
             # Idempotency guard: if a deploy job for this template is already
             # in-flight, return it instead of launching a duplicate (defends
             # against double-click / two tabs / slow render — the real guard,
@@ -2385,8 +3310,21 @@ def create_app(settings: Settings | None = None, contract: AppContract | None = 
                 ssl_verify=settings.awx.ssl_verify,
             )
             if active is not None:
+                # codex R3-4: bridge this already-in-flight job into the ops
+                # store too (never facility-gated — see _track_sync_reattach
+                # — this is retroactive observability, not a new dispatch).
+                op_id = (
+                    _track_sync_reattach(
+                        request.app, ops_store_for_check, request_id, user.subject,
+                        action="deploy", target=key, job_id=active,
+                    )
+                    if ops_store_for_check is not None else None
+                )
                 _audit_awx_write(request, user, action="deploy", target=key, request_id=request_id, reason=reason, outcome="already-active")
-                return JSONResponse({"job_id": active, "status": "already-active", "request_id": request_id})
+                body = {"job_id": active, "status": "already-active", "request_id": request_id}
+                if op_id is not None:
+                    body["operation_id"] = op_id
+                return JSONResponse(body)
             # Cross-JT guard (#24): the sync flow has no store to lock across
             # actions, so check whether the OPPOSITE stage's job template has
             # an in-flight job before launching this one. Residual
@@ -2412,6 +3350,30 @@ def create_app(settings: Settings | None = None, contract: AppContract | None = 
                             {"error": "conflicting lifecycle operation in progress", "request_id": request_id},
                             status_code=409,
                         )
+            # #202 WP2 §4.5 P2-2: advisory facility check, symmetric with the
+            # async branch above — console-local only, no network IO.
+            # codex R2-5: the sync flow now ALSO creates its own Operation
+            # at launch (below), so this has real teeth in the shipped
+            # default (autoscale-disabled) mode on its own, not just for
+            # mixed sync/async deployments. ops_store_for_check was already
+            # retrieved above (needed there too, for the already-active
+            # branch, codex R3-4) — current_operation_id stays None here
+            # since no op exists yet at this point in the sync flow.
+            blocking = (
+                _facility_busy_check(ops_store_for_check, current_target=key, current_action="deploy")
+                if ops_store_for_check else None
+            )
+            if blocking is not None:
+                _audit_awx_write(request, user, action="deploy", target=key, request_id=request_id, reason=reason, outcome="facility-busy")
+                return JSONResponse(
+                    {
+                        "error": "facility-busy",
+                        "advisory": True,
+                        "blocking_operation": blocking.to_dict(),
+                        "request_id": request_id,
+                    },
+                    status_code=409,
+                )
             # #202 WP1 R2-7: preflight runs here — after both idempotency
             # guards (already-active reattach, cross-JT conflict), immediately
             # before the actual AWX side effect. Neither guard above re-runs
@@ -2429,8 +3391,29 @@ def create_app(settings: Settings | None = None, contract: AppContract | None = 
                 ssl_verify=settings.awx.ssl_verify,
                 extra_vars=_build_launch_extra_vars(workload, l3_envelope),
             )
+            # codex R2-5: the sync flow now ALSO tracks this launch as an
+            # Operation and attaches the job watcher — so the advisory
+            # facility check, auto-rollback trigger, and outcome surfacing
+            # all have teeth in the shipped default (autoscale-disabled)
+            # mode, not just when autoscale is on. getattr-guarded (see the
+            # facility-check comment above): only skips when the app's
+            # lifespan never ran, which is test-only. codex R3-4: the
+            # response gains an ADDITIVE "operation_id" key when tracked
+            # (never present when the guard skips, so existing callers that
+            # don't expect it are unaffected).
+            response_body = {"job_id": job_id, "status": "launched", "request_id": request_id}
+            if ops_store_for_check is not None:
+                sync_op = ops_store_for_check.create(
+                    action="deploy", target=key, request_id=request_id, initiator=user.subject,
+                )
+                # codex R3-3: fresh dispatch — run_id is this op's own request_id.
+                ops_store_for_check.update(
+                    sync_op.operation_id, state=OperationState.LAUNCHED, job_id=job_id, run_id=request_id,
+                )
+                _spawn_job_watcher(request.app, sync_op.operation_id, job_id, "deploy", key)
+                response_body["operation_id"] = sync_op.operation_id
             _audit_awx_write(request, user, action="deploy", target=key, request_id=request_id, reason=reason, outcome="launched", workload=workload)
-            return JSONResponse({"job_id": job_id, "status": "launched", "request_id": request_id})
+            return JSONResponse(response_body)
         except AWXAPIError as exc:
             _audit_awx_write(request, user, action="deploy", target=key, request_id=request_id, reason=reason, outcome=f"awx-error:{exc.status}")
             return JSONResponse({"error": f"AWX API error: {exc.body}", "request_id": request_id}, status_code=exc.status)
@@ -2479,7 +3462,8 @@ def create_app(settings: Settings | None = None, contract: AppContract | None = 
             # Atomic dedupe + cross-action exclusion (#24): a deploy already
             # in flight for this catalog entry blocks a new teardown.
             op, created, conflict = ops_store.get_or_create_exclusive(
-                action="teardown", target=key, conflicts=("deploy",)
+                action="teardown", target=key, conflicts=("deploy",),
+                request_id=request_id, initiator=user.subject,
             )
 
             if conflict is not None:
@@ -2499,6 +3483,30 @@ def create_app(settings: Settings | None = None, contract: AppContract | None = 
                 # safely reattaches via get_or_create (no double launch)
                 _audit_awx_write(request, user, action="teardown", target=key, request_id=request_id, reason=reason, outcome="reattached")
                 return JSONResponse({**op.to_dict(), "request_id": request_id}, status_code=200)
+
+            # codex R2-6: advisory facility check, now wired into teardown
+            # too — a DIRTY run (FAILED_ROLLBACK_REQUIRED/ROLLBACK_INCOMPLETE/
+            # RUN_STATUS_UNKNOWN) elsewhere on the facility must block a new
+            # teardown just like it blocks a new deploy/rollback. codex
+            # R3-5 removed the old teardown-vs-teardown cross-target
+            # exemption — plan §4.5 is one run at a time, full stop.
+            # current_operation_id self-skips the just-created op (create-
+            # then-check order, same reasoning as the async deploy branch).
+            blocking = _facility_busy_check(
+                ops_store, current_target=key, current_action="teardown", current_operation_id=op.operation_id,
+            )
+            if blocking is not None:
+                ops_store.update(op.operation_id, state=OperationState.ERROR, error="facility-busy")
+                _audit_awx_write(request, user, action="teardown", target=key, request_id=request_id, reason=reason, outcome="facility-busy")
+                return JSONResponse(
+                    {
+                        "error": "facility-busy",
+                        "advisory": True,
+                        "blocking_operation": blocking.to_dict(),
+                        "request_id": request_id,
+                    },
+                    status_code=409,
+                )
 
             # Spawn background task with tracking
             task = asyncio.create_task(_run_teardown_operation(
@@ -2521,6 +3529,10 @@ def create_app(settings: Settings | None = None, contract: AppContract | None = 
             if template is None:
                 _audit_awx_write(request, user, action="teardown", target=key, request_id=request_id, reason=reason, outcome="template-not-found")
                 return JSONResponse({"error": f"AWX job template '{jt_name}' not found", "request_id": request_id}, status_code=404)
+            # app.state.operations — see the matching comment in the sync
+            # deploy branch (retrieved here, before the already-active
+            # check, since codex R3-4 needs it there too).
+            ops_store_for_check = getattr(request.app.state, "operations", None)
             # Idempotency guard (symmetric with deploy): return an in-flight
             # teardown job for this template instead of launching a duplicate.
             active = find_active_job_for_template(
@@ -2530,8 +3542,20 @@ def create_app(settings: Settings | None = None, contract: AppContract | None = 
                 ssl_verify=settings.awx.ssl_verify,
             )
             if active is not None:
+                # codex R3-4: bridge this already-in-flight job into the ops
+                # store — see _track_sync_reattach.
+                op_id = (
+                    _track_sync_reattach(
+                        request.app, ops_store_for_check, request_id, user.subject,
+                        action="teardown", target=key, job_id=active,
+                    )
+                    if ops_store_for_check is not None else None
+                )
                 _audit_awx_write(request, user, action="teardown", target=key, request_id=request_id, reason=reason, outcome="already-active")
-                return JSONResponse({"job_id": active, "status": "already-active", "request_id": request_id})
+                body = {"job_id": active, "status": "already-active", "request_id": request_id}
+                if op_id is not None:
+                    body["operation_id"] = op_id
+                return JSONResponse(body)
             # Cross-JT guard (#24, symmetric with deploy): the sync flow has
             # no store to lock across actions, so check whether the OPPOSITE
             # stage's job template has an in-flight job before launching this
@@ -2557,16 +3581,231 @@ def create_app(settings: Settings | None = None, contract: AppContract | None = 
                             {"error": "conflicting lifecycle operation in progress", "request_id": request_id},
                             status_code=409,
                         )
+            # codex R2-6: advisory facility check, symmetric with the async
+            # branch above and with the deploy/rollback sync branches —
+            # ops_store_for_check was already retrieved above (needed there
+            # too, for the already-active branch, codex R3-4).
+            blocking = (
+                _facility_busy_check(ops_store_for_check, current_target=key, current_action="teardown")
+                if ops_store_for_check else None
+            )
+            if blocking is not None:
+                _audit_awx_write(request, user, action="teardown", target=key, request_id=request_id, reason=reason, outcome="facility-busy")
+                return JSONResponse(
+                    {
+                        "error": "facility-busy",
+                        "advisory": True,
+                        "blocking_operation": blocking.to_dict(),
+                        "request_id": request_id,
+                    },
+                    status_code=409,
+                )
             job_id = launch_job(
                 api_url=settings.awx.api_url,
                 api_token=settings.awx.api_token,
                 job_template_id=template["id"],
                 ssl_verify=settings.awx.ssl_verify,
             )
+            # codex R2-5: track this launch as an Operation + watcher too —
+            # see the matching comment in the sync deploy branch. codex
+            # R3-4: response gains an additive "operation_id" key.
+            response_body = {"job_id": job_id, "status": "launched", "request_id": request_id}
+            if ops_store_for_check is not None:
+                sync_op = ops_store_for_check.create(
+                    action="teardown", target=key, request_id=request_id, initiator=user.subject,
+                )
+                ops_store_for_check.update(
+                    sync_op.operation_id, state=OperationState.LAUNCHED, job_id=job_id, run_id=request_id,
+                )
+                _spawn_job_watcher(request.app, sync_op.operation_id, job_id, "teardown", key)
+                response_body["operation_id"] = sync_op.operation_id
             _audit_awx_write(request, user, action="teardown", target=key, request_id=request_id, reason=reason, outcome="launched")
-            return JSONResponse({"job_id": job_id, "status": "launched", "request_id": request_id})
+            return JSONResponse(response_body)
         except AWXAPIError as exc:
             _audit_awx_write(request, user, action="teardown", target=key, request_id=request_id, reason=reason, outcome=f"awx-error:{exc.status}")
+            return JSONResponse({"error": f"AWX API error: {exc.body}", "request_id": request_id}, status_code=exc.status)
+
+    @app.post("/api/runs/{run_id}/rollback")
+    async def api_run_rollback(request: Request, run_id: str):
+        """Launch the rollback command for a run whose deploy failed after
+        starting (umbrella #202 WP2, plan §4.5/§4.6 — FAILED_ROLLBACK_REQUIRED).
+
+        Operator+ gated with the C5 quartet, same posture as deploy/teardown.
+        ``run_id`` is the failed deploy's own request_id (uuid4 hex).
+        """
+        user, err = _require_min_role(request, "operator")
+        if err is not None:
+            return err
+        assert user is not None
+        reason, rerr = await _require_reason(request)
+        if rerr is not None:
+            return rerr
+        assert reason is not None
+        request_id = uuid.uuid4().hex
+
+        if not _RUN_ID_RE.fullmatch(run_id):
+            _audit_awx_write(request, user, action="rollback", target=run_id, request_id=request_id, reason=reason, outcome="invalid-run-id")
+            return JSONResponse({"error": "invalid-run-id", "request_id": request_id}, status_code=400)
+
+        if not settings.awx.configured:
+            _audit_awx_write(request, user, action="rollback", target=run_id, request_id=request_id, reason=reason, outcome="awx-not-configured")
+            return JSONResponse({"error": "AWX API not configured", "request_id": request_id}, status_code=503)
+
+        # Async operation flow (when autoscale enabled)
+        if settings.awx_autoscale.enabled:
+            if not settings.awx_autoscale.configured:
+                _audit_awx_write(request, user, action="rollback", target=run_id, request_id=request_id, reason=reason, outcome="autoscale-misconfigured")
+                return JSONResponse({"error": "AWX autoscale enabled but misconfigured", "request_id": request_id}, status_code=503)
+
+            ops_store = request.app.state.operations
+
+            # codex R3-1: rollback's dedupe is a plain (non-exclusive)
+            # get_or_create, so — unlike deploy/teardown's
+            # get_or_create_exclusive — we CAN peek whether this dispatch
+            # would reattach without needing atomicity with the create.
+            # Preferred ordering (avoids the self-skip/un-wedge dance
+            # entirely): if it WOULD reattach, skip the facility check
+            # (a reattach must never be facility-gated) and go straight to
+            # get_or_create. If it would NOT, run the facility check FIRST
+            # — nothing has been created yet, so current_operation_id stays
+            # None and a refusal never needs to un-wedge anything.
+            if ops_store.find_active("rollback", run_id) is None:
+                blocking = _facility_busy_check(ops_store, current_target=run_id, current_action="rollback")
+                if blocking is not None:
+                    _audit_awx_write(request, user, action="rollback", target=run_id, request_id=request_id, reason=reason, outcome="facility-busy")
+                    return JSONResponse(
+                        {
+                            "error": "facility-busy",
+                            "advisory": True,
+                            "blocking_operation": blocking.to_dict(),
+                            "request_id": request_id,
+                        },
+                        status_code=409,
+                    )
+
+            # Dedupe only (not get_or_create_exclusive/conflicts): a run_id
+            # is unique to one failed deploy, so there's no "opposite
+            # action" to exclude the way deploy<->teardown exclude each
+            # other on a shared catalog key. A second rollback POST for the
+            # SAME run_id reattaches, it never conflicts.
+            op, created = ops_store.get_or_create(
+                action="rollback", target=run_id,
+                request_id=request_id, initiator=user.subject,
+            )
+
+            if not created:
+                _audit_awx_write(request, user, action="rollback", target=run_id, request_id=request_id, reason=reason, outcome="reattached")
+                return JSONResponse({**op.to_dict(), "request_id": request_id}, status_code=200)
+
+            _spawn_rollback_task(request.app, op.operation_id, run_id, reason)
+
+            _audit_awx_write(request, user, action="rollback", target=run_id, request_id=request_id, reason=reason, outcome="dispatched")
+            return JSONResponse({**op.to_dict(), "request_id": request_id}, status_code=202)
+
+        # Sync flow (autoscale disabled) — mirrors the sync deploy/teardown
+        # branches: dedupe is still only the AWX-side already-active check
+        # (no ops-store dedupe/reattach here, unlike async), but codex R2-5
+        # means this branch NOW ALSO creates a tracked Operation + watcher
+        # at launch (getattr-guarded — see below), so the facility
+        # check/auto-rollback/outcome-surfacing machinery has teeth here
+        # in the shipped default (autoscale-disabled) mode too.
+        try:
+            template = lookup_job_template_by_name(
+                api_url=settings.awx.api_url,
+                api_token=settings.awx.api_token,
+                name=settings.l3.rollback_jt_name,
+                ssl_verify=settings.awx.ssl_verify,
+            )
+            if template is None:
+                _audit_awx_write(request, user, action="rollback", target=run_id, request_id=request_id, reason=reason, outcome="jt-not-registered")
+                return JSONResponse(
+                    {
+                        "error": f"rollback job template '{settings.l3.rollback_jt_name}' not found",
+                        "request_id": request_id,
+                    },
+                    status_code=404,
+                )
+            # getattr-guard: see the matching comment in the sync deploy
+            # branch. Retrieved here (before the already-active check)
+            # since codex R3-4 needs it there too.
+            ops_store_for_check = getattr(request.app.state, "operations", None)
+            active = find_active_job_for_template(
+                api_url=settings.awx.api_url,
+                api_token=settings.awx.api_token,
+                job_template_id=template["id"],
+                ssl_verify=settings.awx.ssl_verify,
+            )
+            if active is not None:
+                # codex R4-2b: the rollback JT is SHARED across ALL runs
+                # (unlike deploy/teardown's per-entry JT) — "active" here
+                # just means SOME rollback job is running, not necessarily
+                # one for THIS run_id. Verify identity (the active job's
+                # own extra_vars.l3_run_id) BEFORE ever creating or
+                # reattaching an Operation — never attribute a DIFFERENT
+                # run's rollback job to this run_id (that would let the
+                # other run's outcome marker false-complete this one).
+                op_id, identity_mismatch = (
+                    _track_sync_rollback_reattach(
+                        request.app, ops_store_for_check, request_id, user.subject,
+                        run_id=run_id, job_id=active,
+                    )
+                    if ops_store_for_check is not None else (None, False)
+                )
+                if identity_mismatch:
+                    _audit_awx_write(request, user, action="rollback", target=run_id, request_id=request_id, reason=reason, outcome="already-active-other-run")
+                    return JSONResponse(
+                        {"error": "already-active-other-run", "request_id": request_id}, status_code=409,
+                    )
+                _audit_awx_write(request, user, action="rollback", target=run_id, request_id=request_id, reason=reason, outcome="already-active")
+                body = {"job_id": active, "status": "already-active", "request_id": request_id}
+                if op_id is not None:
+                    body["operation_id"] = op_id
+                return JSONResponse(body)
+            blocking = (
+                _facility_busy_check(ops_store_for_check, current_target=run_id, current_action="rollback")
+                if ops_store_for_check else None
+            )
+            if blocking is not None:
+                _audit_awx_write(request, user, action="rollback", target=run_id, request_id=request_id, reason=reason, outcome="facility-busy")
+                return JSONResponse(
+                    {
+                        "error": "facility-busy",
+                        "advisory": True,
+                        "blocking_operation": blocking.to_dict(),
+                        "request_id": request_id,
+                    },
+                    status_code=409,
+                )
+            job_id = launch_job(
+                api_url=settings.awx.api_url,
+                api_token=settings.awx.api_token,
+                job_template_id=template["id"],
+                ssl_verify=settings.awx.ssl_verify,
+                # R2-7: l3_request_id is this dispatch's OWN request_id
+                # (already true here in the sync flow — see
+                # _run_rollback_operation for the async-flow fix).
+                extra_vars={"l3_run_id": run_id, "l3_rollback_reason": reason, "l3_request_id": request_id},
+            )
+            # codex R2-5: track this launch as an Operation + watcher too —
+            # see the matching comment in the sync deploy branch. codex
+            # R3-4: response gains an additive "operation_id" key.
+            response_body = {"job_id": job_id, "status": "launched", "request_id": request_id}
+            if ops_store_for_check is not None:
+                sync_op = ops_store_for_check.create(
+                    action="rollback", target=run_id, request_id=request_id, initiator=user.subject,
+                )
+                # codex R3-3: fresh dispatch — run_id (the OP's OWN identity)
+                # is its own request_id, same value threaded as l3_request_id
+                # above.
+                ops_store_for_check.update(
+                    sync_op.operation_id, state=OperationState.LAUNCHED, job_id=job_id, run_id=request_id,
+                )
+                _spawn_job_watcher(request.app, sync_op.operation_id, job_id, "rollback", run_id)
+                response_body["operation_id"] = sync_op.operation_id
+            _audit_awx_write(request, user, action="rollback", target=run_id, request_id=request_id, reason=reason, outcome="launched")
+            return JSONResponse(response_body)
+        except AWXAPIError as exc:
+            _audit_awx_write(request, user, action="rollback", target=run_id, request_id=request_id, reason=reason, outcome=f"awx-error:{exc.status}")
             return JSONResponse({"error": f"AWX API error: {exc.body}", "request_id": request_id}, status_code=exc.status)
 
     @app.get("/api/catalog/{key}/status/{job_id}")

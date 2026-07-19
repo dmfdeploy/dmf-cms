@@ -75,6 +75,69 @@ def _request(
         raise AWXAPIError(exc.code, error_body) from exc
 
 
+# codex R3-6: fixed, not configurable — see _request_text's docstring.
+_TEXT_READ_CHUNK_BYTES = 8 * 1024
+_TEXT_TAIL_BYTES = 64 * 1024
+
+
+def _request_text(
+    api_url: str,
+    api_token: str,
+    method: str,
+    path: str,
+    ssl_context: ssl.SSLContext | None = None,
+) -> str:
+    """Make an authenticated request to the AWX API, returning raw text.
+
+    Distinct from ``_request``: some AWX endpoints (job stdout) return
+    plain text, not JSON — ``_request``'s ``json.loads`` would raise on
+    that body. Used by ``get_job_stdout`` (umbrella #202 WP2).
+
+    codex R3-6: streams the response body in fixed ``_TEXT_READ_CHUNK_BYTES``
+    reads into a rolling buffer that retains only the last
+    ``_TEXT_TAIL_BYTES`` — the full body is NEVER materialized in memory,
+    regardless of how large the underlying AWX job's stdout actually is (a
+    prior draft fetched via a single unbounded ``resp.read()`` then sliced
+    the resulting string after the fact — a memory/latency risk for a
+    genuinely huge job log, and the actual full body still transited
+    memory once). A trailing partial multi-byte UTF-8 sequence at either
+    the chunk or tail-window boundary is tolerated via ``errors="replace"``
+    on the final decode — the outcome marker contract only needs the tail
+    to be readable, not byte-exact.
+
+    codex R4-5: the HTTPError path is bounded too — a fixed-size PREFIX
+    read (``_TEXT_READ_CHUNK_BYTES``, the same constant as the success
+    path's chunk size, reused rather than adding a near-duplicate) via
+    ``exc.read(size)``, not the success path's rolling tail-window. An
+    error body's useful content (an AWX-rendered JSON error/HTML message)
+    is normally short and front-loaded, unlike a job's stdout log where
+    the useful content is the LAST line — a prefix is the right shape
+    here, a tail wouldn't be. Still never an unbounded ``exc.read()``
+    regardless of how large the error body actually is.
+    """
+    url = api_url.rstrip("/") + path
+    headers = {
+        "Authorization": f"Bearer {api_token}",
+        "Accept": "text/plain",
+    }
+    req = urllib.request.Request(url, headers=headers, method=method)
+
+    try:
+        with urllib.request.urlopen(req, timeout=30, context=ssl_context) as resp:
+            tail = b""
+            while True:
+                chunk = resp.read(_TEXT_READ_CHUNK_BYTES)
+                if not chunk:
+                    break
+                tail += chunk
+                if len(tail) > _TEXT_TAIL_BYTES:
+                    tail = tail[-_TEXT_TAIL_BYTES:]
+            return tail.decode("utf-8", errors="replace")
+    except urllib.error.HTTPError as exc:
+        error_body = exc.read(_TEXT_READ_CHUNK_BYTES).decode(errors="replace") if exc.fp else str(exc)
+        raise AWXAPIError(exc.code, error_body) from exc
+
+
 def call_with_transient_retry(fn, *, attempts=3, delay=3.0, sleep=None):
     """Call fn(), retrying transient AWX failures (HTTP 5xx or URLError).
 
@@ -212,6 +275,61 @@ def get_job_status(
         url=str(result.get("url", "")),
         elapsed=float(result.get("elapsed", 0)),
         failed=result.get("failed", False),
+    )
+
+
+def get_job(
+    *,
+    api_url: str,
+    api_token: str,
+    job_id: int,
+    ssl_verify: bool = True,
+) -> dict:
+    """Fetch the full raw job detail (umbrella #202 WP2 job watcher).
+
+    Distinct from ``get_job_status``: this returns the raw AWX response
+    dict (at least ``status``, ``started``, ``finished``) rather than the
+    narrowed ``AWXJobInfo`` — the watcher needs ``started`` (to distinguish
+    "job failed before ever starting" from "job started then failed",
+    plan §4.5) which ``AWXJobInfo`` doesn't carry.
+    """
+    ctx = _ssl_context(ssl_verify)
+    return _request(
+        api_url, api_token, "GET",
+        f"/api/v2/jobs/{job_id}/",
+        ssl_context=ctx,
+    )
+
+
+# Kept as a public-ish alias of _request_text's own bound (codex R2-9/R3-6)
+# so callers/tests that think in terms of "a job's stdout" don't need to
+# know _request_text is the layer that actually enforces it.
+_STDOUT_TAIL_BYTES = _TEXT_TAIL_BYTES
+
+
+def get_job_stdout(
+    *,
+    api_url: str,
+    api_token: str,
+    job_id: int,
+    ssl_verify: bool = True,
+) -> str:
+    """Fetch a job's stdout as plain text (umbrella #202 WP2-B parses
+    rollback/outcome markers from this).
+
+    Only the last ``_STDOUT_TAIL_BYTES`` (== ``_request_text``'s own
+    ``_TEXT_TAIL_BYTES``) ever reach the caller — the outcome marker is
+    always the LAST matching line, so the tail is sufficient, and callers
+    must never see (or forward into an API response) more of a job's raw
+    log than that fixed bound. codex R3-6: the bound is enforced by
+    ``_request_text`` streaming the read itself, not by slicing an
+    already-fully-fetched string here.
+    """
+    ctx = _ssl_context(ssl_verify)
+    return _request_text(
+        api_url, api_token, "GET",
+        f"/api/v2/jobs/{job_id}/stdout/?format=txt",
+        ssl_context=ctx,
     )
 
 

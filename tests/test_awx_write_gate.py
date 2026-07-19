@@ -66,6 +66,14 @@ def awx_spy(monkeypatch):
         return 4242
 
     monkeypatch.setattr(main, "launch_job", fake_launch)
+    # umbrella #202 WP2: async deploy/teardown now spawns a job watcher
+    # right after LAUNCHED, which polls get_job. Mock it to an immediately
+    # terminal "successful" job so the watcher resolves on its first poll
+    # instead of sleeping/retrying against a real (nonexistent) AWX.
+    monkeypatch.setattr(
+        main, "get_job",
+        lambda **k: {"status": "successful", "started": "2026-01-01T00:00:00Z", "finished": "2026-01-01T00:05:00Z"},
+    )
     # deploy / teardown resolve a catalog entry before dispatch.
     entry = CatalogEntry(
         key="mxl-videotest-view",

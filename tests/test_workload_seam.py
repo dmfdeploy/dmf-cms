@@ -112,6 +112,14 @@ def awx_spy(monkeypatch):
         return 4242
 
     monkeypatch.setattr(main, "launch_job", fake_launch)
+    # umbrella #202 WP2: async deploy/teardown now spawns a job watcher
+    # right after LAUNCHED, which polls get_job. Mock it to an immediately
+    # terminal "successful" job so the watcher resolves on its first poll
+    # instead of sleeping/retrying against a real (nonexistent) AWX.
+    monkeypatch.setattr(
+        main, "get_job",
+        lambda **k: {"status": "successful", "started": "2026-01-01T00:00:00Z", "finished": "2026-01-01T00:05:00Z"},
+    )
     entry = CatalogEntry(
         key="mxl-videotest-view",
         display_name="MXL video test view",
@@ -278,9 +286,14 @@ def _autoscale_settings() -> Settings:
 
 
 def _wait_for_launch(app, op_id):
+    # codex #202 WP2: LAUNCHED is no longer a resting state for deploy/
+    # teardown ops — the job watcher spawned right after it can race straight
+    # through to RUN_COMPLETE before this poll loop ever observes LAUNCHED
+    # itself. job_id is set at the same moment and never changes afterward,
+    # so it's the robust "launch happened" signal to wait on.
     for _ in range(50):  # 5s max
         op = app.state.operations.get(op_id)
-        if op and op.state == OperationState.LAUNCHED:
+        if op and op.job_id is not None:
             return op
         time.sleep(0.1)
     return app.state.operations.get(op_id)
@@ -296,7 +309,7 @@ def test_async_deploy_with_valid_workload_passes_extra_vars(monkeypatch, awx_spy
         )
         assert resp.status_code == 202, resp.text
         op = _wait_for_launch(client.app, resp.json()["operation_id"])
-        assert op is not None and op.state == OperationState.LAUNCHED
+        assert op is not None and op.job_id == 4242
 
     _assert_skipped_l3_envelope(awx_spy[-1]["extra_vars"], workload_slug="studio-b")
 
@@ -308,7 +321,7 @@ def test_async_deploy_without_workload_omits_extra_vars(monkeypatch, awx_spy):
         resp = client.post("/api/catalog/mxl-videotest-view/deploy", json={"reason": "x"})
         assert resp.status_code == 202, resp.text
         op = _wait_for_launch(client.app, resp.json()["operation_id"])
-        assert op is not None and op.state == OperationState.LAUNCHED
+        assert op is not None and op.job_id == 4242
 
     _assert_skipped_l3_envelope(awx_spy[-1].get("extra_vars"))
 

@@ -15,17 +15,19 @@ def _env_bool(name: str, default: bool) -> bool:
     return value.strip().lower() in {"1", "true", "yes", "on"}
 
 
-def _env_l3_enabled(name: str, default: bool = True) -> bool:
-    """Strict tri-state parser for the L3 kill switch (codex #202 WP1 R3-3).
+def _env_strict_bool_fail_safe_on(name: str, default: bool = True) -> bool:
+    """Shared strict tri-state parser for kill-switch-style booleans (codex R3-3).
 
     Deliberately narrower than the generic ``_env_bool`` above — that
     helper treats ANY unrecognized token as False, so a typo'd 'tru' would
-    silently DISABLE L3, activating the kill switch by accident. This one
-    fails SAFE-ON: ``'false'``/``'0'``/``'no'`` (case-insensitive) are the
-    only ways to turn it off; ``'true'``/``'1'``/``'yes'`` or an unset/blank
-    value keep it on; any OTHER token also keeps it on (never silently
-    disables a security/capacity-relevant gate on a typo) but logs a loud
-    warning naming the bad value so the typo is visible, not silent.
+    silently flip the feature OFF by accident. This one fails SAFE-ON:
+    ``'false'``/``'0'``/``'no'`` (case-insensitive) are the only ways to
+    turn it off; ``'true'``/``'1'``/``'yes'`` or an unset/blank value keep
+    it on; any OTHER token also keeps it on (never silently disables a
+    capacity/rollback-relevant gate on a typo) but logs a loud warning
+    naming the bad value so the typo is visible, not silent. Shared by L3's
+    ``enabled`` (the kill switch, WP1 R3-3) and ``auto_rollback`` (WP2) —
+    both are "a typo here must never silently turn safety off" booleans.
     """
     value = os.getenv(name)
     if value is None or not value.strip():
@@ -37,11 +39,20 @@ def _env_l3_enabled(name: str, default: bool = True) -> bool:
         return True
     logger.warning(
         "%s=%r is not a recognized true/false token — defaulting to enabled "
-        "(the L3 kill switch fails safe-ON: a typo must never silently "
-        "disable the capacity preflight)",
+        "(this is a fail-safe-ON switch: a typo must never silently turn it off)",
         name, value,
     )
     return True
+
+
+def _env_l3_enabled(name: str, default: bool = True) -> bool:
+    """Strict tri-state parser for the L3 kill switch (codex #202 WP1 R3-3).
+
+    Thin wrapper over ``_env_strict_bool_fail_safe_on`` — kept as its own
+    named function since it's referenced directly by name in tests and by
+    the L3Settings docstring.
+    """
+    return _env_strict_bool_fail_safe_on(name, default)
 
 
 def _env_positive_int(name: str, default: int) -> int:
@@ -263,11 +274,27 @@ class L3Settings:
     reserve nothing for the run's own executor pod. Loaded via
     ``_env_positive_int``: an unparseable or non-positive env value falls
     back to the default with a logged warning, never silently to 0.
+
+    umbrella #202 WP2 additions — the run-tracking substrate:
+
+    * ``job_poll_interval_seconds`` — how often the job watcher
+      (main.py ``_watch_job_operation``) polls AWX for a dispatched
+      run's status. Positive-validated like the EE floors.
+    * ``rollback_jt_name`` — the AWX job template WP2-B's rollback
+      command launches on a ``failed_rollback_required`` operation.
+    * ``auto_rollback`` — whether WP2-B auto-triggers that rollback
+      command on ``failed_rollback_required``, or only surfaces the state
+      for a human to act on. Strict tri-state, fail-safe-ON like
+      ``enabled`` — a typo here must never silently turn auto-rollback off
+      the way the generic ``_env_bool`` would.
     """
 
     enabled: bool = True
     ee_floor_cpu_millicores: int = 250
     ee_floor_memory_mib: int = 512
+    job_poll_interval_seconds: int = 10
+    rollback_jt_name: str = "media-rollback-run"
+    auto_rollback: bool = True
 
 
 @dataclass(frozen=True)
@@ -462,6 +489,9 @@ def load_settings() -> Settings:
             enabled=_env_l3_enabled("DMF_CONSOLE_L3_ENABLED", True),
             ee_floor_cpu_millicores=_env_positive_int("DMF_CONSOLE_L3_EE_FLOOR_CPU_MILLICORES", 250),
             ee_floor_memory_mib=_env_positive_int("DMF_CONSOLE_L3_EE_FLOOR_MEMORY_MIB", 512),
+            job_poll_interval_seconds=_env_positive_int("DMF_CONSOLE_L3_JOB_POLL_INTERVAL_SECONDS", 10),
+            rollback_jt_name=os.getenv("DMF_CONSOLE_L3_ROLLBACK_JT_NAME", "media-rollback-run"),
+            auto_rollback=_env_strict_bool_fail_safe_on("DMF_CONSOLE_L3_AUTO_ROLLBACK", True),
         ),
         forgejo=ForgejoSettings(
             api_url=os.getenv("DMF_CONSOLE_FORGEJO_API_URL", ""),

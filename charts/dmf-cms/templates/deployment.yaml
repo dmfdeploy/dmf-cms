@@ -176,6 +176,12 @@ spec:
               value: {{ .Values.l3.eeFloorCpuMillicores | quote }}
             - name: DMF_CONSOLE_L3_EE_FLOOR_MEMORY_MIB
               value: {{ .Values.l3.eeFloorMemoryMib | quote }}
+            - name: DMF_CONSOLE_L3_JOB_POLL_INTERVAL_SECONDS
+              value: {{ .Values.l3.jobPollIntervalSeconds | quote }}
+            - name: DMF_CONSOLE_L3_ROLLBACK_JT_NAME
+              value: {{ .Values.l3.rollbackJtName | quote }}
+            - name: DMF_CONSOLE_L3_AUTO_ROLLBACK
+              value: {{ .Values.l3.autoRollback | quote }}
             {{- if .Values.media.tenancy }}
             - name: DMF_CONSOLE_MEDIA_TENANCY
               value: {{ .Values.media.tenancy | quote }}
