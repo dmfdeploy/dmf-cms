@@ -12,8 +12,10 @@ Three layers:
 * operations.py — the state machine itself (terminal_states, dedupe/
   reattach/GC behavior).
 * main.py — the watcher's polling loop and its terminal transitions.
-* awx.py — the two new AWX API helpers (get_job, get_job_stdout) the
-  watcher (and WP2-B's rollback command) read from.
+* awx.py — the AWX API helpers the watcher (and WP2-B's rollback command)
+  read from: get_job, get_job_events_for_task (WP3 R2b — outcome marker
+  transport, anchored by task name), get_job_stdout (bounded utility, no
+  longer used for outcome parsing as of R2b).
 """
 
 import asyncio
@@ -637,7 +639,7 @@ def test_run_deploy_operation_reattach_hydrates_run_id_from_job_extra_vars(monke
         main, "get_job", lambda **k: {"id": 9999, "extra_vars": '{"l3_request_id": "' + ("f" * 32) + '"}'},
     )
     # Prevent the watcher this reattach spawns from making real network calls.
-    monkeypatch.setattr(main, "get_job_stdout", lambda **k: "no marker\n")
+    monkeypatch.setattr(main, "get_job_events_for_task", lambda **k: [])
 
     asyncio.run(main._run_deploy_operation(app, op.operation_id, "key1", "dmf-configure"))
 
@@ -746,7 +748,7 @@ def test_reattached_deploy_with_invalid_extra_vars_uuid_is_identity_unknown_on_a
     monkeypatch.setattr(
         main, "get_job", lambda **k: {"id": 9999, "extra_vars": '{"l3_request_id": "not-a-uuid"}'},
     )
-    monkeypatch.setattr(main, "get_job_stdout", lambda **k: "no marker\n")
+    monkeypatch.setattr(main, "get_job_events_for_task", lambda **k: [])
 
     asyncio.run(main._run_deploy_operation(app, op.operation_id, "key1", "dmf-configure"))
     assert ops_store.get(op.operation_id).run_id is None  # codex R4-4: rejected, not passed through
@@ -761,8 +763,99 @@ def test_reattached_deploy_with_invalid_extra_vars_uuid_is_identity_unknown_on_a
 
 
 # ---------------------------------------------------------------------------
-# awx.py — get_job / get_job_stdout
+# awx.py — get_job / get_job_events_for_task / get_job_stdout
 # ---------------------------------------------------------------------------
+
+
+def test_get_job_events_for_task_queries_by_task_name(monkeypatch):
+    # The HTTP-layer half of the R2b provenance binding: the request URL
+    # itself must filter by the exact task name, not fetch every event.
+    captured = {}
+
+    def fake_request(api_url, api_token, method, path, body=None, ssl_context=None):
+        captured.update(method=method, path=path)
+        return {"results": [{"counter": 1, "task": "dmf-l3-outcome"}], "next": None}
+
+    monkeypatch.setattr(awx, "_request", fake_request)
+    result = awx.get_job_events_for_task(
+        api_url="http://awx.test", api_token="tok", job_id=42, task_name="dmf-l3-outcome",
+    )
+    assert result == [{"counter": 1, "task": "dmf-l3-outcome"}]
+    assert captured["method"] == "GET"
+    assert captured["path"] == "/api/v2/jobs/42/job_events/?task=dmf-l3-outcome&order_by=counter"
+
+
+def test_get_job_events_for_task_urlencodes_the_task_name(monkeypatch):
+    captured = {}
+
+    def fake_request(api_url, api_token, method, path, body=None, ssl_context=None):
+        captured.update(path=path)
+        return {"results": [], "next": None}
+
+    monkeypatch.setattr(awx, "_request", fake_request)
+    awx.get_job_events_for_task(
+        api_url="http://awx.test", api_token="tok", job_id=42, task_name="a task/with special&chars",
+    )
+    # urllib.parse.quote's default safe='/' leaves the slash unescaped —
+    # matching the exact encoding get_job_events_for_task actually produces.
+    assert "task=a%20task/with%20special%26chars" in captured["path"]
+
+
+def test_get_job_events_for_task_follows_pagination(monkeypatch):
+    pages = [
+        {"results": [{"counter": 1}], "next": "/api/v2/jobs/42/job_events/?task=x&page=2"},
+        {"results": [{"counter": 2}], "next": "/api/v2/jobs/42/job_events/?task=x&page=3"},
+        {"results": [{"counter": 3}], "next": None},
+    ]
+    calls = []
+
+    def fake_request(api_url, api_token, method, path, body=None, ssl_context=None):
+        calls.append(path)
+        return pages[len(calls) - 1]
+
+    monkeypatch.setattr(awx, "_request", fake_request)
+    result = awx.get_job_events_for_task(
+        api_url="http://awx.test", api_token="tok", job_id=42, task_name="x",
+    )
+    assert result == [{"counter": 1}, {"counter": 2}, {"counter": 3}]
+    assert len(calls) == 3
+
+
+def test_get_job_events_for_task_normalizes_absolute_url_next(monkeypatch):
+    # AWX may return 'next' as a full URL depending on deployment config —
+    # must not double-prepend api_url on the following request.
+    pages = [
+        {"results": [{"counter": 1}], "next": "http://awx.test/api/v2/jobs/42/job_events/?task=x&page=2"},
+        {"results": [{"counter": 2}], "next": None},
+    ]
+    calls = []
+
+    def fake_request(api_url, api_token, method, path, body=None, ssl_context=None):
+        calls.append(path)
+        return pages[len(calls) - 1]
+
+    monkeypatch.setattr(awx, "_request", fake_request)
+    result = awx.get_job_events_for_task(
+        api_url="http://awx.test", api_token="tok", job_id=42, task_name="x",
+    )
+    assert result == [{"counter": 1}, {"counter": 2}]
+    assert calls[1] == "/api/v2/jobs/42/job_events/?task=x&page=2"  # normalized, not the full URL
+
+
+def test_get_job_events_for_task_pagination_hard_capped(monkeypatch):
+    # Defensive backstop against a misbehaving/looping 'next' chain.
+    call_count = {"n": 0}
+
+    def fake_request(api_url, api_token, method, path, body=None, ssl_context=None):
+        call_count["n"] += 1
+        return {"results": [{"counter": call_count["n"]}], "next": "/api/v2/jobs/42/job_events/?page=next"}
+
+    monkeypatch.setattr(awx, "_request", fake_request)
+    result = awx.get_job_events_for_task(
+        api_url="http://awx.test", api_token="tok", job_id=42, task_name="x",
+    )
+    assert call_count["n"] == awx._JOB_EVENTS_MAX_PAGES
+    assert len(result) == awx._JOB_EVENTS_MAX_PAGES
 
 
 def test_get_job_returns_raw_dict(monkeypatch):
@@ -1178,7 +1271,9 @@ def test_facility_busy_check_dirty_run_still_blocks_an_unrelated_rollback():
 
 
 # ---------------------------------------------------------------------------
-# main.py — _fetch_l3_outcome (§4.6 outcome marker parsing)
+# main.py — _fetch_l3_outcome_from_events (§4.6 outcome marker parsing,
+# transport revised WP3 R2b — AWX job events anchored by task name, never
+# stdout scraping)
 # ---------------------------------------------------------------------------
 
 
@@ -1187,27 +1282,138 @@ def _fake_app_for_outcome():
     return SimpleNamespace(state=SimpleNamespace(settings=settings))
 
 
+def _outcome_event(msg, *, task=None, counter=1):
+    """A realistic AWX job_events payload shape for the dmf-l3-outcome
+    task's own debug event."""
+    return {
+        "counter": counter,
+        "task": task if task is not None else main._L3_OUTCOME_TASK_NAME,
+        "event_data": {"res": {"msg": msg}},
+    }
+
+
 @pytest.mark.parametrize("token", [
-    "facility-busy", "no-snapshot", "stale-snapshot", "rollback_complete",
-    "rollback_incomplete", "no-fit", "missing-budget", "some-future-token",
+    "facility-busy", "lock-unavailable", "preflight-error", "no-snapshot",
+    "stale-snapshot", "rollback_complete", "rollback_incomplete", "no-fit",
+    "missing-budget", "post-mutation-failed", "some-future-token",
 ])
-def test_fetch_l3_outcome_parses_each_known_and_unknown_token(monkeypatch, token):
+def test_fetch_l3_outcome_from_events_parses_each_known_and_unknown_token(monkeypatch, token):
     app = _fake_app_for_outcome()
-    monkeypatch.setattr(main, "get_job_stdout", lambda **k: f"PLAY [x]\nTASK [y]\nDMF_L3_OUTCOME: {token}\n")
-    tok, kv = asyncio.run(main._fetch_l3_outcome(app, 42))
+    monkeypatch.setattr(
+        main, "get_job_events_for_task",
+        lambda **k: [_outcome_event(f"DMF_L3_OUTCOME: {token}")],
+    )
+    tok, kv = asyncio.run(main._fetch_l3_outcome_from_events(app, 42))
     assert tok == token
     assert kv is None
 
 
-def test_fetch_l3_outcome_captures_kv_detail(monkeypatch):
+def test_fetch_l3_outcome_from_events_captures_kv_detail(monkeypatch):
     app = _fake_app_for_outcome()
     monkeypatch.setattr(
-        main, "get_job_stdout",
-        lambda **k: "DMF_L3_OUTCOME: rollback_incomplete surfaces=netbox,helm\n",
+        main, "get_job_events_for_task",
+        lambda **k: [_outcome_event("DMF_L3_OUTCOME: rollback_incomplete surfaces=netbox,helm")],
     )
-    tok, kv = asyncio.run(main._fetch_l3_outcome(app, 42))
+    tok, kv = asyncio.run(main._fetch_l3_outcome_from_events(app, 42))
     assert tok == "rollback_incomplete"
     assert kv == "surfaces=netbox,helm"
+
+
+def test_fetch_l3_outcome_from_events_queries_the_named_task(monkeypatch):
+    # The call-site half of the provenance binding: the fetch must ask AWX
+    # to filter by the exact dedicated task name, not fetch every event and
+    # hope for the best.
+    app = _fake_app_for_outcome()
+    captured = {}
+
+    def fake_fetch(**kwargs):
+        captured.update(kwargs)
+        return [_outcome_event("DMF_L3_OUTCOME: no-fit")]
+
+    monkeypatch.setattr(main, "get_job_events_for_task", fake_fetch)
+    asyncio.run(main._fetch_l3_outcome_from_events(app, 42))
+    assert captured["task_name"] == "dmf-l3-outcome"
+    assert captured["job_id"] == 42
+
+
+def test_fetch_l3_outcome_from_events_wrong_task_name_is_invisible(monkeypatch):
+    # THE anchor test (codex's own demand): an event carrying an
+    # IDENTICALLY-FORMATTED marker string, but on a DIFFERENTLY-named
+    # task, must never match — even though get_job_events_for_task
+    # already filters server-side, this proves the defense-in-depth
+    # per-event task check in _fetch_l3_outcome_from_events itself also
+    # holds, independent of trusting the upstream filter alone.
+    app = _fake_app_for_outcome()
+    monkeypatch.setattr(
+        main, "get_job_events_for_task",
+        lambda **k: [_outcome_event("DMF_L3_OUTCOME: rollback_complete", task="some-other-debug-task")],
+    )
+    tok, kv = asyncio.run(main._fetch_l3_outcome_from_events(app, 42))
+    assert tok is None
+    assert kv is None
+
+
+def test_fetch_l3_outcome_from_events_last_event_wins(monkeypatch):
+    app = _fake_app_for_outcome()
+    monkeypatch.setattr(
+        main, "get_job_events_for_task",
+        lambda **k: [
+            _outcome_event("DMF_L3_OUTCOME: no-fit", counter=1),
+            _outcome_event("DMF_L3_OUTCOME: rollback_incomplete", counter=2),
+        ],
+    )
+    tok, kv = asyncio.run(main._fetch_l3_outcome_from_events(app, 42))
+    assert tok == "rollback_incomplete"
+
+
+def test_fetch_l3_outcome_from_events_missing_event_data_shapes_are_none(monkeypatch):
+    app = _fake_app_for_outcome()
+    malformed = [
+        {"task": main._L3_OUTCOME_TASK_NAME},  # no event_data at all
+        {"task": main._L3_OUTCOME_TASK_NAME, "event_data": "not-a-dict"},
+        {"task": main._L3_OUTCOME_TASK_NAME, "event_data": {}},  # no res
+        {"task": main._L3_OUTCOME_TASK_NAME, "event_data": {"res": "not-a-dict"}},
+        {"task": main._L3_OUTCOME_TASK_NAME, "event_data": {"res": {}}},  # no msg
+        {"task": main._L3_OUTCOME_TASK_NAME, "event_data": {"res": {"msg": 12345}}},  # msg not a string
+        "not-a-dict-event-at-all",
+    ]
+    monkeypatch.setattr(main, "get_job_events_for_task", lambda **k: malformed)
+    tok, kv = asyncio.run(main._fetch_l3_outcome_from_events(app, 42))
+    assert tok is None
+    assert kv is None
+
+
+def test_fetch_l3_outcome_from_events_empty_events_list_is_none(monkeypatch):
+    app = _fake_app_for_outcome()
+    monkeypatch.setattr(main, "get_job_events_for_task", lambda **k: [])
+    tok, kv = asyncio.run(main._fetch_l3_outcome_from_events(app, 42))
+    assert tok is None
+    assert kv is None
+
+
+def test_fetch_l3_outcome_from_events_ignores_malformed_marker_strings(monkeypatch):
+    app = _fake_app_for_outcome()
+    events = [
+        _outcome_event("DMF_L3_OUTCOME rollback_incomplete", counter=1),  # missing colon
+        _outcome_event("  DMF_L3_OUTCOME: UPPER-not-allowed", counter=2),  # uppercase token
+        _outcome_event("not a marker line at all", counter=3),
+    ]
+    monkeypatch.setattr(main, "get_job_events_for_task", lambda **k: events)
+    tok, kv = asyncio.run(main._fetch_l3_outcome_from_events(app, 42))
+    assert tok is None
+    assert kv is None
+
+
+def test_fetch_l3_outcome_from_events_tolerates_fetch_failure(monkeypatch):
+    app = _fake_app_for_outcome()
+
+    def boom(**k):
+        raise TimeoutError("no events yet")
+
+    monkeypatch.setattr(main, "get_job_events_for_task", boom)
+    tok, kv = asyncio.run(main._fetch_l3_outcome_from_events(app, 42))
+    assert tok is None
+    assert kv is None
 
 
 # ---------------------------------------------------------------------------
@@ -1247,17 +1453,36 @@ def test_sanitize_kv_run_id_and_request_id_must_be_bare_hex32():
     assert main._sanitize_kv(f"run_id={'A' * 32}") is None  # uppercase not hex-lower
 
 
-def test_sanitize_kv_detail_key_is_dropped_entirely():
-    # codex R3-7: the prior draft's generic free-text "detail" key is GONE
-    # — there is no key that accepts arbitrary text anymore, regardless of
-    # how charset-clean the value looks.
+def test_sanitize_kv_detail_key_free_text_is_still_dropped_R3_7_posture_holds():
+    # R3b brought 'detail' back, but as a CLOSED ENUM (_KV_DETAIL_TOKENS)
+    # — the R3-7 posture against FREE TEXT still holds: a charset-clean
+    # value that isn't an exact enum member is dropped exactly like before.
     assert main._sanitize_kv("detail=some-safe-looking-text") is None
     assert main._sanitize_kv("detail=timeout") is None
 
 
+def test_sanitize_kv_detail_key_enum_values_survive():
+    # R3b (the cross-repo gap R3a's own report flagged), re-enumerated R5b
+    # (umbrella #202 WP3 R5b, codex round-4 P2-2) from the ACTUAL staged
+    # dmf-runbooks tree's own emitted detail= values — every launcher
+    # refusal-detail token must survive sanitization.
+    for token in main._KV_DETAIL_TOKENS:
+        assert main._sanitize_kv(f"detail={token}") == f"detail={token}"
+
+
+def test_sanitize_kv_snapshot_key_removed_R5b():
+    # R5b: the 'snapshot' kv key (and its own _KV_SNAPSHOT_TOKENS enum) is
+    # REMOVED entirely — no dmf-runbooks code path ever emitted it for
+    # real (only its own comments mentioned it) even before this cleanup.
+    # A snapshot= kv is now just a disallowed key, dropped like any other.
+    assert main._sanitize_kv("snapshot=skipped") is None
+    assert main._sanitize_kv("snapshot=captured") is None
+    assert main._sanitize_kv("snapshot=anything-else") is None
+
+
 def test_sanitize_kv_drops_disallowed_key():
-    # A key outside {surfaces,request_id,run_id} — the ORIGINAL WP2-B
-    # marker prose used "dirty_surfaces", which R2-9/R3-7 disallows.
+    # A key outside _KV_ALLOWED_KEYS — the ORIGINAL WP2-B marker prose used
+    # "dirty_surfaces", which R2-9/R3-7 disallows.
     assert main._sanitize_kv("dirty_surfaces=netbox,helm") is None
 
 
@@ -1265,6 +1490,12 @@ def test_sanitize_kv_keeps_allowed_tokens_and_drops_disallowed_ones_from_a_mixed
     hex32 = "b" * 32
     result = main._sanitize_kv(f"surfaces=netbox evil=`x` run_id={hex32} detail=timeout")
     assert result == f"surfaces=netbox run_id={hex32}"
+
+
+def test_sanitize_kv_mixed_line_with_a_valid_enum_detail_survives():
+    hex32 = "b" * 32
+    result = main._sanitize_kv(f"run_id={hex32} detail=lock-race evil=`x`")
+    assert result == f"run_id={hex32} detail=lock-race"
 
 
 def test_sanitize_kv_caps_total_length():
@@ -1285,89 +1516,6 @@ def test_sanitize_kv_none_and_empty_and_all_noise_return_none():
     assert main._sanitize_kv("badkey=value") is None
 
 
-def test_fetch_l3_outcome_last_matching_line_wins(monkeypatch):
-    # This IS the marker-is-the-final-line case (codex R3-7) — the LAST
-    # marker also happens to be the final non-empty line of the stdout,
-    # nothing follows it, so it parses.
-    app = _fake_app_for_outcome()
-    stdout = (
-        "DMF_L3_OUTCOME: no-fit\n"
-        "some progress\n"
-        "DMF_L3_OUTCOME: rollback_complete\n"
-    )
-    monkeypatch.setattr(main, "get_job_stdout", lambda **k: stdout)
-    tok, kv = asyncio.run(main._fetch_l3_outcome(app, 42))
-    assert tok == "rollback_complete"
-
-
-def test_fetch_l3_outcome_trailing_blank_lines_after_marker_still_parse(monkeypatch):
-    # codex R3-7: trailing BLANK lines (whitespace-only) after the marker
-    # don't count as "meaningful output" — the marker is still effectively
-    # the last word.
-    app = _fake_app_for_outcome()
-    stdout = "DMF_L3_OUTCOME: rollback_complete\n\n   \n"
-    monkeypatch.setattr(main, "get_job_stdout", lambda **k: stdout)
-    tok, kv = asyncio.run(main._fetch_l3_outcome(app, 42))
-    assert tok == "rollback_complete"
-
-
-def test_fetch_l3_outcome_marker_followed_by_more_output_is_ignored(monkeypatch):
-    # codex R3-7 TEST-CRITICAL: the marker must be the FINAL non-empty line
-    # of stdout — a play that logs a marker mid-run and then keeps going
-    # (a later cleanup step, an unrelated log line) must NOT have that
-    # earlier marker mistaken for the run's actual final word. This is
-    # stricter than "last MATCHING line wins" (the prior draft's rule,
-    # still true when nothing follows — see the sibling test above): here
-    # something DOES follow, so the marker doesn't count at all.
-    app = _fake_app_for_outcome()
-    stdout = (
-        "DMF_L3_OUTCOME: rollback_complete\n"
-        "cleaning up temp files...\n"
-    )
-    monkeypatch.setattr(main, "get_job_stdout", lambda **k: stdout)
-    tok, kv = asyncio.run(main._fetch_l3_outcome(app, 42))
-    assert tok is None
-    assert kv is None
-
-
-def test_fetch_l3_outcome_marker_followed_by_unrelated_log_line_is_ignored(monkeypatch):
-    # Same rule, a case closer to a real play: a facility-busy refusal
-    # logged, then a later unrelated PLAY RECAP line AWX itself appends.
-    app = _fake_app_for_outcome()
-    stdout = (
-        "DMF_L3_OUTCOME: facility-busy\n"
-        "PLAY RECAP *********************************************************\n"
-    )
-    monkeypatch.setattr(main, "get_job_stdout", lambda **k: stdout)
-    tok, kv = asyncio.run(main._fetch_l3_outcome(app, 42))
-    assert tok is None
-
-
-def test_fetch_l3_outcome_ignores_malformed_lines(monkeypatch):
-    app = _fake_app_for_outcome()
-    stdout = (
-        "DMF_L3_OUTCOME rollback_complete\n"  # missing colon -> no match
-        "  DMF_L3_OUTCOME: UPPER-not-allowed\n"  # uppercase -> token class rejects it
-        "not a marker line at all\n"
-    )
-    monkeypatch.setattr(main, "get_job_stdout", lambda **k: stdout)
-    tok, kv = asyncio.run(main._fetch_l3_outcome(app, 42))
-    assert tok is None
-    assert kv is None
-
-
-def test_fetch_l3_outcome_tolerates_stdout_fetch_failure(monkeypatch):
-    app = _fake_app_for_outcome()
-
-    def boom(**k):
-        raise TimeoutError("no stdout yet")
-
-    monkeypatch.setattr(main, "get_job_stdout", boom)
-    tok, kv = asyncio.run(main._fetch_l3_outcome(app, 42))
-    assert tok is None
-    assert kv is None
-
-
 # ---------------------------------------------------------------------------
 # main.py — watcher × rollback outcome mapping (§4.5 partial-failure posture)
 # ---------------------------------------------------------------------------
@@ -1377,7 +1525,7 @@ def test_watcher_rollback_complete_marker_is_run_complete(monkeypatch):
     app, ops_store = _fake_app()
     op = ops_store.create("rollback", "a" * 32)
     monkeypatch.setattr(main, "get_job", lambda **k: {"status": "successful", "started": "t0", "finished": "t1"})
-    monkeypatch.setattr(main, "get_job_stdout", lambda **k: "DMF_L3_OUTCOME: rollback_complete\n")
+    monkeypatch.setattr(main, "get_job_events_for_task", lambda **k: [_outcome_event("DMF_L3_OUTCOME: rollback_complete")])
     _run_watcher(app, op.operation_id, 111, "rollback", "a" * 32)
     updated = ops_store.get(op.operation_id)
     assert updated.state == OperationState.RUN_COMPLETE
@@ -1394,7 +1542,8 @@ def test_watcher_rollback_incomplete_marker_is_rollback_incomplete_even_when_job
     op = ops_store.create("rollback", "a" * 32)
     monkeypatch.setattr(main, "get_job", lambda **k: {"status": "successful", "started": "t0", "finished": "t1"})
     monkeypatch.setattr(
-        main, "get_job_stdout", lambda **k: "DMF_L3_OUTCOME: rollback_incomplete surfaces=netbox\n"
+        main, "get_job_events_for_task",
+        lambda **k: [_outcome_event("DMF_L3_OUTCOME: rollback_incomplete surfaces=netbox")],
     )
     _run_watcher(app, op.operation_id, 111, "rollback", "a" * 32)
     updated = ops_store.get(op.operation_id)
@@ -1411,7 +1560,7 @@ def test_watcher_rollback_no_marker_but_job_successful_is_rollback_incomplete(mo
     app, ops_store = _fake_app()
     op = ops_store.create("rollback", "a" * 32)
     monkeypatch.setattr(main, "get_job", lambda **k: {"status": "successful", "started": "t0", "finished": "t1"})
-    monkeypatch.setattr(main, "get_job_stdout", lambda **k: "no marker here\n")
+    monkeypatch.setattr(main, "get_job_events_for_task", lambda **k: [])
     _run_watcher(app, op.operation_id, 111, "rollback", "a" * 32)
     updated = ops_store.get(op.operation_id)
     assert updated.state == OperationState.ROLLBACK_INCOMPLETE
@@ -1423,7 +1572,7 @@ def test_watcher_rollback_no_marker_and_job_failed_is_rollback_incomplete(monkey
     app, ops_store = _fake_app()
     op = ops_store.create("rollback", "a" * 32)
     monkeypatch.setattr(main, "get_job", lambda **k: {"status": "failed", "started": "t0", "finished": "t1"})
-    monkeypatch.setattr(main, "get_job_stdout", lambda **k: "no marker here\n")
+    monkeypatch.setattr(main, "get_job_events_for_task", lambda **k: [])
     _run_watcher(app, op.operation_id, 111, "rollback", "a" * 32)
     updated = ops_store.get(op.operation_id)
     assert updated.state == OperationState.ROLLBACK_INCOMPLETE
@@ -1431,19 +1580,20 @@ def test_watcher_rollback_no_marker_and_job_failed_is_rollback_incomplete(monkey
     assert updated.l3_outcome is None
 
 
-def test_watcher_rollback_stdout_fetch_failure_is_rollback_incomplete(monkeypatch):
-    # codex R2-1's explicit "fetch failure" combination: _fetch_l3_outcome
-    # tolerates get_job_stdout raising and returns (None, None) — the
-    # watcher must treat that identically to "no marker found", never
-    # assume success just because the fetch itself broke.
+def test_watcher_rollback_events_fetch_failure_is_rollback_incomplete(monkeypatch):
+    # codex R2-1's explicit "fetch failure" combination:
+    # _fetch_l3_outcome_from_events tolerates get_job_events_for_task
+    # raising and returns (None, None) — the watcher must treat that
+    # identically to "no marker found", never assume success just because
+    # the fetch itself broke.
     app, ops_store = _fake_app()
     op = ops_store.create("rollback", "a" * 32)
     monkeypatch.setattr(main, "get_job", lambda **k: {"status": "successful", "started": "t0", "finished": "t1"})
 
     def boom(**k):
-        raise TimeoutError("stdout not ready")
+        raise TimeoutError("events not ready")
 
-    monkeypatch.setattr(main, "get_job_stdout", boom)
+    monkeypatch.setattr(main, "get_job_events_for_task", boom)
     _run_watcher(app, op.operation_id, 111, "rollback", "a" * 32)
     updated = ops_store.get(op.operation_id)
     assert updated.state == OperationState.ROLLBACK_INCOMPLETE
@@ -1457,7 +1607,7 @@ def test_watcher_rollback_failed_job_with_rollback_complete_marker_is_rollback_i
     app, ops_store = _fake_app()
     op = ops_store.create("rollback", "a" * 32)
     monkeypatch.setattr(main, "get_job", lambda **k: {"status": "failed", "started": "t0", "finished": "t1"})
-    monkeypatch.setattr(main, "get_job_stdout", lambda **k: "DMF_L3_OUTCOME: rollback_complete\n")
+    monkeypatch.setattr(main, "get_job_events_for_task", lambda **k: [_outcome_event("DMF_L3_OUTCOME: rollback_complete")])
     _run_watcher(app, op.operation_id, 111, "rollback", "a" * 32)
     updated = ops_store.get(op.operation_id)
     assert updated.state == OperationState.ROLLBACK_INCOMPLETE
@@ -1470,25 +1620,180 @@ def test_watcher_rollback_successful_job_with_refusal_token_is_rollback_incomple
     app, ops_store = _fake_app()
     op = ops_store.create("rollback", "a" * 32)
     monkeypatch.setattr(main, "get_job", lambda **k: {"status": "successful", "started": "t0", "finished": "t1"})
-    monkeypatch.setattr(main, "get_job_stdout", lambda **k: "DMF_L3_OUTCOME: facility-busy\n")
+    monkeypatch.setattr(main, "get_job_events_for_task", lambda **k: [_outcome_event("DMF_L3_OUTCOME: facility-busy")])
     _run_watcher(app, op.operation_id, 111, "rollback", "a" * 32)
     updated = ops_store.get(op.operation_id)
     assert updated.state == OperationState.ROLLBACK_INCOMPLETE
     assert updated.l3_outcome == "facility-busy"
 
 
+# ---------------------------------------------------------------------------
+# main.py — _await_event_ingestion_finished (§4.6 event-ingestion readiness,
+# umbrella #202 WP3 R3b, codex round-2 P2-1)
+# ---------------------------------------------------------------------------
+
+
+def test_watcher_deploy_pre_mutation_refusal_waits_for_lagging_event_ingestion(monkeypatch):
+    # codex's exact scenario: AWX's job STATUS goes terminal before its
+    # EVENT ingestion catches up — fetching the marker immediately (0
+    # extra polls) would see no events yet and misclassify a genuine
+    # PRE-MUTATION refusal as FAILED_ROLLBACK_REQUIRED, dispatching a
+    # pointless (no-snapshot) auto-rollback. This is deliberately wired so
+    # the event fetch's own return value is KEYED to how many get_job
+    # calls happened first — proving the wait loop's ORDERING is what
+    # makes this pass, not merely that a wait loop exists.
+    app, ops_store = _fake_app(auto_rollback=True)
+    op = ops_store.create("deploy", "key1", request_id="d" * 32)
+
+    state = {"get_job_calls": 0}
+    READY_AT_CALL = 3  # 1 initial terminal poll + 2 extra ingestion-wait polls
+
+    def fake_get_job(**k):
+        state["get_job_calls"] += 1
+        finished = state["get_job_calls"] >= READY_AT_CALL
+        return {"status": "failed", "started": "t0", "finished": "t1", "event_processing_finished": finished}
+
+    def fake_get_job_events_for_task(**k):
+        if state["get_job_calls"] < READY_AT_CALL:
+            # Ingestion lag simulated: the marker event hasn't landed yet.
+            return []
+        return [_outcome_event("DMF_L3_OUTCOME: no-fit")]
+
+    monkeypatch.setattr(main, "get_job", fake_get_job)
+    monkeypatch.setattr(main, "get_job_events_for_task", fake_get_job_events_for_task)
+
+    def boom(*a, **k):
+        raise AssertionError("auto-trigger must not run for a pre-mutation refusal token")
+
+    monkeypatch.setattr(main, "_maybe_auto_trigger_rollback", boom)
+    _run_watcher(app, op.operation_id, 111, "deploy", "key1")
+    updated = ops_store.get(op.operation_id)
+    assert updated.state == OperationState.RUN_FAILED
+    assert updated.l3_outcome == "no-fit"
+    assert updated.auto_rollback is None
+    assert state["get_job_calls"] == READY_AT_CALL  # waited exactly as long as needed, no more
+
+
+def test_watcher_transient_get_job_failure_during_ingestion_wait_continues_polling(monkeypatch):
+    # umbrella #202 WP3 R4b (codex round-3 P2-3): a transient get_job
+    # exception during the ingestion-ready wait must NOT end the wait
+    # early — the R3b draft returned immediately on ANY exception, which
+    # can recreate the exact lagging-event misclassification this whole
+    # wait exists to prevent. get_job RAISES on calls 2 and 3 (2
+    # CONSECUTIVE transient failures, under the 3-consecutive give-up
+    # threshold mirrored from the outer watcher's own idiom), then
+    # SUCCEEDS with event_processing_finished on call 4 (1 initial
+    # terminal poll + 3 extra polls: 2 raises, then success). Wired the
+    # same way as the sibling lagging-ingestion test above: the events
+    # fetch's own return value is KEYED to the exact call count, so this
+    # only passes if the wait genuinely reaches call 4, not merely that a
+    # wait loop exists.
+    app, ops_store = _fake_app(auto_rollback=True)
+    op = ops_store.create("deploy", "key1", request_id="d" * 32)
+
+    state = {"get_job_calls": 0}
+    READY_AT_CALL = 4  # 1 initial terminal poll + 3 extra polls (2 transient raises, then success)
+
+    def fake_get_job(**k):
+        state["get_job_calls"] += 1
+        call = state["get_job_calls"]
+        if call in (2, 3):
+            raise RuntimeError("transient AWX hiccup")
+        finished = call >= READY_AT_CALL
+        return {"status": "failed", "started": "t0", "finished": "t1", "event_processing_finished": finished}
+
+    def fake_get_job_events_for_task(**k):
+        if state["get_job_calls"] < READY_AT_CALL:
+            # Ingestion lag simulated: the marker event hasn't landed yet.
+            return []
+        return [_outcome_event("DMF_L3_OUTCOME: no-fit")]
+
+    monkeypatch.setattr(main, "get_job", fake_get_job)
+    monkeypatch.setattr(main, "get_job_events_for_task", fake_get_job_events_for_task)
+
+    def boom(*a, **k):
+        raise AssertionError("auto-trigger must not run for a pre-mutation refusal token")
+
+    monkeypatch.setattr(main, "_maybe_auto_trigger_rollback", boom)
+    _run_watcher(app, op.operation_id, 111, "deploy", "key1")
+    updated = ops_store.get(op.operation_id)
+    assert updated.state == OperationState.RUN_FAILED
+    assert updated.l3_outcome == "no-fit"
+    assert updated.auto_rollback is None
+    # Reached call 4 despite 2 consecutive transient get_job failures along
+    # the way — proving the wait survived them rather than bailing on the
+    # first one (the R3b draft's exact bug).
+    assert state["get_job_calls"] == READY_AT_CALL
+
+
+def test_watcher_event_ingestion_never_finishing_uses_bounded_final_fetch(monkeypatch):
+    # Ingestion that never catches up must not hang the watcher forever —
+    # after _L3_EVENT_INGESTION_MAX_EXTRA_POLLS extra polls, the caller
+    # proceeds with its own single fetch and classifies whatever exists
+    # (here: nothing, so the existing no-marker fallback applies).
+    app, ops_store = _fake_app()
+    op = ops_store.create("rollback", "a" * 32)
+
+    get_job_calls = {"n": 0}
+
+    def fake_get_job(**k):
+        get_job_calls["n"] += 1
+        return {"status": "successful", "started": "t0", "finished": "t1", "event_processing_finished": False}
+
+    events_calls = {"n": 0}
+
+    def fake_get_job_events_for_task(**k):
+        events_calls["n"] += 1
+        return []  # ingestion never catches up — never any events
+
+    monkeypatch.setattr(main, "get_job", fake_get_job)
+    monkeypatch.setattr(main, "get_job_events_for_task", fake_get_job_events_for_task)
+    _run_watcher(app, op.operation_id, 111, "rollback", "a" * 32)
+    updated = ops_store.get(op.operation_id)
+    assert updated.state == OperationState.ROLLBACK_INCOMPLETE
+    assert updated.error == "rollback-outcome-unverified"
+    # 1 initial terminal poll + exactly _L3_EVENT_INGESTION_MAX_EXTRA_POLLS
+    # extra polls, never more (bounded, not infinite).
+    assert get_job_calls["n"] == 1 + main._L3_EVENT_INGESTION_MAX_EXTRA_POLLS
+    assert events_calls["n"] == 1  # exactly one fetch, after the bound
+
+
+def test_watcher_event_ingestion_already_finished_skips_the_wait_entirely(monkeypatch):
+    app, ops_store = _fake_app()
+    op = ops_store.create("rollback", "a" * 32)
+
+    get_job_calls = {"n": 0}
+
+    def fake_get_job(**k):
+        get_job_calls["n"] += 1
+        return {"status": "successful", "started": "t0", "finished": "t1", "event_processing_finished": True}
+
+    monkeypatch.setattr(main, "get_job", fake_get_job)
+    monkeypatch.setattr(main, "get_job_events_for_task", lambda **k: [_outcome_event("DMF_L3_OUTCOME: rollback_complete")])
+    _run_watcher(app, op.operation_id, 111, "rollback", "a" * 32)
+    updated = ops_store.get(op.operation_id)
+    assert updated.state == OperationState.RUN_COMPLETE
+    assert get_job_calls["n"] == 1  # no extra polls at all — already finished
+
+
 @pytest.mark.parametrize(
-    "token", ["facility-busy", "no-fit", "missing-budget", "no-snapshot", "stale-snapshot"],
+    "token",
+    [
+        "facility-busy", "lock-unavailable", "preflight-error",
+        "no-fit", "missing-budget", "no-snapshot", "stale-snapshot",
+    ],
 )
 def test_watcher_deploy_pre_mutation_token_is_run_failed_no_auto_trigger(monkeypatch, token):
     # codex R2-3: a PRE-MUTATION token means the launcher refused BEFORE
     # mutating anything — "started" here just means the AWX job PROCESS
     # ran, not that the play got past its own preflight. Must never reach
-    # FAILED_ROLLBACK_REQUIRED or call the auto-trigger.
+    # FAILED_ROLLBACK_REQUIRED or call the auto-trigger. R2b extends this
+    # to the launcher's two new pre-lock/pre-mutation refusal tokens
+    # (preflight-error, lock-unavailable).
     app, ops_store = _fake_app(auto_rollback=True)
     op = ops_store.create("deploy", "key1", request_id="d" * 32)
     monkeypatch.setattr(main, "get_job", lambda **k: {"status": "failed", "started": "t0", "finished": "t1"})
-    monkeypatch.setattr(main, "get_job_stdout", lambda **k: f"DMF_L3_OUTCOME: {token}\n")
+    monkeypatch.setattr(main, "get_job_events_for_task", lambda **k: [_outcome_event(f"DMF_L3_OUTCOME: {token}")])
 
     def boom(*a, **k):
         raise AssertionError("auto-trigger must not run for a pre-mutation refusal token")
@@ -1500,6 +1805,32 @@ def test_watcher_deploy_pre_mutation_token_is_run_failed_no_auto_trigger(monkeyp
     assert updated.l3_outcome == token
     assert updated.auto_rollback is None
     assert "job-failed" in updated.error
+
+
+def test_watcher_deploy_post_mutation_failed_token_is_dirty_terminal_auto_trigger_proceeds(monkeypatch):
+    # R2b: post-mutation-failed (launcher R2a's launch_rescue.yml) is
+    # DELIBERATELY NOT in _PRE_MUTATION_TOKENS — a rescue-path failure
+    # AFTER the run's own provision stage began mutating something is a
+    # genuine started-then-failed deploy, so it must reach
+    # FAILED_ROLLBACK_REQUIRED and the auto-trigger must be CALLED (not
+    # asserted-never-called, the opposite of the pre-mutation test above).
+    app, ops_store = _fake_app(auto_rollback=True)
+    op = ops_store.create("deploy", "key1", request_id="d" * 32)
+    ops_store.update(op.operation_id, run_id="d" * 32)  # codex R3-3: auto-trigger keys off run_id
+    monkeypatch.setattr(main, "get_job", lambda **k: {"status": "failed", "started": "t0", "finished": "t1"})
+    monkeypatch.setattr(main, "get_job_events_for_task", lambda **k: [_outcome_event("DMF_L3_OUTCOME: post-mutation-failed")])
+
+    trigger_calls = []
+
+    async def fake_trigger(*a, **k):
+        trigger_calls.append(1)
+
+    monkeypatch.setattr(main, "_maybe_auto_trigger_rollback", fake_trigger)
+    _run_watcher(app, op.operation_id, 111, "deploy", "key1")
+    updated = ops_store.get(op.operation_id)
+    assert updated.state == OperationState.FAILED_ROLLBACK_REQUIRED
+    assert updated.l3_outcome == "post-mutation-failed"
+    assert len(trigger_calls) == 1  # auto-trigger DID run, unlike the pre-mutation tokens
 
 
 def test_watcher_deploy_failure_outcome_kv_is_appended_to_error(monkeypatch):
@@ -1516,7 +1847,8 @@ def test_watcher_deploy_failure_outcome_kv_is_appended_to_error(monkeypatch):
     ops_store.update(op.operation_id, run_id="d" * 32)  # codex R3-3: auto-trigger keys off run_id
     monkeypatch.setattr(main, "get_job", lambda **k: {"status": "failed", "started": "t0", "finished": "t1"})
     monkeypatch.setattr(
-        main, "get_job_stdout", lambda **k: "DMF_L3_OUTCOME: unexpected-runtime-error surfaces=netbox\n"
+        main, "get_job_events_for_task",
+        lambda **k: [_outcome_event("DMF_L3_OUTCOME: unexpected-runtime-error surfaces=netbox")],
     )
     _run_watcher(app, op.operation_id, 111, "deploy", "key1")
     updated = ops_store.get(op.operation_id)
