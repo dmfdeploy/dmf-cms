@@ -1,49 +1,90 @@
 """dmf-cms backend (FastAPI) — the DMF Console.
 
-## L3 outcome marker contract (umbrella #202 WP2 §4.6)
+## L3 outcome marker contract (umbrella #202 WP2 §4.6, transport revised WP3 R2b)
 
 A launcher play that wants to hand the console a structured run outcome
-writes, as the LAST LINE of its stdout (nothing meaningful after it):
+runs a SINGLE, dedicated task literally named ``dmf-l3-outcome``
+(``ansible.builtin.debug``) whose message is:
 
     DMF_L3_OUTCOME: <token> [<space-separated key=value detail>]
 
-``<token>`` is one of: ``facility-busy``, ``no-snapshot``, ``stale-snapshot``,
-``rollback_complete``, ``rollback_incomplete``, ``no-fit``, ``missing-budget``
-— or any other token matching ``[a-z0-9_-]+``; unknown tokens are stored
-verbatim on the operation's ``l3_outcome`` field, forward-compatible with
-launcher changes that ship ahead of the console's token list (never refuse
-to record an outcome just because the console doesn't recognize it yet).
-The optional detail after the token is a space-separated ``key=value`` list;
-see ``_sanitize_kv`` — only ``surfaces`` (comma-joined subset of
-``netbox``/``helm``/``monitoring``), ``request_id``, and ``run_id`` (both:
-bare 32-char lowercase hex) survive into the operation's ``error`` field,
-each with its OWN strict per-key value rule — there is NO generic free-text
-key (codex R3-7 killed a prior draft's ``detail`` key entirely: no dots,
-colons, or slashes may ever ride into a public API response this way).
-codex R3-7: the marker line must be the FINAL non-empty line of stdout —
-"nothing meaningful after it" above is load-bearing, not decorative. A
-marker followed by further output (progress logging that continues past
-it, a later unrelated line) is IGNORED entirely, not treated as a stale-
-but-valid prior marker — only "the true last word on this run" counts.
-Only the last 64KiB of stdout is fetched/scanned, via a streamed, bounded
-read that never materializes the full body (``_request_text``'s tail
-window, codex R2-9/R3-6) — the marker is always the final line, so this is
-sufficient. See ``_fetch_l3_outcome``.
+R2b (codex round-1 P1-2 disposition): the marker is fetched via AWX JOB
+EVENTS, anchored by that task NAME — ``GET
+/api/v2/jobs/{id}/job_events/?task=dmf-l3-outcome`` — never by scraping
+job stdout. This replaces the WP3-D stdout-tail amendment entirely: a
+stdout-based contract (even "last matching line in the tail") is still
+bound to TEXT position, which is fundamentally unreliable once a real
+ansible job is involved (ansible's own PLAY RECAP epilogue, and any other
+task's own debug/log output, all land in the same undifferentiated
+stream). Anchoring to a specific, dedicated task's NAME is STRUCTURAL, not
+textual — an identically-formatted marker STRING emitted by some other,
+differently-named task must NOT be picked up (see
+``_fetch_l3_outcome_from_events``'s own docstring and the test suite's
+wrong-task-name anchor case). The marker is still provenance (§3.1), never
+authority — the console uses it for classification/surfacing only, the
+job's own AWX status remains authoritative for pass/fail.
 
-``facility-busy``, ``no-fit``, ``missing-budget``, ``no-snapshot``, and
-``stale-snapshot`` are PRE-MUTATION tokens (``_PRE_MUTATION_TOKENS``,
-codex R2-3): the launcher refused before mutating anything, so a
-started-then-failed deploy carrying one of these never triggers
-FAILED_ROLLBACK_REQUIRED/auto-rollback — see ``_watch_job_operation``.
+``<token>`` is one of: ``facility-busy``, ``lock-unavailable``,
+``preflight-error``, ``no-snapshot``, ``stale-snapshot``,
+``rollback_incomplete``, ``no-fit``, ``missing-budget``,
+``post-mutation-failed`` — or any other token matching ``[a-z0-9_-]+``;
+unknown tokens are stored verbatim on the operation's ``l3_outcome`` field,
+forward-compatible with launcher changes that ship ahead of the console's
+token list (never refuse to record an outcome just because the console
+doesn't recognize it yet). ``rollback_complete`` is a KNOWN token in this
+list's history but is structurally UNREACHABLE from the WP3 launcher tier
+(umbrella #202 R2a-7 — monitoring drain is unverifiable from that EE, so
+every WP3 rollback reports ``rollback_incomplete``); WP4's console-side
+verification is the only tier that can ever emit it. The optional detail
+after the token is a space-separated ``key=value`` list; see
+``_sanitize_kv`` — only ``surfaces`` (comma-joined subset of
+``netbox``/``helm``/``monitoring``), ``request_id``/``run_id`` (both: bare
+32-char lowercase hex), and ``detail`` (R3b, widened R5b — a CLOSED ENUM,
+``_KV_DETAIL_TOKENS`` — of the launcher's own refusal-reason strings)
+survive into the operation's ``error`` field, each with its OWN strict
+per-key value rule — there is still NO generic FREE-TEXT key (codex R3-7
+killed a prior draft's free-text ``detail`` key: no dots, colons, or
+slashes may ever ride into a public API response this way; R3b's
+``detail`` is enum-constrained, a different thing entirely — see
+``_KV_DETAIL_TOKENS``, not a relaxation of the R3-7 posture).
+
+R5b (umbrella #202 WP3 R5b, codex round-4 P2-2): the ``snapshot`` kv key
+(and its own closed enum, formerly ``_KV_SNAPSHOT_TOKENS = {"skipped"}``)
+is REMOVED entirely, not merely emptied. It existed for exactly one
+signal — the direct-path lock-unavailable-override's advertised
+``snapshot=skipped`` marker — which R4a (codex round-3 P1-9) confirmed had
+NEVER actually shipped as a real emission anywhere in dmf-runbooks (only
+mentioned in that repo's own comments) before removing the lockless
+override path itself entirely; there is now no code path in dmf-runbooks
+that could ever emit a ``snapshot=`` kv, and there never genuinely was.
+Keeping a permanently-unmatchable enum/key around invites exactly the
+kind of "the docs describe a feature that doesn't exist" drift this whole
+contract exists to prevent — deleted outright rather than left as dead,
+misleading machinery.
+
+``facility-busy``, ``lock-unavailable``, ``preflight-error``, ``no-fit``,
+``missing-budget``, ``no-snapshot``, and ``stale-snapshot`` are
+PRE-MUTATION tokens (``_PRE_MUTATION_TOKENS``, codex R2-3, extended R2b
+for the two launcher-side R2a additions): the launcher refused before
+mutating anything, so a started-then-failed deploy carrying one of these
+never triggers FAILED_ROLLBACK_REQUIRED/auto-rollback — see
+``_watch_job_operation``. ``post-mutation-failed`` (launcher R2a's
+launch_rescue.yml) is DELIBERATELY NOT a pre-mutation token — it fires
+only from a rescue path AFTER the run's own provision stage began
+mutating something, so a deploy carrying it correctly DOES auto-trigger
+rollback, unlike the pre-mutation refusals above it.
 
 A rollback op's own pass/fail is marker-authoritative, never a bare AWX
 job-status read (codex R2-1, "never false-green"): RUN_COMPLETE requires
-BOTH a successful job status AND an exact ``rollback_complete`` marker.
-Every other combination — job failed, marker missing, marker says
-``rollback_incomplete``, marker is some other token, or the stdout fetch
-itself failed — lands on ``OperationState.ROLLBACK_INCOMPLETE``, a DIRTY
-terminal state that keeps blocking new dispatches elsewhere on the
-facility (``_facility_busy_check``) until an operator/retry resolves it.
+BOTH a successful job status AND an exact ``rollback_complete`` marker —
+which, per the structural-unreachability note above, means a WP3 rollback
+can never itself produce RUN_COMPLETE this way (expected; WP4 is the tier
+that eventually will). Every other combination — job failed, marker
+missing, marker says ``rollback_incomplete``, marker is some other token,
+or the job-events fetch itself failed — lands on
+``OperationState.ROLLBACK_INCOMPLETE``, a DIRTY terminal state that keeps
+blocking new dispatches elsewhere on the facility
+(``_facility_busy_check``) until an operator/retry resolves it.
 """
 
 from __future__ import annotations
@@ -75,7 +116,7 @@ from .authentik import (
     list_groups,
     list_users,
 )
-from .awx import AWXAPIError, AWXAutoscaleError, AWXJobInfo, list_job_templates, launch_job, get_job, get_job_status, get_job_stdout, wait_for_job, lookup_job_template_by_name, list_recent_jobs, find_active_job_for_template, ensure_awx_awake, call_with_transient_retry
+from .awx import AWXAPIError, AWXAutoscaleError, AWXJobInfo, list_job_templates, launch_job, get_job, get_job_status, get_job_events_for_task, wait_for_job, lookup_job_template_by_name, list_recent_jobs, find_active_job_for_template, ensure_awx_awake, call_with_transient_retry
 from .catalog import CatalogEntry, load_catalog_entries, get_lifecycle_status
 from .contracts import AppContract, load_app_contract
 from .operations import Operation, OperationStore, OperationState, terminal_states, DIRTY_STATES
@@ -859,54 +900,96 @@ async def _run_launch_operation(app: FastAPI, operation_id: str, workflow_name: 
 _TERMINAL_JOB_STATUSES = {"successful", "failed", "canceled", "error"}
 
 # See the module docstring's "L3 outcome marker contract" (umbrella #202
-# WP2 §4.6) for the full shape this parses.
+# WP2 §4.6, transport revised WP3 R2b) for the full shape this parses.
 _L3_OUTCOME_RE = re.compile(r"^DMF_L3_OUTCOME: (?P<token>[a-z0-9_-]+)(?: (?P<kv>.*))?$")
+
+# R2b: the dedicated ansible.builtin.debug task name every DMF_L3_OUTCOME
+# emission routes through (roles/l3_run_guard/tasks/_emit_outcome.yml in
+# dmf-runbooks) — the job-events fetch is anchored to THIS exact name, not
+# just the marker string's own shape, so an identically-formatted string
+# emitted by some other, differently-named task is structurally invisible
+# to this contract (the provenance binding codex demanded).
+_L3_OUTCOME_TASK_NAME = "dmf-l3-outcome"
 
 # codex R2-3: tokens meaning the launcher refused BEFORE mutating anything —
 # a started-then-failed DEPLOY carrying one of these is not dirty, it just
-# never got past its own preflight. See _watch_job_operation.
+# never got past its own preflight. See _watch_job_operation. R2b: extended
+# with the launcher's two new pre-lock/pre-mutation refusal tokens
+# (preflight-error, lock-unavailable) — post-mutation-failed is
+# DELIBERATELY excluded, see the module docstring.
 _PRE_MUTATION_TOKENS = frozenset({
-    "facility-busy", "no-fit", "missing-budget", "no-snapshot", "stale-snapshot",
+    "facility-busy", "lock-unavailable", "preflight-error",
+    "no-fit", "missing-budget", "no-snapshot", "stale-snapshot",
 })
 
 # codex R2-9/R3-7 §6 public-safety: the outcome marker's optional kv
-# detail is free text straight from a job's own stdout — only these
+# detail is untrusted text straight from a job's own stdout — only these
 # specific keys, each with its OWN strict per-key value rule (never a
 # shared generic charset — R3-7 killed the prior draft's broad
 # [A-Za-z0-9_.,:/-] pattern, which let dot/colon-shaped values through and
 # could leak an IP-shaped string). Everything else is silently dropped,
-# never partially-included. The generic "detail" free-text key from a
-# prior draft is GONE entirely — there is no free-text kv key at all now.
-_KV_ALLOWED_KEYS = frozenset({"surfaces", "request_id", "run_id"})
+# never partially-included. R3-7's original "detail" key was a FREE-TEXT
+# field (any charset-matching string) — that one is still gone entirely.
+# R3b (umbrella #202 WP3, codex round-2, the cross-repo gap R3a's own
+# report flagged) brought 'detail' back, but as a CLOSED ENUM, not free
+# text — the launcher's own refusal paths need SOME way to surface their
+# specific reason, and a frozen enum carries zero free-text risk (no
+# dots/colons/slashes can ever ride in this way — the R3-7 posture holds,
+# this is not a relaxation of it).
+#
+# R5b (umbrella #202 WP3 R5b, codex round-4 P2-2): _KV_DETAIL_TOKENS
+# re-enumerated from the ACTUAL staged dmf-runbooks tree (every literal
+# `detail=<x>` kv value grepped from roles/l3_run_guard/tasks/*.yml after
+# R5a), not carried forward from memory — R4 already found the enum had
+# silently drifted behind the runbooks' own emissions once (missing
+# snapshot-race/helm-values-fetch-failed/reserved-var-run-id); this is
+# the same drift class, now closed with tests/test_l3_token_registry.py's
+# own cross-repo-aware registry test rather than trusted to stay in sync
+# by hand a second time. The 'snapshot' kv key (and its own
+# _KV_SNAPSHOT_TOKENS enum) is REMOVED entirely — see the module
+# docstring's own R5b paragraph for why.
+_KV_ALLOWED_KEYS = frozenset({"surfaces", "request_id", "run_id", "detail"})
 _HEX32_RE = re.compile(r"^[0-9a-f]{32}$")
 _KV_SURFACES_ALLOWED = frozenset({"netbox", "helm", "monitoring"})
+_KV_DETAIL_TOKENS = frozenset({
+    "authority-constant-mismatch", "helm-values-fetch-failed", "lock-lost",
+    "lock-race", "lock-verify-failed", "reserved-var", "reserved-var-run-id",
+    "snapshot-collision", "snapshot-race", "snapshot-verify-failed",
+})
 _KV_MAX_LEN = 500
 
 
 def _kv_value_ok(key: str, value: str) -> bool:
-    """Per-key strict value validation (codex R3-7) — no shared charset."""
+    """Per-key strict value validation (codex R3-7, enum key added R3b,
+    re-enumerated R5b) — no shared charset; the enum key accepts ONLY its
+    frozen member set, never an arbitrary string."""
     if key in ("request_id", "run_id"):
         return bool(_HEX32_RE.fullmatch(value))
     if key == "surfaces":
         parts = value.split(",")
         return bool(parts) and all(p in _KV_SURFACES_ALLOWED for p in parts)
+    if key == "detail":
+        return value in _KV_DETAIL_TOKENS
     return False
 
 
 def _sanitize_kv(kv: str | None) -> str | None:
     """Allow-list the outcome marker's kv detail with PER-KEY strict value
-    rules (codex R2-9, tightened by R3-7).
+    rules (codex R2-9, tightened by R3-7, enum key added R3b,
+    re-enumerated R5b).
 
     ``kv`` is space-separated ``key=value`` tokens straight from a job's
     stdout — untrusted free text. Only tokens whose key is in
     ``_KV_ALLOWED_KEYS`` AND whose value passes that key's OWN validator
     (``_kv_value_ok`` — request_id/run_id must fullmatch a bare 32-char
     lowercase hex uuid; surfaces must be a comma-joined subset of
-    ``_KV_SURFACES_ALLOWED``) survive; a malformed token (no ``=``,
-    disallowed key, or a value that fails its key's rule) is dropped, not
-    partially kept or escaped. The reassembled result is capped at
-    ``_KV_MAX_LEN`` chars. Returns ``None`` if nothing survives (an absent
-    kv, or a kv that was entirely noise).
+    ``_KV_SURFACES_ALLOWED``; detail must be an exact member of its own
+    frozen enum, ``_KV_DETAIL_TOKENS``) survive; a malformed token (no
+    ``=``, disallowed key, or a value that fails its key's rule) is
+    dropped, not partially kept or escaped. The reassembled result is
+    capped at ``_KV_MAX_LEN`` chars. Returns
+    ``None`` if nothing survives (an absent kv, or a kv that was entirely
+    noise).
     """
     if not kv:
         return None
@@ -921,49 +1004,164 @@ def _sanitize_kv(kv: str | None) -> str | None:
     return " ".join(kept)[:_KV_MAX_LEN]
 
 
-async def _fetch_l3_outcome(app: FastAPI, job_id: int) -> tuple[str | None, str | None]:
-    """Fetch a job's stdout and parse the ``DMF_L3_OUTCOME`` marker line.
+async def _fetch_l3_outcome_from_events(app: FastAPI, job_id: int) -> tuple[str | None, str | None]:
+    """Fetch a job's ``dmf-l3-outcome`` task events and parse the marker.
 
-    See the module docstring for the full contract. Tolerates
-    ``get_job_stdout`` failure (network error, stdout not yet available,
-    the job template not writing a marker at all, ...): returns
-    ``(None, None)`` rather than raising — a missing outcome must never
-    crash the watcher; ``l3_outcome`` just stays unset and the AWX job
-    status remains the fallback source of truth.
+    R2b (codex round-1 P1-2): replaces the WP3-D stdout-tail approach
+    entirely — the marker is fetched via AWX job events, filtered to the
+    dedicated ``_L3_OUTCOME_TASK_NAME`` task, never by scanning stdout.
+    This binds the contract to STRUCTURE (a specific task's own events),
+    not TEXT POSITION — an identically-formatted ``DMF_L3_OUTCOME: ...``
+    string emitted by some OTHER, differently-named task's own debug
+    output is invisible here: both because ``get_job_events_for_task``
+    already asks AWX to filter server-side by task name, AND (defense in
+    depth) because this function separately re-checks each event's own
+    ``task`` field against ``_L3_OUTCOME_TASK_NAME`` before ever looking at
+    its ``msg`` — which a stdout-tail scan could never guarantee at all.
 
-    codex R3-7: the marker line must be the FINAL non-empty line of the
-    (64KiB-tail-bounded, per R2-9/R3-6) stdout — trailing blank lines are
-    ignored, but ANY other meaningful output after a marker line means the
-    marker is NOT the last word and is ignored entirely (returns
-    ``(None, None)``, not the stale/mid-stream value). This is stricter
-    than a prior draft's "last MATCHING line wins" — a play that logs a
-    marker mid-run and then keeps going (e.g. cleanup steps, a later
-    unrelated log line) must not have that earlier marker mistaken for the
-    final word on the run's outcome.
+    Tolerates ``get_job_events_for_task`` failure (network error, events
+    not yet available, the job template never running the named task at
+    all, ...): returns ``(None, None)`` rather than raising — a missing
+    outcome must never crash the watcher; ``l3_outcome`` just stays unset
+    and the AWX job status remains the fallback source of truth. Each
+    event's own shape is validated defensively (dict checks at every
+    level) since it's untrusted data straight from the AWX API — a
+    malformed/missing ``event_data``/``res``/``msg`` chain on any one
+    event also falls through to ``(None, None)`` for that event, never a
+    crash.
+
+    Multiple events for the task (should not normally happen — the
+    emitter task runs exactly once per play — but the wire contract
+    doesn't forbid a caller from including it more than once): the LAST
+    event (AWX's own ``order_by=counter`` ordering) wins, same "last one
+    wins" semantics as the old stdout-based contract had for multiple
+    marker lines.
 
     The returned kv (if any) has already been through ``_sanitize_kv`` —
     every caller gets the sanitized form for free, there is no raw-kv path.
     """
     settings = app.state.settings
     try:
-        stdout = await run_in_threadpool(
-            get_job_stdout,
+        events = await run_in_threadpool(
+            get_job_events_for_task,
             api_url=settings.awx.api_url,
             api_token=settings.awx.api_token,
             job_id=job_id,
+            task_name=_L3_OUTCOME_TASK_NAME,
             ssl_verify=settings.awx.ssl_verify,
         )
     except Exception:
         return None, None
 
-    non_empty_lines = [line.strip() for line in stdout.splitlines() if line.strip()]
-    if not non_empty_lines:
+    if not events:
         return None, None
-    m = _L3_OUTCOME_RE.match(non_empty_lines[-1])
-    if not m:
-        return None, None
-    token, kv = m.group("token"), m.group("kv")
-    return token, _sanitize_kv(kv)
+
+    for event in reversed(events):
+        if not isinstance(event, dict):
+            continue
+        # Defense in depth: even though get_job_events_for_task already
+        # asked AWX to filter server-side by task name, re-check each
+        # event's own ``task`` field here too — an identically-formatted
+        # DMF_L3_OUTCOME string on a DIFFERENTLY-named task's event must
+        # never match, regardless of how it ended up in this list (the
+        # provenance binding is "this exact task", not "any event whose
+        # msg happens to look right").
+        if event.get("task") != _L3_OUTCOME_TASK_NAME:
+            continue
+        event_data = event.get("event_data")
+        if not isinstance(event_data, dict):
+            continue
+        res = event_data.get("res")
+        if not isinstance(res, dict):
+            continue
+        msg = res.get("msg")
+        if not isinstance(msg, str):
+            continue
+        match = _L3_OUTCOME_RE.match(msg.strip())
+        if match:
+            token, kv = match.group("token"), match.group("kv")
+            return token, _sanitize_kv(kv)
+
+    return None, None
+
+
+# umbrella #202 WP3 R3b (codex round-2 P2-1): a bounded, settings-free cap
+# on the EXTRA polls _await_event_ingestion_finished waits for AWX's own
+# event_processing_finished flag. AWX's job-events ingestion can lag the
+# job's own terminal STATUS transition by a few seconds — job.status flips
+# to "successful"/"failed" before every job_event row has necessarily
+# landed. Never poll forever: a job whose ingestion never finishes (a
+# genuinely stuck/crashed AWX event processor) must not hang this
+# operation's terminal transition indefinitely.
+_L3_EVENT_INGESTION_MAX_EXTRA_POLLS = 6
+
+
+async def _await_event_ingestion_finished(app: FastAPI, job: dict, job_id: int, poll_interval: float) -> None:
+    """Poll ``get_job`` up to ``_L3_EVENT_INGESTION_MAX_EXTRA_POLLS`` extra
+    times, waiting for AWX's own ``event_processing_finished`` flag on the
+    job detail (umbrella #202 WP3 R3b, codex round-2 P2-1) before the
+    caller fetches the outcome marker.
+
+    Fetching the marker (``_fetch_l3_outcome_from_events``) immediately on
+    terminal STATUS risks a false "no marker" classification purely
+    because the marker's own event hasn't been ingested yet — which, for a
+    PRE-MUTATION refusal (a token in ``_PRE_MUTATION_TOKENS``), would
+    wrongly fall through to FAILED_ROLLBACK_REQUIRED and dispatch a
+    pointless (no-snapshot) auto-rollback — codex's exact scenario.
+
+    Bounded, never infinite: after the cap, the caller proceeds with its
+    OWN single ``_fetch_l3_outcome_from_events`` call and classifies
+    whatever it finds — exactly as if ingestion HAD finished (the marker
+    may simply not exist yet, which is treated identically to "no marker",
+    the existing, already-safe fallback). This function itself never
+    fetches the marker — it only waits, then returns.
+
+    umbrella #202 WP3 R4b (codex round-3 P2-3): a transient ``get_job``
+    exception mid-wait no longer ends the wait early. The R3b draft
+    ``return``ed immediately on ANY exception, treating it as equivalent to
+    "ingestion finished" — but that can recreate the EXACT lagging-event
+    misclassification this whole function exists to prevent: a single
+    transient hiccup on, say, poll 2 of 6 would abandon the wait right
+    there, the caller's own single marker fetch would then run against a
+    still-lagging AWX event pipeline, and a genuine pre-mutation refusal
+    would misclassify as FAILED_ROLLBACK_REQUIRED exactly as if this
+    function had never run at all. Fixed by mirroring the OUTER watcher
+    loop's own consecutive-failure idiom (see its own docstring/loop body,
+    3-consecutive-failures-gives-up, reset to 0 on any success): a
+    transient exception here now just costs one of the bounded
+    ``_L3_EVENT_INGESTION_MAX_EXTRA_POLLS`` iterations and the loop
+    continues — only 3 CONSECUTIVE exceptions (a real "AWX API looks down"
+    signal, not a single blip) ends the wait early. The outer bound
+    (``_L3_EVENT_INGESTION_MAX_EXTRA_POLLS`` total iterations) is untouched
+    either way — this can never poll longer than before, only more
+    resiliently within the same budget.
+    """
+    if not isinstance(job, dict) or job.get("event_processing_finished", False):
+        return
+    settings = app.state.settings
+    consecutive_failures = 0
+    for _ in range(_L3_EVENT_INGESTION_MAX_EXTRA_POLLS):
+        await asyncio.sleep(poll_interval)
+        try:
+            job = await run_in_threadpool(
+                get_job,
+                api_url=settings.awx.api_url,
+                api_token=settings.awx.api_token,
+                job_id=job_id,
+                ssl_verify=settings.awx.ssl_verify,
+            )
+        except Exception:
+            consecutive_failures += 1
+            logger.warning(
+                "event ingestion wait: get_job failed for job %s, attempt %d/3",
+                job_id, consecutive_failures,
+            )
+            if consecutive_failures >= 3:
+                return
+            continue
+        consecutive_failures = 0
+        if isinstance(job, dict) and job.get("event_processing_finished", False):
+            return
 
 
 def _append_kv(base: str, kv: str | None) -> str:
@@ -1194,7 +1392,9 @@ async def _watch_job_operation(app: FastAPI, operation_id: str, job_id: int, act
     ``_watch_lost_terminal_state``), not just read fresh at the terminal
     poll.
 
-    On a terminal job status (§4.6 outcome surfacing — ``_fetch_l3_outcome``
+    On a terminal job status (§4.6 outcome surfacing — R3b: first
+    ``_await_event_ingestion_finished`` waits, bounded, for AWX's own
+    event-ingestion lag to clear, then ``_fetch_l3_outcome_from_events``
     is called, and its token/detail stored on ``l3_outcome``/appended to
     ``error``, for any FAILED terminal on a watched deploy/teardown op, and
     for ANY terminal on a rollback op — BEFORE classifying the deploy case,
@@ -1317,7 +1517,8 @@ async def _watch_job_operation(app: FastAPI, operation_id: str, job_id: int, act
                 # refusal token changes that classification.
                 outcome_token = outcome_kv = None
                 if action == "rollback" or status != "successful":
-                    outcome_token, outcome_kv = await _fetch_l3_outcome(app, job_id)
+                    await _await_event_ingestion_finished(app, job, job_id, poll_interval)
+                    outcome_token, outcome_kv = await _fetch_l3_outcome_from_events(app, job_id)
 
                 if action == "rollback":
                     # codex R2-1: RUN_COMPLETE requires BOTH a successful

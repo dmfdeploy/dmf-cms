@@ -314,16 +314,21 @@ def get_job_stdout(
     job_id: int,
     ssl_verify: bool = True,
 ) -> str:
-    """Fetch a job's stdout as plain text (umbrella #202 WP2-B parses
-    rollback/outcome markers from this).
+    """Fetch a job's stdout as plain text.
+
+    umbrella #202 WP3 R2b: NO LONGER used to parse the outcome marker —
+    that moved to job events, anchored by task name
+    (``get_job_events_for_task`` + ``_fetch_l3_outcome_from_events`` in
+    main.py). Kept as a standalone, still-bounded utility for a possible
+    future report-display use (showing a job's raw log in the console UI),
+    not currently called by any outcome-classification path.
 
     Only the last ``_STDOUT_TAIL_BYTES`` (== ``_request_text``'s own
-    ``_TEXT_TAIL_BYTES``) ever reach the caller — the outcome marker is
-    always the LAST matching line, so the tail is sufficient, and callers
-    must never see (or forward into an API response) more of a job's raw
-    log than that fixed bound. codex R3-6: the bound is enforced by
-    ``_request_text`` streaming the read itself, not by slicing an
-    already-fully-fetched string here.
+    ``_TEXT_TAIL_BYTES``) ever reach the caller — callers must never see
+    (or forward into an API response) more of a job's raw log than that
+    fixed bound. codex R3-6: the bound is enforced by ``_request_text``
+    streaming the read itself, not by slicing an already-fully-fetched
+    string here.
     """
     ctx = _ssl_context(ssl_verify)
     return _request_text(
@@ -331,6 +336,58 @@ def get_job_stdout(
         f"/api/v2/jobs/{job_id}/stdout/?format=txt",
         ssl_context=ctx,
     )
+
+
+# Defensive hard cap on job_events pagination — a single named task should
+# never emit more than a handful of events in practice (the L3 launcher's
+# own dmf-l3-outcome task runs exactly once per play); this is a backstop
+# against a misbehaving/looping 'next' chain, not a real limit the wire
+# contract expects to hit.
+_JOB_EVENTS_MAX_PAGES = 10
+
+
+def get_job_events_for_task(
+    *,
+    api_url: str,
+    api_token: str,
+    job_id: int,
+    task_name: str,
+    ssl_verify: bool = True,
+) -> list[dict]:
+    """Fetch every job event for one specific task name (umbrella #202 WP3
+    R2b — the outcome marker transport moved OFF stdout onto AWX job
+    events, anchored to task name, per codex P1-2: stdout always ends
+    with ansible's own PLAY RECAP epilogue after the launcher's last debug
+    line, which made a stdout-tail contract unreliable; job events bound
+    to a specific, dedicated task NAME are structural, not textual).
+
+    GET /api/v2/jobs/{id}/job_events/?task=<task_name>&order_by=counter,
+    paginated via AWX's own ``next`` field — passed straight back into the
+    next request rather than reconstructed from a page number, since AWX's
+    filter/ordering query string rides along with it. Hard-capped at
+    ``_JOB_EVENTS_MAX_PAGES`` pages (defensive only — see the module-level
+    comment above).
+    """
+    ctx = _ssl_context(ssl_verify)
+    events: list[dict] = []
+    path = (
+        f"/api/v2/jobs/{job_id}/job_events/"
+        f"?task={urllib.parse.quote(task_name)}&order_by=counter"
+    )
+    for _ in range(_JOB_EVENTS_MAX_PAGES):
+        result = _request(api_url, api_token, "GET", path, ssl_context=ctx)
+        events.extend(result.get("results", []))
+        next_path = result.get("next")
+        if not next_path:
+            break
+        # AWX may return 'next' as either a bare path or a full URL
+        # depending on deployment config — normalize to path+query so
+        # _request's own api_url-prefixing never double-prepends the host.
+        if next_path.startswith("http://") or next_path.startswith("https://"):
+            parsed = urllib.parse.urlparse(next_path)
+            next_path = parsed.path + (("?" + parsed.query) if parsed.query else "")
+        path = next_path
+    return events
 
 
 def wait_for_job(

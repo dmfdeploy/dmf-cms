@@ -370,13 +370,24 @@ def test_rollback_sync_creates_a_tracked_operation(monkeypatch):
     monkeypatch.setattr(main, "find_active_job_for_template", lambda **k: None)
     monkeypatch.setattr(main, "launch_job", lambda **k: 4242)
     monkeypatch.setattr(
-        main, "get_job", lambda **k: {"status": "successful", "started": "t0", "finished": "t1"},
+        main, "get_job",
+        # R3b: event_processing_finished=True avoids the new bounded
+        # ingestion-readiness wait (_await_event_ingestion_finished) —
+        # this real TestClient/asyncio flow uses the REAL (10s default)
+        # job_poll_interval_seconds, not a test-only poll_interval=0, so
+        # an unset flag here would make the wait loop blow well past
+        # _wait_for's 5s timeout.
+        lambda **k: {"status": "successful", "started": "t0", "finished": "t1", "event_processing_finished": True},
     )
     # codex R2-1: a rollback op's outcome is ALWAYS marker-fetched
-    # (regardless of job status) — must mock get_job_stdout too, or the
+    # (regardless of job status) — must mock get_job_events_for_task too
+    # (WP3 R2b: job-events transport, anchored by task name), or the
     # (unmocked, real-network) fetch fails and the op fails closed to
     # ROLLBACK_INCOMPLETE instead of RUN_COMPLETE.
-    monkeypatch.setattr(main, "get_job_stdout", lambda **k: "DMF_L3_OUTCOME: rollback_complete\n")
+    monkeypatch.setattr(
+        main, "get_job_events_for_task",
+        lambda **k: [{"task": "dmf-l3-outcome", "event_data": {"res": {"msg": "DMF_L3_OUTCOME: rollback_complete"}}}],
+    )
 
     with TestClient(create_app(settings=_settings(OPERATOR))) as client:
         client.get("/auth/login", follow_redirects=False)
