@@ -142,14 +142,31 @@ class Operation:
     # identifies the ORIGINAL request that started this run). initiator is
     # the dispatching user's subject. l3_outcome is a parsed launcher-side
     # outcome token; WP2-A leaves it unset, WP2-B's marker-parsing fills it.
+    # codex round-2 R2b-2 (wording tightened by round-2 F4): WP4 adds
+    # exactly ONE console-originated exception, and it applies ONLY to the
+    # SINGLE rollback op whose own monitoring drain was directly verified
+    # — drain verification (main.py _mark_drain_verified) may finalize
+    # THAT op's stuck ``rollback_incomplete`` to ``rollback_complete``
+    # itself (the launcher's own EE can never emit that token for a
+    # monitoring-only surface — see main.py's L3 outcome marker
+    # docstring), always paired with the console-provenance
+    # ``detail=monitoring-drain-verified`` token in ``error``. A
+    # SUPERSEDED rollback attempt at the same run (an older
+    # ROLLBACK_INCOMPLETE op the verified one's facility-unblock also
+    # resolves) is NOT this exception — its l3_outcome and the rest of its
+    # error content stay exactly what the launcher last reported (its own
+    # AWX job/marker never changed); only its STATE moves to RUN_FAILED
+    # (a truthful non-dirty terminal — that attempt did not itself
+    # complete) with ``detail=superseded-by-verified-rollback`` appended.
+    # Every other write path keeps this the RAW, unmodified launcher token.
     request_id: str | None = None
     initiator: str | None = None
     l3_outcome: str | None = None
     # codex R2-3: auto-trigger status, kept SEPARATE from l3_outcome (which
-    # always keeps the raw launcher token, never overwritten). One of
-    # "triggered" | "disabled" | "already-in-progress" | "identity-unknown"
-    # | None (not yet evaluated, or this op never reached
-    # FAILED_ROLLBACK_REQUIRED/RUN_STATUS_UNKNOWN).
+    # otherwise always keeps the raw launcher token — see the WP4 console-
+    # provenance exception noted above). One of "triggered" | "disabled" |
+    # "already-in-progress" | "identity-unknown" | None (not yet evaluated,
+    # or this op never reached FAILED_ROLLBACK_REQUIRED/RUN_STATUS_UNKNOWN).
     auto_rollback: str | None = None
     # codex R3-3: this op's RUN identity — what a rollback command's own
     # run_id must equal to target THIS run. For a FRESH dispatch this is
@@ -417,8 +434,18 @@ class OperationStore:
                 FAILED_ROLLBACK_REQUIRED/ROLLBACK_INCOMPLETE/
                 RUN_STATUS_UNKNOWN)
             l3_outcome: Parsed launcher-side outcome token (#202 WP2-B).
-                Always the RAW token — never overwritten by auto-trigger
-                bookkeeping (codex R2-3; see ``auto_rollback``).
+                The RAW token — never overwritten by auto-trigger
+                bookkeeping (codex R2-3; see ``auto_rollback``) — with
+                exactly ONE console-originated exception, scoped to a
+                SINGLE op (codex round-2 R2b-2, tightened by F4): WP4 drain
+                verification may finalize the directly-verified rollback
+                op's own outcome to ``rollback_complete`` when its
+                ``rollback_incomplete`` marker is confirmed clean, paired
+                with ``detail=monitoring-drain-verified`` in ``error``. A
+                SUPERSEDED rollback op the same verification resolves for
+                facility purposes is NEVER this exception — its
+                l3_outcome is left exactly as the launcher last reported
+                it (see ``Operation.l3_outcome``'s own comment).
             auto_rollback: Auto-trigger status, kept separate from
                 l3_outcome (codex R2-3)
             run_id: This op's run identity (codex R3-3) — set once, at

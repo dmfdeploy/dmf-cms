@@ -210,6 +210,20 @@ class PrometheusSettings:
 
 
 @dataclass(frozen=True)
+class PromSDSettings:
+    """umbrella #202 WP4: the NetBox-driven PromSD read seam used to verify
+    monitoring drain after a rollback (mirrors PrometheusSettings exactly).
+    Unconfigured means drain is unverifiable — pending forever, never an
+    upgrade (see drain.py's fail-closed boundary)."""
+
+    url: str = ""
+
+    @property
+    def configured(self) -> bool:
+        return bool(self.url)
+
+
+@dataclass(frozen=True)
 class MediaTenancySettings:
     """Tenancy posture for the Media Workloads surface (ADR-0037).
 
@@ -287,6 +301,15 @@ class L3Settings:
       for a human to act on. Strict tri-state, fail-safe-ON like
       ``enabled`` — a typo here must never silently turn auto-rollback off
       the way the generic ``_env_bool`` would.
+
+    umbrella #202 WP4 additions — monitoring drain verification:
+
+    * ``drain_poll_interval_seconds``/``drain_timeout_seconds`` — the
+      bounded poll a rollback that lands on ``rollback_incomplete
+      surfaces=monitoring`` enters (drain.py + main.py's
+      ``_verify_drain_and_finalize``). Default window (180s) is ~2x the
+      ~75s reconcile lag (45s PromSD TTL + 30s Prometheus refresh).
+      Positive-validated like the EE floors.
     """
 
     enabled: bool = True
@@ -295,6 +318,8 @@ class L3Settings:
     job_poll_interval_seconds: int = 10
     rollback_jt_name: str = "media-rollback-run"
     auto_rollback: bool = True
+    drain_poll_interval_seconds: int = 10
+    drain_timeout_seconds: int = 180
 
 
 @dataclass(frozen=True)
@@ -407,6 +432,7 @@ class Settings:
     awx_autoscale: AWXAutoscaleSettings = field(default_factory=AWXAutoscaleSettings)
     netbox: NetboxSettings = field(default_factory=NetboxSettings)
     prometheus: PrometheusSettings = field(default_factory=PrometheusSettings)
+    promsd: PromSDSettings = field(default_factory=PromSDSettings)
     l3: L3Settings = field(default_factory=L3Settings)
     forgejo: ForgejoSettings = field(default_factory=ForgejoSettings)
     mxl: MXLSettings = field(default_factory=MXLSettings)
@@ -485,6 +511,9 @@ def load_settings() -> Settings:
         prometheus=PrometheusSettings(
             url=os.getenv("DMF_CONSOLE_PROMETHEUS_URL", ""),
         ),
+        promsd=PromSDSettings(
+            url=os.getenv("DMF_CONSOLE_PROMSD_URL", ""),
+        ),
         l3=L3Settings(
             enabled=_env_l3_enabled("DMF_CONSOLE_L3_ENABLED", True),
             ee_floor_cpu_millicores=_env_positive_int("DMF_CONSOLE_L3_EE_FLOOR_CPU_MILLICORES", 250),
@@ -492,6 +521,8 @@ def load_settings() -> Settings:
             job_poll_interval_seconds=_env_positive_int("DMF_CONSOLE_L3_JOB_POLL_INTERVAL_SECONDS", 10),
             rollback_jt_name=os.getenv("DMF_CONSOLE_L3_ROLLBACK_JT_NAME", "media-rollback-run"),
             auto_rollback=_env_strict_bool_fail_safe_on("DMF_CONSOLE_L3_AUTO_ROLLBACK", True),
+            drain_poll_interval_seconds=_env_positive_int("DMF_CONSOLE_L3_DRAIN_POLL_INTERVAL_SECONDS", 10),
+            drain_timeout_seconds=_env_positive_int("DMF_CONSOLE_L3_DRAIN_TIMEOUT_SECONDS", 180),
         ),
         forgejo=ForgejoSettings(
             api_url=os.getenv("DMF_CONSOLE_FORGEJO_API_URL", ""),

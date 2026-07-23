@@ -81,13 +81,21 @@ netbox:
 prometheus:
   url: "http://prometheus-server.monitoring.svc.cluster.local/prometheus"
 
+# PromSD read seam (umbrella dmfdeploy/dmfdeploy#202 WP4) — used only to
+# verify monitoring drain after a rollback (drain.py). Unconfigured means
+# drain is unverifiable, never an upgrade — see settings.py PromSDSettings.
+promsd:
+  url: "http://dmf-promsd.monitoring.svc.cluster.local:8000"
+
 # L3 console capacity preflight + run-tracking substrate (umbrella
 # dmfdeploy/dmfdeploy#202 WP1/WP2). enabled is THE kill switch (fail-open
 # when false); with it true but prometheus.url unset the handler fails
 # CLOSED (409 budget-unavailable), not silently skipped — see settings.py
 # L3Settings for the full posture. jobPollIntervalSeconds/rollbackJtName/
 # autoRollback are WP2's job-watcher + rollback-command config; autoRollback
-# is a fail-safe-ON switch like enabled.
+# is a fail-safe-ON switch like enabled. drainPollIntervalSeconds/
+# drainTimeoutSeconds are WP4's monitoring-drain-verification poll (default
+# 180s window ≈ 2x the ~75s PromSD+Prometheus reconcile lag).
 l3:
   enabled: true
   eeFloorCpuMillicores: 250
@@ -95,6 +103,8 @@ l3:
   jobPollIntervalSeconds: 10
   rollbackJtName: "media-rollback-run"
   autoRollback: true
+  drainPollIntervalSeconds: 10
+  drainTimeoutSeconds: 180
 
 # Media Workloads page (dmfdeploy/dmfdeploy#173): fail-closed — the page stays
 # dark unless tenancy is "single" or "scoped" (scoped additionally needs the
