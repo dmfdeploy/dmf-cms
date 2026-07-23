@@ -120,7 +120,7 @@ from .awx import AWXAPIError, AWXAutoscaleError, AWXJobInfo, list_job_templates,
 from .catalog import CatalogEntry, load_catalog_entries, get_lifecycle_status
 from .contracts import AppContract, load_app_contract
 from .operations import Operation, OperationStore, OperationState, terminal_states, DIRTY_STATES
-from . import netbox, prometheus, forgejo, mxl, media_workloads, capacity
+from . import netbox, prometheus, promsd, forgejo, mxl, media_workloads, capacity, drain
 from starlette.concurrency import run_in_threadpool
 import asyncio
 from .security import (
@@ -1334,6 +1334,206 @@ def _spawn_job_watcher(app: FastAPI, operation_id: str, job_id: int, action: str
     task.add_done_callback(app.state.operation_tasks.discard)
 
 
+def _spawn_drain_verification(app: FastAPI, operation_id: str, run_id: str) -> None:
+    """Spawn the WP4 monitoring-drain verification poll (umbrella #202 WP4)
+    as a background task — same registration pattern as
+    ``_spawn_job_watcher`` (app.state.operation_tasks + self-discard)."""
+    task = asyncio.create_task(_verify_drain_and_finalize(app, operation_id, run_id))
+    app.state.operation_tasks.add(task)
+    task.add_done_callback(app.state.operation_tasks.discard)
+
+
+async def _prepare_drain_verification(app: FastAPI, run_id: str) -> list[drain.DrainTarget] | None:
+    """D2: recover the run's catalog key (F6-hardened: ALL deploy ops
+    carrying this run_id must agree on one target), load its CatalogEntry,
+    and resolve the expected drain set. ``None`` means unrecoverable —
+    identity is gone/ambiguous, or the drain-target NetBox read failed
+    (drain.resolve_drain_targets is itself fail-closed). codex round-1 F8:
+    the NetBox read is blocking urllib I/O — run off the event loop, same
+    as the watcher's own AWX polling.
+    """
+    settings = app.state.settings
+    ops_store = app.state.operations
+
+    deploy_ops = drain.find_deploy_ops_for_run(ops_store.list_all(), run_id)
+    if not deploy_ops:
+        return None
+    target = deploy_ops[0].target
+
+    entries = {e.key: e for e in load_catalog_entries()}
+    entry = entries.get(target)
+    if entry is None:
+        return None
+
+    return await run_in_threadpool(
+        drain.resolve_drain_targets,
+        entry,
+        netbox_url=settings.netbox.api_url,
+        netbox_token=settings.netbox.api_token,
+        ssl_verify=settings.netbox.ssl_verify,
+    )
+
+
+def _strip_detail_token(base: str, token: str) -> str:
+    """Remove a specific ``detail=<token>`` kv from an already-built error
+    string (codex round-1 F9) — so a final terminal update never leaves
+    contradictory detail tokens (e.g. both pending and verified) visible
+    on the operator surface after a late recheck."""
+    marker = f"detail={token}"
+    return " ".join(p for p in base.split() if p != marker)
+
+
+def _mark_drain_verified(ops_store: OperationStore, operation_id: str, run_id: str) -> bool:
+    """codex round-1 F1 (facility-coherence): a verified drain doesn't just
+    finalize the rollback op itself — ``_facility_busy_check`` also still
+    sees the run's own correlated ops as dirty, so without resolving THEM
+    too the facility would stay blocked until TTL GC even though the run's
+    rollback is now verified clean across all three surfaces.
+
+    codex round-2 F1: returns ``True`` iff ``operation_id`` was actually
+    finalized to RUN_COMPLETE, ``False`` if the finalize-time correlation
+    guard below refused instead. CALLERS MUST BRANCH ON THIS — logging or
+    auditing "drained"/success unconditionally after calling this function
+    false-greens the exact case the guard exists to catch (codex's own
+    endpoint repro: HTTP 200 ``drained: true`` with a body that still says
+    ``state=rollback_incomplete``).
+
+    TOCTOU guard (round-2 R2b-1): re-derives ``find_deploy_ops_for_run``
+    FRESH here, at finalization time — never trusts the resolution
+    ``_prepare_drain_verification`` made when the poll started. Correlation
+    can become ambiguous mid-poll (a disagreeing deploy op reattaches, or
+    the correlated op gets GC'd) between that earlier resolution and this
+    call. If it's ambiguous NOW, nothing upgrades — not even this rollback
+    op itself: a drain verified against a now-disputed identity is not a
+    verified rollback, fail-closed to pending instead.
+    """
+    all_ops = ops_store.list_all()
+    deploy_ops = drain.find_deploy_ops_for_run(all_ops, run_id)
+    if deploy_ops is None:
+        _mark_drain_pending(ops_store, operation_id, "correlation-changed-mid-poll")
+        return False
+
+    op = ops_store.get(operation_id)
+    base = op.error or "" if op is not None else ""
+    ops_store.update(
+        operation_id,
+        state=OperationState.RUN_COMPLETE,
+        l3_outcome="rollback_complete",
+        # F9: never show both pending and verified on the final surface.
+        error=_append_kv(_strip_detail_token(base, drain.DRAIN_PENDING_DETAIL), f"detail={drain.DRAIN_VERIFIED_DETAIL}"),
+    )
+
+    # F1(a): the run's own deploy op(s) — honest terminal. The DEPLOY
+    # itself still failed; only its rollback is now verified clean — never
+    # RUN_COMPLETE for a failed deploy.
+    for deploy_op in deploy_ops:
+        if deploy_op.state in (OperationState.FAILED_ROLLBACK_REQUIRED, OperationState.RUN_STATUS_UNKNOWN):
+            ops_store.update(
+                deploy_op.operation_id, state=OperationState.RUN_FAILED,
+                error=_append_kv(deploy_op.error or "", f"detail={drain.ROLLBACK_VERIFIED_DETAIL}"),
+            )
+
+    # F1(b): any OTHER rollback op at this same target still stuck
+    # ROLLBACK_INCOMPLETE (a superseded earlier attempt). codex round-2 F4
+    # (REVERSES round-1's directive): that attempt did NOT itself complete
+    # — rewriting its state to RUN_COMPLETE and overwriting its l3_outcome
+    # to rollback_complete falsifies whatever the launcher actually
+    # reported for it (e.g. a stale-snapshot refusal masquerading as
+    # success), while its own job_id/AWX result never changed. Truthful
+    # resolution: RUN_FAILED (a non-dirty terminal — still unblocks the
+    # facility) with l3_outcome and the rest of error's content LEFT
+    # UNTOUCHED; only the superseding detail is appended (still stripping
+    # any pending token first, per F9). The console-originated
+    # rollback_complete exception (operations.py) applies ONLY to the
+    # single op directly verified above, never to a superseded one.
+    for other in all_ops:
+        if (
+            other.operation_id != operation_id
+            and other.action == "rollback"
+            and other.target == run_id
+            and other.state == OperationState.ROLLBACK_INCOMPLETE
+        ):
+            ops_store.update(
+                other.operation_id, state=OperationState.RUN_FAILED,
+                error=_append_kv(
+                    _strip_detail_token(other.error or "", drain.DRAIN_PENDING_DETAIL),
+                    f"detail={drain.SUPERSEDED_BY_VERIFIED_ROLLBACK_DETAIL}",
+                ),
+            )
+
+    return True
+
+
+def _mark_drain_pending(ops_store: OperationStore, operation_id: str, cause: str) -> None:
+    op = ops_store.get(operation_id)
+    if op is None:
+        return
+    base = op.error or ""
+    if drain.DRAIN_PENDING_DETAIL not in base:
+        ops_store.update(operation_id, error=_append_kv(base, f"detail={drain.DRAIN_PENDING_DETAIL}"))
+    logger.info("drain: monitoring drain pending for operation %s — %s", operation_id, cause)
+
+
+def _find_rollback_op_for_run(ops_store: OperationStore, run_id: str) -> Operation | None:
+    """Most-recently-updated rollback op whose target == run_id, if any."""
+    candidates = [op for op in ops_store.list_all() if op.action == "rollback" and op.target == run_id]
+    if not candidates:
+        return None
+    return max(candidates, key=lambda o: o.updated_at)
+
+
+async def _verify_drain_and_finalize(app: FastAPI, operation_id: str, run_id: str) -> None:
+    """WP4 (umbrella #202): bounded poll verifying monitoring drain for an
+    eligible rollback (D1), then finalizes RUN_COMPLETE on drained (D6), or
+    leaves ROLLBACK_INCOMPLETE with a ``monitoring-drain-pending`` detail on
+    window-exhausted / unverifiable / any-crash (one token for all soft
+    causes; the cause is only logged). Entirely fail-closed — nothing in
+    this function may ever upgrade a dirty facility without a confirmed
+    drained check.
+    """
+    settings = app.state.settings
+    ops_store = app.state.operations
+    try:
+        drain_targets = await _prepare_drain_verification(app, run_id)
+        if drain_targets is None:
+            _mark_drain_pending(ops_store, operation_id, "drain-identity-unrecoverable")
+            return
+
+        deadline = datetime.now(timezone.utc) + timedelta(seconds=settings.l3.drain_timeout_seconds)
+        poll_interval = settings.l3.drain_poll_interval_seconds
+        while True:
+            if ops_store.get(operation_id) is None:
+                return  # op GC'd mid-poll — nothing left to finalize
+            # F8: three urllib seam reads with 30s timeouts each — off the
+            # event loop, same posture as the watcher's own AWX polling.
+            drained = await run_in_threadpool(
+                drain.check_drained, drain_targets,
+                promsd_url=settings.promsd.url, prometheus_url=settings.prometheus.url,
+            )
+            if drained:
+                # F1: branch on the return — a refusal (correlation changed
+                # mid-poll) already marked pending inside; logging
+                # "confirmed drained" here regardless would false-green it.
+                if _mark_drain_verified(ops_store, operation_id, run_id):
+                    logger.info(
+                        "drain: monitoring surface confirmed drained for operation %s (run %s)",
+                        operation_id, run_id,
+                    )
+                else:
+                    logger.info(
+                        "drain: correlation changed mid-poll for operation %s (run %s) — staying pending",
+                        operation_id, run_id,
+                    )
+                return
+            if datetime.now(timezone.utc) > deadline:
+                _mark_drain_pending(ops_store, operation_id, "window-exhausted")
+                return
+            await asyncio.sleep(poll_interval)
+    except Exception:
+        logger.exception("drain: unexpected crash verifying operation %s (run %s)", operation_id, run_id)
+        _mark_drain_pending(ops_store, operation_id, "drain-verify-crashed")
+
+
 def _watch_lost_terminal_state(action: str, seen_started: bool) -> OperationState:
     """Conservative give-up terminal state (codex R2-4, remapped by R3-2).
 
@@ -1536,11 +1736,26 @@ async def _watch_job_operation(app: FastAPI, operation_id: str, job_id: int, act
                             error="rollback-outcome-unverified", l3_outcome=outcome_token,
                         )
                     else:
+                        # WP4 (umbrella #202): classification is BYTE-FOR-
+                        # BYTE identical to pre-WP4 here — the eligible case
+                        # (D1: successful + rollback_incomplete +
+                        # surfaces=monitoring exactly) still lands on
+                        # ROLLBACK_INCOMPLETE with the same marker-derived
+                        # error, same as every other rollback_incomplete
+                        # case. WP4 only ADDS an async follow-up: a bounded
+                        # drain-verification poll that may later upgrade
+                        # this op to RUN_COMPLETE, or append a pending
+                        # detail if it can't confirm drain within the
+                        # window.
                         ops_store.update(
                             operation_id, state=OperationState.ROLLBACK_INCOMPLETE,
                             error=_append_kv(f"rollback-incomplete:{outcome_token}", outcome_kv),
                             l3_outcome=outcome_token,
                         )
+                        if drain.is_eligible_for_drain_verification(
+                            status=status, outcome_token=outcome_token, outcome_kv=outcome_kv,
+                        ):
+                            _spawn_drain_verification(app, operation_id, key)
                     return
 
                 if status == "successful":
@@ -4008,6 +4223,80 @@ def create_app(settings: Settings | None = None, contract: AppContract | None = 
         except AWXAPIError as exc:
             _audit_awx_write(request, user, action="rollback", target=run_id, request_id=request_id, reason=reason, outcome=f"awx-error:{exc.status}")
             return JSONResponse({"error": f"AWX API error: {exc.body}", "request_id": request_id}, status_code=exc.status)
+
+    @app.post("/api/runs/{run_id}/verify-drain")
+    async def api_run_verify_drain(request: Request, run_id: str):
+        """Re-run ONE monitoring-drain verification cycle (no long poll,
+        umbrella #202 WP4/D7) for a rollback op stuck at ROLLBACK_INCOMPLETE
+        + monitoring-drain-pending — covers "drained after the [180s]
+        window". Operator+ gated with the C5 quartet, mirroring
+        api_run_rollback's own posture (role, reason, request_id, audit).
+        """
+        user, err = _require_min_role(request, "operator")
+        if err is not None:
+            return err
+        assert user is not None
+        reason, rerr = await _require_reason(request)
+        if rerr is not None:
+            return rerr
+        assert reason is not None
+        request_id = uuid.uuid4().hex
+
+        if not _RUN_ID_RE.fullmatch(run_id):
+            _audit_awx_write(request, user, action="verify-drain", target=run_id, request_id=request_id, reason=reason, outcome="invalid-run-id")
+            return JSONResponse({"error": "invalid-run-id", "request_id": request_id}, status_code=400)
+
+        ops_store = getattr(request.app.state, "operations", None)
+        op = _find_rollback_op_for_run(ops_store, run_id) if ops_store is not None else None
+        if op is None:
+            _audit_awx_write(request, user, action="verify-drain", target=run_id, request_id=request_id, reason=reason, outcome="not-found")
+            return JSONResponse({"error": "not-found", "request_id": request_id}, status_code=404)
+
+        if op.state != OperationState.ROLLBACK_INCOMPLETE or not (op.error and drain.DRAIN_PENDING_DETAIL in op.error):
+            _audit_awx_write(request, user, action="verify-drain", target=run_id, request_id=request_id, reason=reason, outcome="not-eligible")
+            # op.to_dict() FIRST — it has its OWN "error"/"request_id" keys
+            # (the operation's stored fields); this endpoint's own
+            # error/request_id must win, not get silently clobbered by dict
+            # unpacking order.
+            return JSONResponse({**op.to_dict(), "error": "not-eligible", "request_id": request_id}, status_code=409)
+
+        drain_targets = await _prepare_drain_verification(request.app, run_id)
+        if drain_targets is None:
+            _mark_drain_pending(ops_store, op.operation_id, "drain-identity-unrecoverable")
+            _audit_awx_write(request, user, action="verify-drain", target=run_id, request_id=request_id, reason=reason, outcome="unrecoverable")
+            return JSONResponse({**ops_store.get(op.operation_id).to_dict(), "error": "unrecoverable", "request_id": request_id}, status_code=409)
+
+        # F8: same off-event-loop posture as the poll — two more 30s-
+        # timeout urllib seam reads (promsd + prometheus).
+        drained = await run_in_threadpool(
+            drain.check_drained, drain_targets,
+            promsd_url=settings.promsd.url, prometheus_url=settings.prometheus.url,
+        )
+        if not drained:
+            _audit_awx_write(request, user, action="verify-drain", target=run_id, request_id=request_id, reason=reason, outcome="not-drained")
+            return JSONResponse(
+                {**ops_store.get(op.operation_id).to_dict(), "drained": False, "request_id": request_id},
+                status_code=200,
+            )
+
+        # F1: branch on the finalize result — a refusal (correlation
+        # changed mid-poll, between _prepare_drain_verification and this
+        # check) must NEVER be reported as a success. Codex's own repro:
+        # HTTP 200 drained:true with a body that still says
+        # state=rollback_incomplete is exactly the contradiction this
+        # branch exists to prevent.
+        if not _mark_drain_verified(ops_store, op.operation_id, run_id):
+            _audit_awx_write(request, user, action="verify-drain", target=run_id, request_id=request_id, reason=reason, outcome="correlation-changed")
+            return JSONResponse(
+                {**ops_store.get(op.operation_id).to_dict(), "error": "correlation-changed-mid-poll", "drained": False, "request_id": request_id},
+                status_code=409,
+            )
+
+        _audit_awx_write(request, user, action="verify-drain", target=run_id, request_id=request_id, reason=reason, outcome="drained")
+        return JSONResponse(
+            {**ops_store.get(op.operation_id).to_dict(), "drained": True, "request_id": request_id},
+            status_code=200,
+        )
 
     @app.get("/api/catalog/{key}/status/{job_id}")
     async def api_catalog_job_status(request: Request, key: str, job_id: int):

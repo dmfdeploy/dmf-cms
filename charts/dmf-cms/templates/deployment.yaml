@@ -170,6 +170,10 @@ spec:
             - name: DMF_CONSOLE_PROMETHEUS_URL
               value: {{ .Values.prometheus.url | quote }}
             {{- end }}
+            {{- if .Values.promsd.url }}
+            - name: DMF_CONSOLE_PROMSD_URL
+              value: {{ .Values.promsd.url | quote }}
+            {{- end }}
             - name: DMF_CONSOLE_L3_ENABLED
               value: {{ .Values.l3.enabled | quote }}
             - name: DMF_CONSOLE_L3_EE_FLOOR_CPU_MILLICORES
@@ -182,6 +186,10 @@ spec:
               value: {{ .Values.l3.rollbackJtName | quote }}
             - name: DMF_CONSOLE_L3_AUTO_ROLLBACK
               value: {{ .Values.l3.autoRollback | quote }}
+            - name: DMF_CONSOLE_L3_DRAIN_POLL_INTERVAL_SECONDS
+              value: {{ .Values.l3.drainPollIntervalSeconds | quote }}
+            - name: DMF_CONSOLE_L3_DRAIN_TIMEOUT_SECONDS
+              value: {{ .Values.l3.drainTimeoutSeconds | quote }}
             {{- if .Values.media.tenancy }}
             - name: DMF_CONSOLE_MEDIA_TENANCY
               value: {{ .Values.media.tenancy | quote }}
