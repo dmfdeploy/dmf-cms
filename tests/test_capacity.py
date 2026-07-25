@@ -192,6 +192,37 @@ def test_read_entry_demand_malformed_resources_layer_is_invalid_budget_not_500()
 
 
 # ---------------------------------------------------------------------------
+# §8 capacity honesty — topology_source_count (umbrella #201 WP5)
+# ---------------------------------------------------------------------------
+
+
+def test_topology_source_count_none_is_one():
+    assert capacity.topology_source_count(None) == 1
+
+
+def test_topology_source_count_non_mapping_is_one():
+    assert capacity.topology_source_count("not-a-dict") == 1
+
+
+def test_topology_source_count_missing_sources_is_one():
+    assert capacity.topology_source_count({"schema_version": 1}) == 1
+
+
+def test_topology_source_count_empty_sources_is_one():
+    assert capacity.topology_source_count({"sources": []}) == 1
+
+
+def test_topology_source_count_non_list_sources_is_one():
+    assert capacity.topology_source_count({"sources": "not-a-list"}) == 1
+
+
+def test_topology_source_count_two_sources_is_two():
+    assert capacity.topology_source_count(
+        {"sources": [{"id": "source-a"}, {"id": "source-b"}]}
+    ) == 2
+
+
+# ---------------------------------------------------------------------------
 # EE reserve
 # ---------------------------------------------------------------------------
 

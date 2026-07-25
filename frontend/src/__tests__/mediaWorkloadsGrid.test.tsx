@@ -91,6 +91,10 @@ interface HarnessOpts {
   // per-instance status override; defaults to AVAILABLE_STATUS
   statusFor?: (instance: string) => Record<string, unknown>
   clearResult?: Record<string, unknown>
+  // umbrella #201 WP5 — undefined means "no topology" (the fetch catch-all's
+  // `{}` response), matching every non-viewer instance today.
+  topology?: Record<string, unknown>
+  switchResult?: Record<string, unknown>
 }
 
 function mkFetch(opts: HarnessOpts) {
@@ -116,6 +120,7 @@ function mkFetch(opts: HarnessOpts) {
   }
   const statusCalls: Record<string, number> = {}
   const clearCalls: Array<{ url: string; init?: RequestInit }> = []
+  const switchCalls: Array<{ url: string; init?: RequestInit }> = []
   // The legacy aggregate endpoint (MxlDetailPanel). After the R1 P1 fix nothing
   // should hit it unless the modal fallback is explicitly opened.
   const counters = { aggregateStatus: 0, aggregatePreview: 0 }
@@ -155,10 +160,33 @@ function mkFetch(opts: HarnessOpts) {
         },
       )
     }
+    if (url.match(/\/api\/media-workloads\/[^/]+\/topology$/)) {
+      return json(opts.topology ?? {})
+    }
+    if (url.match(/\/api\/media-workloads\/[^/]+\/switch-source$/)) {
+      switchCalls.push({ url, init })
+      return json(
+        opts.switchResult ?? {
+          command_id: 'cmd-1',
+          receiver_instance: 'mxl-a',
+          source_instance: 'source-b',
+          reason: 'go',
+          status: 'active',
+          previous_source: 'source-a',
+          error: null,
+          request_id: 'req-switch-1',
+          initiator: 'ops',
+          created_at: '2026-01-01T00:00:00Z',
+          updated_at: '2026-01-01T00:00:00Z',
+          actor: 'ops',
+          role: 'engineer',
+        },
+      )
+    }
     return json({})
   })
   vi.stubGlobal('fetch', fetchMock)
-  return { statusCalls, clearCalls, counters, fetchMock }
+  return { statusCalls, clearCalls, switchCalls, counters, fetchMock }
 }
 
 function renderPage() {
@@ -460,6 +488,129 @@ describe('clear-for-deployment from a tile (C5)', () => {
     // C5: the console-local Activity record landed, correlated by request_id.
     const records = useActivityStore.getState().records
     expect(records.some((r) => r.request_id === 'req-xyz')).toBe(true)
+  })
+})
+
+const TOPOLOGY_MXL_A = {
+  receiver_instance: 'mxl-a',
+  sources: [
+    { id: 'source-a', flow_id: '5fbec3b1-1b0f-417d-9059-8b94a47197ed', pattern: 'smpte' },
+    { id: 'source-b', flow_id: 'b0ae9cba-a989-4568-ac96-8bd19272c966', pattern: 'ball' },
+  ],
+  active_source: 'source-a',
+}
+
+describe('switch source from the live modal (umbrella #201 WP5)', () => {
+  it('renders no switch control when the instance carries no topology', async () => {
+    mkFetch({})
+    renderPage()
+    const tile = (await screen.findByText('MXL Video Test View')).closest('[role="button"]')!
+    fireEvent.click(tile)
+    const dialog = await screen.findByRole('dialog')
+    await screen.findByText('Node (NetBox)') // modal body has settled
+    expect(within(dialog).queryByRole('button', { name: 'Switch source' })).toBeNull()
+  })
+
+  it('lists the topology\'s OTHER sources only, and shows the current one before arming', async () => {
+    mkFetch({ topology: TOPOLOGY_MXL_A })
+    renderPage()
+    const tile = (await screen.findByText('MXL Video Test View')).closest('[role="button"]')!
+    fireEvent.click(tile)
+    const dialog = await screen.findByRole('dialog')
+
+    expect(await within(dialog).findByText('source-a')).toBeTruthy() // current active source shown
+
+    fireEvent.click(within(dialog).getByRole('button', { name: 'Switch source' }))
+    const select = within(dialog).getByRole('combobox') as HTMLSelectElement
+    const optionValues = Array.from(select.options).map((o) => o.value)
+    expect(optionValues).toContain('source-b')
+    expect(optionValues).not.toContain('source-a') // the active source is never a switch target
+  })
+
+  it('requires both a target source and a reason before Confirm switch is enabled, then POSTs and records to Activity', async () => {
+    const { switchCalls } = mkFetch({
+      topology: TOPOLOGY_MXL_A,
+      switchResult: {
+        command_id: 'cmd-9',
+        receiver_instance: 'mxl-a',
+        source_instance: 'source-b',
+        reason: 'operator requested',
+        status: 'active',
+        previous_source: 'source-a',
+        error: null,
+        request_id: 'req-switch-9',
+        initiator: 'ops',
+        created_at: '2026-01-01T00:00:00Z',
+        updated_at: '2026-01-01T00:00:00Z',
+        actor: 'ops',
+        role: 'engineer',
+      },
+    })
+    renderPage()
+    const tile = (await screen.findByText('MXL Video Test View')).closest('[role="button"]')!
+    fireEvent.click(tile)
+    const dialog = await screen.findByRole('dialog')
+
+    fireEvent.click(await within(dialog).findByRole('button', { name: 'Switch source' }))
+    const confirm = within(dialog).getByRole('button', { name: 'Confirm switch' }) as HTMLButtonElement
+    const select = within(dialog).getByRole('combobox') as HTMLSelectElement
+    const textbox = within(dialog).getByRole('textbox')
+
+    // Neither target nor reason set — disabled.
+    expect(confirm.disabled).toBe(true)
+    expect(switchCalls).toHaveLength(0)
+
+    fireEvent.change(textbox, { target: { value: 'operator requested' } })
+    expect(confirm.disabled).toBe(true) // reason alone is not enough — no target yet
+
+    fireEvent.change(select, { target: { value: 'source-b' } })
+    expect(confirm.disabled).toBe(false)
+
+    fireEvent.click(confirm)
+
+    await within(dialog).findByText(/Active source: source-b/)
+    expect(switchCalls).toHaveLength(1)
+    expect(JSON.parse(switchCalls[0].init?.body as string)).toEqual({
+      source_instance: 'source-b',
+      reason: 'operator requested',
+    })
+    const records = useActivityStore.getState().records
+    expect(records.some((r) => r.request_id === 'req-switch-9' && r.action === 'switch-source')).toBe(true)
+  })
+
+  it('surfaces failed_rollback_required honestly, never masked as success', async () => {
+    mkFetch({
+      topology: TOPOLOGY_MXL_A,
+      switchResult: {
+        command_id: 'cmd-2',
+        receiver_instance: 'mxl-a',
+        source_instance: 'source-b',
+        reason: 'go',
+        status: 'failed_rollback_required',
+        previous_source: 'source-a',
+        error: 'switch-job-failed',
+        request_id: 'req-switch-2',
+        initiator: 'ops',
+        created_at: '2026-01-01T00:00:00Z',
+        updated_at: '2026-01-01T00:00:00Z',
+        actor: 'ops',
+        role: 'engineer',
+      },
+    })
+    renderPage()
+    const tile = (await screen.findByText('MXL Video Test View')).closest('[role="button"]')!
+    fireEvent.click(tile)
+    const dialog = await screen.findByRole('dialog')
+
+    fireEvent.click(await within(dialog).findByRole('button', { name: 'Switch source' }))
+    fireEvent.change(within(dialog).getByRole('textbox'), { target: { value: 'go' } })
+    fireEvent.change(within(dialog).getByRole('combobox'), { target: { value: 'source-b' } })
+    fireEvent.click(within(dialog).getByRole('button', { name: 'Confirm switch' }))
+
+    await within(dialog).findByText(/Switch failed/)
+    expect(within(dialog).getByText(/switch-job-failed/)).toBeTruthy()
+    expect(within(dialog).getByText(/operator retry\/rollback required/)).toBeTruthy()
+    expect(within(dialog).queryByText(/Active source: source-b/)).toBeNull()
   })
 })
 
