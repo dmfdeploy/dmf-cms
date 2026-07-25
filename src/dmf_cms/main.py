@@ -120,6 +120,13 @@ from .awx import AWXAPIError, AWXAutoscaleError, AWXJobInfo, list_job_templates,
 from .catalog import CatalogEntry, load_catalog_entries, get_lifecycle_status, load_topology_instance, CATALOG_DIR
 from .contracts import AppContract, load_app_contract
 from .operations import Operation, OperationStore, OperationState, terminal_states, DIRTY_STATES
+from .switch_source import (
+    ReconnectViaAwxActuator,
+    SwitchCommandStore,
+    SwitchSourceError,
+    dispatch_switch_source,
+    resolve_topology_for_receiver,
+)
 from . import netbox, prometheus, promsd, forgejo, mxl, media_workloads, capacity, drain
 from starlette.concurrency import run_in_threadpool
 import asyncio
@@ -290,6 +297,33 @@ async def _require_reason(request: Request) -> tuple[str | None, JSONResponse | 
     return reason.strip(), None
 
 
+async def _require_source_instance(request: Request) -> tuple[str | None, JSONResponse | None]:
+    """Extract + validate the mandatory ``source_instance`` field from a
+    switch-source request body (umbrella #201 WP5, spec §7 body contract:
+    ``{"source_instance": "<source.id>", "reason": "<non-empty>"}``).
+
+    Same non-object-body-safe shape as ``_require_reason`` (a bare
+    list/string/number body is treated as missing, never an unhandled
+    AttributeError) — this is a request-SHAPE check only (is there a
+    non-empty string here at all); whether it actually names a real
+    ``sources[].id`` for this receiver is ``dispatch_switch_source``'s own
+    ``source-not-found`` check, deeper in the call.
+    """
+    try:
+        body = await request.json()
+    except Exception:
+        body = None
+    if not isinstance(body, dict):
+        body = None
+    source_instance = (body or {}).get("source_instance", "")
+    if not isinstance(source_instance, str) or not source_instance.strip():
+        return None, JSONResponse(
+            {"error": "source-instance-required", "detail": "a non-empty 'source_instance' field is mandatory"},
+            status_code=400,
+        )
+    return source_instance.strip(), None
+
+
 async def _extract_workload(request: Request, request_id: str) -> tuple[str | None, JSONResponse | None]:
     """Extract + validate the optional #239 ``workload`` slug from a request body.
 
@@ -446,6 +480,19 @@ async def _l3_preflight(
         return None, override_err
 
     demand, demand_reason = capacity.read_entry_demand(entry.provision)
+    if demand is not None and entry.topology_ref:
+        # umbrella #201 WP5, spec §8: a topology-carrying entry demands N
+        # copies of its declared per-source profile (N = len(sources[])) —
+        # supply/envelope math stays untouched, only this demand tuple
+        # scales. A malformed/unreadable topology instance degrades to the
+        # UNMULTIPLIED demand here — no duplicate validation/refusal;
+        # _resolve_topology_seam (which runs right after this gate passes)
+        # is the sole authority on topology validity and refuses before any
+        # AWX dispatch either way, so under-counting here costs nothing.
+        topology_params, _terr = load_topology_instance(CATALOG_DIR, entry.topology_ref)
+        multiplier = capacity.topology_source_count(topology_params)
+        if multiplier > 1:
+            demand = (demand[0] * multiplier, demand[1] * multiplier)
 
     if override:
         result = None
@@ -933,6 +980,9 @@ async def lifespan(app: FastAPI):
     _bootstrap_console_groups(app.state.settings)
     app.state.operations = OperationStore(ttl_seconds=3600)
     app.state.operation_tasks: set[asyncio.Task] = set()
+    # umbrella #201 WP5: a dedicated store, not folded into OperationStore —
+    # see switch_source.SwitchCommandStore's own docstring for why.
+    app.state.switch_commands = SwitchCommandStore(ttl_seconds=3600)
     yield
 
 
@@ -4726,6 +4776,126 @@ def create_app(settings: Settings | None = None, contract: AppContract | None = 
                 },
             }
         )
+
+    @app.get("/api/media-workloads/{instance}/topology")
+    async def api_media_workloads_topology(request: Request, instance: str):
+        """Expose a viewer instance's topology (sources[] + current
+        selection) so the console can present switch targets (umbrella
+        #201 WP5, spec §7: "presents the selectable sources (sources[]
+        from the topology set)").
+
+        Not itself in the spec's own WP5 endpoint list — a necessary read
+        seam the switch UI has no other way to get (no existing endpoint
+        exposes a catalog entry's topology_ref/topology_params at all).
+        Reuses ``resolve_topology_for_receiver`` verbatim (WP4) — the SAME
+        resolution ``dispatch_switch_source`` itself uses for the write, so
+        "what the UI shows" and "what the actuator receives" can never
+        drift apart. Same access gate as every other Media Workloads read
+        (``_require_media_workloads_access`` gates reads and the write
+        uniformly on this surface, not just the one write).
+        """
+        user, err = _require_media_workloads_access(request)
+        if err is not None:
+            return err
+        try:
+            topology_params = resolve_topology_for_receiver(receiver_instance=instance)
+        except SwitchSourceError as exc:
+            status_code = 404 if exc.code in ("receiver-not-found", "receiver-not-topology") else 422
+            return JSONResponse({"error": exc.code, "detail": exc.detail}, status_code=status_code)
+        return JSONResponse({
+            "receiver_instance": instance,
+            "sources": topology_params.get("sources", []),
+            "active_source": (topology_params.get("viewer") or {}).get("source_selection"),
+        })
+
+    @app.post("/api/media-workloads/{instance}/switch-source")
+    async def api_media_workloads_switch_source(request: Request, instance: str):
+        """Switch which topology source a viewer instance receives (umbrella
+        #201 WP5, spec §7).
+
+        The domain command, its status machine, and the coarse `reconnect`
+        actuator all live in ``switch_source.py`` (WP4) — this endpoint is the
+        thin console seam: gate, validate, dispatch, audit, respond. Reuses
+        the SAME access gate + C5 pattern as ``clear`` above (spec §7's own
+        explicit instruction: reuse the shipped pattern, do not invent a new
+        one) — NOT ``clear``'s NetBox-tenant-scoped lookup, since
+        ``dispatch_switch_source`` resolves ``instance`` from the git catalog
+        (same data source as deploy/teardown/launch, which are role-gated
+        only, no tenant scoping — the catalog has no tenant concept at all).
+        """
+        user, err = _require_media_workloads_access(request)
+        if err is not None:
+            return err
+        assert user is not None
+        # C5: reason before any actuator call (spec §7 step 2).
+        reason, rerr = await _require_reason(request)
+        if rerr is not None:
+            return rerr
+        assert reason is not None
+        request_id = uuid.uuid4().hex
+        source_instance, serr = await _require_source_instance(request)
+        if serr is not None:
+            _audit_awx_write(
+                request, user, action="switch-source", target=instance,
+                request_id=request_id, reason=reason, outcome="invalid-source-instance",
+            )
+            return serr
+        if not settings.awx.configured:
+            _audit_awx_write(
+                request, user, action="switch-source", target=instance,
+                request_id=request_id, reason=reason, workload=source_instance,
+                outcome="awx-not-configured",
+            )
+            return JSONResponse({"error": "AWX API not configured", "request_id": request_id}, status_code=503)
+
+        store: SwitchCommandStore = request.app.state.switch_commands
+        actuator = ReconnectViaAwxActuator(
+            awx_api_url=settings.awx.api_url,
+            awx_api_token=settings.awx.api_token,
+            awx_ssl_verify=settings.awx.ssl_verify,
+        )
+        try:
+            command = await dispatch_switch_source(
+                receiver_instance=instance,
+                source_instance=source_instance,
+                reason=reason,
+                store=store,
+                actuator=actuator,
+                request_id=request_id,
+                initiator=user.subject,
+            )
+        except SwitchSourceError as exc:
+            _audit_awx_write(
+                request, user, action="switch-source", target=instance,
+                request_id=request_id, reason=reason, workload=source_instance,
+                outcome=exc.code,
+            )
+            # receiver-not-found/receiver-not-topology: no such switchable
+            # resource here (404, same "no leak" vocabulary as clear's own
+            # not-found). topology-invalid/source-not-found: the resource
+            # exists but the request can't be fulfilled against its actual
+            # shape — 422, matching WP3a's own precedent for the identical
+            # underlying checks at the deploy seam (test_topology_seam.py).
+            status_code = 404 if exc.code in ("receiver-not-found", "receiver-not-topology") else 422
+            return JSONResponse({"error": exc.code, "detail": exc.detail, "request_id": request_id}, status_code=status_code)
+
+        # C5 quartet — audited on every outcome, including
+        # failed_rollback_required: a switch that failed is still a switch
+        # that was attempted (matches clear's own "log every outcome" shape).
+        _audit_awx_write(
+            request, user, action="switch-source", target=instance,
+            request_id=request_id, reason=reason, workload=source_instance,
+            outcome=command.status.value,
+        )
+
+        # Not an HTTP error for failed_rollback_required — dispatch_switch_source's
+        # own contract: an actuator-level failure is a normal (if unhappy)
+        # response, never raised (switch_source.py's own docstring).
+        payload = command.to_dict()
+        payload["request_id"] = request_id
+        payload["actor"] = user.subject
+        payload["role"] = user.role
+        return JSONResponse(payload)
 
     # ------------------------------------------------------------------
     # Media Workloads live view (WP-D / G26): per-instance MXL status +

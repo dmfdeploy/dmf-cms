@@ -1,5 +1,7 @@
 import { useEffect, useRef, useState } from 'react'
-import { useInstanceMxlStatus } from '../../api/hooks'
+import { useInstanceMxlStatus, useInstanceTopology, useSwitchSource } from '../../api/hooks'
+import { useActivityStore } from '../../store/activity'
+import ReasonConfirm from '../../components/ReasonConfirm'
 import type { MediaWorkloadInstance } from '../../api/types'
 import MxlDetailPanel from './MxlDetailPanel'
 import { MODAL_PREVIEW_TICK_MS, MODAL_STATUS_POLL_MS } from './liveView'
@@ -29,6 +31,112 @@ function Stat({ label, value }: { label: string; value: string }) {
     <div>
       <div className="text-xs uppercase tracking-wide text-muted">{label}</div>
       <div className="mt-0.5 font-mono text-sm text-text">{value}</div>
+    </div>
+  )
+}
+
+/**
+ * The coarse `reconnect` switch (umbrella #201 WP5, spec §6/§7): presents
+ * the topology's OTHER sources as targets, requires a reason (C5, mirrors
+ * ClearForDeployment's own graduated-friction pattern via the shared
+ * ReasonConfirm), and surfaces the actuator's outcome honestly —
+ * "Switching…" IS the live "reconnecting" status (the actuator's own
+ * contract is synchronous-await, not a separate poll), and
+ * failed_rollback_required is shown as a failure requiring operator
+ * retry/rollback, never masked as success.
+ *
+ * Renders nothing (not an error state) when the instance carries no
+ * topology at all — the common case for every non-viewer instance.
+ */
+function SwitchSourceControl({ instance }: { instance: string }) {
+  const topology = useInstanceTopology(instance)
+  const switchMutation = useSwitchSource()
+  const recordAwxWrite = useActivityStore((s) => s.recordAwxWrite)
+  const [arming, setArming] = useState(false)
+  const [target, setTarget] = useState('')
+
+  if (!topology.data || !Array.isArray(topology.data.sources)) return null
+
+  const { sources, active_source } = topology.data
+  const otherSources = sources.filter((s) => s.id !== active_source)
+  if (otherSources.length === 0) return null
+
+  const result = switchMutation.data
+
+  const submit = (reason: string) => {
+    if (!target) return
+    switchMutation.mutate(
+      { instance, sourceInstance: target, reason },
+      {
+        onSuccess: (res) => {
+          // C5: the console-local record also lands in Activity → History.
+          recordAwxWrite({
+            request_id: res.request_id,
+            action: 'switch-source',
+            target: instance,
+            reason: res.reason,
+            actor: res.actor,
+            role: res.role,
+            outcome: res.status,
+          })
+          setArming(false)
+          setTarget('')
+          topology.refetch()
+        },
+      },
+    )
+  }
+
+  return (
+    <div className="mt-4 border-t border-white/10 pt-4">
+      <div className="flex items-center justify-between gap-3">
+        <div className="text-xs uppercase tracking-wide text-muted">Source</div>
+        {!arming && (
+          <button
+            className="btn btn-secondary btn-sm"
+            onClick={() => {
+              switchMutation.reset()
+              setArming(true)
+            }}
+          >
+            Switch source
+          </button>
+        )}
+      </div>
+
+      {arming ? (
+        <div className="mt-2">
+          <ReasonConfirm
+            title="Switch active source"
+            description="Coarse reconfigure/reconnect actuator — not a live IS-05 switch. Re-points this viewer to a different source and is recorded in the audit trail with your reason."
+            confirmLabel="Confirm switch"
+            pendingLabel="Switching…"
+            pending={switchMutation.isPending}
+            error={switchMutation.isError ? switchMutation.error : undefined}
+            onConfirm={submit}
+            onCancel={() => {
+              setArming(false)
+              setTarget('')
+            }}
+            extraField={{
+              label: 'Target source',
+              placeholder: 'Select a source…',
+              value: target,
+              onChange: setTarget,
+              invalid: target === '',
+              options: otherSources.map((s) => ({ value: s.id, label: `${s.id} (${s.pattern})` })),
+            }}
+          />
+        </div>
+      ) : result ? (
+        <div className={`mt-1 text-xs ${result.status === 'active' ? 'text-green-400' : 'text-red-300'}`}>
+          {result.status === 'active'
+            ? `Active source: ${result.source_instance}`
+            : `Switch failed (${result.error ?? 'failed_rollback_required'}) — operator retry/rollback required.`}
+        </div>
+      ) : (
+        <div className="mt-0.5 font-mono text-sm text-text">{active_source ?? '—'}</div>
+      )}
     </div>
   )
 }
@@ -96,6 +204,8 @@ function LiveBody({ instance }: { instance: MediaWorkloadInstance }) {
         Preview + flow proxied live from the instance's MXL status sidecar;
         placement (node) is the NetBox source of truth. Updates ~5×/s while open.
       </p>
+
+      <SwitchSourceControl instance={instance.instance} />
     </div>
   )
 }
