@@ -3,8 +3,10 @@
 from __future__ import annotations
 
 import logging
+import os
 import ssl
 import urllib.parse
+import uuid
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Optional
@@ -40,6 +42,14 @@ class CatalogEntry:
     # own (e.g. nmos-crosspoint). Shape: {host: <fqdn>}. Surfaced as an "Open"
     # link on the card once the entry is lifecycle:active.
     ingress: Optional[dict[str, Any]] = None
+    # umbrella #201 WP3a: optional filename (same catalog dir) of a
+    # topology_params instance this entry deploys (dmf-media
+    # catalog/topology-params.schema.yaml, WP1). Absent = None = zero
+    # behavior change — the deploy launch seam only resolves/injects
+    # topology_params when this is set. The WP2 dmf-media entry-file edits
+    # that actually populate this field for real entries are out of scope
+    # here; this WO supports the mechanism.
+    topology_ref: Optional[str] = None
 
 
 def _validate_ebu(key: str, ebu: Any) -> bool:
@@ -98,6 +108,23 @@ def _validate_ebu(key: str, ebu: Any) -> bool:
     return True
 
 
+def _is_topology_contract_file(raw: dict[str, Any]) -> bool:
+    """True for topology_params schema/instance documents (umbrella #201 WP1).
+
+    These live in the same catalog/*.yaml glob as function entries but are
+    a different kind of document entirely — no ``key`` field, never a
+    function to load. Distinguished so ``_load_one_yaml`` can skip them
+    quietly (debug level) instead of the generic 'lacks key' warning, which
+    would otherwise fire on every catalog load for these expected,
+    legitimate files.
+    """
+    if "topology_params" in raw:  # an instance file, e.g. topology-params.j1.yaml
+        return True
+    if "schema_version" in raw and "fields" in raw:  # the schema file itself
+        return True
+    return False
+
+
 def _load_one_yaml(path: Path) -> Optional[CatalogEntry]:
     """Parse a single catalog YAML file into a CatalogEntry.
 
@@ -116,13 +143,20 @@ def _load_one_yaml(path: Path) -> Optional[CatalogEntry]:
 
     key = raw.get("key")
     if not key:
-        logger.warning("catalog: %s lacks 'key' — skipping", path)
+        if _is_topology_contract_file(raw):
+            logger.debug(
+                "catalog: %s is a topology_params contract/instance file, not a "
+                "function entry — skipping", path,
+            )
+        else:
+            logger.warning("catalog: %s lacks 'key' — skipping", path)
         return None
 
     ebu = raw.get("ebu")
     if not _validate_ebu(str(key), ebu):
         return None
 
+    topology_ref = raw.get("topology_ref")
     return CatalogEntry(
         key=str(key),
         display_name=str(raw.get("display_name", key)),
@@ -133,6 +167,7 @@ def _load_one_yaml(path: Path) -> Optional[CatalogEntry]:
         finalise=raw.get("finalise"),
         dependencies=raw.get("dependencies"),
         ingress=raw.get("ingress"),
+        topology_ref=str(topology_ref) if topology_ref else None,
     )
 
 
@@ -159,6 +194,135 @@ def load_catalog_entries(catalog_dir: str = CATALOG_DIR) -> list[CatalogEntry]:
             entries.append(entry)
 
     return entries
+
+
+def load_topology_instance(
+    catalog_dir: str, topology_ref: str
+) -> tuple[Optional[dict[str, Any]], Optional[str]]:
+    """Load + validate a topology_params instance referenced by ``topology_ref``.
+
+    umbrella #201 WP3a — the launch seam's other half of WP1's frozen
+    contract (dmf-media catalog/topology-params.schema.yaml). Fail-closed:
+    a malformed instance must never let a deploy launch with a partial or
+    wrong topology, so any validation failure returns ``(None, "reason")``
+    rather than a best-effort partial object. On success returns
+    ``(topology_params_dict, None)`` — the object as authored, with
+    ``target_facility`` still the catalog's illustrative placeholder; the
+    caller (the launch seam) is responsible for resolving it to the env's
+    real NetBox site slug before injecting into AWX extra_vars.
+
+    Enforces the full WP1 frozen contract (dmf-media
+    catalog/topology-params.schema.yaml): schema_version == 1; sources is a
+    non-empty list with unique ids, each entry has id/flow_id/pattern,
+    flow_id is a well-formed UUID and unique across sources[], pattern is
+    distinct across sources[]; viewer.source_selection references a real
+    sources[].id; target_facility is present. ``topology_ref`` itself must
+    be a plain basename within ``catalog_dir`` — no path separators, no
+    parent traversal, no absolute paths — refused before any file I/O
+    (defense-in-depth: also enforced by resolved-path containment below).
+    """
+    if (
+        os.path.isabs(topology_ref)
+        or os.sep in topology_ref
+        or (os.altsep and os.altsep in topology_ref)
+        or Path(topology_ref).name != topology_ref
+        or ".." in Path(topology_ref).parts
+    ):
+        return None, (
+            f"topology_ref {topology_ref!r} must be a plain filename within the "
+            "catalog directory — no path separators, parent traversal, or "
+            "absolute paths"
+        )
+
+    catalog_root = Path(catalog_dir).resolve()
+    path = (catalog_root / topology_ref).resolve()
+    if path.parent != catalog_root:
+        return None, f"topology_ref {topology_ref!r} resolves outside the catalog directory"
+
+    try:
+        raw = yaml.safe_load(path.read_text())
+    except FileNotFoundError:
+        return None, f"topology_ref '{topology_ref}' not found in catalog"
+    except Exception as exc:
+        return None, f"topology_ref '{topology_ref}' failed to parse: {exc}"
+
+    if not isinstance(raw, dict):
+        return None, f"topology_ref '{topology_ref}' did not yield a mapping"
+
+    tp = raw.get("topology_params")
+    if not isinstance(tp, dict):
+        return None, f"topology_ref '{topology_ref}' has no top-level topology_params object"
+
+    if tp.get("schema_version") != 1:
+        return None, (
+            f"topology_ref '{topology_ref}': schema_version must equal 1, "
+            f"got {tp.get('schema_version')!r}"
+        )
+
+    sources = tp.get("sources")
+    if not isinstance(sources, list) or not sources:
+        return None, f"topology_ref '{topology_ref}': sources must be a non-empty list"
+
+    ids: list[str] = []
+    parsed_flow_ids: list[uuid.UUID] = []
+    patterns: list[str] = []
+    for i, s in enumerate(sources):
+        if not isinstance(s, dict):
+            return None, f"topology_ref '{topology_ref}': sources[{i}] is not a mapping"
+        sid = s.get("id")
+        if not sid or not isinstance(sid, str):
+            return None, f"topology_ref '{topology_ref}': sources[{i}].id missing/invalid"
+        flow_id = s.get("flow_id")
+        if not flow_id or not isinstance(flow_id, str):
+            return None, f"topology_ref '{topology_ref}': sources[{i}].flow_id missing/invalid"
+        try:
+            parsed_flow_id = uuid.UUID(flow_id)
+        except ValueError:
+            return None, (
+                f"topology_ref '{topology_ref}': sources[{i}].flow_id "
+                f"{flow_id!r} is not a well-formed UUID"
+            )
+        pattern = s.get("pattern")
+        if not pattern or not isinstance(pattern, str):
+            return None, f"topology_ref '{topology_ref}': sources[{i}].pattern missing/invalid"
+        ids.append(sid)
+        # Uniqueness compares the PARSED uuid.UUID value, not the raw
+        # string (codex P1 re-gate): "5FBEC3B1-..." and "5fbec3b1-..." are
+        # the SAME flow identity in different case spellings — a
+        # string-set comparison would let both through. The authored
+        # string itself (flow_id, not parsed_flow_id) is what's stored
+        # below and returned unchanged in the object.
+        parsed_flow_ids.append(parsed_flow_id)
+        patterns.append(pattern)
+
+    if len(ids) != len(set(ids)):
+        return None, f"topology_ref '{topology_ref}': sources[].id values are not unique"
+    if len(parsed_flow_ids) != len(set(parsed_flow_ids)):
+        return None, f"topology_ref '{topology_ref}': sources[].flow_id values are not unique"
+    if len(patterns) != len(set(patterns)):
+        return None, (
+            f"topology_ref '{topology_ref}': sources[].pattern values are not "
+            "distinct — the switch must be visually unambiguous (spec §4)"
+        )
+
+    viewer = tp.get("viewer")
+    if not isinstance(viewer, dict):
+        return None, f"topology_ref '{topology_ref}': viewer must be a mapping"
+    if not viewer.get("id") or not isinstance(viewer.get("id"), str):
+        return None, f"topology_ref '{topology_ref}': viewer.id missing/invalid"
+    source_selection = viewer.get("source_selection")
+    if not source_selection or not isinstance(source_selection, str):
+        return None, f"topology_ref '{topology_ref}': viewer.source_selection missing/invalid"
+    if source_selection not in ids:
+        return None, (
+            f"topology_ref '{topology_ref}': viewer.source_selection "
+            f"{source_selection!r} does not reference a known sources[].id {ids}"
+        )
+
+    if not tp.get("target_facility") or not isinstance(tp.get("target_facility"), str):
+        return None, f"topology_ref '{topology_ref}': target_facility missing/invalid"
+
+    return tp, None
 
 
 def get_lifecycle_status(
