@@ -510,3 +510,72 @@ def test_threadpool_dispatch_on_override_path(monkeypatch, awx_spy):
     )
     assert resp.status_code == 200, resp.text
     assert set(dispatched) == {capacity.read_ee_reserve, capacity.read_node_supply}
+
+
+# ---------------------------------------------------------------------------
+# (g) §8 capacity honesty (umbrella #201 WP5) — a topology-carrying entry's
+# demand scales by len(sources[]); a non-topology entry is untouched.
+# ---------------------------------------------------------------------------
+
+TOPOLOGY_ENTRY = CatalogEntry(
+    key="mxl-videotestsrc",
+    display_name="MXL video test source",
+    summary="MXL video test source",
+    # 1200m alone fits _fit_supply()'s 2250m budget (2500m headroom - 250m EE
+    # reserve); 2 x 1200m = 2400m does not — the observable proof the demand
+    # actually scaled by source count, not a no-op.
+    provision={"resources": {"requests": {"cpu": "1200m", "memory": "320Mi"}}},
+    configure={"awx_job_template": "dmf-configure"},
+    finalise={"awx_job_template": "dmf-finalise"},
+    topology_ref="topology-params.j1.yaml",
+)
+
+_TWO_SOURCE_TOPOLOGY_PARAMS = {
+    "schema_version": 1,
+    "target_facility": "dmf-example-site",
+    "sources": [
+        {"id": "source-a", "flow_id": "5fbec3b1-1b0f-417d-9059-8b94a47197ed", "pattern": "smpte"},
+        {"id": "source-b", "flow_id": "b0ae9cba-a989-4568-ac96-8bd19272c966", "pattern": "ball"},
+    ],
+    "viewer": {"id": "viewer-a", "source_selection": "source-a"},
+}
+
+
+def test_topology_entry_demand_doubled_flips_fit_to_no_fit(monkeypatch, awx_spy, caplog):
+    monkeypatch.setattr(main, "load_catalog_entries", _entries(TOPOLOGY_ENTRY))
+    monkeypatch.setattr(
+        main, "load_topology_instance",
+        lambda catalog_dir, ref: (dict(_TWO_SOURCE_TOPOLOGY_PARAMS), None),
+    )
+    _mock_budget_io(monkeypatch, supply=_fit_supply())
+    client = _client()
+    with caplog.at_level(logging.INFO, logger="dmf_cms.main"):
+        resp = client.post("/api/catalog/mxl-videotestsrc/deploy", json={"reason": "x"})
+    assert resp.status_code == 409, resp.text
+    body = resp.json()
+    assert body["kind"] == "no-fit"
+    assert body["report"]["run_demand_cpu_m"] == 2400  # 1200 x 2 sources
+    assert awx_spy == []
+    assert any("outcome=capacity-denied" in m for m in _audit_lines(caplog))
+
+
+def test_no_topology_entry_demand_unmultiplied_byte_identical(monkeypatch, awx_spy):
+    # Same 1200m profile, no topology_ref: single (unmultiplied) demand
+    # fits, and load_topology_instance must never even be consulted —
+    # proves the §8 multiplier branch is a complete no-op for every entry
+    # without a topology (spec §8's own "no-topology entry byte-identical").
+    def boom(*a, **k):
+        raise AssertionError("load_topology_instance must not be called for a non-topology entry")
+
+    entry = CatalogEntry(
+        key="mxl-videotestsrc", display_name="x", summary="x",
+        provision={"resources": {"requests": {"cpu": "1200m", "memory": "320Mi"}}},
+        configure={"awx_job_template": "dmf-configure"},
+        finalise={"awx_job_template": "dmf-finalise"},
+    )
+    monkeypatch.setattr(main, "load_catalog_entries", _entries(entry))
+    monkeypatch.setattr(main, "load_topology_instance", boom)
+    _mock_budget_io(monkeypatch, supply=_fit_supply())
+    client = _client()
+    resp = client.post("/api/catalog/mxl-videotestsrc/deploy", json={"reason": "x"})
+    assert resp.status_code == 200, resp.text
