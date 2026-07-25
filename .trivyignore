@@ -1,0 +1,11 @@
+# GHSA-qwww-vcr4-c8h2 — "React Router: RSC Mode CSRF Bypass Allows Action
+# Execution Before 400 Response". Affects react-router >=7.12.0 <8.3.0; the
+# only fixed version is 8.3.0 (a major upgrade).
+# NOT APPLICABLE here: the console frontend is a client-only Vite SPA using
+# BrowserRouter/Routes (frontend/src/main.tsx, App.tsx). React Server
+# Components / RSC framework mode — the vulnerable surface (server-side
+# action execution) — is not used anywhere; the bundle is served as static
+# files by FastAPI with no react-router server runtime. Verified 2026-07-25
+# (grep: no react-router server imports, no "use server", no @react-router/*
+# framework packages). Revisit on any move to react-router v8 or RSC mode.
+GHSA-qwww-vcr4-c8h2
