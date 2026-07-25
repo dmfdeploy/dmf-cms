@@ -209,6 +209,28 @@ def read_entry_demand(entry_provision: dict | None) -> tuple[tuple[int, int] | N
     return (cpu_m, mem_b), None
 
 
+def topology_source_count(topology_params: dict | None) -> int:
+    """§8 capacity honesty (umbrella #201 WP5, `DMF v0.2b Multi-Source
+    Switch Spec 2026-07-15.md` §8): the demand-side multiplier for a
+    topology-carrying entry — it demands ``len(sources[])`` copies of its
+    declared per-source profile ("2 x mxl-videotestsrc" for the J1 2-source
+    shape), not one. Supply/envelope math is untouched; only the caller's
+    own per-source demand tuple gets scaled by this count.
+
+    Defaults to 1 (no multiplication) for ``None``/non-mapping input or a
+    missing/empty/malformed ``sources`` list — the caller's own topology
+    load is the authority on whether the instance is actually VALID
+    (``load_topology_instance``/``_resolve_topology_seam``); this is purely
+    "how many, if any", never a second validation pass.
+    """
+    if not isinstance(topology_params, dict):
+        return 1
+    sources = topology_params.get("sources")
+    if not isinstance(sources, list) or not sources:
+        return 1
+    return len(sources)
+
+
 # ---------------------------------------------------------------------------
 # EE reserve — §3.2(b), plan OQ1
 # ---------------------------------------------------------------------------

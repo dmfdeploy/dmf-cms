@@ -15,6 +15,8 @@ function actionTitle(action: ConsoleActionType, target: string): string {
       return `Tore down ${target}`
     case 'launch':
       return `Launched ${target}`
+    case 'switch-source':
+      return `Switched source on ${target}`
   }
 }
 

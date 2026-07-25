@@ -325,23 +325,47 @@ def load_topology_instance(
     return tp, None
 
 
-def get_lifecycle_status(
-    entry: CatalogEntry,
-    netbox_url: str,
-    netbox_token: str,
-    ssl_verify: bool = True,
+def _netbox_service_names(entry: CatalogEntry) -> list[str]:
+    """Normalize ``provision.netbox_service`` to a list of service names.
+
+    Mirrors drain.py's own ``_netbox_service_specs`` normalization (today
+    every shipped entry authors a single dict; a LIST is a real shape for
+    umbrella #201 WP5's topology-carrying entries, which provision one
+    NetBox service per source). Same "no partial declaration" rule: a
+    declared list with any non-dict member, or any member missing a
+    string ``name``, is malformed as a WHOLE — returns ``[]`` uniformly
+    (same as "no netbox_service at all"), never a silently-filtered
+    partial subset.
+    """
+    if not entry.provision:
+        return []
+    raw = entry.provision.get("netbox_service")
+    specs: list[Any]
+    if isinstance(raw, dict):
+        specs = [raw]
+    elif isinstance(raw, list):
+        if not raw or not all(isinstance(r, dict) for r in raw):
+            return []
+        specs = raw
+    else:
+        return []
+    names = [spec.get("name") for spec in specs]
+    if not all(isinstance(n, str) and n for n in names):
+        return []
+    return names
+
+
+def _service_lifecycle_tag(
+    service_name: str, netbox_url: str, netbox_token: str, ssl_verify: bool
 ) -> str:
-    """Query NetBox for the ipam.Service matching this entry and return its lifecycle tag.
+    """Query NetBox for ONE ipam.Service by name and return its lifecycle tag.
 
     Returns one of: ``"bootstrapped"``, ``"active"``, ``"unknown"``, ``"error"``.
+    The original (pre-WP5) single-service body of ``get_lifecycle_status``,
+    factored out so an N-service entry can query each and aggregate.
     """
     # Lazy import to avoid circular deps when netbox.py imports catalog helpers
     from . import netbox as _netbox
-
-    service_name = (entry.provision or {}).get("netbox_service", {}).get("name") if entry.provision else None
-    if not service_name:
-        logger.warning("catalog: entry %s has no provision.netbox_service.name — status unknown", entry.key)
-        return "unknown"
 
     ctx = _netbox._ssl_context(ssl_verify)
     path = f"/api/ipam/services/?name={urllib.parse.quote(service_name)}"
@@ -365,7 +389,50 @@ def get_lifecycle_status(
     for tag_obj in tags:
         tag_name = tag_obj.get("name", "") if isinstance(tag_obj, dict) else str(tag_obj)
         if tag_name.startswith("lifecycle:"):
-            state = tag_name.split(":", 1)[1]
-            return state
+            return tag_name.split(":", 1)[1]
 
+    return "unknown"
+
+
+def get_lifecycle_status(
+    entry: CatalogEntry,
+    netbox_url: str,
+    netbox_token: str,
+    ssl_verify: bool = True,
+) -> str:
+    """Query NetBox for this entry's ipam.Service(s) and return an
+    aggregate lifecycle tag.
+
+    Returns one of: ``"bootstrapped"``, ``"active"``, ``"unknown"``,
+    ``"error"``. A single ``provision.netbox_service`` stays the common
+    shape; umbrella #201 WP5 adds support for a LIST (mirrors drain.py's
+    own N-service normalization for topology-carrying entries that
+    provision one NetBox service per source).
+
+    Aggregation is fail-closed / no-partial-success: if ANY service query
+    errors, the whole entry reports ``"error"`` (never hide a real failure
+    behind others that happened to succeed). If every service agrees on
+    the SAME lifecycle value, that value is returned. Any other
+    disagreement (e.g. some sources active, some still bootstrapped — a
+    genuinely partial deployment) reports ``"unknown"`` rather than
+    picking a side — overclaiming ``"active"`` when only some sources are
+    up would be exactly the kind of dishonest partial-success signal this
+    codebase otherwise refuses (see drain.py's ``_netbox_service_specs``
+    docstring). For a single-service entry this is byte-identical to the
+    pre-WP5 behavior (one status in, that status out).
+    """
+    service_names = _netbox_service_names(entry)
+    if not service_names:
+        logger.warning("catalog: entry %s has no provision.netbox_service.name — status unknown", entry.key)
+        return "unknown"
+
+    statuses = [
+        _service_lifecycle_tag(name, netbox_url, netbox_token, ssl_verify)
+        for name in service_names
+    ]
+    if "error" in statuses:
+        return "error"
+    distinct = set(statuses)
+    if len(distinct) == 1:
+        return distinct.pop()
     return "unknown"

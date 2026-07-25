@@ -27,6 +27,8 @@ import type {
   MediaWorkloadsResponse,
   MediaWorkloadsGroupedResponse,
   ClearForDeploymentResult,
+  InstanceTopology,
+  SwitchSourceResult,
   Operation,
 } from './types'
 
@@ -348,6 +350,51 @@ export function useInstanceMxlStatus(
       ),
     enabled: opts?.enabled ?? true,
     refetchInterval: opts?.refetchInterval ?? false,
+  })
+}
+
+// umbrella #201 WP5 — read seam the switch UI needs (not itself in the
+// spec's own endpoint list; see api_media_workloads_topology's own
+// docstring in main.py). A 404 (receiver-not-found/receiver-not-topology)
+// is the common, expected case for any instance without a topology — never
+// retried, and the caller (SwitchSourceControl) treats `isError` as "no
+// switch control here", not a fetch failure to surface.
+export function useInstanceTopology(instance: string, opts?: { enabled?: boolean }) {
+  return useQuery({
+    queryKey: ['media-workloads-topology', instance],
+    queryFn: () =>
+      apiCall<InstanceTopology>(
+        `/api/media-workloads/${encodeURIComponent(instance)}/topology`,
+      ),
+    enabled: opts?.enabled ?? true,
+    retry: false,
+  })
+}
+
+// umbrella #201 WP5, spec §6/§7 — the coarse reconnect switch. Synchronous-
+// await contract: the mutation resolves to the TERMINAL command (active or
+// failed_rollback_required) directly, never a separate pending/reconnecting
+// state to poll — `isPending` on this mutation IS the live "reconnecting"
+// signal the console shows.
+export function useSwitchSource() {
+  return useMutation({
+    mutationFn: ({
+      instance,
+      sourceInstance,
+      reason,
+    }: {
+      instance: string
+      sourceInstance: string
+      reason: string
+    }) =>
+      apiCall<SwitchSourceResult>(
+        `/api/media-workloads/${encodeURIComponent(instance)}/switch-source`,
+        {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ source_instance: sourceInstance, reason }),
+        },
+      ),
   })
 }
 

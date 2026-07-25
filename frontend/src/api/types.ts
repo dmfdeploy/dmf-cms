@@ -465,3 +465,34 @@ export interface ClearForDeploymentResult {
     watch: string
   }
 }
+
+// umbrella #201 WP5 — console switch surface (spec §6/§7).
+export interface TopologySource {
+  id: string
+  flow_id: string
+  pattern: string
+}
+
+export interface InstanceTopology {
+  receiver_instance: string
+  sources: TopologySource[]
+  active_source: string | null
+}
+
+export type SwitchStatus = 'pending' | 'reconnecting' | 'active' | 'failed_rollback_required'
+
+export interface SwitchSourceResult {
+  command_id: string
+  receiver_instance: string
+  source_instance: string
+  reason: string
+  status: SwitchStatus
+  previous_source: string | null
+  error: string | null
+  request_id: string
+  initiator: string | null
+  created_at: string
+  updated_at: string
+  actor: string
+  role: string
+}

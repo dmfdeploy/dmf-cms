@@ -15,6 +15,11 @@ export interface ReasonConfirmExtraField {
   onChange: (value: string) => void
   invalid?: boolean
   invalidHint?: string
+  // umbrella #201 WP5: when provided, renders a <select> of these options
+  // (e.g. the switch-source target picker) instead of the default free-text
+  // <input> — every other consumer (the #239 workload field) omits this and
+  // is unaffected.
+  options?: { value: string; label: string }[]
 }
 
 export default function ReasonConfirm({
@@ -58,13 +63,30 @@ export default function ReasonConfirm({
       {extraField && (
         <div className="mt-2">
           <label className="block text-xs text-amber-200/80">{extraField.label}</label>
-          <input
-            type="text"
-            className="mt-1 w-full rounded border border-white/10 bg-black/20 p-1 text-xs text-text"
-            placeholder={extraField.placeholder}
-            value={extraField.value}
-            onChange={(e) => extraField.onChange(e.target.value)}
-          />
+          {extraField.options ? (
+            <select
+              className="mt-1 w-full rounded border border-white/10 bg-black/20 p-1 text-xs text-text"
+              value={extraField.value}
+              onChange={(e) => extraField.onChange(e.target.value)}
+            >
+              <option value="" disabled>
+                {extraField.placeholder ?? 'Select…'}
+              </option>
+              {extraField.options.map((opt) => (
+                <option key={opt.value} value={opt.value}>
+                  {opt.label}
+                </option>
+              ))}
+            </select>
+          ) : (
+            <input
+              type="text"
+              className="mt-1 w-full rounded border border-white/10 bg-black/20 p-1 text-xs text-text"
+              placeholder={extraField.placeholder}
+              value={extraField.value}
+              onChange={(e) => extraField.onChange(e.target.value)}
+            />
+          )}
           {extraInvalid && extraField.invalidHint ? (
             <p className="mt-1 text-[11px] text-red-300">{extraField.invalidHint}</p>
           ) : extraField.helperText ? (
