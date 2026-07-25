@@ -117,7 +117,7 @@ from .authentik import (
     list_users,
 )
 from .awx import AWXAPIError, AWXAutoscaleError, AWXJobInfo, list_job_templates, launch_job, get_job, get_job_status, get_job_events_for_task, wait_for_job, lookup_job_template_by_name, list_recent_jobs, find_active_job_for_template, ensure_awx_awake, call_with_transient_retry
-from .catalog import CatalogEntry, load_catalog_entries, get_lifecycle_status
+from .catalog import CatalogEntry, load_catalog_entries, get_lifecycle_status, load_topology_instance, CATALOG_DIR
 from .contracts import AppContract, load_app_contract
 from .operations import Operation, OperationStore, OperationState, terminal_states, DIRTY_STATES
 from . import netbox, prometheus, promsd, forgejo, mxl, media_workloads, capacity, drain
@@ -547,8 +547,11 @@ async def _l3_preflight(
     return {"l3_request_id": request_id, "l3_preflight_verdict": "fit"}, None
 
 
-def _build_launch_extra_vars(workload: str | None, envelope: dict | None) -> dict | None:
-    """Merge the #239 workload_slug and the #202 L3 envelope into one extra_vars dict.
+def _build_launch_extra_vars(
+    workload: str | None, envelope: dict | None, topology_params: dict | None = None,
+) -> dict | None:
+    """Merge the #239 workload_slug, the #202 L3 envelope, and the #201 WP3a
+    topology_params object into one extra_vars dict.
 
     Mirrors the pre-existing ``{"workload_slug": workload} if workload else
     None`` contract: an empty result stays ``None`` (bit-compatible with
@@ -563,13 +566,138 @@ def _build_launch_extra_vars(workload: str | None, envelope: dict | None) -> dic
     mean the launcher can't tell "console run, preflight skipped" from
     "direct run, no console at all", breaking the §3.2 divergence-report's
     request_id correlation.
+
+    ``topology_params`` (umbrella #201 WP3a, spec §3.2) rides as a single
+    ``topology_params`` key carrying the WHOLE object unchanged — not
+    spread into individual extra_vars keys — per the spec's "the object
+    rides extra_vars unchanged" provenance rule. Only present for entries
+    with a ``topology_ref`` (see ``_resolve_topology_seam``); absent for
+    every other entry, so this stays byte-identical to today for them.
     """
     extra_vars: dict[str, Any] = {}
     if workload:
         extra_vars["workload_slug"] = workload
     if envelope:
         extra_vars.update(envelope)
+    if topology_params:
+        extra_vars["topology_params"] = topology_params
     return extra_vars or None
+
+
+async def _resolve_topology_seam(
+    request: Request,
+    user: UserIdentity,
+    *,
+    settings: Settings,
+    entry: CatalogEntry,
+    key: str,
+    request_id: str,
+    reason: str,
+) -> tuple[dict | None, JSONResponse | None]:
+    """umbrella #201 WP3a — resolve+validate the deploying entry's topology_params.
+
+    Entries without ``topology_ref`` are untouched: returns ``(None, None)``
+    immediately, so ``_build_launch_extra_vars`` gets ``topology_params=None``
+    and behavior is byte-identical to today (spec §10 WP3a's own
+    requirement).
+
+    For a ``topology_ref`` entry: loads+validates the instance
+    (``catalog.load_topology_instance``, fail-closed on any malformed
+    shape — refuses before any AWX call, same posture as ``_l3_preflight``);
+    then resolves ``target_facility`` LIVE from NetBox, replacing the
+    catalog instance's illustrative placeholder (dmf-media
+    catalog/topology-params.j1.yaml's own comment: "never a literal env
+    slug in git"). Exactly one NetBox site is the only legal J1 shape
+    (spec §3.4's resolution rule, umbrella issue #201 comment 2026-07-25);
+    zero or more than one is refused fail-closed — this seam must never
+    guess a facility, and must never let the placeholder ride through to
+    AWX.
+
+    Returns ``(topology_params, None)`` — the resolved object, ready to
+    merge into extra_vars — to proceed, or ``(None, response)`` to refuse.
+    Every refusal path audits via ``_audit_awx_write`` before returning,
+    matching ``_l3_preflight``'s convention.
+    """
+    if not entry.topology_ref:
+        return None, None
+
+    topology_params, terr = load_topology_instance(CATALOG_DIR, entry.topology_ref)
+    if terr is not None:
+        _audit_awx_write(
+            request, user, action="deploy", target=key, request_id=request_id, reason=reason,
+            outcome="topology-invalid",
+        )
+        return None, JSONResponse(
+            {"error": "topology-invalid", "detail": terr, "request_id": request_id},
+            status_code=422,
+        )
+
+    if not settings.netbox.configured:
+        _audit_awx_write(
+            request, user, action="deploy", target=key, request_id=request_id, reason=reason,
+            outcome="topology-facility-unavailable",
+        )
+        return None, JSONResponse(
+            {
+                "error": "topology-facility-unavailable",
+                "detail": "NetBox is not configured — cannot resolve target_facility",
+                "request_id": request_id,
+            },
+            status_code=503,
+        )
+
+    try:
+        # NetBox read is blocking urllib I/O — off the event loop, same
+        # posture as every other NetBox/AWX read in this launch path.
+        sites = await run_in_threadpool(
+            netbox.list_sites,
+            api_url=settings.netbox.api_url,
+            api_token=settings.netbox.api_token,
+            ssl_verify=settings.netbox.ssl_verify,
+        )
+    except netbox.NetboxAPIError as exc:
+        _audit_awx_write(
+            request, user, action="deploy", target=key, request_id=request_id, reason=reason,
+            outcome="topology-facility-error",
+        )
+        return None, JSONResponse(
+            {"error": "topology-facility-error", "detail": str(exc), "request_id": request_id},
+            status_code=502,
+        )
+
+    if len(sites) != 1:
+        _audit_awx_write(
+            request, user, action="deploy", target=key, request_id=request_id, reason=reason,
+            outcome="topology-facility-ambiguous",
+        )
+        return None, JSONResponse(
+            {
+                "error": "topology-facility-ambiguous",
+                "detail": f"expected exactly 1 NetBox site, found {len(sites)} — refusing rather than guess",
+                "site_count": len(sites),
+                "request_id": request_id,
+            },
+            status_code=409,
+        )
+
+    site_slug = sites[0].get("slug")
+    if not site_slug:
+        _audit_awx_write(
+            request, user, action="deploy", target=key, request_id=request_id, reason=reason,
+            outcome="topology-facility-error",
+        )
+        return None, JSONResponse(
+            {
+                "error": "topology-facility-error",
+                "detail": "the resolved NetBox site has no slug",
+                "request_id": request_id,
+            },
+            status_code=502,
+        )
+
+    resolved = dict(topology_params)
+    resolved["target_facility"] = site_slug
+    return resolved, None
 
 
 # uuid4().hex format — a run_id IS the originating deploy op's own
@@ -1915,6 +2043,7 @@ def _spawn_rollback_task(app: FastAPI, operation_id: str, run_id: str, reason: s
 async def _run_deploy_operation(
     app: FastAPI, operation_id: str, key: str, jt_name: str, workload: str | None = None,
     opposite_jt_name: str | None = None, l3_envelope: dict | None = None,
+    topology_params: dict | None = None,
 ) -> None:
     """Background task to wake AWX and deploy a catalog entry.
 
@@ -1930,6 +2059,13 @@ async def _run_deploy_operation(
     task is even spawned — the gate must refuse before dispatch, not after.
     Merged into extra_vars alongside workload_slug via
     _build_launch_extra_vars.
+
+    topology_params (umbrella #201 WP3a) is the resolved topology_params
+    object (target_facility already replaced with the env's real NetBox
+    site slug), computed synchronously by the caller
+    (_resolve_topology_seam) BEFORE this background task is spawned — same
+    refuse-before-dispatch posture as l3_envelope. None for entries without
+    a topology_ref.
     """
     settings = app.state.settings
     ops_store = app.state.operations
@@ -2042,7 +2178,7 @@ async def _run_deploy_operation(
             api_token=settings.awx.api_token,
             job_template_id=template["id"],
             ssl_verify=settings.awx.ssl_verify,
-            extra_vars=_build_launch_extra_vars(workload, l3_envelope),
+            extra_vars=_build_launch_extra_vars(workload, l3_envelope, topology_params),
         )
 
         # codex R3-3: a FRESH dispatch's run identity IS its own
@@ -3688,9 +3824,22 @@ def create_app(settings: Settings | None = None, contract: AppContract | None = 
                 ops_store.update(op.operation_id, state=OperationState.ERROR, error="Capacity preflight refused")
                 return l3_err
 
+            # umbrella #201 WP3a: same posture as the L3 preflight above —
+            # only for a freshly created op, right before dispatch. A
+            # refusal here must also mark the just-created op terminal or
+            # it wedges the exclusive lock.
+            topology_params, topology_err = await _resolve_topology_seam(
+                request, user, settings=settings, entry=entry, key=key,
+                request_id=request_id, reason=reason,
+            )
+            if topology_err is not None:
+                ops_store.update(op.operation_id, state=OperationState.ERROR, error="Topology resolution refused")
+                return topology_err
+
             # Spawn background task with tracking
             task = asyncio.create_task(_run_deploy_operation(
-                request.app, op.operation_id, key, jt_name, workload, opposite_jt_name, l3_envelope
+                request.app, op.operation_id, key, jt_name, workload, opposite_jt_name, l3_envelope,
+                topology_params,
             ))
             request.app.state.operation_tasks.add(task)
             task.add_done_callback(request.app.state.operation_tasks.discard)
@@ -3800,12 +3949,21 @@ def create_app(settings: Settings | None = None, contract: AppContract | None = 
             )
             if l3_err is not None:
                 return l3_err
+            # umbrella #201 WP3a: same posture as the L3 preflight above —
+            # immediately before the AWX side effect, after both idempotency
+            # guards, so a refusal never re-runs on a reattach/cross-JT-conflict path.
+            topology_params, topology_err = await _resolve_topology_seam(
+                request, user, settings=settings, entry=entry, key=key,
+                request_id=request_id, reason=reason,
+            )
+            if topology_err is not None:
+                return topology_err
             job_id = launch_job(
                 api_url=settings.awx.api_url,
                 api_token=settings.awx.api_token,
                 job_template_id=template["id"],
                 ssl_verify=settings.awx.ssl_verify,
-                extra_vars=_build_launch_extra_vars(workload, l3_envelope),
+                extra_vars=_build_launch_extra_vars(workload, l3_envelope, topology_params),
             )
             # codex R2-5: the sync flow now ALSO tracks this launch as an
             # Operation and attaches the job watcher — so the advisory
