@@ -490,3 +490,38 @@ def test_deploy_netbox_api_error_refused_no_awx_call(monkeypatch, tmp_path, awx_
     assert resp.status_code == 502, resp.text
     assert resp.json()["error"] == "topology-facility-error"
     assert awx_spy == []
+
+
+def test_catalog_listing_with_service_list_entry_returns_200(monkeypatch):
+    """The /api/catalog serializer crashed (AttributeError -> 500 -> frontend
+    JSON SyntaxError) when provision.netbox_service became the #201 N+1 LIST
+    (live incident 2026-07-27). It must serialize the primary (first) name,
+    and single-dict entries must be unchanged."""
+    list_entry = CatalogEntry(
+        key="mxl-videotest-view",
+        display_name="MXL Test-Pattern Viewer",
+        summary="x",
+        provision={"netbox_service": [
+            {"name": "mxl-videotest-view"},
+            {"name": "mxl-videotest-view-source-a"},
+            {"name": "mxl-videotest-view-source-b"},
+        ]},
+        configure={"awx_job_template": "dmf-configure"},
+        finalise={"awx_job_template": "dmf-finalise"},
+    )
+    dict_entry = CatalogEntry(
+        key="nmos-cpp",
+        display_name="NMOS",
+        summary="x",
+        provision={"netbox_service": {"name": "nmos-cpp-registry"}},
+        configure={"awx_job_template": "c"},
+        finalise={"awx_job_template": "f"},
+    )
+    monkeypatch.setattr(main, "load_catalog_entries", lambda: [list_entry, dict_entry])
+    monkeypatch.setattr(main, "get_lifecycle_status", lambda *a, **k: "unknown")
+    client = _client(["dmf-console-admin"])
+    resp = client.get("/api/catalog")
+    assert resp.status_code == 200, resp.text
+    by_key = {e["key"]: e for e in resp.json()["entries"]}
+    assert by_key["mxl-videotest-view"]["provision_netbox_service"] == "mxl-videotest-view"
+    assert by_key["nmos-cpp"]["provision_netbox_service"] == "nmos-cpp-registry"
