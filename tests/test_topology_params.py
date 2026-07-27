@@ -509,3 +509,46 @@ def test_entry_without_topology_ref_defaults_none(tmp_path: Path):
 def test_catalog_entry_dataclass_default_topology_ref_none():
     entry = CatalogEntry(key="k", display_name="d", summary="s")
     assert entry.topology_ref is None
+
+
+def test_load_topology_instance_through_configmap_symlink_layout(tmp_path):
+    """Kubernetes ConfigMap volumes serve files as symlinks into ..data/ —
+    the containment backstop must not refuse legitimately-mounted refs
+    (live incident 2026-07-27: resolve()-based parent check refused ALL
+    ConfigMap files)."""
+    from dmf_cms.catalog import load_topology_instance
+    data_dir = tmp_path / "..2026_07_26_06_32_48.2616367988"
+    data_dir.mkdir()
+    real = data_dir / "topology-params.j1.yaml"
+    real.write_text(J1_INSTANCE)
+    dotdata = tmp_path / "..data"
+    dotdata.symlink_to(data_dir.name)
+    (tmp_path / "topology-params.j1.yaml").symlink_to("..data/topology-params.j1.yaml")
+    topo, err = load_topology_instance(str(tmp_path), "topology-params.j1.yaml")
+    assert err is None, err
+    assert [s["id"] for s in topo["sources"]] == ["source-a", "source-b"]
+
+
+def test_load_topology_instance_traversal_still_refused_after_symlink_fix(tmp_path):
+    from dmf_cms.catalog import load_topology_instance
+    for ref in ("../escape.yaml", "sub/dir.yaml", "/abs/path.yaml"):
+        topo, err = load_topology_instance(str(tmp_path), ref)
+        assert topo is None and err is not None
+
+
+def test_load_topology_instance_symlink_escape_refused(tmp_path):
+    """A plain-basename ref (passes every pre-check) whose on-disk target is
+    a symlink pointing OUTSIDE the catalog dir must refuse — the containment
+    backstop's real job (independent-review probe, 2026-07-27). Distinct from
+    the ConfigMap layout, whose symlinks stay INSIDE the mount root."""
+    from dmf_cms.catalog import load_topology_instance
+    outside = tmp_path / "outside"
+    outside.mkdir()
+    secret = outside / "secret.yaml"
+    secret.write_text(J1_INSTANCE)
+    catalog = tmp_path / "catalog"
+    catalog.mkdir()
+    (catalog / "evil.yaml").symlink_to(secret)
+    topo, err = load_topology_instance(str(catalog), "evil.yaml")
+    assert topo is None
+    assert err is not None and "outside" in err

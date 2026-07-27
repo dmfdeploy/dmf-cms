@@ -234,9 +234,17 @@ def load_topology_instance(
             "absolute paths"
         )
 
+    # Containment backstop: resolved-DESCENDANT check, not resolved-PARENT
+    # equality. Kubernetes ConfigMap volumes serve every file as a symlink
+    # through ..data/ into a timestamped directory — two levels below the
+    # mount root — so requiring path.parent == catalog_root refused ALL
+    # legitimately-mounted refs (live incident, 2026-07-27). Descendant
+    # containment accepts that indirection while still refusing a
+    # plain-basename ref whose on-disk target is a symlink escaping the
+    # catalog dir (an escape the basename pre-checks above cannot see).
     catalog_root = Path(catalog_dir).resolve()
     path = (catalog_root / topology_ref).resolve()
-    if path.parent != catalog_root:
+    if path != catalog_root and catalog_root not in path.parents:
         return None, f"topology_ref {topology_ref!r} resolves outside the catalog directory"
 
     try:

@@ -118,6 +118,7 @@ from .authentik import (
 )
 from .awx import AWXAPIError, AWXAutoscaleError, AWXJobInfo, list_job_templates, launch_job, get_job, get_job_status, get_job_events_for_task, wait_for_job, lookup_job_template_by_name, list_recent_jobs, find_active_job_for_template, ensure_awx_awake, call_with_transient_retry
 from .catalog import CatalogEntry, load_catalog_entries, get_lifecycle_status, load_topology_instance, CATALOG_DIR
+from .catalog import _netbox_service_names as _catalog_service_names
 from .contracts import AppContract, load_app_contract
 from .operations import Operation, OperationStore, OperationState, terminal_states, DIRTY_STATES
 from .switch_source import (
@@ -3719,7 +3720,11 @@ def create_app(settings: Settings | None = None, contract: AppContract | None = 
             "ebu_lifecycle_owner": ebu.get("lifecycle_owner"),
             "lifecycle": lifecycle_status,
             "provision_image": provision.get("image", {}).get("repository") if provision.get("image") else None,
-            "provision_netbox_service": provision.get("netbox_service", {}).get("name") if provision.get("netbox_service") else None,
+            # provision.netbox_service may be a single mapping or, since the
+            # #201 topology work, an N+1 list (viewer + per-source services).
+            # Normalize through the same parser every other consumer uses and
+            # surface the entry's primary (first) service name.
+            "provision_netbox_service": (_catalog_service_names(entry) or [None])[0],
             "configure_awx_job_template": configure.get("awx_job_template"),
             "finalise_awx_job_template": finalise.get("awx_job_template"),
             "dependencies": entry.dependencies or [],
