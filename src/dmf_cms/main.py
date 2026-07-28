@@ -1038,11 +1038,14 @@ async def _run_launch_operation(app: FastAPI, operation_id: str, workflow_name: 
 
         # Launch job
         job_id = await run_in_threadpool(
-            launch_job,
-            api_url=settings.awx.api_url,
-            api_token=settings.awx.api_token,
-            job_template_id=template["id"],
-            ssl_verify=settings.awx.ssl_verify,
+            call_with_transient_retry,
+            functools.partial(
+                launch_job,
+                api_url=settings.awx.api_url,
+                api_token=settings.awx.api_token,
+                job_template_id=template["id"],
+                ssl_verify=settings.awx.ssl_verify,
+            ),
         )
 
         ops_store.update(
@@ -2224,12 +2227,15 @@ async def _run_deploy_operation(
 
         # Launch job
         job_id = await run_in_threadpool(
-            launch_job,
-            api_url=settings.awx.api_url,
-            api_token=settings.awx.api_token,
-            job_template_id=template["id"],
-            ssl_verify=settings.awx.ssl_verify,
-            extra_vars=_build_launch_extra_vars(workload, l3_envelope, topology_params),
+            call_with_transient_retry,
+            functools.partial(
+                launch_job,
+                api_url=settings.awx.api_url,
+                api_token=settings.awx.api_token,
+                job_template_id=template["id"],
+                ssl_verify=settings.awx.ssl_verify,
+                extra_vars=_build_launch_extra_vars(workload, l3_envelope, topology_params),
+            ),
         )
 
         # codex R3-3: a FRESH dispatch's run identity IS its own
@@ -2389,11 +2395,14 @@ async def _run_teardown_operation(
 
         # Launch job
         job_id = await run_in_threadpool(
-            launch_job,
-            api_url=settings.awx.api_url,
-            api_token=settings.awx.api_token,
-            job_template_id=template["id"],
-            ssl_verify=settings.awx.ssl_verify,
+            call_with_transient_retry,
+            functools.partial(
+                launch_job,
+                api_url=settings.awx.api_url,
+                api_token=settings.awx.api_token,
+                job_template_id=template["id"],
+                ssl_verify=settings.awx.ssl_verify,
+            ),
         )
 
         # codex R3-3: fresh dispatch — run_id is this op's own request_id.
@@ -2491,16 +2500,19 @@ async def _run_rollback_operation(app: FastAPI, operation_id: str, run_id: str, 
         l3_request_id = op.request_id if (op is not None and op.request_id) else uuid.uuid4().hex
 
         job_id = await run_in_threadpool(
-            launch_job,
-            api_url=settings.awx.api_url,
-            api_token=settings.awx.api_token,
-            job_template_id=template["id"],
-            ssl_verify=settings.awx.ssl_verify,
-            extra_vars={
-                "l3_run_id": run_id,
-                "l3_rollback_reason": reason,
-                "l3_request_id": l3_request_id,
-            },
+            call_with_transient_retry,
+            functools.partial(
+                launch_job,
+                api_url=settings.awx.api_url,
+                api_token=settings.awx.api_token,
+                job_template_id=template["id"],
+                ssl_verify=settings.awx.ssl_verify,
+                extra_vars={
+                    "l3_run_id": run_id,
+                    "l3_rollback_reason": reason,
+                    "l3_request_id": l3_request_id,
+                },
+            ),
         )
 
         # codex R3-3: rollback ops never reattach (no active-job idempotency
@@ -2867,11 +2879,14 @@ def create_app(settings: Settings | None = None, contract: AppContract | None = 
             # codex R2-2: lifecycle-mapped JTs are refused above, before the
             # async/sync split — by construction, `lifecycle` is always
             # None here. Non-catalog JTs only.
-            job_id = launch_job(
-                api_url=settings.awx.api_url,
-                api_token=settings.awx.api_token,
-                job_template_id=template["id"],
-                ssl_verify=settings.awx.ssl_verify,
+            job_id = call_with_transient_retry(
+                functools.partial(
+                    launch_job,
+                    api_url=settings.awx.api_url,
+                    api_token=settings.awx.api_token,
+                    job_template_id=template["id"],
+                    ssl_verify=settings.awx.ssl_verify,
+                ),
             )
             _audit_awx_write(request, user, action="launch", target=workflow_name, request_id=request_id, reason=reason, outcome="launched")
             return JSONResponse({"job_id": job_id, "status": "launched", "request_id": request_id})
@@ -4013,12 +4028,15 @@ def create_app(settings: Settings | None = None, contract: AppContract | None = 
             )
             if topology_err is not None:
                 return topology_err
-            job_id = launch_job(
-                api_url=settings.awx.api_url,
-                api_token=settings.awx.api_token,
-                job_template_id=template["id"],
-                ssl_verify=settings.awx.ssl_verify,
-                extra_vars=_build_launch_extra_vars(workload, l3_envelope, topology_params),
+            job_id = call_with_transient_retry(
+                functools.partial(
+                    launch_job,
+                    api_url=settings.awx.api_url,
+                    api_token=settings.awx.api_token,
+                    job_template_id=template["id"],
+                    ssl_verify=settings.awx.ssl_verify,
+                    extra_vars=_build_launch_extra_vars(workload, l3_envelope, topology_params),
+                ),
             )
             # codex R2-5: the sync flow now ALSO tracks this launch as an
             # Operation and attaches the job watcher — so the advisory
@@ -4229,11 +4247,14 @@ def create_app(settings: Settings | None = None, contract: AppContract | None = 
                     },
                     status_code=409,
                 )
-            job_id = launch_job(
-                api_url=settings.awx.api_url,
-                api_token=settings.awx.api_token,
-                job_template_id=template["id"],
-                ssl_verify=settings.awx.ssl_verify,
+            job_id = call_with_transient_retry(
+                functools.partial(
+                    launch_job,
+                    api_url=settings.awx.api_url,
+                    api_token=settings.awx.api_token,
+                    job_template_id=template["id"],
+                    ssl_verify=settings.awx.ssl_verify,
+                ),
             )
             # codex R2-5: track this launch as an Operation + watcher too —
             # see the matching comment in the sync deploy branch. codex
@@ -4405,15 +4426,18 @@ def create_app(settings: Settings | None = None, contract: AppContract | None = 
                     },
                     status_code=409,
                 )
-            job_id = launch_job(
-                api_url=settings.awx.api_url,
-                api_token=settings.awx.api_token,
-                job_template_id=template["id"],
-                ssl_verify=settings.awx.ssl_verify,
-                # R2-7: l3_request_id is this dispatch's OWN request_id
-                # (already true here in the sync flow — see
-                # _run_rollback_operation for the async-flow fix).
-                extra_vars={"l3_run_id": run_id, "l3_rollback_reason": reason, "l3_request_id": request_id},
+            job_id = call_with_transient_retry(
+                functools.partial(
+                    launch_job,
+                    api_url=settings.awx.api_url,
+                    api_token=settings.awx.api_token,
+                    job_template_id=template["id"],
+                    ssl_verify=settings.awx.ssl_verify,
+                    # R2-7: l3_request_id is this dispatch's OWN request_id
+                    # (already true here in the sync flow — see
+                    # _run_rollback_operation for the async-flow fix).
+                    extra_vars={"l3_run_id": run_id, "l3_rollback_reason": reason, "l3_request_id": request_id},
+                ),
             )
             # codex R2-5: track this launch as an Operation + watcher too —
             # see the matching comment in the sync deploy branch. codex
