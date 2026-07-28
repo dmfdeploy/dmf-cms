@@ -29,6 +29,7 @@ review gate (§6.3) demands.
 from __future__ import annotations
 
 import asyncio
+import functools
 import logging
 import threading
 import uuid
@@ -429,12 +430,15 @@ class ReconnectViaAwxActuator:
 
             extra_vars = self._build_extra_vars(command, topology_params)
             job_id = await run_in_threadpool(
-                _awx.launch_job,
-                api_url=self._awx_api_url,
-                api_token=self._awx_api_token,
-                job_template_id=template["id"],
-                ssl_verify=self._awx_ssl_verify,
-                extra_vars=extra_vars,
+                _awx.call_with_transient_retry,
+                functools.partial(
+                    _awx.launch_job,
+                    api_url=self._awx_api_url,
+                    api_token=self._awx_api_token,
+                    job_template_id=template["id"],
+                    ssl_verify=self._awx_ssl_verify,
+                    extra_vars=extra_vars,
+                ),
             )
         except Exception as exc:  # noqa: BLE001 - actuator-level failure, not a crash
             logger.warning("switch-source actuator: launch failed for command %s: %s", command.command_id, exc)
