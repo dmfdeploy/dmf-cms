@@ -116,7 +116,7 @@ from .authentik import (
     list_groups,
     list_users,
 )
-from .awx import AWXAPIError, AWXAutoscaleError, AWXJobInfo, list_job_templates, launch_job, get_job, get_job_status, get_job_events_for_task, wait_for_job, lookup_job_template_by_name, list_recent_jobs, find_active_job_for_template, ensure_awx_awake, call_with_transient_retry
+from .awx import AWXAPIError, AWXAutoscaleError, AWXJobInfo, AWXTransportError, list_job_templates, launch_job, get_job, get_job_status, get_job_events_for_task, wait_for_job, lookup_job_template_by_name, list_recent_jobs, find_active_job_for_template, ensure_awx_awake, call_with_readiness_retry
 from .catalog import CatalogEntry, load_catalog_entries, get_lifecycle_status, load_topology_instance, CATALOG_DIR
 from .catalog import _netbox_service_names as _catalog_service_names
 from .contracts import AppContract, load_app_contract
@@ -987,6 +987,35 @@ async def lifespan(app: FastAPI):
     yield
 
 
+async def _post_wake_template_lookup(settings, name: str) -> dict | None:
+    """Resolve a job template on the FIRST authenticated call after a wake (#295).
+
+    Every ``ensure_awx_awake`` → first-authenticated-AWX-call sequence in
+    this module goes through here, so the post-wake policy is defined in one
+    place instead of being re-derived (or forgotten) per operation.
+
+    Why a deadline and not another attempt count: the reproduced failure was
+    a bare Django 500 on this exact call ~13s after dispatch, while the old
+    3-attempt/fixed-3s wrapper had already given up at ~6s. The helper-side
+    readiness gate is best-effort by construction (different identity,
+    different path), so this is the definitive race-closer — see
+    ``awx.call_with_readiness_retry``.
+
+    Safe to retry because it is a GET. The launch POST that follows is NOT,
+    and is deliberately sent exactly once.
+    """
+    return await run_in_threadpool(
+        call_with_readiness_retry,
+        functools.partial(
+            lookup_job_template_by_name,
+            api_url=settings.awx.api_url,
+            api_token=settings.awx.api_token,
+            name=name,
+            ssl_verify=settings.awx.ssl_verify,
+        ),
+    )
+
+
 async def _run_launch_operation(app: FastAPI, operation_id: str, workflow_name: str) -> None:
     """Background task to wake AWX and launch a workflow job."""
     settings = app.state.settings
@@ -1004,14 +1033,8 @@ async def _run_launch_operation(app: FastAPI, operation_id: str, workflow_name: 
         # Update state to launching
         ops_store.update(operation_id, state=OperationState.LAUNCHING)
 
-        # Lookup job template
-        template = await run_in_threadpool(
-            lookup_job_template_by_name,
-            api_url=settings.awx.api_url,
-            api_token=settings.awx.api_token,
-            name=workflow_name,
-            ssl_verify=settings.awx.ssl_verify,
-        )
+        # Lookup job template — first authenticated call after the wake (#295)
+        template = await _post_wake_template_lookup(settings, workflow_name)
         if template is None:
             ops_store.update(
                 operation_id,
@@ -1038,14 +1061,11 @@ async def _run_launch_operation(app: FastAPI, operation_id: str, workflow_name: 
 
         # Launch job
         job_id = await run_in_threadpool(
-            call_with_transient_retry,
-            functools.partial(
-                launch_job,
-                api_url=settings.awx.api_url,
-                api_token=settings.awx.api_token,
-                job_template_id=template["id"],
-                ssl_verify=settings.awx.ssl_verify,
-            ),
+            launch_job,
+            api_url=settings.awx.api_url,
+            api_token=settings.awx.api_token,
+            job_template_id=template["id"],
+            ssl_verify=settings.awx.ssl_verify,
         )
 
         ops_store.update(
@@ -2137,16 +2157,8 @@ async def _run_deploy_operation(
         ops_store.update(operation_id, state=OperationState.LAUNCHING)
 
         # Lookup job template
-        template = await run_in_threadpool(
-            call_with_transient_retry,
-            functools.partial(
-                lookup_job_template_by_name,
-                api_url=settings.awx.api_url,
-                api_token=settings.awx.api_token,
-                name=jt_name,
-                ssl_verify=settings.awx.ssl_verify,
-            ),
-        )
+        # First authenticated call after the wake (#295).
+        template = await _post_wake_template_lookup(settings, jt_name)
         if template is None:
             ops_store.update(
                 operation_id,
@@ -2227,15 +2239,12 @@ async def _run_deploy_operation(
 
         # Launch job
         job_id = await run_in_threadpool(
-            call_with_transient_retry,
-            functools.partial(
-                launch_job,
-                api_url=settings.awx.api_url,
-                api_token=settings.awx.api_token,
-                job_template_id=template["id"],
-                ssl_verify=settings.awx.ssl_verify,
-                extra_vars=_build_launch_extra_vars(workload, l3_envelope, topology_params),
-            ),
+            launch_job,
+            api_url=settings.awx.api_url,
+            api_token=settings.awx.api_token,
+            job_template_id=template["id"],
+            ssl_verify=settings.awx.ssl_verify,
+            extra_vars=_build_launch_extra_vars(workload, l3_envelope, topology_params),
         )
 
         # codex R3-3: a FRESH dispatch's run identity IS its own
@@ -2307,16 +2316,8 @@ async def _run_teardown_operation(
         ops_store.update(operation_id, state=OperationState.LAUNCHING)
 
         # Lookup job template
-        template = await run_in_threadpool(
-            call_with_transient_retry,
-            functools.partial(
-                lookup_job_template_by_name,
-                api_url=settings.awx.api_url,
-                api_token=settings.awx.api_token,
-                name=jt_name,
-                ssl_verify=settings.awx.ssl_verify,
-            ),
-        )
+        # First authenticated call after the wake (#295).
+        template = await _post_wake_template_lookup(settings, jt_name)
         if template is None:
             ops_store.update(
                 operation_id,
@@ -2395,14 +2396,11 @@ async def _run_teardown_operation(
 
         # Launch job
         job_id = await run_in_threadpool(
-            call_with_transient_retry,
-            functools.partial(
-                launch_job,
-                api_url=settings.awx.api_url,
-                api_token=settings.awx.api_token,
-                job_template_id=template["id"],
-                ssl_verify=settings.awx.ssl_verify,
-            ),
+            launch_job,
+            api_url=settings.awx.api_url,
+            api_token=settings.awx.api_token,
+            job_template_id=template["id"],
+            ssl_verify=settings.awx.ssl_verify,
         )
 
         # codex R3-3: fresh dispatch — run_id is this op's own request_id.
@@ -2478,16 +2476,8 @@ async def _run_rollback_operation(app: FastAPI, operation_id: str, run_id: str, 
 
         ops_store.update(operation_id, state=OperationState.LAUNCHING)
 
-        template = await run_in_threadpool(
-            call_with_transient_retry,
-            functools.partial(
-                lookup_job_template_by_name,
-                api_url=settings.awx.api_url,
-                api_token=settings.awx.api_token,
-                name=settings.l3.rollback_jt_name,
-                ssl_verify=settings.awx.ssl_verify,
-            ),
-        )
+        # First authenticated call after the wake (#295).
+        template = await _post_wake_template_lookup(settings, settings.l3.rollback_jt_name)
         if template is None:
             ops_store.update(
                 operation_id,
@@ -2500,19 +2490,16 @@ async def _run_rollback_operation(app: FastAPI, operation_id: str, run_id: str, 
         l3_request_id = op.request_id if (op is not None and op.request_id) else uuid.uuid4().hex
 
         job_id = await run_in_threadpool(
-            call_with_transient_retry,
-            functools.partial(
-                launch_job,
-                api_url=settings.awx.api_url,
-                api_token=settings.awx.api_token,
-                job_template_id=template["id"],
-                ssl_verify=settings.awx.ssl_verify,
-                extra_vars={
-                    "l3_run_id": run_id,
-                    "l3_rollback_reason": reason,
-                    "l3_request_id": l3_request_id,
-                },
-            ),
+            launch_job,
+            api_url=settings.awx.api_url,
+            api_token=settings.awx.api_token,
+            job_template_id=template["id"],
+            ssl_verify=settings.awx.ssl_verify,
+            extra_vars={
+                "l3_run_id": run_id,
+                "l3_rollback_reason": reason,
+                "l3_request_id": l3_request_id,
+            },
         )
 
         # codex R3-3: rollback ops never reattach (no active-job idempotency
@@ -2879,14 +2866,11 @@ def create_app(settings: Settings | None = None, contract: AppContract | None = 
             # codex R2-2: lifecycle-mapped JTs are refused above, before the
             # async/sync split — by construction, `lifecycle` is always
             # None here. Non-catalog JTs only.
-            job_id = call_with_transient_retry(
-                functools.partial(
-                    launch_job,
-                    api_url=settings.awx.api_url,
-                    api_token=settings.awx.api_token,
-                    job_template_id=template["id"],
-                    ssl_verify=settings.awx.ssl_verify,
-                ),
+            job_id = launch_job(
+                api_url=settings.awx.api_url,
+                api_token=settings.awx.api_token,
+                job_template_id=template["id"],
+                ssl_verify=settings.awx.ssl_verify,
             )
             _audit_awx_write(request, user, action="launch", target=workflow_name, request_id=request_id, reason=reason, outcome="launched")
             return JSONResponse({"job_id": job_id, "status": "launched", "request_id": request_id})
@@ -4028,15 +4012,12 @@ def create_app(settings: Settings | None = None, contract: AppContract | None = 
             )
             if topology_err is not None:
                 return topology_err
-            job_id = call_with_transient_retry(
-                functools.partial(
-                    launch_job,
-                    api_url=settings.awx.api_url,
-                    api_token=settings.awx.api_token,
-                    job_template_id=template["id"],
-                    ssl_verify=settings.awx.ssl_verify,
-                    extra_vars=_build_launch_extra_vars(workload, l3_envelope, topology_params),
-                ),
+            job_id = launch_job(
+                api_url=settings.awx.api_url,
+                api_token=settings.awx.api_token,
+                job_template_id=template["id"],
+                ssl_verify=settings.awx.ssl_verify,
+                extra_vars=_build_launch_extra_vars(workload, l3_envelope, topology_params),
             )
             # codex R2-5: the sync flow now ALSO tracks this launch as an
             # Operation and attaches the job watcher — so the advisory
@@ -4247,14 +4228,11 @@ def create_app(settings: Settings | None = None, contract: AppContract | None = 
                     },
                     status_code=409,
                 )
-            job_id = call_with_transient_retry(
-                functools.partial(
-                    launch_job,
-                    api_url=settings.awx.api_url,
-                    api_token=settings.awx.api_token,
-                    job_template_id=template["id"],
-                    ssl_verify=settings.awx.ssl_verify,
-                ),
+            job_id = launch_job(
+                api_url=settings.awx.api_url,
+                api_token=settings.awx.api_token,
+                job_template_id=template["id"],
+                ssl_verify=settings.awx.ssl_verify,
             )
             # codex R2-5: track this launch as an Operation + watcher too —
             # see the matching comment in the sync deploy branch. codex
@@ -4426,18 +4404,15 @@ def create_app(settings: Settings | None = None, contract: AppContract | None = 
                     },
                     status_code=409,
                 )
-            job_id = call_with_transient_retry(
-                functools.partial(
-                    launch_job,
-                    api_url=settings.awx.api_url,
-                    api_token=settings.awx.api_token,
-                    job_template_id=template["id"],
-                    ssl_verify=settings.awx.ssl_verify,
-                    # R2-7: l3_request_id is this dispatch's OWN request_id
-                    # (already true here in the sync flow — see
-                    # _run_rollback_operation for the async-flow fix).
-                    extra_vars={"l3_run_id": run_id, "l3_rollback_reason": reason, "l3_request_id": request_id},
-                ),
+            job_id = launch_job(
+                api_url=settings.awx.api_url,
+                api_token=settings.awx.api_token,
+                job_template_id=template["id"],
+                ssl_verify=settings.awx.ssl_verify,
+                # R2-7: l3_request_id is this dispatch's OWN request_id
+                # (already true here in the sync flow — see
+                # _run_rollback_operation for the async-flow fix).
+                extra_vars={"l3_run_id": run_id, "l3_rollback_reason": reason, "l3_request_id": request_id},
             )
             # codex R2-5: track this launch as an Operation + watcher too —
             # see the matching comment in the sync deploy branch. codex
@@ -4882,6 +4857,11 @@ def create_app(settings: Settings | None = None, contract: AppContract | None = 
             awx_api_url=settings.awx.api_url,
             awx_api_token=settings.awx.api_token,
             awx_ssl_verify=settings.awx.ssl_verify,
+            # #295: the actuator performs the sanctioned wake itself before
+            # its first authenticated read — no-op when autoscale is off.
+            autoscale_helper_url=settings.awx_autoscale.helper_url,
+            autoscale_bearer_token=settings.awx_autoscale.bearer_token,
+            autoscale_max_startup_wait=settings.awx_autoscale.max_startup_wait,
         )
         try:
             command = await dispatch_switch_source(

@@ -10,7 +10,7 @@ from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
-from dmf_cms.awx import AWXAPIError, call_with_transient_retry
+from dmf_cms.awx import AWXAPIError
 from dmf_cms.catalog import CatalogEntry
 from dmf_cms.operations import OperationState, OperationStore
 from dmf_cms.settings import L3Settings, Settings, load_settings
@@ -253,38 +253,6 @@ def test_operation_error_sanitization(enabled_settings):
 
 
 # --------------------------------------------------------------------------
-# #134 — call_with_transient_retry helper
-# --------------------------------------------------------------------------
-
-def test_transient_retry_recovers_after_two_5xx():
-    fn = MagicMock(side_effect=[AWXAPIError(500, "x"), AWXAPIError(502, "x"), "value"])
-    result = call_with_transient_retry(fn, sleep=lambda s: None)
-    assert result == "value"
-    assert fn.call_count == 3
-
-
-def test_transient_retry_recovers_after_urlerror():
-    fn = MagicMock(side_effect=[urllib.error.URLError("refused"), "value"])
-    result = call_with_transient_retry(fn, sleep=lambda s: None)
-    assert result == "value"
-    assert fn.call_count == 2
-
-
-def test_transient_retry_does_not_retry_4xx():
-    fn = MagicMock(side_effect=AWXAPIError(404, "x"))
-    with pytest.raises(AWXAPIError):
-        call_with_transient_retry(fn, sleep=lambda s: None)
-    assert fn.call_count == 1
-
-
-def test_transient_retry_exhausts_attempts_and_reraises():
-    fn = MagicMock(side_effect=[AWXAPIError(500, "x")] * 3)
-    with pytest.raises(AWXAPIError):
-        call_with_transient_retry(fn, attempts=3, sleep=lambda s: None)
-    assert fn.call_count == 3
-
-
-# --------------------------------------------------------------------------
 # #134 — post-wake transient retry, runner level (deploy/teardown)
 # --------------------------------------------------------------------------
 
@@ -407,7 +375,11 @@ def test_async_deploy_urlerror_sanitizes_error_field(enabled_settings):
          patch(
              "dmf_cms.main.lookup_job_template_by_name",
              side_effect=urllib.error.URLError(secret_detail),
-         ):
+         ), \
+         patch("dmf_cms.awx.POST_WAKE_READ_DEADLINE", 0.5):
+        # #295: the post-wake policy is bounded by ELAPSED TIME, not attempt
+        # count, so patching out time.sleep no longer shortens it — this test
+        # wants the exhausted-then-sanitized path, so shrink the deadline.
         app = create_app(settings=enabled_settings)
         with TestClient(app) as client:
             client.get("/auth/login", follow_redirects=False)

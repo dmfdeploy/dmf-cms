@@ -381,6 +381,9 @@ class ReconnectViaAwxActuator:
         job_template_name: str = SWITCH_SOURCE_JOB_TEMPLATE_NAME,
         timeout_seconds: float = _DEFAULT_ACTUATOR_TIMEOUT_SECONDS,
         poll_interval_seconds: float = _DEFAULT_POLL_INTERVAL_SECONDS,
+        autoscale_helper_url: str = "",
+        autoscale_bearer_token: str = "",
+        autoscale_max_startup_wait: int = 1260,
     ) -> None:
         self._awx_api_url = awx_api_url
         self._awx_api_token = awx_api_token
@@ -388,6 +391,17 @@ class ReconnectViaAwxActuator:
         self._job_template_name = job_template_name
         self._timeout_seconds = timeout_seconds
         self._poll_interval_seconds = poll_interval_seconds
+        # #295: this actuator used to go straight to an authenticated lookup
+        # with no wake at all. Under autoscale that is strictly worse than
+        # the deploy path's race — with AWX asleep the switch simply failed.
+        # It now performs the SAME sanctioned wake, then the same
+        # deadline-bounded post-wake read. ensure_awx_awake is a documented
+        # no-op when these are empty, so a non-autoscale deployment (and
+        # every existing test that constructs the actuator without them)
+        # behaves exactly as before.
+        self._autoscale_helper_url = autoscale_helper_url
+        self._autoscale_bearer_token = autoscale_bearer_token
+        self._autoscale_max_startup_wait = autoscale_max_startup_wait
 
     @staticmethod
     def _build_extra_vars(command: SwitchSourceCommand, topology_params: dict[str, Any]) -> dict[str, Any]:
@@ -412,12 +426,24 @@ class ReconnectViaAwxActuator:
         command.updated_at = datetime.now(timezone.utc)
 
         try:
+            # #295: wake precondition is encoded here, not assumed of the
+            # caller — then the first authenticated call rides the same
+            # deadline-bounded post-wake read policy the deploy path uses.
+            await run_in_threadpool(
+                _awx.ensure_awx_awake,
+                helper_url=self._autoscale_helper_url,
+                bearer_token=self._autoscale_bearer_token,
+                max_startup_wait=self._autoscale_max_startup_wait,
+            )
             template = await run_in_threadpool(
-                _awx.lookup_job_template_by_name,
-                api_url=self._awx_api_url,
-                api_token=self._awx_api_token,
-                name=self._job_template_name,
-                ssl_verify=self._awx_ssl_verify,
+                _awx.call_with_readiness_retry,
+                functools.partial(
+                    _awx.lookup_job_template_by_name,
+                    api_url=self._awx_api_url,
+                    api_token=self._awx_api_token,
+                    name=self._job_template_name,
+                    ssl_verify=self._awx_ssl_verify,
+                ),
             )
             if template is None:
                 self._fail(
@@ -430,15 +456,12 @@ class ReconnectViaAwxActuator:
 
             extra_vars = self._build_extra_vars(command, topology_params)
             job_id = await run_in_threadpool(
-                _awx.call_with_transient_retry,
-                functools.partial(
-                    _awx.launch_job,
-                    api_url=self._awx_api_url,
-                    api_token=self._awx_api_token,
-                    job_template_id=template["id"],
-                    ssl_verify=self._awx_ssl_verify,
-                    extra_vars=extra_vars,
-                ),
+                _awx.launch_job,
+                api_url=self._awx_api_url,
+                api_token=self._awx_api_token,
+                job_template_id=template["id"],
+                ssl_verify=self._awx_ssl_verify,
+                extra_vars=extra_vars,
             )
         except Exception as exc:  # noqa: BLE001 - actuator-level failure, not a crash
             logger.warning("switch-source actuator: launch failed for command %s: %s", command.command_id, exc)
