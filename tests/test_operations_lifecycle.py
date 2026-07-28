@@ -632,7 +632,7 @@ def test_run_deploy_operation_reattach_hydrates_run_id_from_job_extra_vars(monke
     op = ops_store.create("deploy", "key1", request_id="d" * 32, initiator="alice")
 
     monkeypatch.setattr(main, "ensure_awx_awake", lambda **k: None)
-    monkeypatch.setattr(main, "call_with_transient_retry", lambda fn: fn())
+    monkeypatch.setattr(main, "call_with_readiness_retry", lambda fn, **kw: fn(timeout=1))
     monkeypatch.setattr(main, "lookup_job_template_by_name", lambda **k: {"id": 7})
     monkeypatch.setattr(main, "find_active_job_for_template", lambda **k: 9999)  # active job found -> reattach
     monkeypatch.setattr(
@@ -657,7 +657,7 @@ def test_run_deploy_operation_reattach_tolerates_get_job_failure(monkeypatch):
     op = ops_store.create("deploy", "key1", request_id="d" * 32)
 
     monkeypatch.setattr(main, "ensure_awx_awake", lambda **k: None)
-    monkeypatch.setattr(main, "call_with_transient_retry", lambda fn: fn())
+    monkeypatch.setattr(main, "call_with_readiness_retry", lambda fn, **kw: fn(timeout=1))
     monkeypatch.setattr(main, "lookup_job_template_by_name", lambda **k: {"id": 7})
     monkeypatch.setattr(main, "find_active_job_for_template", lambda **k: 9999)
 
@@ -742,7 +742,7 @@ def test_reattached_deploy_with_invalid_extra_vars_uuid_is_identity_unknown_on_a
     op = ops_store.create("deploy", "key1", request_id="d" * 32)
 
     monkeypatch.setattr(main, "ensure_awx_awake", lambda **k: None)
-    monkeypatch.setattr(main, "call_with_transient_retry", lambda fn: fn())
+    monkeypatch.setattr(main, "call_with_readiness_retry", lambda fn, **kw: fn(timeout=1))
     monkeypatch.setattr(main, "lookup_job_template_by_name", lambda **k: {"id": 7})
     monkeypatch.setattr(main, "find_active_job_for_template", lambda **k: 9999)
     monkeypatch.setattr(

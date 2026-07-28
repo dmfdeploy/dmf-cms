@@ -192,10 +192,31 @@ def test_sync_awx_error_echoes_request_id(monkeypatch, awx_spy):
 
 def test_async_dispatch_and_reattach_echo_request_id_and_audit(monkeypatch, awx_spy, caplog):
     import logging
+    import threading
+
     # Autoscale (async) path needs app.state.operations from the lifespan, so
-    # use a context-managed client. Hold the wake so the op stays in-flight and
-    # the second POST reattaches (200) instead of racing to completion.
-    monkeypatch.setattr(main, "ensure_awx_awake", lambda **k: None)
+    # use a context-managed client.
+    #
+    # The second POST must arrive while the first operation is STILL in
+    # flight, or it creates a fresh operation (202) instead of reattaching
+    # (200). A no-op wake does not guarantee that — it just makes the
+    # background task fast, and which of the two wins is left to scheduler
+    # timing. That is exactly how this test went red on the 3.12/3.13 CI
+    # legs while passing locally.
+    #
+    # So hold the operation with a real barrier: the wake blocks until the
+    # second POST has been issued, and only then is the background task
+    # allowed to proceed. Deterministic on any scheduler.
+    #
+    # ensure_awx_awake runs inside run_in_threadpool, so a blocking
+    # threading.Event.wait() here parks a worker thread, never the event
+    # loop. The timeout is a deadlock guard, not the synchronization.
+    second_post_issued = threading.Event()
+
+    def held_wake(**kwargs):
+        assert second_post_issued.wait(timeout=10), "second POST never issued"
+
+    monkeypatch.setattr(main, "ensure_awx_awake", held_wake)
     settings = Settings(
         runtime_mode="local",
         dev_login_enabled=True,
@@ -209,7 +230,12 @@ def test_async_dispatch_and_reattach_echo_request_id_and_audit(monkeypatch, awx_
         client.get("/auth/login", follow_redirects=False)
         with caplog.at_level(logging.INFO, logger="dmf_cms.main"):
             first = client.post("/api/workflows/dmf-provision/launch", json={"reason": "x"})
-            second = client.post("/api/workflows/dmf-provision/launch", json={"reason": "x"})
+            try:
+                second = client.post("/api/workflows/dmf-provision/launch", json={"reason": "x"})
+            finally:
+                # Release the held operation whatever the second POST did, so
+                # a failure here surfaces as an assertion, not a hang.
+                second_post_issued.set()
     assert first.status_code == 202
     assert first.json()["request_id"]
     assert first.json()["operation_id"]

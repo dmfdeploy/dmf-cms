@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import http.client
 import json
 import ssl
 import time
@@ -19,6 +20,39 @@ class AWXAPIError(Exception):
         self.status = status
         self.body = body
         super().__init__(f"AWX API {status}: {body}")
+
+
+class AWXTransportError(AWXAPIError):
+    """A request never produced a usable AWX response body (#295).
+
+    Normalized at the ``_request`` boundary so retry policy has exactly ONE
+    thing to classify instead of three shapes leaking out of urllib:
+
+    * ``read`` — the connection dropped DURING ``resp.read()``. urllib has
+      already handed back a 200-status response object at that point, so
+      neither ``HTTPError`` nor ``URLError`` is raised: a bare
+      ``ConnectionResetError``/``IncompleteRead`` escaped the client
+      untouched and no caller classified it as retryable.
+    * ``empty`` — a 2xx with a zero-length body. Every endpoint ``_request``
+      serves has a JSON success contract, so an empty body is a failed
+      response, NOT the empty dict it used to decode to. That silent ``{}``
+      is what turned a lost lookup response into an authoritative
+      "job template not found" and a lost launch response into job id 0.
+    * ``decode`` — a 2xx whose body is not JSON (a proxy error page, a
+      truncated write).
+    * ``schema`` — valid JSON that is not a JSON object.
+
+    Subclasses ``AWXAPIError`` with a synthetic 502 deliberately: every
+    caller that already sanitizes ``AWXAPIError`` into a structured console
+    response or an operation ERROR state then covers these too, instead of
+    a raw reset escaping to a generic HTTP 500 (or, worse, being silently
+    absorbed as an empty result). 502 also reads correctly to
+    ``is_transient_awx_failure``: bad gateway, no authoritative answer.
+    """
+
+    def __init__(self, message: str, *, phase: str) -> None:
+        self.phase = phase
+        super().__init__(502, f"AWX transport error ({phase}): {message}")
 
 
 class AWXAutoscaleError(Exception):
@@ -48,6 +82,9 @@ class AWXJobInfo:
         return self.status in {"new", "pending", "waiting", "running"}
 
 
+DEFAULT_REQUEST_TIMEOUT = 30.0
+
+
 def _request(
     api_url: str,
     api_token: str,
@@ -55,8 +92,23 @@ def _request(
     path: str,
     body: dict | None = None,
     ssl_context: ssl.SSLContext | None = None,
+    timeout: float = DEFAULT_REQUEST_TIMEOUT,
 ) -> dict:
-    """Make an authenticated JSON request to the AWX API."""
+    """Make an authenticated JSON request to the AWX API.
+
+    Every endpoint routed through here has a JSON-object success contract
+    (the plain-text job-stdout endpoint goes through ``_request_text``
+    instead). So the body is not merely decoded opportunistically: a
+    read-time drop, an empty body, undecodable bytes, or a non-object
+    payload are all failures, normalized into ``AWXTransportError`` for the
+    retry policy to classify (#295). The previous
+    ``json.loads(raw) if raw else {}`` turned every one of those into a
+    successful-looking ``{}``.
+
+    ``timeout`` is per-call so a deadline-bounded caller
+    (``call_with_readiness_retry``) can derive it from its remaining budget
+    rather than letting one hung socket eat the whole window.
+    """
     url = api_url.rstrip("/") + path
     headers = {
         "Authorization": f"Bearer {api_token}",
@@ -67,12 +119,31 @@ def _request(
     req = urllib.request.Request(url, data=data, headers=headers, method=method)
 
     try:
-        with urllib.request.urlopen(req, timeout=30, context=ssl_context) as resp:
-            raw = resp.read()
-            return json.loads(raw) if raw else {}
+        with urllib.request.urlopen(req, timeout=timeout, context=ssl_context) as resp:
+            # NB: urllib only raises HTTPError/URLError from urlopen itself.
+            # Once we are inside the `with`, a dropped connection surfaces as
+            # a bare OSError (ConnectionResetError) or http.client
+            # IncompleteRead out of read() — neither is a URLError.
+            try:
+                raw = resp.read()
+            except (OSError, http.client.HTTPException) as exc:
+                raise AWXTransportError(f"{method} {path}: {exc}", phase="read") from exc
     except urllib.error.HTTPError as exc:
         error_body = exc.read().decode() if exc.fp else str(exc)
         raise AWXAPIError(exc.code, error_body) from exc
+
+    if not raw:
+        raise AWXTransportError(f"{method} {path}: empty response body", phase="empty")
+    try:
+        decoded = json.loads(raw)
+    except (ValueError, UnicodeDecodeError) as exc:
+        raise AWXTransportError(f"{method} {path}: {exc}", phase="decode") from exc
+    if not isinstance(decoded, dict):
+        raise AWXTransportError(
+            f"{method} {path}: expected a JSON object, got {type(decoded).__name__}",
+            phase="schema",
+        )
+    return decoded
 
 
 # codex R3-6: fixed, not configurable — see _request_text's docstring.
@@ -138,24 +209,126 @@ def _request_text(
         raise AWXAPIError(exc.code, error_body) from exc
 
 
-def call_with_transient_retry(fn, *, attempts=3, delay=3.0, sleep=None):
-    """Call fn(), retrying transient AWX failures (HTTP 5xx or URLError).
+# ---------------------------------------------------------------------------
+# Post-wake readiness retry (#295)
+# ---------------------------------------------------------------------------
+#
+# This REPLACES call_with_transient_retry (#134) rather than sitting beside
+# it. That helper was the empirically-insufficient policy below, it had no
+# remaining production call site once the launch POSTs stopped being blindly
+# retried, and leaving a retry primitive exported that is unsafe on a
+# non-idempotent call is precisely how the duplicate-job risk would come
+# back.
+#
+# What actually failed, live against AWX 24.6.1: a catalog deploy dispatched
+# right after the autoscale helper reported AWX awake hit a bare Django 500
+# on the FIRST authenticated call — lookup_job_template_by_name — roughly 13
+# SECONDS after dispatch. That call was already wrapped in retry. The old
+# policy was 3 attempts at a fixed 3s delay: two sleeps, ~6s of scheduled
+# backoff against immediate 5xx responses. It expired while AWX's ORM/RBAC
+# stack was still warming, and it was bounded by attempt COUNT rather than by
+# any deliberate readiness-lag budget.
+#
+# The helper-side gate (dmf-infra#61) is best-effort BY CONSTRUCTION: it
+# probes with the awx-svc identity, not the console's dmf-cms-svc, and not
+# the console's exact ?name= path. This deadline is the definitive
+# race-closer, so it is sized to outlast the observed lag by a wide margin
+# — and it is applied ONLY to idempotent reads (see call_with_readiness_retry).
+POST_WAKE_READ_DEADLINE = 120.0
+POST_WAKE_INITIAL_DELAY = 1.0
+POST_WAKE_MAX_DELAY = 10.0
+POST_WAKE_MIN_CALL_TIMEOUT = 5.0
 
-    Covers the post-wake window where AWX is Ready but its API briefly
-    returns 5xx or resets connections (#134).
+
+def is_transient_awx_failure(exc: BaseException) -> bool:
+    """Classify an AWX failure as safe to retry for an IDEMPOTENT call.
+
+    Transient — the request did not produce an authoritative answer:
+      * ``AWXTransportError`` (read-time reset, empty body, undecodable
+        body, non-object payload — see that class);
+      * ``AWXAPIError`` with a 5xx status, including a bare Django 500 with
+        an empty body, which is the exact #295 signature;
+      * ``urllib.error.URLError`` — connect/DNS/TLS/timeout before a
+        response existed.
+
+    NOT transient — AWX answered authoritatively and retrying only repeats
+    the same answer: any 4xx, so auth failures, RBAC refusals, and
+    not-found stay hard errors.
     """
-    if sleep is None:
-        sleep = time.sleep
-    for attempt in range(attempts):
+    if isinstance(exc, AWXTransportError):
+        return True
+    if isinstance(exc, AWXAPIError):
+        return exc.status >= 500
+    # HTTPError is a URLError subclass — check it first. _request normalizes
+    # it to AWXAPIError, so this only guards a caller that passes one through.
+    if isinstance(exc, urllib.error.HTTPError):
+        return exc.code >= 500
+    return isinstance(exc, urllib.error.URLError)
+
+
+_RETRYABLE = (AWXAPIError, AWXTransportError, urllib.error.URLError)
+
+
+def call_with_readiness_retry(
+    fn,
+    *,
+    deadline_seconds: float | None = None,
+    initial_delay: float | None = None,
+    max_delay: float | None = None,
+    min_call_timeout: float | None = None,
+    sleep=None,
+    monotonic=None,
+):
+    """Retry an IDEMPOTENT AWX read until a wall-clock deadline (#295).
+
+    ONLY for safe reads. ``fn`` is re-sent whenever the previous attempt
+    failed transiently, so a non-idempotent call (a launch POST) must never
+    be passed here: a reset arriving AFTER AWX accepted the job would make
+    this create a duplicate. See ``launch_job``'s own docstring.
+
+    ``fn`` is called as ``fn(timeout=<per-call timeout>)``; bind everything
+    else with ``functools.partial``. The per-call timeout is derived from
+    the remaining budget (floored at ``min_call_timeout``) so a single hung
+    socket cannot consume the whole window — the practical overshoot is
+    bounded by one ``min_call_timeout``, since a final attempt started just
+    inside the deadline is always allowed to finish.
+
+    Backoff is exponential from ``initial_delay``, capped at ``max_delay``,
+    and further capped by the time actually left. Bounded by elapsed time,
+    not attempt count: that is the whole point — the attempt-count policy
+    this replaces expired ~6s into a ~13s readiness lag.
+
+    Raises the last exception once the deadline passes, or immediately for
+    any non-transient failure (see ``is_transient_awx_failure``).
+
+    The four bounds default to None and resolve against the module
+    constants at CALL time, not at def time — so the constants are a real
+    knob (patchable in a test, adjustable in one place operationally)
+    rather than values frozen into this signature at import.
+    """
+    deadline_seconds = POST_WAKE_READ_DEADLINE if deadline_seconds is None else deadline_seconds
+    initial_delay = POST_WAKE_INITIAL_DELAY if initial_delay is None else initial_delay
+    max_delay = POST_WAKE_MAX_DELAY if max_delay is None else max_delay
+    min_call_timeout = POST_WAKE_MIN_CALL_TIMEOUT if min_call_timeout is None else min_call_timeout
+    sleep = time.sleep if sleep is None else sleep
+    monotonic = time.monotonic if monotonic is None else monotonic
+
+    deadline = monotonic() + deadline_seconds
+    delay = initial_delay
+
+    while True:
+        remaining = deadline - monotonic()
+        call_timeout = max(min_call_timeout, min(DEFAULT_REQUEST_TIMEOUT, remaining))
         try:
-            return fn()
-        except (AWXAPIError, urllib.error.URLError) as exc:
-            transient = isinstance(exc, urllib.error.URLError) or (
-                isinstance(exc, AWXAPIError) and exc.status >= 500
-            )
-            if not transient or attempt == attempts - 1:
+            return fn(timeout=call_timeout)
+        except _RETRYABLE as exc:
+            if not is_transient_awx_failure(exc):
                 raise
-            sleep(delay)
+            remaining = deadline - monotonic()
+            if remaining <= 0:
+                raise
+            sleep(min(delay, max_delay, remaining))
+            delay = min(delay * 2, max_delay)
 
 
 def _ssl_context(verify: bool) -> ssl.SSLContext | None:
@@ -179,21 +352,44 @@ def list_job_templates(
     return result.get("results", [])
 
 
+def _collection_results(result: dict, *, path: str) -> list:
+    """Return the ``results`` list of an AWX paginated collection.
+
+    A response that does not carry a ``results`` list is not an empty
+    collection — it is a malformed response, and reporting it as "nothing
+    found" is exactly how a lost body became an authoritative
+    "job template not found" (#295). ``_request`` already rejects empty and
+    non-object bodies; this rejects the object-shaped-but-wrong ones.
+    """
+    results = result.get("results")
+    if not isinstance(results, list):
+        raise AWXTransportError(
+            f"{path}: response has no 'results' list (got {type(results).__name__})",
+            phase="schema",
+        )
+    return results
+
+
 def lookup_job_template_by_name(
     *,
     api_url: str,
     api_token: str,
     name: str,
     ssl_verify: bool = True,
+    timeout: float = DEFAULT_REQUEST_TIMEOUT,
 ) -> dict | None:
-    """Find a job template by its name."""
+    """Find a job template by its name, or None if AWX says there is none.
+
+    ``None`` means AWX answered authoritatively with an empty collection.
+    A malformed/lost response raises instead (see ``_collection_results``)
+    so a post-wake blip can never be reported as a missing template — this
+    is the exact call that failed in #295, and it is the one the
+    post-wake ``call_with_readiness_retry`` guards.
+    """
     ctx = _ssl_context(ssl_verify)
-    result = _request(
-        api_url, api_token, "GET",
-        f"/api/v2/job_templates/?name={urllib.parse.quote(name)}",
-        ssl_context=ctx,
-    )
-    results = result.get("results", [])
+    path = f"/api/v2/job_templates/?name={urllib.parse.quote(name)}"
+    result = _request(api_url, api_token, "GET", path, ssl_context=ctx, timeout=timeout)
+    results = _collection_results(result, path=path)
     return results[0] if results else None
 
 
@@ -216,17 +412,36 @@ def launch_job(
     ask_variables_on_launch=true; the dmf-infra side of the #239 trio flips
     that flag on the catalog job templates. Until then, passing extra_vars
     here is a no-op on AWX's end, not an error.
+
+    NOT IDEMPOTENT — never wrap this in ``call_with_readiness_retry`` or any
+    other blind retry (#295). AWX creates the job when it accepts the POST;
+    if the response is then lost to a reset or a proxy 5xx, the job exists
+    and a resend creates a SECOND one, with real duplicate infrastructure
+    side effects. A caller that wants to survive an ambiguous launch must
+    reconcile through ``find_active_job_for_template`` before resending —
+    it must not simply repeat the POST.
+
+    A missing/invalid job id in the response is raised, not returned as 0:
+    a lost launch response is an ambiguous commit, not "job 0".
     """
     ctx = _ssl_context(ssl_verify)
     body = {"extra_vars": extra_vars} if extra_vars else {}
-    result = _request(
-        api_url, api_token, "POST",
-        f"/api/v2/job_templates/{job_template_id}/launch/",
-        body=body,
-        ssl_context=ctx,
-    )
+    path = f"/api/v2/job_templates/{job_template_id}/launch/"
+    result = _request(api_url, api_token, "POST", path, body=body, ssl_context=ctx)
     # AWX returns the job id in the 'job' key for launch responses
-    return int(result.get("job", result.get("id", 0)))
+    job_id = result.get("job", result.get("id"))
+    if isinstance(job_id, bool) or not isinstance(job_id, (int, str)):
+        raise AWXTransportError(
+            f"{path}: launch response carries no job id (got {type(job_id).__name__})",
+            phase="schema",
+        )
+    try:
+        job_id = int(job_id)
+    except ValueError as exc:
+        raise AWXTransportError(f"{path}: non-numeric job id {job_id!r}", phase="schema") from exc
+    if job_id <= 0:
+        raise AWXTransportError(f"{path}: launch returned job id {job_id}", phase="schema")
+    return job_id
 
 
 def find_active_job_for_template(
@@ -242,15 +457,19 @@ def find_active_job_for_template(
     launch idempotent: a double-click (or two tabs / refresh / slow render)
     that arrives while a prior job is still active gets the SAME job id back
     instead of spawning a duplicate.
+
+    A malformed response raises rather than reading as "no active job":
+    this is the reconciliation query that decides whether a launch is safe
+    to send, so a lost body must never be mistaken for an authoritative
+    "nothing in flight" (#295).
     """
     ctx = _ssl_context(ssl_verify)
-    result = _request(
-        api_url, api_token, "GET",
+    path = (
         f"/api/v2/jobs/?job_template={int(job_template_id)}"
-        "&status__in=new,pending,waiting,running&order_by=-id&page_size=1",
-        ssl_context=ctx,
+        "&status__in=new,pending,waiting,running&order_by=-id&page_size=1"
     )
-    results = result.get("results", [])
+    result = _request(api_url, api_token, "GET", path, ssl_context=ctx)
+    results = _collection_results(result, path=path)
     return int(results[0]["id"]) if results else None
 
 
