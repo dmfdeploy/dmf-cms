@@ -395,6 +395,30 @@ def _sum_by_pod(
     return out
 
 
+def _max_by_pod(
+    rows: list[dict], *, allowed_keys: set[tuple[str, str]] | None = None
+) -> dict[tuple[str, str], float]:
+    """Largest single value across rows sharing the same (namespace,pod).
+
+    The init-container family (one row per init container) is combined with
+    ``max``, not ``sum`` (dmfdeploy/dmfdeploy#293): regular init containers
+    run sequentially and each completes before the next starts, so a pod
+    only ever holds ONE init container's reservation at a time — the
+    scheduler's effective pod request charges ``max(app_sum, max_init)``,
+    never ``app_sum + init_sum``. Same malformed-row / ``allowed_keys``
+    semantics as ``_sum_by_pod``.
+    """
+    out: dict[tuple[str, str], float] = {}
+    for row in rows:
+        key = _pod_key(row["metric"])
+        if allowed_keys is not None and key not in allowed_keys:
+            continue
+        value = _row_value(row)
+        if value > out.get(key, 0.0):
+            out[key] = value
+    return out
+
+
 def read_node_supply(*, prom_url: str) -> NodeSupply | str:
     """Read the target node's allocatable + already-requested budget.
 
@@ -501,20 +525,33 @@ def _read_node_supply(prom_url: str) -> NodeSupply:
 
     app_cpu = _sum_by_pod(app_cpu_rows)
     app_mem = _sum_by_pod(app_mem_rows)
-    init_cpu = _sum_by_pod(init_cpu_rows)
-    init_mem = _sum_by_pod(init_mem_rows)
+    # #293: init containers combine with max, not sum — see _max_by_pod.
+    init_cpu = _max_by_pod(init_cpu_rows)
+    init_mem = _max_by_pod(init_mem_rows)
     overhead_cpu = _sum_by_pod(overhead_cpu_rows, allowed_keys=eligible)
     overhead_mem = _sum_by_pod(overhead_mem_rows, allowed_keys=eligible)
 
     requested_cpu_m = 0
     requested_mem_b = 0
     for key in eligible:
-        # Conservative overcount (R2-3a): app sum + init sum + overhead,
-        # never a max — request families are legitimately sparse for a
-        # pod with no requests/no inits/no overhead, so missing entries
-        # default to 0, not a refusal.
-        pod_cpu = app_cpu.get(key, 0.0) + init_cpu.get(key, 0.0) + overhead_cpu.get(key, 0.0)
-        pod_mem = app_mem.get(key, 0.0) + init_mem.get(key, 0.0) + overhead_mem.get(key, 0.0)
+        # Kubernetes effective pod request (dmfdeploy/dmfdeploy#293):
+        # max(sum(app containers), max(init container)) + overhead, per
+        # resource. Init containers run sequentially and complete before the
+        # app containers start, so their reservations do NOT stack on top of
+        # the app containers' — the prior `app + init` sum double-charged
+        # every init-bearing platform pod (forgejo/awx/netbox), inflating the
+        # budget by ~800m on the J1 node and manufacturing a false no-fit.
+        # Request families stay legitimately sparse: a pod with no
+        # requests/inits/overhead contributes 0, never a refusal.
+        #
+        # CAVEAT (native/restartable init containers, aka sidecars): those DO
+        # run alongside the app containers and their requests SHOULD stack.
+        # KSM's kube_pod_init_container_resource_requests does not distinguish
+        # them here, so this max-model under-counts a pod that uses a native
+        # sidecar. No current DMF platform chart does; revisit if one adopts
+        # `restartPolicy: Always` init containers.
+        pod_cpu = max(app_cpu.get(key, 0.0), init_cpu.get(key, 0.0)) + overhead_cpu.get(key, 0.0)
+        pod_mem = max(app_mem.get(key, 0.0), init_mem.get(key, 0.0)) + overhead_mem.get(key, 0.0)
         requested_cpu_m += int(pod_cpu * 1000)
         requested_mem_b += int(pod_mem)
 

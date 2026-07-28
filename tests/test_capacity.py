@@ -2,8 +2,8 @@
 
 Pure-logic tests: quantity grammar (tolerant k8s-side vs strict catalog-side),
 the EE reserve reader (whole-pod conservative sum vs floor fallback), node
-supply accounting (the R2-3 conservative-overcount formula — app sum + init
-sum + overhead, never a max — plus the R2-2 liveness sentinels and
+supply accounting (the Kubernetes effective-request model, #293 — per pod
+max(sum(app), max(init)) + overhead — plus the R2-2 liveness sentinels and
 fail-closed exception/malformed-row handling, and single-node enforcement),
 and the evaluate/report/text shape (facility = node name, R2-8).
 
@@ -397,13 +397,17 @@ def test_supply_happy_path_excludes_succeeded(monkeypatch):
     assert supply.pod_count == 2
 
 
-def test_supply_init_sum_added_conservatively(monkeypatch):
-    # codex R2-3a: demand_pod = app_sum + init_sum(+overhead) — a
-    # CONSERVATIVE OVERCOUNT, never the scheduler's own max formula (KSM
-    # can't distinguish restartable sidecars, cumulative, from sequential
-    # inits, max-of-any-single). app=100m, inits=[200m,300m] -> 100+500=600m.
-    # This must fail against BOTH a max-only implementation (300m) and a
-    # bare app-sum implementation (100m).
+def test_supply_init_uses_scheduler_max_not_sum(monkeypatch):
+    # dmfdeploy/dmfdeploy#293: a pod's effective request is
+    # max(sum(app), max(init)) + overhead — init containers run sequentially
+    # and complete before the app containers start, so their reservations
+    # never stack on top of the app containers'. The prior `app + init` SUM
+    # double-charged every init-bearing pod and manufactured false no-fits.
+    #
+    # Discriminating fixture: app=100m, inits=[200m,300m].
+    #   correct max model : max(100, 300) = 300m   <- asserted
+    #   old sum bug       : 100 + 200 + 300 = 600m  (rejected)
+    #   bare app-only     : 100m                     (rejected)
     routes = _supply_routes(
         pod_info=[_metric_row(1, namespace="ns1", pod="podD")],
         phase=[_metric_row(1, namespace="ns1", pod="podD")],
@@ -413,12 +417,44 @@ def test_supply_init_sum_added_conservatively(monkeypatch):
             _metric_row("0.2", namespace="ns1", pod="podD", container="init-a"),
             _metric_row("0.3", namespace="ns1", pod="podD", container="init-b"),
         ],
+        init_mem=[
+            _metric_row(30 * MI, namespace="ns1", pod="podD", container="init-a"),
+            _metric_row(70 * MI, namespace="ns1", pod="podD", container="init-b"),
+        ],
     )
     monkeypatch.setattr(prometheus_module, "query", _exact_query_dispatcher(routes))
 
     supply = capacity.read_node_supply(prom_url="http://prom.test")
     assert isinstance(supply, capacity.NodeSupply)
-    assert supply.requested_cpu_m == 600
+    # cpu: max(100, max(200,300)) = 300m
+    assert supply.requested_cpu_m == 300
+    # mem: max(app 50Mi, max(init 30Mi, 70Mi)) = 70Mi
+    assert supply.requested_mem_b == 70 * MI
+
+
+def test_supply_app_dominates_when_larger_than_init(monkeypatch):
+    # #293 complement: when the app-container sum exceeds every init
+    # container, the effective request is the app sum (init adds nothing).
+    # app=400m, inits=[100m,150m] -> max(400,150)=400m.
+    routes = _supply_routes(
+        pod_info=[_metric_row(1, namespace="ns1", pod="podE")],
+        phase=[_metric_row(1, namespace="ns1", pod="podE")],
+        app_cpu=[
+            _metric_row("0.25", namespace="ns1", pod="podE", container="a"),
+            _metric_row("0.15", namespace="ns1", pod="podE", container="b"),
+        ],
+        app_mem=[_metric_row(200 * MI, namespace="ns1", pod="podE")],
+        init_cpu=[
+            _metric_row("0.1", namespace="ns1", pod="podE", container="init-a"),
+            _metric_row("0.15", namespace="ns1", pod="podE", container="init-b"),
+        ],
+    )
+    monkeypatch.setattr(prometheus_module, "query", _exact_query_dispatcher(routes))
+
+    supply = capacity.read_node_supply(prom_url="http://prom.test")
+    assert isinstance(supply, capacity.NodeSupply)
+    # cpu: max(app 250+150=400, max(init 100,150)=150) = 400m
+    assert supply.requested_cpu_m == 400
 
 
 def test_supply_overhead_has_no_node_label_and_is_filtered_to_eligible(monkeypatch):
