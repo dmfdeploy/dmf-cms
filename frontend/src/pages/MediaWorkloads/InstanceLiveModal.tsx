@@ -47,7 +47,24 @@ function Stat({ label, value }: { label: string; value: string }) {
  *
  * Renders nothing (not an error state) when the instance carries no
  * topology at all — the common case for every non-viewer instance.
+ *
+ * umbrella #320/#321 (runtime truth): `active_source` now reflects a live
+ * sidecar observation, not a static catalog value — so the switch control
+ * itself must fail closed. It only ever offers a target when the topology's
+ * `provenance`/`observed_at` prove the current active source was actually
+ * seen, recently. Anything else (unreachable/unconfigured sidecar, no flow
+ * match, or a reading that's gone stale) disables the control rather than
+ * falling back to a possibly-wrong catalog default.
  */
+// useInstanceTopology fetches once when the modal opens (and again only
+// after a switch completes) rather than polling, so `observed_at` can
+// genuinely go stale while the modal sits open; this bounds how old a
+// reading may be before the switch is refused rather than trusted.
+const OBSERVED_SOURCE_STALE_MS = 15_000
+
+const OBSERVED_SOURCE_UNKNOWN_MESSAGE =
+  'Live source is unknown or stale — refresh to retry before switching.'
+
 function SwitchSourceControl({ instance }: { instance: string }) {
   const topology = useInstanceTopology(instance)
   const switchMutation = useSwitchSource()
@@ -57,9 +74,18 @@ function SwitchSourceControl({ instance }: { instance: string }) {
 
   if (!topology.data || !Array.isArray(topology.data.sources)) return null
 
-  const { sources, active_source } = topology.data
-  const otherSources = sources.filter((s) => s.id !== active_source)
-  if (otherSources.length === 0) return null
+  const { sources, active_source, provenance, observed_at } = topology.data
+  const isObservedFresh =
+    provenance === 'observed-flow' &&
+    !!active_source &&
+    !!observed_at &&
+    Date.now() - new Date(observed_at).getTime() < OBSERVED_SOURCE_STALE_MS
+
+  // Fresh: today's behavior (offer every OTHER declared source; no control
+  // at all when there's nothing else to switch to). Not fresh: never offer
+  // a target — the disabled branch below renders instead.
+  const otherSources = isObservedFresh ? sources.filter((s) => s.id !== active_source) : []
+  if (isObservedFresh && otherSources.length === 0) return null
 
   const result = switchMutation.data
 
@@ -94,6 +120,8 @@ function SwitchSourceControl({ instance }: { instance: string }) {
         {!arming && (
           <button
             className="btn btn-secondary btn-sm"
+            disabled={!isObservedFresh}
+            title={isObservedFresh ? undefined : OBSERVED_SOURCE_UNKNOWN_MESSAGE}
             onClick={() => {
               switchMutation.reset()
               setArming(true)
@@ -103,6 +131,10 @@ function SwitchSourceControl({ instance }: { instance: string }) {
           </button>
         )}
       </div>
+
+      {!isObservedFresh && (
+        <p className="mt-1 text-[11px] text-amber-200/60">{OBSERVED_SOURCE_UNKNOWN_MESSAGE}</p>
+      )}
 
       {arming ? (
         <div className="mt-2">
