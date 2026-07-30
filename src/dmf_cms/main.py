@@ -120,6 +120,7 @@ from .awx import AWXAPIError, AWXAutoscaleError, AWXJobInfo, AWXTransportError, 
 from .catalog import CatalogEntry, load_catalog_entries, get_lifecycle_status, load_topology_instance, CATALOG_DIR
 from .catalog import _netbox_service_names as _catalog_service_names
 from .contracts import AppContract, load_app_contract
+from . import l3_detail_tokens
 from .operations import Operation, OperationStore, OperationState, terminal_states, DIRTY_STATES
 from .switch_source import (
     ReconnectViaAwxActuator,
@@ -1150,14 +1151,19 @@ _PRE_MUTATION_TOKENS = frozenset({
 # by hand a second time. The 'snapshot' kv key (and its own
 # _KV_SNAPSHOT_TOKENS enum) is REMOVED entirely — see the module
 # docstring's own R5b paragraph for why.
+#
+# umbrella #320/#321: the frozenset itself now lives in l3_detail_tokens.py
+# (re-exported here as _KV_DETAIL_TOKENS for every existing call site) so
+# switch_source.py's new switch-outcome parser can validate a
+# DMF_L3_SWITCH_REFUSED detail value against the SAME allowlist without a
+# circular import (main.py already imports switch_source.py). The set now
+# also carries the switch/topology detail values dmf-runbooks 0.4.3 emits
+# for the switch play (switch-*, topology-*) — see l3_detail_tokens.py's
+# own docstring.
 _KV_ALLOWED_KEYS = frozenset({"surfaces", "request_id", "run_id", "detail"})
 _HEX32_RE = re.compile(r"^[0-9a-f]{32}$")
 _KV_SURFACES_ALLOWED = frozenset({"netbox", "helm", "monitoring"})
-_KV_DETAIL_TOKENS = frozenset({
-    "authority-constant-mismatch", "helm-values-fetch-failed", "lock-lost",
-    "lock-race", "lock-verify-failed", "reserved-var", "reserved-var-run-id",
-    "snapshot-collision", "snapshot-race", "snapshot-verify-failed",
-})
+_KV_DETAIL_TOKENS = l3_detail_tokens.KV_DETAIL_TOKENS
 _KV_MAX_LEN = 500
 
 
@@ -4781,12 +4787,54 @@ def create_app(settings: Settings | None = None, contract: AppContract | None = 
             }
         )
 
+    # umbrella #321 fix: the catalog's own viewer.source_selection is a
+    # DECLARED intent, never live truth — a real switch re-points the
+    # cluster without ever rewriting the catalog file. The observed active
+    # source is derived by matching the status-sidecar's own reported
+    # flow.id (the SAME sidecar the live-view endpoints below already
+    # poll) against the declared topology's sources[].flow_id. Fail-closed
+    # by construction: any failure to reach the sidecar, or a reported
+    # flow.id that names no declared source, returns (None, None, None) —
+    # NEVER a fallback to the catalog's own source_selection, which is
+    # exactly the bug this fixes.
+    _OBSERVED_FLOW_PROVENANCE = "observed-flow"
+
+    async def _resolve_observed_active_source(
+        request: Request, instance: str, sources: list,
+    ) -> tuple[Any, Any, Any]:
+        """Returns ``(active_source, provenance, observed_at)``.
+
+        ``provenance`` is ``"observed-flow"`` only when the sidecar was
+        reachable AND its reported flow.id matched exactly one declared
+        source; every other case (sidecar not configured/unreachable/no
+        sidecar for this instance, or a reported flow.id that matches no
+        declared source) returns ``(None, None, None)`` — the caller must
+        never substitute the catalog's own source_selection here.
+        """
+        outcome, err = await _resolve_mxl_target(request, instance)
+        if err is not None or not isinstance(outcome, dict) or outcome.get("status") != "ok":
+            return None, None, None
+        data = await run_in_threadpool(mxl.fetch_status_one, outcome["base_url"])
+        if not isinstance(data, dict):
+            return None, None, None
+        flow = data.get("flow")
+        flow_id = flow.get("id") if isinstance(flow, dict) else None
+        if not isinstance(flow_id, str) or not flow_id:
+            return None, None, None
+        matched = next(
+            (s.get("id") for s in sources if isinstance(s, dict) and s.get("flow_id") == flow_id),
+            None,
+        )
+        if matched is None:
+            return None, None, None
+        return matched, _OBSERVED_FLOW_PROVENANCE, datetime.now(timezone.utc).isoformat()
+
     @app.get("/api/media-workloads/{instance}/topology")
     async def api_media_workloads_topology(request: Request, instance: str):
         """Expose a viewer instance's topology (sources[] + current
-        selection) so the console can present switch targets (umbrella
-        #201 WP5, spec §7: "presents the selectable sources (sources[]
-        from the topology set)").
+        observed selection) so the console can present switch targets
+        (umbrella #201 WP5, spec §7: "presents the selectable sources
+        (sources[] from the topology set)").
 
         Not itself in the spec's own WP5 endpoint list — a necessary read
         seam the switch UI has no other way to get (no existing endpoint
@@ -4797,6 +4845,16 @@ def create_app(settings: Settings | None = None, contract: AppContract | None = 
         drift apart. Same access gate as every other Media Workloads read
         (``_require_media_workloads_access`` gates reads and the write
         uniformly on this surface, not just the one write).
+
+        umbrella #321: ``active_source`` is the OBSERVED runtime source
+        (see ``_resolve_observed_active_source``), never the catalog's own
+        ``viewer.source_selection`` — a real switch re-points the cluster
+        without ever touching the catalog file, so the declared selection
+        can silently disagree with reality after any switch. ``provenance``
+        and ``observed_at`` let the console tell "we know the live source
+        and it's this" from "we don't currently know" — the switch UI must
+        disable switching entirely in the latter case (never fall back to
+        a possibly-stale/possibly-active default).
         """
         user, err = _require_media_workloads_access(request)
         if err is not None:
@@ -4806,10 +4864,14 @@ def create_app(settings: Settings | None = None, contract: AppContract | None = 
         except SwitchSourceError as exc:
             status_code = 404 if exc.code in ("receiver-not-found", "receiver-not-topology") else 422
             return JSONResponse({"error": exc.code, "detail": exc.detail}, status_code=status_code)
+        sources = topology_params.get("sources", [])
+        active_source, provenance, observed_at = await _resolve_observed_active_source(request, instance, sources)
         return JSONResponse({
             "receiver_instance": instance,
-            "sources": topology_params.get("sources", []),
-            "active_source": (topology_params.get("viewer") or {}).get("source_selection"),
+            "sources": sources,
+            "active_source": active_source,
+            "provenance": provenance,
+            "observed_at": observed_at,
         })
 
     @app.post("/api/media-workloads/{instance}/switch-source")
