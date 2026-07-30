@@ -491,13 +491,34 @@ describe('clear-for-deployment from a tile (C5)', () => {
   })
 })
 
-const TOPOLOGY_MXL_A = {
-  receiver_instance: 'mxl-a',
-  sources: [
-    { id: 'source-a', flow_id: '5fbec3b1-1b0f-417d-9059-8b94a47197ed', pattern: 'smpte' },
-    { id: 'source-b', flow_id: 'b0ae9cba-a989-4568-ac96-8bd19272c966', pattern: 'ball' },
-  ],
-  active_source: 'source-a',
+// umbrella #320/#321 (runtime truth): active_source is now a live observation,
+// not a static catalog value — fixtures need matching provenance/observed_at
+// so the fail-closed switch control treats them as fresh, confirmed readings.
+// These are computed lazily (factory functions, called at test-execution
+// time) rather than baked into a module-level constant at import time — this
+// file's other describes exercise real timers, so a value computed once at
+// module load could genuinely cross the 15s staleness bound before a later
+// test in the same run gets around to using it.
+function freshObservedAt(): string {
+  return new Date(Date.now() - 1_000).toISOString() // 1s old — well under the 15s staleness bound
+}
+
+function staleObservedAt(): string {
+  return new Date(Date.now() - 60_000).toISOString() // 60s old — past the 15s staleness bound
+}
+
+function topologyMxlA(overrides: Record<string, unknown> = {}) {
+  return {
+    receiver_instance: 'mxl-a',
+    sources: [
+      { id: 'source-a', flow_id: '5fbec3b1-1b0f-417d-9059-8b94a47197ed', pattern: 'smpte' },
+      { id: 'source-b', flow_id: 'b0ae9cba-a989-4568-ac96-8bd19272c966', pattern: 'ball' },
+    ],
+    active_source: 'source-a',
+    provenance: 'observed-flow',
+    observed_at: freshObservedAt(),
+    ...overrides,
+  }
 }
 
 describe('switch source from the live modal (umbrella #201 WP5)', () => {
@@ -512,7 +533,7 @@ describe('switch source from the live modal (umbrella #201 WP5)', () => {
   })
 
   it('lists the topology\'s OTHER sources only, and shows the current one before arming', async () => {
-    mkFetch({ topology: TOPOLOGY_MXL_A })
+    mkFetch({ topology: topologyMxlA() })
     renderPage()
     const tile = (await screen.findByText('MXL Video Test View')).closest('[role="button"]')!
     fireEvent.click(tile)
@@ -527,9 +548,83 @@ describe('switch source from the live modal (umbrella #201 WP5)', () => {
     expect(optionValues).not.toContain('source-a') // the active source is never a switch target
   })
 
+  it('shows the OBSERVED source (not a stale catalog value) and offers only the other sources', async () => {
+    // Conceptually: a stale catalog might have said source-a, but the live
+    // observation says source-b — the card and the offered targets must
+    // follow the observation, not any catalog default.
+    mkFetch({
+      topology: topologyMxlA({
+        active_source: 'source-b',
+        provenance: 'observed-flow',
+        observed_at: freshObservedAt(),
+      }),
+    })
+    renderPage()
+    const tile = (await screen.findByText('MXL Video Test View')).closest('[role="button"]')!
+    fireEvent.click(tile)
+    const dialog = await screen.findByRole('dialog')
+
+    expect(await within(dialog).findByText('source-b')).toBeTruthy() // the OBSERVED source, shown
+
+    fireEvent.click(within(dialog).getByRole('button', { name: 'Switch source' }))
+    const select = within(dialog).getByRole('combobox') as HTMLSelectElement
+    const optionValues = Array.from(select.options).map((o) => o.value)
+    expect(optionValues).toContain('source-a')
+    expect(optionValues).not.toContain('source-b') // never offer the already-active source
+  })
+
+  it('fails closed (disabled, no offered sources) when the observation is unknown', async () => {
+    mkFetch({
+      topology: topologyMxlA({
+        active_source: null,
+        provenance: null,
+        observed_at: null,
+      }),
+    })
+    renderPage()
+    const tile = (await screen.findByText('MXL Video Test View')).closest('[role="button"]')!
+    fireEvent.click(tile)
+    const dialog = await screen.findByRole('dialog')
+
+    const button = (await within(dialog).findByRole('button', {
+      name: 'Switch source',
+    })) as HTMLButtonElement
+    expect(button.disabled).toBe(true)
+    expect(
+      within(dialog).getByText(/Live source is unknown or stale — refresh to retry before switching\./),
+    ).toBeTruthy()
+    // Disabled: clicking it must not arm the dropdown/offer any source.
+    fireEvent.click(button)
+    expect(within(dialog).queryByRole('combobox')).toBeNull()
+  })
+
+  it('fails closed (disabled, no offered sources) when the observation has gone stale', async () => {
+    mkFetch({
+      topology: topologyMxlA({
+        active_source: 'source-a',
+        provenance: 'observed-flow',
+        observed_at: staleObservedAt(),
+      }),
+    })
+    renderPage()
+    const tile = (await screen.findByText('MXL Video Test View')).closest('[role="button"]')!
+    fireEvent.click(tile)
+    const dialog = await screen.findByRole('dialog')
+
+    const button = (await within(dialog).findByRole('button', {
+      name: 'Switch source',
+    })) as HTMLButtonElement
+    expect(button.disabled).toBe(true)
+    expect(
+      within(dialog).getByText(/Live source is unknown or stale — refresh to retry before switching\./),
+    ).toBeTruthy()
+    fireEvent.click(button)
+    expect(within(dialog).queryByRole('combobox')).toBeNull()
+  })
+
   it('requires both a target source and a reason before Confirm switch is enabled, then POSTs and records to Activity', async () => {
     const { switchCalls } = mkFetch({
-      topology: TOPOLOGY_MXL_A,
+      topology: topologyMxlA(),
       switchResult: {
         command_id: 'cmd-9',
         receiver_instance: 'mxl-a',
@@ -580,7 +675,7 @@ describe('switch source from the live modal (umbrella #201 WP5)', () => {
 
   it('surfaces failed_rollback_required honestly, never masked as success', async () => {
     mkFetch({
-      topology: TOPOLOGY_MXL_A,
+      topology: topologyMxlA(),
       switchResult: {
         command_id: 'cmd-2',
         receiver_instance: 'mxl-a',

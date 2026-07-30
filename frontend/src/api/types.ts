@@ -476,7 +476,14 @@ export interface TopologySource {
 export interface InstanceTopology {
   receiver_instance: string
   sources: TopologySource[]
+  // umbrella #320/#321: active_source is now derived from a live sidecar
+  // observation (matched against declared sources[].flow_id), never a static
+  // catalog fallback. provenance === 'observed-flow' iff this is a fresh,
+  // successfully-matched observation; otherwise active_source/observed_at
+  // are both null (unreachable sidecar, unconfigured, or no flow match).
   active_source: string | null
+  provenance: string | null
+  observed_at: string | null
 }
 
 export type SwitchStatus = 'pending' | 'reconnecting' | 'active' | 'failed_rollback_required'
