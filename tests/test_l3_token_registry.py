@@ -87,6 +87,20 @@ _EXPECTED_RUNBOOKS_DETAIL_TOKENS = frozenset({
     "snapshot-collision",           # _snapshot_create_one_attempt.yml (R4a/P1-6)
     "snapshot-race",                # snapshot.yml (R4a/P2-4)
     "snapshot-verify-failed",       # _snapshot_create_one_attempt.yml (R5a/P1-1)
+    # umbrella #320/#321 (0.4.3 switch play): grepped from the staged
+    # dmf-runbooks tree's switch-specific task files + the demo playbook's
+    # own final-readback assert (see _RUNBOOKS_SWITCH_DEMO_PLAYBOOK below —
+    # that one is NOT under roles/l3_run_guard/tasks/).
+    "switch-chart-metadata-mismatch",     # switch_resolve_chart.yml
+    "switch-coordinator-missing",         # switch_read_coordinator.yml
+    "switch-pre-values-missing-flow-id",  # switch_capture_baseline.yml
+    "switch-receiver-instance-missing",   # switch_validate.yml
+    "switch-source-instance-mismatch",    # switch_validate.yml
+    "switch-final-readback-mismatch",     # playbooks/switch-mxl-fabrics-demo.yml
+    "topology-facility-ambiguous",        # topology_validate.yml
+    "topology-facility-mismatch",         # topology_validate.yml
+    "topology-invalid",                   # switch_validate.yml, topology_validate.yml
+    "topology-wrong-entry",               # topology_validate.yml
 })
 
 _DETAIL_KV_RE = re.compile(r"detail=([a-zA-Z0-9_-]+)")
@@ -96,10 +110,15 @@ _DETAIL_KV_RE = re.compile(r"detail=([a-zA-Z0-9_-]+)")
 # dmf-cms/tests/test_l3_token_registry.py, so three parents up is the
 # common parent, and dmf-runbooks/roles/l3_run_guard/tasks is the source
 # of truth directory.
-_RUNBOOKS_TASKS_DIR = (
-    Path(__file__).resolve().parent.parent.parent / "dmf-runbooks"
-    / "roles" / "l3_run_guard" / "tasks"
-)
+_RUNBOOKS_ROOT = Path(__file__).resolve().parent.parent.parent / "dmf-runbooks"
+_RUNBOOKS_TASKS_DIR = _RUNBOOKS_ROOT / "roles" / "l3_run_guard" / "tasks"
+
+# umbrella #320/#321: the switch play's PHASE 3 final-readback assert lives
+# in the demo PLAYBOOK itself, not under roles/l3_run_guard/tasks/ (every
+# other detail= emission does) — its own detail=switch-final-readback-mismatch
+# would be invisible to a tasks-dir-only glob. Scanned in ADDITION to the
+# tasks dir below, not instead of it.
+_RUNBOOKS_SWITCH_DEMO_PLAYBOOK = _RUNBOOKS_ROOT / "playbooks" / "switch-mxl-fabrics-demo.yml"
 
 
 def test_kv_detail_tokens_matches_documented_expected_set():
@@ -137,6 +156,8 @@ def test_kv_detail_tokens_matches_live_runbooks_source_when_sibling_present():
     found: set[str] = set()
     for path in _RUNBOOKS_TASKS_DIR.glob("*.yml"):
         found.update(_DETAIL_KV_RE.findall(path.read_text()))
+    if _RUNBOOKS_SWITCH_DEMO_PLAYBOOK.is_file():
+        found.update(_DETAIL_KV_RE.findall(_RUNBOOKS_SWITCH_DEMO_PLAYBOOK.read_text()))
 
     assert found == main._KV_DETAIL_TOKENS, (
         f"Live scan of {_RUNBOOKS_TASKS_DIR} found detail= values "

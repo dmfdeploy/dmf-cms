@@ -31,6 +31,7 @@ from __future__ import annotations
 import asyncio
 import functools
 import logging
+import re
 import threading
 import uuid
 from dataclasses import dataclass, field
@@ -42,6 +43,7 @@ from starlette.concurrency import run_in_threadpool
 
 from . import awx as _awx
 from .catalog import CATALOG_DIR, load_catalog_entries, load_topology_instance
+from .l3_detail_tokens import KV_DETAIL_TOKENS
 
 logger = logging.getLogger(__name__)
 
@@ -116,6 +118,15 @@ class SwitchSourceCommand:
     status: SwitchStatus = SwitchStatus.PENDING
     previous_source: Optional[str] = None
     error: Optional[str] = None
+    # umbrella #320: the coarse `status`/free-text `error` fields above stay
+    # UNCHANGED for compatibility — `outcome` is additive, one of the frozen
+    # switch_* enums classify_switch_job_failure/ReconnectViaAwxActuator.execute
+    # produce (see this module's own switch-outcome parser section below).
+    # `outcome_message` is the matching default operator copy for the two
+    # rollback outcomes only (None for every other outcome — the console's
+    # expert view is expected to show the raw `outcome` code instead).
+    outcome: Optional[str] = None
+    outcome_message: Optional[str] = None
     request_id: Optional[str] = None
     initiator: Optional[str] = None
     created_at: datetime = field(default_factory=lambda: datetime.now(timezone.utc))
@@ -134,6 +145,8 @@ class SwitchSourceCommand:
             "status": self.status.value,
             "previous_source": self.previous_source,
             "error": self.error,
+            "outcome": self.outcome,
+            "outcome_message": self.outcome_message,
             "request_id": self.request_id,
             "initiator": self.initiator,
             "created_at": self.created_at.isoformat(),
@@ -282,6 +295,106 @@ _DEFAULT_POLL_INTERVAL_SECONDS = 2.0
 # get_job dict the same way main.py's own watcher does, not the narrowed
 # AWXJobInfo — see awx.get_job's own docstring for why).
 _TERMINAL_JOB_STATUSES = frozenset({"successful", "failed", "canceled", "error"})
+
+
+# ---------------------------------------------------------------------------
+# umbrella #320 — switch-outcome parser (SwitchSourceCommand.outcome).
+#
+# WHY THIS IS A STDOUT-TEXT PARSER, unlike the deploy/rollback L3 outcome
+# marker (main.py's own module docstring, "R2b": that marker moved OFF
+# stdout onto job-events anchored by a single dedicated task name,
+# ``dmf-l3-outcome``, specifically because stdout-text-position binding is
+# unreliable): dmf-runbooks' switch play (``switch-mxl-fabrics-demo.yml``,
+# 0.4.3) deliberately does NOT emit a ``DMF_L3_OUTCOME`` marker at all —
+# its own header says so explicitly ("that vocabulary is launch/teardown/
+# rollback's own snapshot-based outcome model, which a switch does not
+# use"). Its failure/refusal messages instead come from a handful of
+# DIFFERENTLY-NAMED ``ansible.builtin.fail``/``assert`` tasks, each with
+# its own fixed, sanitized message prefix. With no single anchor task to
+# fetch job-events for, this is an INTERIM BRIDGE: prefix-scan the job's
+# own (tail-bounded) stdout for exactly these fixed prefixes — never a
+# generic/free-text scrape. A failure message lands near the END of a
+# job's stdout (the play stops shortly after, modulo the rescue block's
+# own unconditional lock-release), so the existing tail bound
+# (``awx.get_job_stdout``'s ``_STDOUT_TAIL_BYTES``) reliably still covers
+# it, unlike the SUCCESS-marker case R2b moved away from. This parser is
+# explicitly designed to be superseded once dmf-runbooks ships a
+# structured outcome event for switch (tracked, not this change's scope):
+# nothing here assumes prefix-scanning is permanent.
+SWITCH_OUTCOME_SUCCESS = "switch_success"
+SWITCH_OUTCOME_PREVIOUS_SOURCE_RESTORED = "switch_failed_previous_source_restored"
+SWITCH_OUTCOME_RECOVERY_UNVERIFIED = "switch_failed_recovery_unverified"
+SWITCH_OUTCOME_WATCH_TIMEOUT = "switch_watch_timeout"
+SWITCH_OUTCOME_WATCH_LOST = "switch_watch_lost"
+
+# Exact prefixes dmf-runbooks 0.4.3's switch play emits in its own
+# ansible.builtin.fail `msg:` (folded `>-` scalars — one line, no embedded
+# newlines) — see playbooks/switch-mxl-fabrics-demo.yml's own PHASE 2
+# verify-failed block for the source of truth. Mutually exclusive by the
+# playbook's own `when:` guards (a rollback either verifies or it
+# doesn't) — checked in a fixed priority order regardless.
+_SWITCH_ROLLBACK_RESTORED_PREFIX = "rollback_verified previous_source_restored"
+_SWITCH_ROLLBACK_UNVERIFIED_PREFIX = "rollback_verification_failed"
+
+# DMF_L3_SWITCH_REFUSED: detail=<token> — emitted by several differently
+# named validate/resolve/coordinator/final-readback tasks across the
+# switch play; <token> is validated against the SAME KV_DETAIL_TOKENS
+# allowlist main.py's own L3 outcome marker sanitizer uses (this is by
+# design: workstream #4's token-registry update added exactly the
+# switch-*/topology-* tokens this regex needs to recognize) — an
+# unrecognized token falls through to the generic job-status mapping
+# rather than fabricating an unbounded switch_refused_<anything> enum
+# member from untrusted text.
+_SWITCH_REFUSED_DETAIL_RE = re.compile(r"DMF_L3_SWITCH_REFUSED: detail=([a-z0-9-]+)")
+
+_SWITCH_GENERIC_JOB_OUTCOME = {
+    "failed": "switch_job_failed",
+    "error": "switch_job_error",
+    "canceled": "switch_job_canceled",
+}
+
+# Default operator copy (frozen design, umbrella #320) — the only two
+# outcomes with a fixed default message; every other outcome is expected to
+# be rendered from its own machine code by the console UI, not from a
+# canned string here.
+_SWITCH_OUTCOME_OPERATOR_COPY = {
+    SWITCH_OUTCOME_PREVIOUS_SOURCE_RESTORED: (
+        "Switch did not complete; the previous source was restored. Safe to retry."
+    ),
+    SWITCH_OUTCOME_RECOVERY_UNVERIFIED: (
+        "Switch did not complete; automatic recovery did not verify. "
+        "Output may be parked; follow the recovery path."
+    ),
+}
+
+
+def classify_switch_job_failure(job_status: str, stdout: Optional[str]) -> tuple[str, Optional[str]]:
+    """Classify a TERMINAL, non-successful AWX switch job into one of the
+    frozen ``switch_*`` outcome enums.
+
+    ``stdout`` may be ``None`` (the fetch itself failed/timed out) or
+    simply not contain any recognized marker (an older runbooks version,
+    or a failure this parser doesn't yet know about) — either way this
+    falls back to the generic, job-status-derived outcome rather than
+    raising or returning an unclassified value. Pure/side-effect-free so
+    it can be unit-tested directly against fixture stdout strings, with no
+    AWX mocking required.
+    """
+    if stdout:
+        if _SWITCH_ROLLBACK_RESTORED_PREFIX in stdout:
+            return (
+                SWITCH_OUTCOME_PREVIOUS_SOURCE_RESTORED,
+                _SWITCH_OUTCOME_OPERATOR_COPY[SWITCH_OUTCOME_PREVIOUS_SOURCE_RESTORED],
+            )
+        if _SWITCH_ROLLBACK_UNVERIFIED_PREFIX in stdout:
+            return (
+                SWITCH_OUTCOME_RECOVERY_UNVERIFIED,
+                _SWITCH_OUTCOME_OPERATOR_COPY[SWITCH_OUTCOME_RECOVERY_UNVERIFIED],
+            )
+        match = _SWITCH_REFUSED_DETAIL_RE.search(stdout)
+        if match and match.group(1) in KV_DETAIL_TOKENS:
+            return f"switch_refused_{match.group(1)}", None
+    return _SWITCH_GENERIC_JOB_OUTCOME.get(job_status, f"switch_job_{job_status}"), None
 
 
 class ReconnectViaAwxActuator:
@@ -472,7 +585,7 @@ class ReconnectViaAwxActuator:
         consecutive_failures = 0
         while True:
             if datetime.now(timezone.utc) > deadline:
-                self._fail(command, "switch-watch-timeout")
+                self._fail(command, "switch-watch-timeout", outcome=SWITCH_OUTCOME_WATCH_TIMEOUT)
                 return
 
             try:
@@ -487,7 +600,7 @@ class ReconnectViaAwxActuator:
             except Exception:
                 consecutive_failures += 1
                 if consecutive_failures >= 3:
-                    self._fail(command, "switch-watch-lost")
+                    self._fail(command, "switch-watch-lost", outcome=SWITCH_OUTCOME_WATCH_LOST)
                     return
                 await asyncio.sleep(self._poll_interval_seconds)
                 continue
@@ -501,6 +614,8 @@ class ReconnectViaAwxActuator:
                 if status == "successful":
                     command.status = SwitchStatus.ACTIVE
                     command.error = None
+                    command.outcome = SWITCH_OUTCOME_SUCCESS
+                    command.outcome_message = None
                     command.updated_at = datetime.now(timezone.utc)
                 else:
                     # §6.2's own failure posture: a job failure (for any
@@ -512,15 +627,48 @@ class ReconnectViaAwxActuator:
                     # — "no new rollback logic in WP4" (claude1/#201
                     # addendum condition 4): this actuator's only job is to
                     # report the state accurately, never to auto-remediate.
-                    self._fail(command, f"switch-job-{status}")
+                    #
+                    # umbrella #320: classify the sanitized outcome from the
+                    # job's own (tail-bounded) stdout — never surface the
+                    # raw text itself; a stdout-fetch failure degrades to
+                    # `stdout=None`, which classify_switch_job_failure
+                    # already treats as "no marker found" (generic mapping).
+                    stdout = await self._fetch_job_stdout_safe(job_id)
+                    outcome, outcome_message = classify_switch_job_failure(status, stdout)
+                    self._fail(command, f"switch-job-{status}", outcome=outcome, outcome_message=outcome_message)
                 return
 
             await asyncio.sleep(self._poll_interval_seconds)
 
+    async def _fetch_job_stdout_safe(self, job_id: int) -> Optional[str]:
+        """Best-effort stdout fetch for the switch-outcome parser — a
+        fetch failure (network error, AWX unavailable, ...) must never
+        crash the watcher or block the already-known job-status-derived
+        failure classification; it just means the parser falls back to
+        the generic mapping (see ``classify_switch_job_failure``)."""
+        try:
+            return await run_in_threadpool(
+                _awx.get_job_stdout,
+                api_url=self._awx_api_url,
+                api_token=self._awx_api_token,
+                job_id=job_id,
+                ssl_verify=self._awx_ssl_verify,
+            )
+        except Exception:
+            return None
+
     @staticmethod
-    def _fail(command: SwitchSourceCommand, error: str) -> None:
+    def _fail(
+        command: SwitchSourceCommand,
+        error: str,
+        *,
+        outcome: Optional[str] = None,
+        outcome_message: Optional[str] = None,
+    ) -> None:
         command.status = SwitchStatus.FAILED_ROLLBACK_REQUIRED
         command.error = error
+        command.outcome = outcome
+        command.outcome_message = outcome_message
         command.updated_at = datetime.now(timezone.utc)
 
 

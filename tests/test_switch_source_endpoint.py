@@ -39,10 +39,11 @@ from fastapi.testclient import TestClient
 
 from dmf_cms import awx
 from dmf_cms import main as main_module
+from dmf_cms import media_workloads, mxl
 from dmf_cms import switch_source
 from dmf_cms.catalog import CatalogEntry
 from dmf_cms.main import create_app
-from dmf_cms.settings import AWXSettings, L3Settings, Settings
+from dmf_cms.settings import AWXSettings, L3Settings, MediaTenancySettings, NetboxSettings, Settings
 
 ENGINEER = ("dmf-console-engineer",)
 VIEWER = ("dmf-console-viewer",)
@@ -79,22 +80,53 @@ def _mock_awx_terminal(monkeypatch, *, status="successful"):
     monkeypatch.setattr(awx, "lookup_job_template_by_name", lambda **k: {"id": 7})
     monkeypatch.setattr(awx, "launch_job", lambda **k: 42)
     monkeypatch.setattr(awx, "get_job", lambda **k: {"status": status})
+    monkeypatch.setattr(awx, "get_job_stdout", lambda **k: "")
 
 
-def _settings(groups=ENGINEER, *, awx_configured=True, l3=None) -> Settings:
+# umbrella #321: netbox/media_tenancy default UNCONFIGURED (matching every
+# existing test's assumption) — _resolve_mxl_target short-circuits to
+# {"status": "unreachable"} before ever calling resolve_sidecar_target, so
+# active_source/provenance/observed_at all come back None/unavailable for
+# every test that doesn't explicitly opt in via _patch_sidecar_observed.
+SIDECAR_NETBOX = NetboxSettings(api_url="http://netbox.test", api_token="tok")
+SIDECAR_TENANCY = MediaTenancySettings(mode="single")
+
+
+def _patch_sidecar_observed(monkeypatch, *, flow_id):
+    """The sidecar is reachable and reports this flow_id (umbrella #321)."""
+    monkeypatch.setattr(
+        media_workloads, "resolve_sidecar_target",
+        lambda *a, **k: {"status": "ok", "base_url": "http://sidecar.test:9000"},
+    )
+    monkeypatch.setattr(mxl, "fetch_status_one", lambda base_url, **k: {"flow": {"id": flow_id}})
+
+
+def _patch_sidecar_unreachable(monkeypatch):
+    monkeypatch.setattr(media_workloads, "resolve_sidecar_target", lambda *a, **k: {"status": "unreachable"})
+
+
+def _settings(
+    groups=ENGINEER, *, awx_configured=True, l3=None, netbox=None, media_tenancy=None,
+) -> Settings:
     return Settings(
         runtime_mode="local",
         dev_login_enabled=True,
         dev_groups=groups,
         awx=AWXSettings(api_url="http://awx.test", api_token="t") if awx_configured else AWXSettings(),
         l3=l3 if l3 is not None else L3Settings(),
+        netbox=netbox if netbox is not None else NetboxSettings(),
+        media_tenancy=media_tenancy if media_tenancy is not None else MediaTenancySettings(),
     )
 
 
-def _client(groups=ENGINEER, *, awx_configured=True) -> TestClient:
+def _client(
+    groups=ENGINEER, *, awx_configured=True, netbox=None, media_tenancy=None,
+) -> TestClient:
     """For gate-rejection tests that never reach a real dispatch (403/400/503) —
     does NOT trigger lifespan, so app.state.switch_commands is never touched."""
-    client = TestClient(create_app(settings=_settings(groups, awx_configured=awx_configured)))
+    client = TestClient(create_app(settings=_settings(
+        groups, awx_configured=awx_configured, netbox=netbox, media_tenancy=media_tenancy,
+    )))
     client.get("/auth/login", follow_redirects=False)
     return client
 
@@ -271,6 +303,11 @@ def test_failed_rollback_required_is_200_not_an_http_error(monkeypatch, caplog):
     body = resp.json()
     assert body["status"] == "failed_rollback_required"
     assert body["error"] == "switch-job-failed"
+    # umbrella #320: the new additive outcome fields ride the same response
+    # envelope — stdout here is mocked to empty text (no rollback/refused
+    # marker), so the generic job-status mapping applies.
+    assert body["outcome"] == "switch_job_failed"
+    assert body["outcome_message"] is None
     assert any("outcome=failed_rollback_required" in m for m in _audit_lines(caplog))
 
 
@@ -317,14 +354,71 @@ def test_topology_read_requires_media_workloads_access(monkeypatch):
 
 
 def test_topology_read_happy_path(monkeypatch):
+    """umbrella #321 discriminating test: the catalog's OWN declared
+    selection here is source-a (J1_TOPOLOGY_PARAMS' viewer.source_selection),
+    but the sidecar reports a flow.id matching source-b — active_source
+    MUST reflect the OBSERVED source (source-b), never the catalog's
+    static selection. This is the exact bug: on unpatched main.py,
+    active_source came straight from viewer.source_selection ("source-a")
+    and this assertion fails."""
     _patch_catalog(monkeypatch, entries=[VIEWER_ENTRY])
-    client = _client()
+    _patch_sidecar_observed(monkeypatch, flow_id="b0ae9cba-a989-4568-ac96-8bd19272c966")  # source-b's flow_id
+    client = _client(netbox=SIDECAR_NETBOX, media_tenancy=SIDECAR_TENANCY)
     resp = client.get("/api/media-workloads/mxl-videotest-view/topology")
     assert resp.status_code == 200
     body = resp.json()
     assert body["receiver_instance"] == "mxl-videotest-view"
     assert [s["id"] for s in body["sources"]] == ["source-a", "source-b"]
-    assert body["active_source"] == "source-a"
+    assert body["active_source"] == "source-b"
+    assert body["provenance"] == "observed-flow"
+    assert body["observed_at"]
+
+
+def test_topology_read_unavailable_sidecar_reports_no_active_source(monkeypatch):
+    """Sidecar unreachable (or not configured) -> active_source/provenance
+    MUST stay None — never fall back to the catalog's own selection."""
+    _patch_catalog(monkeypatch, entries=[VIEWER_ENTRY])
+    _patch_sidecar_unreachable(monkeypatch)
+    client = _client(netbox=SIDECAR_NETBOX, media_tenancy=SIDECAR_TENANCY)
+    resp = client.get("/api/media-workloads/mxl-videotest-view/topology")
+    assert resp.status_code == 200
+    body = resp.json()
+    assert body["active_source"] is None
+    assert body["provenance"] is None
+    assert body["observed_at"] is None
+
+
+def test_topology_read_not_configured_reports_no_active_source(monkeypatch):
+    """No netbox/media_tenancy config at all (this repo's own existing
+    test default) -> same fail-closed contract, no sidecar call ever
+    attempted."""
+    _patch_catalog(monkeypatch, entries=[VIEWER_ENTRY])
+
+    def boom(*a, **k):
+        raise AssertionError("must not attempt a sidecar lookup when netbox/media_tenancy aren't configured")
+
+    monkeypatch.setattr(media_workloads, "resolve_sidecar_target", boom)
+    client = _client()
+    resp = client.get("/api/media-workloads/mxl-videotest-view/topology")
+    assert resp.status_code == 200
+    body = resp.json()
+    assert body["active_source"] is None
+    assert body["provenance"] is None
+    assert body["observed_at"] is None
+
+
+def test_topology_read_mismatched_observed_flow_reports_no_active_source(monkeypatch):
+    """Sidecar reachable and reports a flow.id, but it names NO declared
+    source (a stale/foreign flow) -> still None, never a guess."""
+    _patch_catalog(monkeypatch, entries=[VIEWER_ENTRY])
+    _patch_sidecar_observed(monkeypatch, flow_id="00000000-0000-0000-0000-000000000000")
+    client = _client(netbox=SIDECAR_NETBOX, media_tenancy=SIDECAR_TENANCY)
+    resp = client.get("/api/media-workloads/mxl-videotest-view/topology")
+    assert resp.status_code == 200
+    body = resp.json()
+    assert body["active_source"] is None
+    assert body["provenance"] is None
+    assert body["observed_at"] is None
 
 
 def test_topology_read_receiver_not_found_is_404(monkeypatch):
