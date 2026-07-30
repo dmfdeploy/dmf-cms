@@ -496,6 +496,15 @@ export interface SwitchSourceResult {
   status: SwitchStatus
   previous_source: string | null
   error: string | null
+  // umbrella #320/#321 gate follow-up: additive fields from
+  // SwitchSourceCommand.to_dict(). `outcome` is a machine enum string (e.g.
+  // 'switch_failed_previous_source_restored'); `outcome_message` is a canned,
+  // human-readable operator string present only for a couple of specific
+  // outcomes and null otherwise — the UI prefers it when non-null and falls
+  // back to the coarse `error` string when it's null (no regression for
+  // outcomes without a canned message).
+  outcome: string | null
+  outcome_message: string | null
   request_id: string
   initiator: string | null
   created_at: string

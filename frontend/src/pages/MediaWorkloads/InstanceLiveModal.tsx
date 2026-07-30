@@ -72,6 +72,23 @@ function SwitchSourceControl({ instance }: { instance: string }) {
   const [arming, setArming] = useState(false)
   const [target, setTarget] = useState('')
 
+  // TOCTOU fix (gate review on umbrella #320/#321): `isObservedFresh` below
+  // is derived from `Date.now()` at RENDER time, but React only re-renders on
+  // a state change — and typing into ReasonConfirm's own reason/target
+  // inputs is THAT component's local state, so it never re-renders us.
+  // Without this, an operator could arm the switch while fresh, sit on the
+  // form past OBSERVED_SOURCE_STALE_MS, and the last render's closure would
+  // still believe the observation is fresh when Confirm is clicked. While
+  // armed, force a re-render roughly once a second so staleness is caught
+  // and surfaced reactively; the timer never runs when the control isn't
+  // armed (no need to burn cycles on a collapsed control).
+  const [, armedFreshnessTick] = useState(0)
+  useEffect(() => {
+    if (!arming) return
+    const id = setInterval(() => armedFreshnessTick((t) => (t + 1) % 100000), 1_000)
+    return () => clearInterval(id)
+  }, [arming])
+
   if (!topology.data || !Array.isArray(topology.data.sources)) return null
 
   const { sources, active_source, provenance, observed_at } = topology.data
@@ -91,6 +108,17 @@ function SwitchSourceControl({ instance }: { instance: string }) {
 
   const submit = (reason: string) => {
     if (!target) return
+    // Defense in depth: the ticking re-render above keeps Confirm disabled
+    // the moment staleness hits while armed, but re-derive freshness against
+    // Date.now() again right here, at the exact instant the handler runs —
+    // belt-and-suspenders against any render-timing edge case. A client-side
+    // stale read must never reach the mutation.
+    const stillFresh =
+      provenance === 'observed-flow' &&
+      !!active_source &&
+      !!observed_at &&
+      Date.now() - new Date(observed_at).getTime() < OBSERVED_SOURCE_STALE_MS
+    if (!stillFresh) return
     switchMutation.mutate(
       { instance, sourceInstance: target, reason },
       {
@@ -154,17 +182,38 @@ function SwitchSourceControl({ instance }: { instance: string }) {
               label: 'Target source',
               placeholder: 'Select a source…',
               value: target,
+              // Once armed, staleness alone (independent of whether a target
+              // is picked) must disable Confirm too — the ticking re-render
+              // above keeps this recomputed every ~1s while armed, and the
+              // OBSERVED_SOURCE_UNKNOWN_MESSAGE paragraph just above already
+              // renders unconditionally on `!isObservedFresh`, so no separate
+              // hint text is needed here to avoid showing it twice.
+              invalid: target === '' || !isObservedFresh,
               onChange: setTarget,
-              invalid: target === '',
               options: otherSources.map((s) => ({ value: s.id, label: `${s.id} (${s.pattern})` })),
             }}
           />
         </div>
       ) : result ? (
-        <div className={`mt-1 text-xs ${result.status === 'active' ? 'text-green-400' : 'text-red-300'}`}>
-          {result.status === 'active'
-            ? `Active source: ${result.source_instance}`
-            : `Switch failed (${result.error ?? 'failed_rollback_required'}) — operator retry/rollback required.`}
+        <div className="mt-1">
+          <div className={`text-xs ${result.status === 'active' ? 'text-green-400' : 'text-red-300'}`}>
+            {/* umbrella #320/#321 gate follow-up: prefer the backend's canned
+                outcome_message when present; fall back to the existing
+                coarse text so outcomes without a canned message don't regress. */}
+            {result.outcome_message ??
+              (result.status === 'active'
+                ? `Active source: ${result.source_instance}`
+                : `Switch failed (${result.error ?? 'failed_rollback_required'}) — operator retry/rollback required.`)}
+          </div>
+          <details className="mt-1 text-xs text-muted">
+            <summary className="cursor-pointer select-none opacity-80 hover:opacity-100">
+              System details
+            </summary>
+            <p className="mt-1 pl-4 font-mono">
+              request {result.request_id}
+              {result.outcome ? ` · ${result.outcome}` : ''}
+            </p>
+          </details>
         </div>
       ) : (
         <div className="mt-0.5 font-mono text-sm text-text">{active_source ?? '—'}</div>
