@@ -2,7 +2,7 @@ replicaCount: 1
 
 image:
   repository: registry.dmf.example.com/dmf-cms
-  tag: "0.17.4"
+  tag: "0.17.5"
   pullPolicy: IfNotPresent
 
 imagePullSecrets:
