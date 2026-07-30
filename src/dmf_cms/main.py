@@ -4857,6 +4857,12 @@ def create_app(settings: Settings | None = None, contract: AppContract | None = 
             awx_api_url=settings.awx.api_url,
             awx_api_token=settings.awx.api_token,
             awx_ssl_verify=settings.awx.ssl_verify,
+            # #306: the redesigned dmf-runbooks switch play's own worst case
+            # (quiesce + upgrade/rollback verification + AWX latency) can
+            # exceed the actuator's flat 120s class default — budget the
+            # switch-source path from settings instead (see L3Settings'
+            # own docstring for the formula).
+            timeout_seconds=settings.l3.switch_source_timeout_seconds,
             # #295: the actuator performs the sanctioned wake itself before
             # its first authenticated read — no-op when autoscale is off.
             autoscale_helper_url=settings.awx_autoscale.helper_url,

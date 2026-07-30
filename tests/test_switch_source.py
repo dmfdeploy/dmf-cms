@@ -25,6 +25,7 @@ from typing import Any
 import pytest
 
 from dmf_cms import awx
+from dmf_cms.settings import load_settings
 from dmf_cms.switch_source import (
     ReconnectViaAwxActuator,
     SwitchCommandStore,
@@ -374,6 +375,29 @@ def test_actuator_timeout_sets_watch_timeout(monkeypatch):
     asyncio.run(_actuator(timeout_seconds=0.05, poll_interval_seconds=0.01).execute(command, _TOPOLOGY_PARAMS))
     assert command.status == SwitchStatus.FAILED_ROLLBACK_REQUIRED
     assert command.error == "switch-watch-timeout"
+
+
+# ── DMF_CONSOLE_L3_SWITCH_SOURCE_TIMEOUT_SECONDS (umbrella #306) ────────
+#
+# The actuator's own _DEFAULT_ACTUATOR_TIMEOUT_SECONDS (120.0, above) is the
+# CLASS default used when no caller supplies timeout_seconds at all. The
+# console's switch-source endpoint (main.py) instead always passes
+# settings.l3.switch_source_timeout_seconds explicitly — these two tests
+# cover THAT settings-layer default/override; the endpoint's own wiring
+# (that the configured value actually reaches the ReconnectViaAwxActuator
+# call) is covered in test_switch_source_endpoint.py.
+
+
+def test_load_settings_default_switch_source_timeout_seconds(monkeypatch):
+    monkeypatch.delenv("DMF_CONSOLE_L3_SWITCH_SOURCE_TIMEOUT_SECONDS", raising=False)
+    settings = load_settings()
+    assert settings.l3.switch_source_timeout_seconds == 360
+
+
+def test_load_settings_switch_source_timeout_seconds_env_override(monkeypatch):
+    monkeypatch.setenv("DMF_CONSOLE_L3_SWITCH_SOURCE_TIMEOUT_SECONDS", "45")
+    settings = load_settings()
+    assert settings.l3.switch_source_timeout_seconds == 45
 
 
 def test_actuator_sequencing_lookup_before_launch_before_terminal_status(monkeypatch):
