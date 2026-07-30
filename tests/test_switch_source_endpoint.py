@@ -33,6 +33,7 @@ form; pure gate-rejection tests (403/400/503) use the plain client.
 """
 
 import logging
+from datetime import datetime, timedelta, timezone
 
 import pytest
 from fastapi.testclient import TestClient
@@ -105,6 +106,37 @@ def _patch_sidecar_unreachable(monkeypatch):
     monkeypatch.setattr(media_workloads, "resolve_sidecar_target", lambda *a, **k: {"status": "unreachable"})
 
 
+SOURCE_A_FLOW_ID = "5fbec3b1-1b0f-417d-9059-8b94a47197ed"
+SOURCE_B_FLOW_ID = "b0ae9cba-a989-4568-ac96-8bd19272c966"
+
+
+def _patch_fresh_observed_source_a(monkeypatch):
+    """umbrella #320/#321 fix-round: the POST endpoint's own write-seam
+    gate now re-resolves observed truth before EVERY dispatch — every
+    existing test that expects a real dispatch needs this (a fresh,
+    matching sidecar observation), same as the fixture's own declared
+    source-a, or it now 409s at the gate before ever reaching dispatch."""
+    _patch_sidecar_observed(monkeypatch, flow_id=SOURCE_A_FLOW_ID)
+
+
+class _SeqUtcNow:
+    """Sequential-clock test double for main._utc_now — the nth call
+    returns times[n] (the last value repeats once exhausted). Lets a test
+    script a (stamp-time, check-time) pair to prove the write-seam's
+    staleness branch is real and reachable, without perturbing any other
+    datetime.now() call site (main._utc_now is a dedicated, narrow seam —
+    see its own docstring)."""
+
+    def __init__(self, times):
+        self._times = list(times)
+        self._i = 0
+
+    def __call__(self):
+        t = self._times[min(self._i, len(self._times) - 1)]
+        self._i += 1
+        return t
+
+
 def _settings(
     groups=ENGINEER, *, awx_configured=True, l3=None, netbox=None, media_tenancy=None,
 ) -> Settings:
@@ -131,10 +163,10 @@ def _client(
     return client
 
 
-def _dispatch_client(groups=ENGINEER, *, l3=None) -> TestClient:
+def _dispatch_client(groups=ENGINEER, *, l3=None, netbox=None, media_tenancy=None) -> TestClient:
     """For tests that reach dispatch_switch_source — caller must use this as
     ``with _dispatch_client() as client:`` so lifespan actually runs."""
-    return TestClient(create_app(settings=_settings(groups, l3=l3)))
+    return TestClient(create_app(settings=_settings(groups, l3=l3, netbox=netbox, media_tenancy=media_tenancy)))
 
 
 def _audit_lines(caplog):
@@ -163,7 +195,8 @@ def test_viewer_without_media_engineers_is_403(monkeypatch):
 def test_real_media_engineers_group_grants_access_without_role(monkeypatch, caplog):
     _patch_catalog(monkeypatch, entries=[VIEWER_ENTRY])
     _mock_awx_terminal(monkeypatch)
-    with _dispatch_client(MEDIA_ENGINEERS) as client:
+    _patch_fresh_observed_source_a(monkeypatch)
+    with _dispatch_client(MEDIA_ENGINEERS, netbox=SIDECAR_NETBOX, media_tenancy=SIDECAR_TENANCY) as client:
         client.get("/auth/login", follow_redirects=False)
         with caplog.at_level(logging.INFO, logger="dmf_cms.main"):
             resp = _post(client, body={"source_instance": "source-b", "reason": "go"})
@@ -247,11 +280,90 @@ def test_invalid_topology_params_is_422(monkeypatch):
 
 def test_unknown_source_instance_is_422(monkeypatch):
     _patch_catalog(monkeypatch, entries=[VIEWER_ENTRY])
-    with _dispatch_client() as client:
+    _patch_fresh_observed_source_a(monkeypatch)
+    with _dispatch_client(netbox=SIDECAR_NETBOX, media_tenancy=SIDECAR_TENANCY) as client:
         client.get("/auth/login", follow_redirects=False)
         resp = _post(client, body={"source_instance": "does-not-exist", "reason": "go"})
     assert resp.status_code == 422
     assert resp.json()["error"] == "source-not-found"
+
+
+# ── write-seam observed-truth gate (umbrella #320/#321 fix-round) ───────
+#
+# The GET .../topology read enforces "never trust the catalog's own
+# source_selection as live truth" — these tests prove the POST write seam
+# enforces the SAME invariant, closing the TOCTOU gap where a client could
+# arm a switch while fresh and still fire it once the observation had
+# gone stale/unreachable/mismatched. Each 409 test proves dispatch was
+# NEVER reached via a boom-patched dispatch_switch_source, mirroring this
+# file's own existing convention for pre-dispatch gates.
+
+
+def test_switch_source_post_refuses_when_observed_truth_is_unknown(monkeypatch):
+    _patch_catalog(monkeypatch, entries=[VIEWER_ENTRY])
+    _patch_sidecar_unreachable(monkeypatch)
+
+    def boom_dispatch(*a, **k):
+        raise AssertionError("must not dispatch when observed truth is unknown")
+
+    monkeypatch.setattr(main_module, "dispatch_switch_source", boom_dispatch)
+    client = _client(netbox=SIDECAR_NETBOX, media_tenancy=SIDECAR_TENANCY)
+    resp = _post(client, body={"source_instance": "source-b", "reason": "go"})
+    assert resp.status_code == 409
+    assert resp.json() == {"error": "source-state-unknown", "request_id": resp.json()["request_id"]}
+
+
+def test_switch_source_post_refuses_when_observed_truth_is_stale(monkeypatch):
+    _patch_catalog(monkeypatch, entries=[VIEWER_ENTRY])
+    _patch_fresh_observed_source_a(monkeypatch)
+    t0 = datetime(2026, 1, 1, tzinfo=timezone.utc)
+    # First call stamps observed_at (inside _resolve_observed_active_source);
+    # second call is the gate's OWN freshness check, 16s later — past
+    # OBSERVED_SOURCE_STALE_SECONDS (15).
+    monkeypatch.setattr(main_module, "_utc_now", _SeqUtcNow([t0, t0 + timedelta(seconds=16)]))
+
+    def boom_dispatch(*a, **k):
+        raise AssertionError("must not dispatch when the observation has gone stale")
+
+    monkeypatch.setattr(main_module, "dispatch_switch_source", boom_dispatch)
+    client = _client(netbox=SIDECAR_NETBOX, media_tenancy=SIDECAR_TENANCY)
+    resp = _post(client, body={"source_instance": "source-b", "reason": "go"})
+    assert resp.status_code == 409
+    assert resp.json()["error"] == "source-state-stale"
+
+
+def test_switch_source_post_refuses_when_target_already_active(monkeypatch):
+    _patch_catalog(monkeypatch, entries=[VIEWER_ENTRY])
+    _patch_fresh_observed_source_a(monkeypatch)  # observed active == source-a
+
+    def boom_dispatch(*a, **k):
+        raise AssertionError("must not dispatch a switch to the already-active source")
+
+    monkeypatch.setattr(main_module, "dispatch_switch_source", boom_dispatch)
+    client = _client(netbox=SIDECAR_NETBOX, media_tenancy=SIDECAR_TENANCY)
+    resp = _post(client, body={"source_instance": "source-a", "reason": "go"})  # requesting the observed-active one
+    assert resp.status_code == 409
+    assert resp.json()["error"] == "target-already-active"
+
+
+def test_switch_source_post_records_previous_source_from_observed_not_catalog(monkeypatch):
+    """Discriminating test: the catalog's own declared selection here is
+    source-a (J1_TOPOLOGY_PARAMS' viewer.source_selection), but the
+    sidecar observes source-b as ACTUALLY active — switching to source-a
+    (the observed-INactive one, so the gate above doesn't refuse it as
+    target-already-active) must record previous_source=source-b, the
+    OBSERVED truth, never the catalog's stale belief."""
+    _patch_catalog(monkeypatch, entries=[VIEWER_ENTRY])
+    _patch_sidecar_observed(monkeypatch, flow_id=SOURCE_B_FLOW_ID)
+    _mock_awx_terminal(monkeypatch, status="successful")
+    with _dispatch_client(netbox=SIDECAR_NETBOX, media_tenancy=SIDECAR_TENANCY) as client:
+        client.get("/auth/login", follow_redirects=False)
+        resp = _post(client, body={"source_instance": "source-a", "reason": "go"})
+    assert resp.status_code == 200
+    body = resp.json()
+    assert body["status"] == "active"
+    assert body["source_instance"] == "source-a"
+    assert body["previous_source"] == "source-b"
 
 
 # ── happy path + C5 audit content ────────────────────────────────────────
@@ -260,7 +372,8 @@ def test_unknown_source_instance_is_422(monkeypatch):
 def test_happy_path_reaches_active_with_c5_audit(monkeypatch, caplog):
     _patch_catalog(monkeypatch, entries=[VIEWER_ENTRY])
     _mock_awx_terminal(monkeypatch, status="successful")
-    with _dispatch_client() as client:
+    _patch_fresh_observed_source_a(monkeypatch)
+    with _dispatch_client(netbox=SIDECAR_NETBOX, media_tenancy=SIDECAR_TENANCY) as client:
         client.get("/auth/login", follow_redirects=False)
         with caplog.at_level(logging.INFO, logger="dmf_cms.main"):
             resp = _post(client, body={"source_instance": "source-b", "reason": "operator requested"})
@@ -293,7 +406,8 @@ def test_happy_path_reaches_active_with_c5_audit(monkeypatch, caplog):
 def test_failed_rollback_required_is_200_not_an_http_error(monkeypatch, caplog):
     _patch_catalog(monkeypatch, entries=[VIEWER_ENTRY])
     _mock_awx_terminal(monkeypatch, status="failed")
-    with _dispatch_client() as client:
+    _patch_fresh_observed_source_a(monkeypatch)
+    with _dispatch_client(netbox=SIDECAR_NETBOX, media_tenancy=SIDECAR_TENANCY) as client:
         client.get("/auth/login", follow_redirects=False)
         with caplog.at_level(logging.INFO, logger="dmf_cms.main"):
             resp = _post(client, body={"source_instance": "source-b", "reason": "go"})
@@ -322,6 +436,7 @@ def test_switch_source_passes_configured_timeout_to_actuator(monkeypatch):
     this covers main.py's actual constructor call)."""
     _patch_catalog(monkeypatch, entries=[VIEWER_ENTRY])
     _mock_awx_terminal(monkeypatch, status="successful")
+    _patch_fresh_observed_source_a(monkeypatch)
 
     captured: dict = {}
     real_actuator_cls = main_module.ReconnectViaAwxActuator
@@ -332,7 +447,9 @@ def test_switch_source_passes_configured_timeout_to_actuator(monkeypatch):
 
     monkeypatch.setattr(main_module, "ReconnectViaAwxActuator", spy_actuator)
 
-    with _dispatch_client(l3=L3Settings(switch_source_timeout_seconds=45)) as client:
+    with _dispatch_client(
+        l3=L3Settings(switch_source_timeout_seconds=45), netbox=SIDECAR_NETBOX, media_tenancy=SIDECAR_TENANCY,
+    ) as client:
         client.get("/auth/login", follow_redirects=False)
         resp = _post(client, body={"source_instance": "source-b", "reason": "go"})
     assert resp.status_code == 200
