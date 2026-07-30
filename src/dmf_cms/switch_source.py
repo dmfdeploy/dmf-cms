@@ -714,6 +714,7 @@ async def dispatch_switch_source(
     catalog_dir: str = CATALOG_DIR,
     request_id: Optional[str] = None,
     initiator: Optional[str] = None,
+    observed_previous_source: Optional[str] = None,
 ) -> SwitchSourceCommand:
     """The thin seam WP5's future HTTP endpoint calls into (spec §7):
     resolve the receiver's own topology, validate the requested
@@ -764,7 +765,20 @@ async def dispatch_switch_source(
             f"'{source_instance}' does not reference a known sources[].id {source_ids}",
         )
 
-    previous_source = (topology_params.get("viewer") or {}).get("source_selection")
+    # umbrella #320/#321 fix-round: previous_source must reflect what was
+    # ACTUALLY running, never the catalog's own (possibly stale)
+    # viewer.source_selection — the same "declared intent, not live truth"
+    # bug the read path fixed. The HTTP endpoint (main.py) always resolves
+    # observed truth itself and passes it here BEFORE ever reaching this
+    # point; the catalog fallback below only serves a caller with no
+    # observed truth available (none exists today — kept for the
+    # SwitchActuator Protocol's own non-HTTP contract test, which has no
+    # sidecar to observe at all).
+    previous_source = (
+        observed_previous_source
+        if observed_previous_source is not None
+        else (topology_params.get("viewer") or {}).get("source_selection")
+    )
     command = store.create(
         receiver_instance=receiver_instance,
         source_instance=source_instance,

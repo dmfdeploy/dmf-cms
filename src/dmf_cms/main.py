@@ -100,7 +100,7 @@ import uuid
 from contextlib import asynccontextmanager
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
-from typing import Any
+from typing import Any, Optional
 
 from fastapi import FastAPI, Request
 from fastapi.responses import HTMLResponse, JSONResponse, RedirectResponse, Response
@@ -2529,6 +2529,49 @@ async def _run_rollback_operation(app: FastAPI, operation_id: str, run_id: str, 
         ops_store.update(operation_id, state=OperationState.ERROR, error="Unexpected error while rolling back")
 
 
+# umbrella #320/#321 fix-round (gate finding): the read-path fail-closed
+# contract (_resolve_observed_active_source below) closed the RENDER-time
+# gap, but the WRITE seam (POST switch-source) still trusted whatever
+# source_instance the client sent with no re-check of observed truth —
+# a client could arm a switch while fresh and still fire it after the
+# observation had gone stale/unknown. OBSERVED_SOURCE_STALE_SECONDS is
+# the SAME 15s window the frontend's own OBSERVED_SOURCE_STALE_MS enforces
+# (InstanceLiveModal.tsx) — one canonical Python-side constant, frozen at
+# 15s by the gate ruling; keep both in lock-step by convention (there is
+# no shared codegen between the two languages, consistent with this
+# codebase's stated preference against extra build-time tooling).
+OBSERVED_SOURCE_STALE_SECONDS = 15
+
+# A dedicated, narrowly-scoped clock seam — used ONLY by the observed-flow
+# staleness contract below (the stamp in _resolve_observed_active_source
+# and the check in _observed_at_is_fresh), never by any other datetime.now()
+# call site in this module. Deliberately NOT just "datetime.now" inline:
+# monkeypatching the bare `datetime` class globally in a test would risk
+# perturbing unrelated code paths in the same request; patching this one
+# function lets a test hand back a scripted (stamp-time, check-time) pair
+# to prove the staleness branch is real and reachable, without touching
+# anything else.
+def _utc_now() -> datetime:
+    return datetime.now(timezone.utc)
+
+
+def _observed_at_is_fresh(observed_at: Optional[str]) -> bool:
+    """Fail-closed: a missing or unparseable timestamp is never fresh."""
+    if not observed_at:
+        return False
+    try:
+        stamped = datetime.fromisoformat(observed_at)
+    except ValueError:
+        return False
+    return (_utc_now() - stamped).total_seconds() < OBSERVED_SOURCE_STALE_SECONDS
+
+
+def _switch_source_error_status_code(code: str) -> int:
+    """Shared 404/422 mapping for SwitchSourceError — used by both the
+    topology read and the switch-source write's pre-dispatch resolve."""
+    return 404 if code in ("receiver-not-found", "receiver-not-topology") else 422
+
+
 def create_app(settings: Settings | None = None, contract: AppContract | None = None) -> FastAPI:
     settings = settings or load_settings()
     if settings.runtime_mode != "local":
@@ -4827,7 +4870,7 @@ def create_app(settings: Settings | None = None, contract: AppContract | None = 
         )
         if matched is None:
             return None, None, None
-        return matched, _OBSERVED_FLOW_PROVENANCE, datetime.now(timezone.utc).isoformat()
+        return matched, _OBSERVED_FLOW_PROVENANCE, _utc_now().isoformat()
 
     @app.get("/api/media-workloads/{instance}/topology")
     async def api_media_workloads_topology(request: Request, instance: str):
@@ -4862,8 +4905,10 @@ def create_app(settings: Settings | None = None, contract: AppContract | None = 
         try:
             topology_params = resolve_topology_for_receiver(receiver_instance=instance)
         except SwitchSourceError as exc:
-            status_code = 404 if exc.code in ("receiver-not-found", "receiver-not-topology") else 422
-            return JSONResponse({"error": exc.code, "detail": exc.detail}, status_code=status_code)
+            return JSONResponse(
+                {"error": exc.code, "detail": exc.detail},
+                status_code=_switch_source_error_status_code(exc.code),
+            )
         sources = topology_params.get("sources", [])
         active_source, provenance, observed_at = await _resolve_observed_active_source(request, instance, sources)
         return JSONResponse({
@@ -4888,6 +4933,31 @@ def create_app(settings: Settings | None = None, contract: AppContract | None = 
         ``dispatch_switch_source`` resolves ``instance`` from the git catalog
         (same data source as deploy/teardown/launch, which are role-gated
         only, no tenant scoping — the catalog has no tenant concept at all).
+
+        umbrella #320/#321 fix-round: the runtime-truth contract the GET
+        .../topology read enforces (never trust the catalog's own
+        source_selection as live truth) must ALSO hold at this write seam —
+        otherwise a client could arm a switch while the observed source
+        looked fresh and still fire it after that observation had gone
+        stale/unreachable/mismatched (a TOCTOU gap between the read that
+        informed the operator's decision and this write). Before ANY
+        command is dispatched, this endpoint re-resolves observed truth
+        itself (the SAME ``_resolve_observed_active_source`` the read path
+        uses — never trusting whatever the client last saw) and refuses
+        with a sanitized, fixed 409 code (never free text) when:
+
+          * the observed source is unknown/unreachable/mismatched ->
+            ``source-state-unknown``
+          * it resolved but ``observed_at`` has aged past
+            ``OBSERVED_SOURCE_STALE_SECONDS`` -> ``source-state-stale``
+          * the requested target already IS the observed active source ->
+            ``target-already-active`` (nothing to switch)
+
+        Only past this gate does ``dispatch_switch_source`` run, and it is
+        given the OBSERVED source as ``observed_previous_source`` — the
+        recorded ``previous_source`` on the resulting command must reflect
+        what was actually running, never the catalog's own (possibly
+        stale) ``viewer.source_selection``.
         """
         user, err = _require_media_workloads_access(request)
         if err is not None:
@@ -4913,6 +4983,36 @@ def create_app(settings: Settings | None = None, contract: AppContract | None = 
                 outcome="awx-not-configured",
             )
             return JSONResponse({"error": "AWX API not configured", "request_id": request_id}, status_code=503)
+
+        try:
+            topology_params = resolve_topology_for_receiver(receiver_instance=instance)
+        except SwitchSourceError as exc:
+            _audit_awx_write(
+                request, user, action="switch-source", target=instance,
+                request_id=request_id, reason=reason, workload=source_instance,
+                outcome=exc.code,
+            )
+            return JSONResponse(
+                {"error": exc.code, "detail": exc.detail, "request_id": request_id},
+                status_code=_switch_source_error_status_code(exc.code),
+            )
+        sources = topology_params.get("sources", [])
+        observed_source, provenance, observed_at = await _resolve_observed_active_source(request, instance, sources)
+
+        def _refuse_write_seam(code: str) -> JSONResponse:
+            _audit_awx_write(
+                request, user, action="switch-source", target=instance,
+                request_id=request_id, reason=reason, workload=source_instance,
+                outcome=code,
+            )
+            return JSONResponse({"error": code, "request_id": request_id}, status_code=409)
+
+        if provenance != _OBSERVED_FLOW_PROVENANCE or observed_source is None:
+            return _refuse_write_seam("source-state-unknown")
+        if not _observed_at_is_fresh(observed_at):
+            return _refuse_write_seam("source-state-stale")
+        if source_instance == observed_source:
+            return _refuse_write_seam("target-already-active")
 
         store: SwitchCommandStore = request.app.state.switch_commands
         actuator = ReconnectViaAwxActuator(
@@ -4940,6 +5040,13 @@ def create_app(settings: Settings | None = None, contract: AppContract | None = 
                 actuator=actuator,
                 request_id=request_id,
                 initiator=user.subject,
+                # umbrella #320/#321: previous_source must reflect what was
+                # actually running (this gate's own fresh observation),
+                # never dispatch_switch_source's own catalog-selection
+                # fallback — that fallback still exists for callers with no
+                # observed truth available (e.g. a future non-HTTP caller),
+                # but THIS caller always has one by the time it gets here.
+                observed_previous_source=observed_source,
             )
         except SwitchSourceError as exc:
             _audit_awx_write(
@@ -4953,8 +5060,10 @@ def create_app(settings: Settings | None = None, contract: AppContract | None = 
             # exists but the request can't be fulfilled against its actual
             # shape — 422, matching WP3a's own precedent for the identical
             # underlying checks at the deploy seam (test_topology_seam.py).
-            status_code = 404 if exc.code in ("receiver-not-found", "receiver-not-topology") else 422
-            return JSONResponse({"error": exc.code, "detail": exc.detail, "request_id": request_id}, status_code=status_code)
+            return JSONResponse(
+                {"error": exc.code, "detail": exc.detail, "request_id": request_id},
+                status_code=_switch_source_error_status_code(exc.code),
+            )
 
         # C5 quartet — audited on every outcome, including
         # failed_rollback_required: a switch that failed is still a switch
