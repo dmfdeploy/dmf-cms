@@ -684,6 +684,8 @@ describe('switch source from the live modal (umbrella #201 WP5)', () => {
         status: 'failed_rollback_required',
         previous_source: 'source-a',
         error: 'switch-job-failed',
+        outcome: null,
+        outcome_message: null,
         request_id: 'req-switch-2',
         initiator: 'ops',
         created_at: '2026-01-01T00:00:00Z',
@@ -706,6 +708,97 @@ describe('switch source from the live modal (umbrella #201 WP5)', () => {
     expect(within(dialog).getByText(/switch-job-failed/)).toBeTruthy()
     expect(within(dialog).getByText(/operator retry\/rollback required/)).toBeTruthy()
     expect(within(dialog).queryByText(/Active source: source-b/)).toBeNull()
+  })
+
+  // umbrella #320/#321 gate follow-up (bug 2): outcome/outcome_message are
+  // additive fields on the switch-source POST response. When the backend
+  // supplies a canned outcome_message, it must win over the coarse
+  // error-based text — the test above proves the null case still falls back.
+  it('prefers outcome_message as the primary text when the backend supplies one', async () => {
+    mkFetch({
+      topology: topologyMxlA(),
+      switchResult: {
+        command_id: 'cmd-3',
+        receiver_instance: 'mxl-a',
+        source_instance: 'source-b',
+        reason: 'go',
+        status: 'failed_rollback_required',
+        previous_source: 'source-a',
+        error: 'switch-job-failed',
+        outcome: 'switch_failed_previous_source_restored',
+        outcome_message:
+          'Switch did not complete; the previous source was restored. Safe to retry.',
+        request_id: 'req-switch-3',
+        initiator: 'ops',
+        created_at: '2026-01-01T00:00:00Z',
+        updated_at: '2026-01-01T00:00:00Z',
+        actor: 'ops',
+        role: 'engineer',
+      },
+    })
+    renderPage()
+    const tile = (await screen.findByText('MXL Video Test View')).closest('[role="button"]')!
+    fireEvent.click(tile)
+    const dialog = await screen.findByRole('dialog')
+
+    fireEvent.click(await within(dialog).findByRole('button', { name: 'Switch source' }))
+    fireEvent.change(within(dialog).getByRole('textbox'), { target: { value: 'go' } })
+    fireEvent.change(within(dialog).getByRole('combobox'), { target: { value: 'source-b' } })
+    fireEvent.click(within(dialog).getByRole('button', { name: 'Confirm switch' }))
+
+    await within(dialog).findByText(
+      'Switch did not complete; the previous source was restored. Safe to retry.',
+    )
+    // The coarse fallback text must NOT also render alongside the canned message.
+    expect(within(dialog).queryByText(/Switch failed \(switch-job-failed\)/)).toBeNull()
+    // Expert detail (request_id + raw outcome code) stays available, just out
+    // of the primary line — never a raw-stdout debug view.
+    expect(within(dialog).getByText(/req-switch-3/)).toBeTruthy()
+    expect(within(dialog).getByText(/switch_failed_previous_source_restored/)).toBeTruthy()
+  })
+
+  // umbrella #320/#321 gate follow-up (bug 1, TOCTOU): isObservedFresh is
+  // derived from Date.now() at render time, and typing into ReasonConfirm's
+  // own reason/target fields is THAT component's local state — it never
+  // re-renders SwitchSourceControl. Without the ticking re-render, arming
+  // while fresh and then sitting on the form past the staleness bound would
+  // leave Confirm enabled on stale data. This proves the control catches
+  // that reactively, with no topology re-fetch involved.
+  it('goes stale reactively while armed, disabling Confirm and blocking the POST', async () => {
+    vi.useFakeTimers()
+    const { switchCalls } = mkFetch({ topology: topologyMxlA() })
+    renderPage()
+    await settle() // let the grouped/catalog fetch resolve so the tile renders
+
+    const tile = screen.getByText('MXL Video Test View').closest('[role="button"]')!
+    fireEvent.click(tile)
+    await settle(0) // let the modal's topology fetch resolve
+
+    const dialog = screen.getByRole('dialog')
+    fireEvent.click(within(dialog).getByRole('button', { name: 'Switch source' }))
+
+    const confirm = within(dialog).getByRole('button', { name: 'Confirm switch' }) as HTMLButtonElement
+    const select = within(dialog).getByRole('combobox') as HTMLSelectElement
+    const textbox = within(dialog).getByRole('textbox')
+
+    fireEvent.change(textbox, { target: { value: 'operator requested' } })
+    fireEvent.change(select, { target: { value: 'source-b' } })
+    expect(confirm.disabled).toBe(false) // armed, target + reason set, still fresh
+
+    // Let more than OBSERVED_SOURCE_STALE_MS (15s) elapse with NO topology
+    // re-fetch and no other user action — only wall-clock time passing while
+    // the operator sits on the armed form.
+    await settle(16_000)
+
+    expect(confirm.disabled).toBe(true) // caught reactively, not just at submit time
+    expect(
+      within(dialog).getByText(/Live source is unknown or stale — refresh to retry before switching\./),
+    ).toBeTruthy()
+
+    // Confirm is now a genuinely disabled native button — clicking it must
+    // not reach the switch-source endpoint.
+    fireEvent.click(confirm)
+    expect(switchCalls).toHaveLength(0)
   })
 })
 
