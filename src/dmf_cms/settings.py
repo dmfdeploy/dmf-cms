@@ -310,6 +310,24 @@ class L3Settings:
       ``_verify_drain_and_finalize``). Default window (180s) is ~2x the
       ~75s reconcile lag (45s PromSD TTL + 30s Prometheus refresh).
       Positive-validated like the EE floors.
+
+    umbrella #306 additions — switch-source watch budget:
+
+    * ``switch_source_timeout_seconds`` — the ``ReconnectViaAwxActuator``'s
+      switch-watch deadline (switch_source.py's own ``timeout_seconds``
+      constructor arg), wired ONLY into the switch-source path (main.py's
+      ``api_media_workloads_switch_source``) — every other actuator caller
+      keeps its own budget untouched. Default 360s = 30s control-plane
+      overhead + 10s quiesce settle + 120s upgrade rollout verification +
+      120s rollback rollout verification + 80s AWX job-launch/event
+      latency + poll slack. The two 120s terms mirror dmf-runbooks' switch
+      play TIMING CONTRACT vars (0.4.3) — if those change, this budget
+      changes with them. Positive-validated like the EE floors; widened
+      from the actuator's own flat 120s default (switch_source.py's
+      ``_DEFAULT_ACTUATOR_TIMEOUT_SECONDS``) because the redesigned 0.4.3
+      play's own worst case already exceeds that budget mid-recovery,
+      firing ``switch-watch-timeout`` on an operation that was still
+      legitimately running.
     """
 
     enabled: bool = True
@@ -320,6 +338,7 @@ class L3Settings:
     auto_rollback: bool = True
     drain_poll_interval_seconds: int = 10
     drain_timeout_seconds: int = 180
+    switch_source_timeout_seconds: int = 360
 
 
 @dataclass(frozen=True)
@@ -523,6 +542,9 @@ def load_settings() -> Settings:
             auto_rollback=_env_strict_bool_fail_safe_on("DMF_CONSOLE_L3_AUTO_ROLLBACK", True),
             drain_poll_interval_seconds=_env_positive_int("DMF_CONSOLE_L3_DRAIN_POLL_INTERVAL_SECONDS", 10),
             drain_timeout_seconds=_env_positive_int("DMF_CONSOLE_L3_DRAIN_TIMEOUT_SECONDS", 180),
+            switch_source_timeout_seconds=_env_positive_int(
+                "DMF_CONSOLE_L3_SWITCH_SOURCE_TIMEOUT_SECONDS", 360
+            ),
         ),
         forgejo=ForgejoSettings(
             api_url=os.getenv("DMF_CONSOLE_FORGEJO_API_URL", ""),

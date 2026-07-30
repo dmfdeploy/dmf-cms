@@ -38,10 +38,11 @@ import pytest
 from fastapi.testclient import TestClient
 
 from dmf_cms import awx
+from dmf_cms import main as main_module
 from dmf_cms import switch_source
 from dmf_cms.catalog import CatalogEntry
 from dmf_cms.main import create_app
-from dmf_cms.settings import AWXSettings, Settings
+from dmf_cms.settings import AWXSettings, L3Settings, Settings
 
 ENGINEER = ("dmf-console-engineer",)
 VIEWER = ("dmf-console-viewer",)
@@ -80,12 +81,13 @@ def _mock_awx_terminal(monkeypatch, *, status="successful"):
     monkeypatch.setattr(awx, "get_job", lambda **k: {"status": status})
 
 
-def _settings(groups=ENGINEER, *, awx_configured=True) -> Settings:
+def _settings(groups=ENGINEER, *, awx_configured=True, l3=None) -> Settings:
     return Settings(
         runtime_mode="local",
         dev_login_enabled=True,
         dev_groups=groups,
         awx=AWXSettings(api_url="http://awx.test", api_token="t") if awx_configured else AWXSettings(),
+        l3=l3 if l3 is not None else L3Settings(),
     )
 
 
@@ -97,10 +99,10 @@ def _client(groups=ENGINEER, *, awx_configured=True) -> TestClient:
     return client
 
 
-def _dispatch_client(groups=ENGINEER) -> TestClient:
+def _dispatch_client(groups=ENGINEER, *, l3=None) -> TestClient:
     """For tests that reach dispatch_switch_source — caller must use this as
     ``with _dispatch_client() as client:`` so lifespan actually runs."""
-    return TestClient(create_app(settings=_settings(groups)))
+    return TestClient(create_app(settings=_settings(groups, l3=l3)))
 
 
 def _audit_lines(caplog):
@@ -270,6 +272,35 @@ def test_failed_rollback_required_is_200_not_an_http_error(monkeypatch, caplog):
     assert body["status"] == "failed_rollback_required"
     assert body["error"] == "switch-job-failed"
     assert any("outcome=failed_rollback_required" in m for m in _audit_lines(caplog))
+
+
+# ── DMF_CONSOLE_L3_SWITCH_SOURCE_TIMEOUT_SECONDS wiring (umbrella #306) ──
+
+
+def test_switch_source_passes_configured_timeout_to_actuator(monkeypatch):
+    """The endpoint must pass settings.l3.switch_source_timeout_seconds into
+    ReconnectViaAwxActuator's own timeout_seconds — not rely on the
+    actuator's flat 120s class default (test_switch_source.py's own
+    load_settings() tests cover the settings-layer default/override;
+    this covers main.py's actual constructor call)."""
+    _patch_catalog(monkeypatch, entries=[VIEWER_ENTRY])
+    _mock_awx_terminal(monkeypatch, status="successful")
+
+    captured: dict = {}
+    real_actuator_cls = main_module.ReconnectViaAwxActuator
+
+    def spy_actuator(**kwargs):
+        captured.update(kwargs)
+        return real_actuator_cls(**kwargs)
+
+    monkeypatch.setattr(main_module, "ReconnectViaAwxActuator", spy_actuator)
+
+    with _dispatch_client(l3=L3Settings(switch_source_timeout_seconds=45)) as client:
+        client.get("/auth/login", follow_redirects=False)
+        resp = _post(client, body={"source_instance": "source-b", "reason": "go"})
+    assert resp.status_code == 200
+    assert resp.json()["status"] == "active"
+    assert captured["timeout_seconds"] == 45
 
 
 # ── GET .../topology — the switch UI's source-discovery read seam ───────
