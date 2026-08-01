@@ -30,10 +30,25 @@ import { JobStatusLine, OperationStatusLine } from './stages/JobProgress'
  * what was accepted, what the job is doing, and what has to happen next.
  *
  * A FAILED JOB IS THE POINT, not an afterthought. If the launch fails, this
- * surface must say so and stop implying something is coming — otherwise the
- * operator sits watching a spinner for a workload that will never arrive.
- * The failure is terminal content here, with a way back, not a transient
- * line that scrolls away.
+ * surface must say so and stop implying a workload is on its way — otherwise
+ * the operator sits watching a spinner. The failure is standing content here,
+ * with a way back, not a transient line that scrolls away.
+ *
+ * BUT A FAILED JOB DOES NOT MEAN NOTHING WAS RECORDED, and this surface must
+ * not say that it does. The launcher writes the tagged NetBox record PART-WAY
+ * through the run (dmf-runbooks roles/mxl provision stage), and the fault
+ * boundary sits AFTER that first mutation — so a job that fails later has
+ * already created the record. Worse for any "nothing happened" reading: the
+ * run guard's rescue only MARKS the snapshot failed_rollback_required and
+ * points at playbooks/rollback-run.yml; it does not roll anything back. A
+ * record left behind by a failed launch therefore persists until someone runs
+ * that rollback explicitly.
+ *
+ * So the failure copy states an uncertainty rather than resolving it, and the
+ * page stays live underneath: if the inventory does report the workload, the
+ * parent swaps this view for the real flow exactly as it would have on a
+ * clean launch. "Failed" here bounds what the console knows, not what the
+ * facility contains.
  *
  * The caller unmounts this the moment the workload appears in the grouped
  * inventory, so the happy path ends by simply becoming the real flow page.
@@ -45,14 +60,12 @@ import { JobStatusLine, OperationStatusLine } from './stages/JobProgress'
  * resolves to one (async autoscale), so this carries whichever arrived —
  * the same union ProvisionStage already tracks, not a new model.
  */
-export interface WorkloadLaunchState {
-  /** Catalog entry that was deployed — needed to read job status. */
-  entryKey: string
+export type WorkloadLaunchState = { entryKey: string } & (
   /** Async autoscale path: an operation that will yield a job id. */
-  operationId?: string
+  | { operationId: string; jobId?: number }
   /** Sync path: the AWX job id itself. */
-  jobId?: number
-}
+  | { operationId?: string; jobId: number }
+)
 
 /** Narrow unknown router state to a launch handoff, or null. */
 export function readLaunchState(state: unknown): WorkloadLaunchState | null {
@@ -71,8 +84,9 @@ export function readLaunchState(state: unknown): WorkloadLaunchState | null {
   // replaced, because it asserts a launch instead of admitting an absence.
   // Without a pollable reference there is no launch to speak of, so the page
   // falls through to the ordinary not-found.
-  if (op === undefined && job === undefined) return null
-  return { entryKey, operationId: op, jobId: job }
+  if (job !== undefined) return { entryKey, operationId: op, jobId: job }
+  if (op !== undefined) return { entryKey, operationId: op }
+  return null
 }
 
 /** Terminal AWX job states that mean the workload is not coming. */
@@ -131,15 +145,25 @@ export default function WorkloadMaterializing({
             <p className="font-medium text-red-200">
               The launch job for this workload did not succeed.
             </p>
-            <p className="text-muted">
-              {operationFailed
-                ? 'The automation platform did not start the job.'
-                : `The job finished as "${jobStatus}".`}{' '}
-              Nothing is recorded under the identity{' '}
-              <span className="font-mono">workload:{slug}</span> unless a previous
-              deploy already created it — this page is not the place that would know,
-              so check the Media Workloads list rather than assuming either way.
-            </p>
+            {operationFailed ? (
+              // The one branch where "nothing was recorded" IS earned: the
+              // job never started, so no task ran and no mutation happened.
+              <p className="text-muted">
+                The automation platform did not start the job, so nothing ran and
+                nothing was recorded under the identity{' '}
+                <span className="font-mono">workload:{slug}</span>.
+              </p>
+            ) : (
+              <p className="text-muted">
+                The job finished as &quot;{jobStatus}&quot;. It may still have recorded
+                the workload before it failed — the launcher writes the record
+                part-way through the run, so a later failure leaves it behind. If it
+                did, <span className="font-mono">workload:{slug}</span> will appear
+                here or in the Media Workloads list, and it stays until a rollback is
+                run for that job. This page cannot tell which happened; check the list
+                rather than assuming either way.
+              </p>
+            )}
           </div>
         ) : (
           <div className="space-y-2 text-sm">
@@ -183,12 +207,19 @@ export default function WorkloadMaterializing({
               onStatusChange={handleStatusChange}
             />
           ) : (
-            // Unreachable by construction: readLaunchState refuses a launch
-            // with neither reference, so one of the two branches above always
-            // renders. Kept as a typed exhaustiveness fallback rather than
-            // prose, because standing copy for a state that cannot occur reads
-            // as a designed state and would quietly become one if the
-            // narrowing ever loosened.
+            // REACHABLE, on exactly one path: the operation errored before it
+            // ever yielded a job id, so operationFailed suppresses the first
+            // branch while jobId is still null. (A launch carrying NEITHER
+            // reference cannot get here — readLaunchState refuses it, and the
+            // WorkloadLaunchState union now encodes that so the compiler
+            // agrees rather than a comment asserting it.)
+            //
+            // Rendering nothing is correct here rather than a gap: no job was
+            // ever created, so there is no job status to show, and the panel
+            // ABOVE has already stated the failure and that nothing ran. A
+            // status line in this slot could only invent a job that does not
+            // exist. Null is the terminal render for that path, not an
+            // exhaustiveness placeholder.
             null
           )}
         </div>
