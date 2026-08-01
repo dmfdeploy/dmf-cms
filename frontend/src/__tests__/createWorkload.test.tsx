@@ -78,6 +78,10 @@ function mkFetch(opts: FetchOpts = {}) {
   // change under the operator mid-draft, and that transition is a case the
   // guard has to survive rather than a hypothetical.
   let catalog = opts.catalog ?? [catalogEntry()]
+  let catalogStatus = opts.catalogStatus
+  // Lets a test hold the catalog response open so "a re-read is in flight"
+  // is an observed state rather than a race the test hopes to hit.
+  let catalogGate: Promise<void> | null = null
   // Mutable so a test can simulate the launcher stamping the tag partway
   // through the journey, which is the real sequence.
   let workloads: MediaWorkload[] = opts.workloads ?? []
@@ -88,7 +92,12 @@ function mkFetch(opts: FetchOpts = {}) {
     const url = (typeof input === 'string' ? input : (input as Request).url).toString()
 
     if (url.endsWith('/api/catalog')) {
-      if (opts.catalogStatus) return json({ error: 'nope' }, opts.catalogStatus)
+      if (catalogGate) {
+        const gate = catalogGate
+        catalogGate = null
+        await gate
+      }
+      if (catalogStatus) return json({ error: 'nope' }, catalogStatus)
       return json({ entries: catalog })
     }
     if (url.endsWith('/api/facility/summary')) {
@@ -134,6 +143,12 @@ function mkFetch(opts: FetchOpts = {}) {
     },
     setCatalog: (next: CatalogEntry[]) => {
       catalog = next
+    },
+    setCatalogStatus: (next: number | undefined) => {
+      catalogStatus = next
+    },
+    setCatalogGate: (gate: Promise<void>) => {
+      catalogGate = gate
     },
     setJobStatus: (id: number, next: { status: string; is_done: boolean }) => {
       jobStatus[id] = next
@@ -494,6 +509,177 @@ describe('a template already deployed on this facility', () => {
     )
     expect(h.deploy).toHaveLength(0)
     expect(screen.queryByText('Deploy accepted.')).toBeNull()
+  })
+
+  // ---- a lifecycle the console can no longer read ------------------------
+
+  // GATE-B7. The guard above is only as good as the read it judges, and the
+  // first version of it trusted `entry.lifecycle` unconditionally. react-query
+  // KEEPS the last successful data alongside isError, so on a failed refetch
+  // the entry is a stale snapshot that can still say `bootstrapped` for a
+  // template that went active in exactly the window the console stopped being
+  // able to look — and the deploy fired. Driven here as an observed sequence
+  // (the query really is put into `error` with data retained) rather than
+  // argued from react-query's semantics.
+  it('withholds provisioning while the catalog read is failing, and fires no deploy', async () => {
+    const h = mkFetch({ catalog: [catalogEntry({ key: 'mxl-viewer', lifecycle: 'bootstrapped' })] })
+    const queryClient = renderCreate()
+    await screen.findByRole('heading', { name: 'Design' })
+    const provision = await reachProvision()
+    fireEvent.click(within(provision).getByRole('button', { name: '▶ Provision now' }))
+    fireEvent.change(
+      within(provision).getByPlaceholderText('Reason (required, recorded in the audit trail)'),
+      { target: { value: 'demo launch' } },
+    )
+
+    h.setCatalogStatus(500)
+    await queryClient.invalidateQueries({ queryKey: ['catalog'] })
+    await waitFor(() => expect(queryClient.getQueryState(['catalog'])?.status).toBe('error'))
+    // The precondition that makes this defect possible, asserted rather than
+    // assumed: the failed read did NOT clear the entries the guard reads.
+    expect(queryClient.getQueryState(['catalog'])?.data).toBeTruthy()
+
+    await waitFor(() =>
+      expect(within(stepSection('Provision')).queryByRole('button', { name: 'Confirm provision' })).toBeNull(),
+    )
+    expect(within(stepSection('Provision')).queryByRole('button', { name: '▶ Provision now' })).toBeNull()
+    expect(h.deploy).toHaveLength(0)
+
+    // Withheld, not refused: it must not claim the template IS deployed,
+    // because a failed read is not evidence of that either.
+    const text = stepSection('Provision').textContent ?? ''
+    expect(text).toMatch(/deployment state is unknown/)
+    expect(text).toMatch(/Provisioning is withheld/)
+    expect(text).not.toMatch(/already deployed on this facility/)
+    // A withheld action has to say how it clears, and the recovery it names
+    // has to be one the client actually performs. Two earlier drafts did
+    // not: "keeps retrying on its own" (retry is 1, nothing polls) and
+    // "read again when you return to this tab" (refetchOnWindowFocus only
+    // refetches a STALE query, and staleTime is 30s). The surviving claim is
+    // the condition plus a reload, which always re-reads because it builds a
+    // fresh QueryClient.
+    expect(text).toMatch(/withheld until the catalog can be read again/)
+    expect(text).toMatch(/Reload the page/)
+    expect(text).not.toMatch(/keeps retrying/)
+    expect(text).not.toMatch(/return to this tab/)
+  })
+
+  it('does not promise an automatic retry the catalog query never performs', async () => {
+    // The picker's failed branch carried the console's stock "Retrying
+    // automatically." tail. That tail is true of the hooks that poll — most
+    // of hooks.ts sets a refetchInterval — but useCatalog sets none, and the
+    // client's retry is 1, so once it is exhausted nothing further happens.
+    // Untested until now, which is how it sat two hundred lines from the
+    // identical claim the Provision step had to have corrected twice.
+    mkFetch({ catalogStatus: 500 })
+    renderCreate()
+    await screen.findByRole('heading', { name: 'Design' })
+
+    const design = stepSection('Design')
+    await waitFor(() => expect(design.textContent).toMatch(/couldn't be read right now/))
+    expect(design.textContent).not.toMatch(/Retrying automatically/)
+    expect(design.textContent).toMatch(/Reload the page/)
+  })
+
+  it('withdraws the action while a catalog re-read is still in flight', async () => {
+    // GATE-B7 round 3. The read in flight is precisely the one that would
+    // correct a lifecycle that has moved, so acting on the superseded answer
+    // while its replacement is on the wire is the closeable part of the
+    // staleness problem. Driven with a catalog response the test holds open,
+    // so "in flight" is an actual observed state and not a timing accident.
+    let release: (() => void) | null = null
+    const h = mkFetch({ catalog: [catalogEntry({ key: 'mxl-viewer', lifecycle: 'bootstrapped' })] })
+    const queryClient = renderCreate()
+    await screen.findByRole('heading', { name: 'Design' })
+    const provision = await reachProvision()
+    fireEvent.click(within(provision).getByRole('button', { name: '▶ Provision now' }))
+    fireEvent.change(
+      within(provision).getByPlaceholderText('Reason (required, recorded in the audit trail)'),
+      { target: { value: 'demo launch' } },
+    )
+    expect(within(provision).getByRole('button', { name: 'Confirm provision' })).toBeTruthy()
+
+    h.setCatalogGate(new Promise<void>((resolve) => { release = resolve }))
+    void queryClient.invalidateQueries({ queryKey: ['catalog'] })
+    await waitFor(() => expect(queryClient.getQueryState(['catalog'])?.fetchStatus).toBe('fetching'))
+
+    await waitFor(() =>
+      expect(within(stepSection('Provision')).queryByRole('button', { name: 'Confirm provision' })).toBeNull(),
+    )
+    expect(stepSection('Provision').textContent).toMatch(/Checking whether/)
+    expect(h.deploy).toHaveLength(0)
+
+    // And it is a window, not a latch: the answer lands clean and the action
+    // returns. It comes back as the ARMED panel, because `arming` is the
+    // page's state and the check never cancelled it — note the cost that
+    // carries, which is real and accepted: ReasonConfirm was unmounted, so
+    // the operator's typed reason is gone and has to be retyped. Losing an
+    // unsubmitted reason is recoverable; firing a duplicate deploy is not.
+    release!()
+    await waitFor(() =>
+      expect(within(stepSection('Provision')).getByRole('button', { name: 'Confirm provision' })).toBeTruthy(),
+    )
+    expect(stepSection('Provision').textContent).not.toMatch(/Checking whether/)
+    expect(
+      (within(stepSection('Provision')).getByRole('button', { name: 'Confirm provision' }) as HTMLButtonElement)
+        .disabled,
+    ).toBe(true)
+    expect(h.deploy).toHaveLength(0)
+  })
+
+  it('does not convert a stale "active" into a confident already-deployed claim', async () => {
+    // The ordering inside `blocked` is load-bearing, so it gets a test
+    // rather than only a comment. If the last successful read said active
+    // and the NEXT read fails, checking lifecycle first would render "already
+    // deployed — open it from Media Workloads": advice the console cannot
+    // stand behind, because the same failed read hides a teardown just as
+    // well as it hides a deploy. Both orderings suppress the action, so only
+    // the claim distinguishes them — which is the whole point.
+    const h = mkFetch({ catalog: [catalogEntry({ key: 'mxl-viewer', lifecycle: 'bootstrapped' })] })
+    const queryClient = renderCreate()
+    await screen.findByRole('heading', { name: 'Design' })
+    await reachProvision()
+
+    // Last GOOD read says active — the console may say so while it can see.
+    h.setCatalog([catalogEntry({ key: 'mxl-viewer', lifecycle: 'active' })])
+    await queryClient.invalidateQueries({ queryKey: ['catalog'] })
+    await waitFor(() =>
+      expect(stepSection('Provision').textContent).toMatch(/already deployed on this facility/),
+    )
+
+    // Now it cannot see. The retained data still says active; the claim must go.
+    h.setCatalogStatus(500)
+    await queryClient.invalidateQueries({ queryKey: ['catalog'] })
+    await waitFor(() =>
+      expect(stepSection('Provision').textContent).toMatch(/deployment state is unknown/),
+    )
+    const text = stepSection('Provision').textContent ?? ''
+    expect(text).not.toMatch(/already deployed on this facility/)
+    expect(text).not.toMatch(/There is nothing here to launch/)
+    expect(h.deploy).toHaveLength(0)
+  })
+
+  it('offers provisioning again once the catalog read recovers', async () => {
+    // The withholding must be a window, not a latch — otherwise a single
+    // transient failure would strand the draft for good, and the test above
+    // would be satisfied by a permanent refusal.
+    const h = mkFetch({ catalog: [catalogEntry({ key: 'mxl-viewer', lifecycle: 'bootstrapped' })] })
+    const queryClient = renderCreate()
+    await screen.findByRole('heading', { name: 'Design' })
+    await reachProvision()
+
+    h.setCatalogStatus(500)
+    await queryClient.invalidateQueries({ queryKey: ['catalog'] })
+    await waitFor(() =>
+      expect(within(stepSection('Provision')).queryByRole('button', { name: '▶ Provision now' })).toBeNull(),
+    )
+
+    h.setCatalogStatus(undefined)
+    await queryClient.invalidateQueries({ queryKey: ['catalog'] })
+    await waitFor(() =>
+      expect(within(stepSection('Provision')).getByRole('button', { name: '▶ Provision now' })).toBeTruthy(),
+    )
+    expect(stepSection('Provision').textContent).not.toMatch(/Provisioning is withheld/)
   })
 
   // ---- the boundary: ONLY `active` is refused ---------------------------

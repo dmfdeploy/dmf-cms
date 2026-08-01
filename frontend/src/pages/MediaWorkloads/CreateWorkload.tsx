@@ -119,7 +119,12 @@ export default function CreateWorkload() {
   // not flatten them (GATE-B P1). See handleProvisionConfirm for why.
   const [deployOutcome, setDeployOutcome] = useState<DeployOutcome | null>(null)
 
-  const { data: catalogData, isLoading: catalogLoading, isError: catalogFailed } = useCatalog()
+  const {
+    data: catalogData,
+    isLoading: catalogLoading,
+    isError: catalogFailed,
+    isFetching: catalogFetching,
+  } = useCatalog()
   const { data: facilityData, isLoading: facilityLoading, isError: facilityFailed } = useFacilitySummary()
   const deployMutation = useDeployCatalog()
 
@@ -284,6 +289,12 @@ export default function CreateWorkload() {
             {id === 'provision' && (
               <ProvisionSection
                 entry={selectedEntry}
+                // The read's outcome, not just its payload — see
+                // ProvisionSection's `blocked`. react-query keeps the last
+                // good entries alongside isError, so without this the step
+                // would go on acting from a catalog it knows it cannot read.
+                catalogFailed={catalogFailed}
+                catalogFetching={catalogFetching}
                 slug={trimmedSlug}
                 arming={arming}
                 pending={deployMutation.isPending}
@@ -333,9 +344,15 @@ function TemplatePicker({
   if (loading) return <p className="text-muted">Loading template information…</p>
   if (failed) {
     return (
+      // "Retrying automatically" is the console's usual error tail and it is
+      // true of the many hooks that carry a refetchInterval — but NOT of
+      // useCatalog, which has none. With retry exhausted at 1 and nothing
+      // polling, this promised a recovery that never arrives (GATE-B7 round
+      // 4). It is the same false claim the Provision step below had, two
+      // hundred lines away, so it gets the same true one.
       <p className="text-amber-200/80">
-        The catalog couldn&apos;t be read right now, so no templates can be shown. Retrying
-        automatically.
+        The catalog couldn&apos;t be read right now, so no templates can be shown. Reload
+        the page to try the read again.
       </p>
     )
   }
@@ -480,6 +497,8 @@ function PlanAssignment({
  */
 function ProvisionSection({
   entry,
+  catalogFailed,
+  catalogFetching,
   slug,
   arming,
   pending,
@@ -489,6 +508,8 @@ function ProvisionSection({
   onConfirm,
 }: {
   entry: CatalogEntry | null
+  catalogFailed: boolean
+  catalogFetching: boolean
   slug: string
   arming: boolean
   pending: boolean
@@ -498,20 +519,70 @@ function ProvisionSection({
   onConfirm: (reason: string) => void
 }) {
   const templateName = entry?.display_name ?? 'the selected template'
-  // THE GUARD THAT DID NOT TRAVEL WITH THE SEAM (operator review, PR #66).
-  // ProvisionStage.tsx offers its deploy only for a non-active entry; this
-  // page reused that page's deploy seam and left the condition behind, so
-  // the draft flow would arm and fire a second deploy against a template
-  // already tagged lifecycle:active.
+  // THE GUARD THAT DID NOT TRAVEL WITH THE SEAM (operator review, PR #66),
+  // plus the one the guard itself needed (GATE-B7).
   //
-  // It gates the confirm panel as well as the arm button, because the entry
-  // can go active WHILE that panel is open — useCatalog refetches on window
-  // focus. Suppressing only the affordance would leave a live "Confirm
-  // provision" standing on exactly the state it exists to refuse. The
-  // outcome messages below are deliberately NOT gated: they record what
-  // happened to a request this page already made, and that history does not
-  // stop being true when the lifecycle moves.
-  const deployed = entry?.lifecycle === 'active'
+  // `deployed` — ProvisionStage.tsx offers its deploy only for a non-active
+  // entry; this page reused that page's deploy seam and left the condition
+  // behind, so the draft flow would arm and fire a second deploy against a
+  // template already tagged lifecycle:active.
+  //
+  // `unverifiable` — the guard above is only as good as the read it judges,
+  // and a lifecycle read that FAILED still has a value. react-query keeps
+  // the last successful data alongside isError, so on a failed refetch
+  // `entry` is a stale snapshot: it can say `bootstrapped` for a template
+  // that went active in exactly the window the console stopped being able
+  // to look. Trusting it there fires the duplicate this guard exists to
+  // prevent, so a failing catalog read withdraws the action outright rather
+  // than acting on the last thing we happened to see. It is checked FIRST
+  // for that reason — when the read is failing, `lifecycle` is not evidence
+  // of anything, including "already deployed".
+  //
+  // `checking` — a refetch is in flight, so the console has an outstanding
+  // question about the very field the guard judges, and the read in transit
+  // is precisely the one that would correct a lifecycle that has moved.
+  // Acting on the old answer while its replacement is on the wire is the
+  // part of the staleness problem that IS closeable here. I argued against
+  // this for two gate rounds on the grounds that it closes a narrower window
+  // than plain staleness and would read as a freshness check it isn't —
+  // then adopted it when the premise underneath that argument turned out to
+  // be false (see the backstop paragraph).
+  //
+  // These are the same rule PlanStage now applies to the demand summary: a
+  // read the console cannot currently stand behind must not produce a
+  // confident output, whether that output is a claim or an affordance.
+  //
+  // WHAT THIS GUARD IS NOT. It does NOT make a duplicate deploy
+  // unreachable. Even a settled, successful read is a snapshot: staleTime
+  // holds it for 30s and an unfocused tab holds it indefinitely, so an
+  // operator can still click on a lifecycle that moved since the console
+  // last looked, with no refetch in flight to catch it. That residue is not
+  // closeable on this side of the wire.
+  //
+  // AND THERE IS NO SERVER-SIDE BACKSTOP. This comment previously claimed
+  // the backend was the authoritative gate. It is not. api_catalog_deploy
+  // refuses on the per-entry lifecycle LOCK (a conflicting operation already
+  // in flight), the capacity preflight, and a dirty failed-rollback run —
+  // but it never calls get_lifecycle_status, which is read only by GET
+  // /api/catalog. Nothing server-side rejects deploying an entry that is
+  // already lifecycle:active. This guard is therefore the ONLY thing between
+  // the operator and a duplicate, which is why it is drawn as wide as the
+  // client honestly can — and why the durable fix is a conditional deploy on
+  // the backend rather than more logic here.
+  //
+  // All three gate the confirm panel as well as the arm button: any of them
+  // can arrive WHILE that panel is open, and suppressing only the affordance
+  // would leave a live "Confirm provision" standing on exactly the state it
+  // exists to refuse. The outcome messages below are deliberately NOT gated:
+  // they record what happened to a request this page already made, and that
+  // history does not stop being true when the lifecycle moves.
+  const blocked: 'unverifiable' | 'checking' | 'deployed' | null = catalogFailed
+    ? 'unverifiable'
+    : catalogFetching
+      ? 'checking'
+      : entry?.lifecycle === 'active'
+        ? 'deployed'
+        : null
   return (
     <div>
       <h3 className="text-xs uppercase tracking-wide text-muted">Provisioning methods</h3>
@@ -520,19 +591,23 @@ function ProvisionSection({
           <div>
             <div className="font-medium text-text">Provision now</div>
             <p className="text-xs text-muted">
-              {deployed
-                ? `${templateName} is already deployed on this facility.`
-                : `Launches ${templateName} immediately via the AWX launcher, recorded as workload:${slug}.`}
+              {blocked === 'unverifiable'
+                ? 'The catalog could not be read, so this template’s deployment state is unknown.'
+                : blocked === 'checking'
+                  ? `Checking whether ${templateName} is still undeployed…`
+                  : blocked === 'deployed'
+                    ? `${templateName} is already deployed on this facility.`
+                    : `Launches ${templateName} immediately via the AWX launcher, recorded as workload:${slug}.`}
             </p>
           </div>
-          {!deployed && !arming && !pending && (
+          {blocked === null && !arming && !pending && (
             <button type="button" className="btn btn-primary btn-sm shrink-0" onClick={onArm}>
               ▶ Provision now
             </button>
           )}
         </div>
 
-        {deployed && (
+        {blocked === 'deployed' && (
           // Same designed state ProvisionStage renders as "Already
           // deployed.", said at the length this page's step needs: there it
           // is one template of several on a running workload, here it is the
@@ -544,7 +619,30 @@ function ProvisionSection({
           </p>
         )}
 
-        {!deployed && arming && (
+        {blocked === 'unverifiable' && (
+          // Withheld, and said as a withholding rather than a refusal: the
+          // console is not claiming this template is deployed, only that it
+          // has stopped being able to tell — and that provisioning blind is
+          // the one thing it will not do.
+          //
+          // The last line took two goes to make true, which is the point of
+          // the whole step. It first promised "the console keeps retrying on
+          // its own" (retry is 1, there is no refetchInterval — nothing
+          // polls), then "read again when you return to this tab", which
+          // overstates refetchOnWindowFocus: that only refetches a STALE
+          // query, and staleTime is 30s, so a return inside that window
+          // issues no request at all. Both would have left an operator
+          // waiting on a recovery that never arrived. What is unconditionally
+          // true is the CONDITION, plus one action that always works —
+          // reloading builds a new QueryClient with an empty cache.
+          <p className="mt-2 text-xs text-amber-200/80">
+            Provisioning is withheld until the catalog can be read again — launching
+            without it risks a second deploy onto a template that is already running.
+            Reload the page to try the read now.
+          </p>
+        )}
+
+        {blocked === null && arming && (
           <div className="mt-2">
             <ReasonConfirm
               title="Provision this workload now?"
