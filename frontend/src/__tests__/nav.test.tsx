@@ -102,6 +102,19 @@ describe('route migration (IA §9)', () => {
     )
   })
 
+  it('keeps the S1-cut surfaces reachable by URL — hidden, not deleted (#285)', async () => {
+    // The sidebar cut is a visibility change. Their routes stay registered so
+    // the expert lane (and any bookmark) still resolves instead of bouncing
+    // home, which is what makes the cut one line each to reverse.
+    for (const path of ['/catalog', '/monitoring']) {
+      cleanup()
+      renderAt(path, identity({ role: 'admin' }))
+      await waitFor(() =>
+        expect(screen.getByTestId('location').textContent).toBe(path),
+      )
+    }
+  })
+
   it('redirects retired /changes to the Activity History lane', async () => {
     renderAt('/changes')
     await waitFor(() =>
@@ -156,25 +169,14 @@ async function visibleLabels() {
 }
 
 describe('sidebar rails + role-gated secondaries (IA §3/§7)', () => {
-  it('viewer sees the ungated rails and secondaries only', async () => {
+  it('viewer sees the ungated rails only', async () => {
     renderSidebar(identity({ role: 'viewer' }))
-    expect(await visibleLabels()).toEqual([
-      'Workspace',
-      'Facilities',
-      'Monitoring',
-      'Activity',
-    ])
+    expect(await visibleLabels()).toEqual(['Workspace', 'Facilities'])
   })
 
-  it('operator gains Catalog', async () => {
+  it('operator gains nothing — Catalog is cut from the sidebar', async () => {
     renderSidebar(identity({ role: 'operator' }))
-    expect(await visibleLabels()).toEqual([
-      'Workspace',
-      'Facilities',
-      'Catalog',
-      'Monitoring',
-      'Activity',
-    ])
+    expect(await visibleLabels()).toEqual(['Workspace', 'Facilities'])
   })
 
   it('engineer gains Media Workloads', async () => {
@@ -186,7 +188,8 @@ describe('sidebar rails + role-gated secondaries (IA §3/§7)', () => {
     renderSidebar(identity({ role: 'viewer', groups: ['media-engineers'] }))
     const labels = await visibleLabels()
     expect(labels).toContain('Media Workloads')
-    expect(labels).not.toContain('Catalog')
+    // Still a viewer everywhere else — the group grants one surface, not a role.
+    expect(labels).not.toContain('Admin')
   })
 
   it('admin sees everything including Admin', async () => {
@@ -195,11 +198,19 @@ describe('sidebar rails + role-gated secondaries (IA §3/§7)', () => {
       'Workspace',
       'Facilities',
       'Media Workloads',
-      'Catalog',
-      'Monitoring',
-      'Activity',
       'Admin',
     ])
+  })
+
+  it('shows none of the S1-cut items to any role (#285)', async () => {
+    for (const role of ['viewer', 'operator', 'engineer', 'admin'] as const) {
+      cleanup()
+      renderSidebar(identity({ role, groups: ['media-engineers'] }))
+      const labels = await visibleLabels()
+      for (const cut of ['Catalog', 'Monitoring', 'Activity']) {
+        expect(labels, `${cut} still in sidebar for ${role}`).not.toContain(cut)
+      }
+    }
   })
 
   it('never surfaces Settings in the sidebar — it lives in the avatar menu (#185 WP-E)', async () => {

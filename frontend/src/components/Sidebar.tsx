@@ -1,4 +1,3 @@
-import { useState } from 'react'
 import { Link, useLocation } from 'react-router-dom'
 import { useCurrentUser } from '../api/hooks'
 
@@ -21,17 +20,25 @@ interface NavItem {
 // the Topbar avatar menu only (IA §3 placement clarification, #185 WP-E); the
 // rail slot is reserved for facility-level Site settings, which appears only
 // once that admin-gated page exists.
+// S1 IA cut (umbrella #285): Catalog, Monitoring and Activity are HIDDEN from
+// the sidebar, not deleted — their routes stay registered in App.tsx and remain
+// reachable by URL, so this is one line each to reverse.
+//
+// Their content did not vanish, it MOVED, which is the whole point of the cut:
+//   Catalog   -> workload detail, Design stage (the template + its composition)
+//               and Provision stage (the deploy action)
+//   Activity  -> workload detail, Provision stage (job progress/outcome) and
+//               Finalise & Review (job log + outcome marker)
+//   Monitoring -> expert lane only; the operator-facing health answer is
+//               Workspace → Problems, which is where it already lived
+// Hiding Activity was gated on the Provision/Finalise relocations landing
+// first — the deploy/switch feedback loop must never go dark.
 const allNavItems: NavItem[] = [
   { label: 'Workspace', path: '/', icon: 'grid', section: 'rail' },
   { label: 'Facilities', path: '/facilities', icon: 'sites', section: 'rail' },
   // Surface gate per ADR-0037 §5: engineer+admin role (the #173 v1 gate) OR
   // the media-engineers tenancy group — first frontend groups[] consumer.
   { label: 'Media Workloads', path: '/media-workloads', icon: 'inventory', section: 'rail', onlyRoles: ['engineer', 'admin'], onlyGroups: ['media-engineers'] },
-  { label: 'Catalog', path: '/catalog', icon: 'catalog', section: 'rail', onlyRoles: ['operator', 'engineer', 'admin'] },
-  { label: 'Monitoring', path: '/monitoring', icon: 'monitor', section: 'secondary' },
-  // One rail, two lanes (IA §5): viewer lands on History; the Jobs lane
-  // gates itself to operator+ inside the page.
-  { label: 'Activity', path: '/activity', icon: 'automation', section: 'secondary' },
   { label: 'Admin', path: '/admin', icon: 'shield', section: 'secondary', onlyRoles: ['admin'] },
 ]
 
@@ -109,7 +116,12 @@ function renderItem(item: NavItem, pathname: string, expanded: boolean) {
 }
 
 export default function Sidebar() {
-  const [expanded, setExpanded] = useState(false)
+  // Expanded with labels, and it STAYS expanded (umbrella #285 global item).
+  // It used to start collapsed to icons and expand on hover, which made the
+  // rail unreadable in a screen recording and made every navigation a
+  // hover-then-read. Labels are the teaching surface for someone meeting the
+  // IA for the first time, so they are not a hover-gated detail.
+  const expanded = true
   const location = useLocation()
   const { data: user } = useCurrentUser()
 
@@ -130,8 +142,6 @@ export default function Sidebar() {
       className={`flex flex-col bg-sidebar border-r border-border shrink-0 transition-all duration-200 overflow-hidden ${
         expanded ? 'w-56' : 'w-16'
       }`}
-      onMouseEnter={() => setExpanded(true)}
-      onMouseLeave={() => setExpanded(false)}
     >
       <nav className="flex flex-col py-4 px-2 gap-1 flex-1">
         {rails.map((item) => renderItem(item, location.pathname, expanded))}
