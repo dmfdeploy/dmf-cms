@@ -1,5 +1,4 @@
-import type { ClearForDeploymentResult, MediaWorkloadInstance } from '../../api/types'
-import ClearForDeployment from './ClearForDeployment'
+import type { MediaWorkloadInstance } from '../../api/types'
 import {
   observedBadge,
   OBSERVED_TITLE,
@@ -29,14 +28,6 @@ export interface WorkloadTileProps {
   // within the live-tile cap AND not reduced-motion: the preview auto-churns.
   motionAllowed: boolean
   onOpen: (instance: MediaWorkloadInstance) => void
-  onCleared?: (result: ClearForDeploymentResult) => void
-  /**
-   * Whether the C5 clear-for-deployment control may appear in the footer.
-   * The Operate stage passes false: the lifecycle rail authorises actions
-   * per stage, and Operate deliberately carries none — a control smuggled in
-   * via a shared tile would break that invariant from the side.
-   */
-  showClear?: boolean
 }
 
 export default function WorkloadTile({
@@ -45,8 +36,6 @@ export default function WorkloadTile({
   active,
   motionAllowed,
   onOpen,
-  onCleared,
-  showClear = true,
 }: WorkloadTileProps) {
   const { isMxl, caption, showRefresh, liveDot, refresh } = useLivePreview({
     instance,
@@ -135,11 +124,6 @@ export default function WorkloadTile({
             Refresh
           </button>
         )}
-        {showClear &&
-          !instance.reconcile_pending &&
-          instance.requested_state === 'bootstrapped' && (
-            <ClearForDeployment instance={instance.instance} onCleared={onCleared} />
-          )}
       </div>
     </div>
   )
