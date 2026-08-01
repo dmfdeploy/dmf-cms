@@ -14,7 +14,7 @@
  * not to a stage the operator reads before anything is even armed.
  */
 import { afterEach, describe, expect, it, vi } from 'vitest'
-import { cleanup, render, screen } from '@testing-library/react'
+import { cleanup, render, screen, waitFor } from '@testing-library/react'
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query'
 import { MemoryRouter } from 'react-router-dom'
 import PlanStage from '../pages/MediaWorkloads/stages/PlanStage'
@@ -93,6 +93,8 @@ function json(body: unknown, status = 200) {
 
 interface FetchOpts {
   catalog?: CatalogEntry[]
+  /** Fail the /api/catalog read with this status instead of answering it. */
+  catalogStatus?: number
   facilitySites?: Array<{ name: string; slug: string | null; device_count: number }>
   facilityDetail?: FacilityDetailResponse
   facilityDetailStatus?: number
@@ -103,7 +105,10 @@ function mkFetch(opts: FetchOpts = {}) {
   const sites = opts.facilitySites ?? [{ name: 'dmf-lab', slug: 'dmf-lab', device_count: 3 }]
   const fetchMock = vi.fn(async (input: RequestInfo | URL) => {
     const url = (typeof input === 'string' ? input : (input as Request).url).toString()
-    if (url.endsWith('/api/catalog')) return json({ entries: catalog })
+    if (url.endsWith('/api/catalog')) {
+      if (opts.catalogStatus) return json({ error: 'nope' }, opts.catalogStatus)
+      return json({ entries: catalog })
+    }
     if (url.endsWith('/api/facility/summary')) {
       return json({ reason: '', site_count: sites.length, device_count: 0, sites })
     }
@@ -221,6 +226,72 @@ describe('a workload where no template declares a demand at all', () => {
     renderPlan()
     expect(await screen.findByText(/None of this workload's 1 template/)).toBeTruthy()
     expect(screen.getByText(/comparison here is incomplete/)).toBeTruthy()
+    // The other side of the boundary the failed-read tests below pin: this
+    // negative IS earned, because the catalog was read. A fix that answered
+    // "unknown" whenever the sum came out empty would pass those tests and
+    // fail this one.
+    expect(screen.queryByText(/a gap in the reading/)).toBeNull()
+  })
+
+  it('still says none declare when the catalog is READ SUCCESSFULLY but empty', async () => {
+    // The shape a failed read used to masquerade as. An empty entries list
+    // from a 200 is a real answer — every function joined against a catalog
+    // that genuinely holds nothing for it — so the negative stands. This is
+    // what proves the fix keys on the READ OUTCOME and not on emptiness:
+    // discriminating on `entries.length === 0` would fail here.
+    mkFetch({ catalog: [] })
+    renderPlan()
+    expect(await screen.findByText(/None of this workload's 1 template/)).toBeTruthy()
+    expect(screen.queryByText(/a gap in the reading/)).toBeNull()
+  })
+})
+
+// ---- a failed catalog read is not a confident negative -----------------
+
+describe('a catalog read that did not succeed', () => {
+  // The defect the operator caught on PR #66: PlanStage passed only
+  // catalog.isLoading into summarizeDemand, so a failed /api/catalog left
+  // data undefined and loading false — an empty entry list that every join
+  // missed — and the stage announced "None of this workload's N templates
+  // declare a resource demand". An unhandled error path rendered as a
+  // definite fact about templates the console had never read.
+  it('never claims no template declares a demand', async () => {
+    mkFetch({ catalogStatus: 500 })
+    renderPlan()
+
+    // The capacity side is independent and still readable, so the section
+    // renders and the demand cell is genuinely on screen to be judged.
+    // Asserted against THAT CELL rather than the document: the allocatable
+    // figure beside it legitimately says "3000m CPU", and a document-wide
+    // "no CPU number" assertion would be testing the wrong half.
+    const requests = (await screen.findByText('Requests (this workload)')).parentElement as HTMLElement
+    await waitFor(() => expect(requests.textContent).toMatch(/a gap in the reading/))
+
+    // THE claim that must not be made.
+    expect(requests.textContent).not.toMatch(/None of this workload's/)
+    expect(requests.textContent).not.toMatch(/declare a resource demand/)
+    // Nor its quieter cousins: no partial sum, and no number of any kind —
+    // an unread catalog cannot produce one, and 0m is a fabrication.
+    expect(requests.textContent).not.toMatch(/Partial/)
+    expect(requests.textContent).not.toMatch(/CPU/)
+  })
+
+  it('says the demand is unknown rather than zero, and never leaks the status code', async () => {
+    mkFetch({ catalogStatus: 503 })
+    renderPlan()
+    expect(await screen.findByText(/what this workload's templates declare is unknown/)).toBeTruthy()
+    // Art. 8: the transport detail is ours, not the operator's vocabulary.
+    expect(screen.queryByText(/503/)).toBeNull()
+  })
+
+  it('still shows the facility side, because that read succeeded independently', async () => {
+    // A failed catalog must degrade the demand cell alone. Blanking the whole
+    // comparison would be the over-correction — the allocatable figure was
+    // read cleanly and is still true.
+    mkFetch({ catalogStatus: 500 })
+    renderPlan()
+    expect(await screen.findByText('Allocatable (facility)')).toBeTruthy()
+    expect(screen.getByText(/3000m CPU/)).toBeTruthy()
   })
 })
 
