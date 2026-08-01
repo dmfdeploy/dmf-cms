@@ -11,9 +11,17 @@ plan):
 
 * Node identity/version  — ``kube_node_info`` (``node``, ``kubelet_version``).
 * Node architecture      — ``node_uname_info`` (``machine``), joined to a
-  node by its ``nodename`` label. An optional enrichment: a node missing
-  from this join shows ``arch: null``, it never fails the whole node list
-  (unlike a missing ``kube_node_info`` label, which is a malformed row).
+  node by its ``nodename`` label, FALLING BACK to the NetBox site's
+  ``dmf_architecture`` custom field (umbrella #339 item 2: on the live env
+  the uname join delivers nothing, and the page rendered its cannot-be-read
+  state for a fact NetBox was holding all along). The two sources speak
+  different dialects — uname says ``aarch64``, dmf-infra's born-inventory
+  role stamps ``arm64`` — and the site field is a facility-level
+  declaration rather than a per-node measurement, so each node also carries
+  ``arch_source`` and the page says "from NetBox" when that is what it is.
+  Still an optional enrichment either way: a node with neither source shows
+  ``arch: null``, it never fails the whole node list (unlike a missing
+  ``kube_node_info`` label, which is a malformed row).
 * Node instance class    — DELIBERATELY ABSENT (S1 decision, umbrella #285).
   No default kube-state-metrics series carries a cloud flavour like
   "CAX21", and NetBox does not hold one either: dmf-infra's born-inventory
@@ -25,21 +33,37 @@ plan):
   node facts it can actually source. Stamping an instance-type field in
   dmf-infra would make it sourceable; that is an infra change, not a
   console one.
-* Platform services + as-deployed versions, and real ingress URLs — ONE
-  combined read, see ``read_platform_services``. Both facts are keyed off
-  the console's own ``AppContract`` (``config/app-contracts.yaml``) — the
-  same 7 services the retired Workspace "Infrastructure Services" table
-  listed from that static config, whose ``deep_links.primary`` was always a
-  fixed ``https://<key>.dmf.example.com/`` placeholder, never resolved
-  against the real cluster. This module keeps the ``<key>.`` host-prefix
-  convention the placeholder itself encodes as the join key against real
-  ``kube_ingress_path`` rows, and reuses the ingress's own ``namespace`` to
-  look up that service's as-deployed image(s) via
-  ``kube_pod_container_info``. Namespace can never be assumed a priori (awx/
-  forgejo/netbox happen to match their app key; authentik and the zot
-  registry do not), so the ingress host is the only honest join key
-  available without hand-maintaining a namespace table here that would
-  duplicate dmf-infra's own role defaults and drift stale.
+* Platform services: presence + as-deployed versions, and real ingress
+  URLs — see ``read_platform_services``. Both facts are keyed off the
+  console's own ``AppContract`` (``config/app-contracts.yaml``) — the same 7
+  services the retired Workspace "Infrastructure Services" table listed from
+  that static config, whose ``deep_links.primary`` was always a fixed
+  ``https://<key>.dmf.example.com/`` placeholder, never resolved against the
+  real cluster.
+
+  These are TWO independent reads over one shared fetch, and keeping them
+  independent is the whole point (umbrella #339 item 1). PRESENCE AND
+  VERSION come from ``kube_pod_container_info``, looked up in one namespace
+  (see the next paragraph for which) and narrowed to that service's own
+  image by the ``image_contains`` token its ``cluster:`` block declares —
+  without that narrowing a service's Version column would list its
+  neighbours' images as its own. ACCESS comes from
+  ``kube_ingress_path`` via the ``<key>.`` host-prefix convention the
+  placeholder domains themselves encode. The page shipped with presence
+  inferred from the ingress alone, so every service that deliberately has no
+  ingress (AWX, explicitly) was reported "not found in this cluster" while
+  its PVCs were listed as present two sections below — the overclaim class.
+  An ingress is an access route, never evidence of existence.
+
+  Which namespace: the matched ingress's own when there is one, the
+  contract's declared one otherwise. The ingress is preferred because it is
+  read from the cluster and so cannot go stale, and because it keeps the
+  page from ever saying "here is the URL" and "nothing is running" in the
+  same row. The contract's declared namespace is what makes the ingressless
+  services readable at all; it duplicates dmf-infra's role defaults and can
+  drift, so a drifted value surfaces as "no matching pods in cluster
+  metrics" — a statement about what was checked, which an operator can
+  falsify, rather than a claim about the cluster.
 * Storage                — ``kube_persistentvolumeclaim_info``
   (``storageclass``) joined to
   ``kube_persistentvolumeclaim_resource_requests_storage_bytes`` by
@@ -93,9 +117,14 @@ class NodeFact:
     name: str
     kubelet_version: str
     arch: str | None
+    # 'node' (node_uname_info, measured on the node itself) | 'netbox' (the
+    # site's dmf_architecture, a facility-level declaration) | None when arch
+    # is None. Never inferred from the value: 'arm64' and 'aarch64' are the
+    # same machine described by two sources, and only the source says which.
+    arch_source: str | None
 
 
-def _read_nodes(prom_url: str) -> list[NodeFact]:
+def _read_nodes(prom_url: str, site_architecture: str | None) -> list[NodeFact]:
     info_rows = prometheus.query(url=prom_url, expr="kube_node_info")
     if not info_rows:
         # Empty is treated as "KSM unscraped", not "nodeless cluster".
@@ -126,55 +155,91 @@ def _read_nodes(prom_url: str) -> list[NodeFact]:
         metric = row["metric"]
         name = metric["node"]  # KeyError -> malformed row, whole read fails
         kubelet_version = metric["kubelet_version"]  # KeyError -> malformed row
+        # Measured beats declared: the site field describes the facility, so
+        # it only ever fills a node the uname join left blank — it must never
+        # overwrite a node that reported its own machine type.
+        arch = arch_by_node.get(name)
+        arch_source: str | None = "node" if arch else None
+        if not arch and site_architecture:
+            arch, arch_source = site_architecture, "netbox"
         nodes.append(
             NodeFact(
                 name=name,
                 kubelet_version=kubelet_version,
-                arch=arch_by_node.get(name),
+                arch=arch,
+                arch_source=arch_source,
             )
         )
     nodes.sort(key=lambda n: n.name)
     return nodes
 
 
-def read_nodes(prom_url: str) -> tuple[list[NodeFact], str]:
+def read_nodes(prom_url: str, site_architecture: str | None = None) -> tuple[list[NodeFact], str]:
     """Returns ``(nodes, reason)``. ``reason == ""`` on a live read (the
     list itself may be non-empty only — see ``_read_nodes``, an empty
-    result there is already collapsed to the refusal below)."""
+    result there is already collapsed to the refusal below).
+
+    ``site_architecture`` is the NetBox fallback for the arch column and is
+    read on the NetBox seam, not this one: an unreachable NetBox hands None
+    here and the column degrades to cannot-be-read, exactly as it did before
+    the fallback existed. A Prometheus failure still fails the whole node
+    list — the fallback fills one field, it does not stand in for a node
+    inventory nobody could read."""
     try:
-        return _read_nodes(prom_url), ""
+        return _read_nodes(prom_url, site_architecture), ""
     except Exception:
         return [], "nodes-unreadable"
 
 
 # ---------------------------------------------------------------------------
-# Platform services + real ingress URLs (one combined read — see module
-# docstring for why these two facts share a join)
+# Platform services: presence + version from container images, access URL
+# from ingress (two independent facts over one fetch — see module docstring
+# for why they must not be collapsed into one)
 # ---------------------------------------------------------------------------
+
+
+@dataclass(frozen=True)
+class PlatformServiceSpec:
+    """One expected service, as the console's own contract declares it.
+    ``namespace``/``image_contains`` are the ``cluster:`` block; both None
+    means the contract declares no cluster location, so presence is never
+    checked and never claimed either way."""
+
+    key: str
+    display_name: str
+    namespace: str | None
+    image_contains: str | None
 
 
 @dataclass(frozen=True)
 class PlatformServiceFact:
     key: str
     display_name: str
-    namespace: str | None  # None => no matching ingress found in the cluster
-    url: str | None
-    images: tuple[str, ...]  # >1 entries legitimately means a rollout in progress
+    # The namespace that WAS searched, so the page can say what it checked.
+    # None => nothing was checked, because nothing was declared.
+    namespace: str | None
+    image_contains: str | None
+    url: str | None  # ingress URL when the cluster has one; access, not existence
+    images: tuple[str, ...]  # empty => no container matched; >1 => rollout in progress
 
 
-def _read_platform_services(prom_url: str, apps: list[tuple[str, str]]) -> list[PlatformServiceFact]:
-    path_rows = prometheus.query(url=prom_url, expr="kube_ingress_path")
-    if not path_rows:
-        # Empty is treated as "the series isn't scraped/emitted" rather
-        # than "ingress-free cluster", because every DMF env we configure
-        # exposes several ingresses. Again config-derived (KSM default
-        # collectors per dmf-infra's values), NOT a live-verified fact:
-        # nothing here has been probed against a running cluster.
-        raise RuntimeError("empty kube_ingress_path")
-    tls_rows = prometheus.query(url=prom_url, expr="kube_ingress_tls") or []
+def _read_platform_services(
+    prom_url: str, apps: list[PlatformServiceSpec]
+) -> list[PlatformServiceFact]:
     container_rows = prometheus.query(url=prom_url, expr="kube_pod_container_info")
     if not container_rows:
+        # THE liveness sentinel for this section now that presence is read
+        # here: a cluster running no containers at all is not a state any DMF
+        # env can be in, so empty means unscraped. Config-derived (KSM default
+        # collectors per dmf-infra's Prometheus values), not live-probed.
         raise RuntimeError("empty kube_pod_container_info")
+
+    # Ingress is OPTIONAL now, and that is the fix: an env whose platform
+    # services deliberately expose no ingress used to collapse this whole
+    # section (or report every service missing). Access is simply absent for
+    # those services; presence below is read from containers regardless.
+    path_rows = prometheus.query(url=prom_url, expr="kube_ingress_path") or []
+    tls_rows = prometheus.query(url=prom_url, expr="kube_ingress_tls") or []
 
     parsed_ingress = sorted(
         (
@@ -210,37 +275,63 @@ def _read_platform_services(prom_url: str, apps: list[tuple[str, str]]) -> list[
         images_by_namespace.setdefault(namespace, set()).add(image)
 
     out: list[PlatformServiceFact] = []
-    for key, display_name in apps:
-        match = by_prefix.get(key)
-        if match is None:
-            out.append(
-                PlatformServiceFact(key=key, display_name=display_name, namespace=None, url=None, images=())
-            )
-            continue
-        scheme = "https" if match["host"] in tls_hosts else "http"
-        url = f"{scheme}://{match['host']}{match['path']}"
-        images = tuple(sorted(images_by_namespace.get(match["namespace"], ())))
+    for spec in apps:
+        match = by_prefix.get(spec.key)
+        url = None
+        if match is not None:
+            scheme = "https" if match["host"] in tls_hosts else "http"
+            url = f"{scheme}://{match['host']}{match['path']}"
+
+        # A matched ingress pins the namespace better than the contract can
+        # (it is read from the cluster, so it cannot drift), and it stops the
+        # page ever pairing a live URL with "nothing is running here".
+        namespace = match["namespace"] if match is not None else spec.namespace
+        images: tuple[str, ...] = ()
+        if namespace is not None:
+            candidates = images_by_namespace.get(namespace, set())
+            if spec.image_contains:
+                candidates = {i for i in candidates if spec.image_contains in i}
+            images = tuple(sorted(candidates))
+
         out.append(
             PlatformServiceFact(
-                key=key, display_name=display_name, namespace=match["namespace"], url=url, images=images
+                key=spec.key,
+                display_name=spec.display_name,
+                namespace=namespace,
+                image_contains=spec.image_contains,
+                url=url,
+                images=images,
             )
         )
     return out
 
 
-def read_platform_services(prom_url: str, apps: list[tuple[str, str]]) -> tuple[list[PlatformServiceFact], str]:
+def read_platform_services(
+    prom_url: str, apps: list[PlatformServiceSpec]
+) -> tuple[list[PlatformServiceFact], str]:
     """Returns ``(services, reason)`` — one row per ``apps`` entry, always
-    (an app absent from the cluster's ingress objects still gets a row with
-    ``namespace``/``url``/``images`` all empty — a legitimate "not found",
-    never dropped silently). ``reason`` is non-empty only when the
-    underlying Prometheus reads themselves failed or returned malformed
-    data, per the module's fail-soft contract."""
+    (a service nothing matched still gets a row, never dropped silently).
+
+    An empty ``images`` tuple means "no container in the namespace we
+    searched matched this service", which is what the page says. It does NOT
+    mean the service is absent from the cluster, and no caller may render it
+    that way: the search is only as good as the contract's declared
+    namespace/token. ``reason`` is non-empty only when the underlying
+    Prometheus reads themselves failed or returned malformed data, per the
+    module's fail-soft contract."""
     try:
         return _read_platform_services(prom_url, apps), ""
     except Exception:
         return [
-            PlatformServiceFact(key=key, display_name=display_name, namespace=None, url=None, images=())
-            for key, display_name in apps
+            PlatformServiceFact(
+                key=spec.key,
+                display_name=spec.display_name,
+                namespace=spec.namespace,
+                image_contains=spec.image_contains,
+                url=None,
+                images=(),
+            )
+            for spec in apps
         ], "platform-services-unreadable"
 
 
@@ -318,20 +409,36 @@ def read_site_identity(
     netbox_api_token: str,
     netbox_ssl_verify: bool,
 ) -> tuple[dict, str]:
+    empty = {"slug": None, "name": None, "architecture": None}
     if not netbox_configured:
-        return {"slug": None, "name": None}, "netbox-not-configured"
+        return dict(empty), "netbox-not-configured"
     try:
-        sites = netbox.list_sites(api_url=netbox_api_url, api_token=netbox_api_token, ssl_verify=netbox_ssl_verify)
+        # brief=False: the brief serializer drops custom_fields, and
+        # dmf_architecture (the node arch fallback) lives there.
+        sites = netbox.list_sites(
+            api_url=netbox_api_url,
+            api_token=netbox_api_token,
+            ssl_verify=netbox_ssl_verify,
+            brief=False,
+        )
     except Exception:
-        return {"slug": None, "name": None}, "netbox-unreadable"
+        return dict(empty), "netbox-unreadable"
     if len(sites) != 1:
-        return {"slug": None, "name": None}, "site-ambiguous"
+        return dict(empty), "site-ambiguous"
     site = sites[0]
     slug = site.get("slug")
     name = site.get("name")
     if not slug or not name:
-        return {"slug": None, "name": None}, "netbox-unreadable"
-    return {"slug": slug, "name": name}, ""
+        return dict(empty), "netbox-unreadable"
+    # A site with no dmf_architecture stamped is an ordinary legacy env, not a
+    # broken read (the born-inventory role skips the patch when the env has no
+    # architecture declared) — identity still resolves, the fallback is just
+    # unavailable.
+    custom_fields = site.get("custom_fields")
+    architecture = custom_fields.get("dmf_architecture") if isinstance(custom_fields, dict) else None
+    if not isinstance(architecture, str) or not architecture.strip():
+        architecture = None
+    return {"slug": slug, "name": name, "architecture": architecture}, ""
 
 
 # ---------------------------------------------------------------------------
@@ -375,7 +482,7 @@ def build_detail_payload(
     netbox_api_url: str,
     netbox_api_token: str,
     netbox_ssl_verify: bool,
-    apps: list[tuple[str, str]],
+    apps: list[PlatformServiceSpec],
 ) -> dict:
     """Assemble the whole Facility Detail payload. ``main.py`` wraps the
     result in a 200 JSONResponse unconditionally — this function itself
@@ -401,7 +508,7 @@ def build_detail_payload(
             "pod_count": None,
         }
     else:
-        nodes, nodes_reason = read_nodes(prometheus_url)
+        nodes, nodes_reason = read_nodes(prometheus_url, site.get("architecture"))
         nodes_payload = {
             "reason": nodes_reason,
             "items": [
@@ -409,6 +516,7 @@ def build_detail_payload(
                     "name": n.name,
                     "kubelet_version": n.kubelet_version,
                     "arch": n.arch,
+                    "arch_source": n.arch_source,
                 }
                 for n in nodes
             ],
@@ -422,6 +530,7 @@ def build_detail_payload(
                     "key": s.key,
                     "display_name": s.display_name,
                     "namespace": s.namespace,
+                    "image_contains": s.image_contains,
                     "url": s.url,
                     "images": list(s.images),
                 }

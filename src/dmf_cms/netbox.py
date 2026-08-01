@@ -76,13 +76,21 @@ def list_sites(
     api_url: str,
     api_token: str,
     ssl_verify: bool = True,
+    brief: bool = True,
 ) -> list[dict]:
-    """List all datacenter sites."""
+    """List all datacenter sites.
+
+    ``brief=True`` (every pre-existing caller) keeps NetBox's brief
+    serializer: id/name/slug only. Pass ``brief=False`` when the caller needs
+    ``custom_fields`` — the brief serializer omits them entirely, so
+    dmf-infra's site-level ``dmf_architecture`` is invisible under the default.
+    """
     ctx = _ssl_context(ssl_verify)
+    query = "?brief=1&limit=100" if brief else "?limit=100"
     result = _request(
         api_url,
         api_token,
-        "/api/dcim/sites/?brief=1&limit=100",
+        f"/api/dcim/sites/{query}",
         ssl_context=ctx,
     )
     return result.get("results", [])

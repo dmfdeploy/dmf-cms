@@ -242,9 +242,12 @@ export interface FacilityDevicesResponse {
 export interface FacilityNode {
   name: string
   kubelet_version: string
-  // null => node-exporter's node_uname_info had no matching row for this
-  // node (per-node degrade, not a page failure).
+  // null => neither node_uname_info nor the NetBox site's dmf_architecture
+  // had anything for this node (per-node degrade, not a page failure).
   arch: string | null
+  // Which source arch came from — 'netbox' is a facility-level declaration
+  // rather than a measurement of this node, so the page says so.
+  arch_source: 'node' | 'netbox' | null
 }
 
 export interface FacilityNodesSection {
@@ -255,10 +258,15 @@ export interface FacilityNodesSection {
 export interface FacilityPlatformService {
   key: string
   display_name: string
-  // null => no ingress in the cluster matched this service (may genuinely
-  // not be deployed in this env, e.g. an optional component left disabled).
+  // The namespace that was searched for this service's containers. null =>
+  // the contract declares no cluster location, so nothing was searched —
+  // which is not the same as the service being absent.
   namespace: string | null
+  image_contains: string | null
+  // Access route when the cluster has an ingress for it. Absence of a URL is
+  // never evidence the service isn't running (AWX runs without one).
   url: string | null
+  // As-deployed container images. Empty => nothing in `namespace` matched.
   images: string[]
 }
 
@@ -298,6 +306,9 @@ export interface FacilityCapacity {
 export interface FacilitySiteIdentity {
   slug: string | null
   name: string | null
+  // dmf-infra's site-level dmf_architecture custom field (arm64|amd64), the
+  // fallback source behind FacilityNode.arch.
+  architecture: string | null
   reason: string
 }
 

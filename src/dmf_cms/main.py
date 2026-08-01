@@ -3614,7 +3614,15 @@ def create_app(settings: Settings | None = None, contract: AppContract | None = 
             netbox_api_url=settings.netbox.api_url,
             netbox_api_token=settings.netbox.api_token,
             netbox_ssl_verify=settings.netbox.ssl_verify,
-            apps=[(a.key, a.display_name) for a in contract.apps],
+            apps=[
+                facility.PlatformServiceSpec(
+                    key=a.key,
+                    display_name=a.display_name,
+                    namespace=a.cluster_namespace,
+                    image_contains=a.cluster_image_contains,
+                )
+                for a in contract.apps
+            ],
         )
         payload["requested_site"] = site
         return JSONResponse(payload)

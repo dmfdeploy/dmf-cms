@@ -19,6 +19,12 @@ class AppContractEntry:
     lane: str
     summary: str
     deep_links: list[AppLink] = field(default_factory=list)
+    # Where this service runs, for the Facility Detail page's container-image
+    # read. Both stay None when the entry declares no `cluster:` block — a
+    # service the console cannot look for is reported as unchecked, never as
+    # absent (see the YAML's own comment for where the values come from).
+    cluster_namespace: str | None = None
+    cluster_image_contains: str | None = None
 
 
 @dataclass(frozen=True)
@@ -42,6 +48,26 @@ def _load_mapping(path: Path) -> dict[str, Any]:
     if not isinstance(data, dict):
         raise ValueError(f"contract at {path} must contain a mapping")
     return data
+
+
+def _parse_cluster(key: str, data: Any) -> tuple[str | None, str | None]:
+    """Parse an app entry's optional ``cluster:`` block into
+    ``(namespace, image_contains)``.
+
+    Absent block -> ``(None, None)``, the honest "nothing declared". A block
+    that IS present must carry a namespace: declaring where a service runs and
+    then omitting the one field that says where is a config defect, and
+    accepting it would produce a row claiming a check that never ran.
+    """
+    if data is None:
+        return None, None
+    if not isinstance(data, dict):
+        raise ValueError(f"cluster for {key} must be a mapping")
+    namespace = str(data.get("namespace", "")).strip()
+    if not namespace:
+        raise ValueError(f"cluster for {key} requires a namespace")
+    image_contains = str(data.get("image_contains", "")).strip()
+    return namespace, image_contains or None
 
 
 def _parse_links(data: Any) -> list[AppLink]:
@@ -77,6 +103,7 @@ def load_app_contract(path: Path) -> AppContract:
         if key in seen_keys:
             raise ValueError(f"duplicate app key: {key}")
         seen_keys.add(key)
+        cluster_namespace, cluster_image_contains = _parse_cluster(key, raw.get("cluster"))
         entries.append(
             AppContractEntry(
                 key=key,
@@ -84,6 +111,8 @@ def load_app_contract(path: Path) -> AppContract:
                 lane=lane,
                 summary=summary,
                 deep_links=_parse_links(raw.get("deep_links")),
+                cluster_namespace=cluster_namespace,
+                cluster_image_contains=cluster_image_contains,
             )
         )
 
