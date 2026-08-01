@@ -189,14 +189,48 @@ describe('AVAILABLE IFF ACTION-BEARING', () => {
   })
 
   it('names the console write seams the rail actually exposes', () => {
-    // GATE-S1 P1: clear-for-deployment is a PROVISION-time action and now
-    // flows through the model, instead of rendering on Finalise outside it.
-    expect(stageActions('provision', { lifecycle: 'provision' }))
+    // Clear is keyed to MEMBER STATE, deploy to POSITION.
+    expect(stageActions('provision', { lifecycle: 'provision' })).toEqual(['deploy'])
+    expect(stageActions('provision', { lifecycle: 'provision', hasBootstrappedMembers: true }))
       .toEqual(['deploy', 'clear-for-deployment'])
     expect(stageActions('configure', { lifecycle: 'operate' })).toEqual(['switch-source'])
     expect(stageActions('finalise', { lifecycle: 'operate' })).toEqual(['tear-down'])
     // Deploy is gone the moment there is something to operate — you cannot
     // deploy what is already running.
     expect(stageActions('provision', { lifecycle: 'operate' })).toEqual([])
+  })
+})
+
+describe('a bootstrapped member always has a reachable clear path', () => {
+  it('keeps Provision offering clear after the position moves to configure', () => {
+    // GATE-S1-RV3 P1, codex's exact scenario: clearing the first of two
+    // siblings flips the backend derivation to configure (any_active wins).
+    // Reading the affordance off position alone stranded the second sibling
+    // PERMANENTLY — the reachability principle turned on my own placement.
+    const afterFirstClear = { lifecycle: 'configure' as const, hasBootstrappedMembers: true }
+    expect(stageActions('provision', afterFirstClear)).toEqual(['clear-for-deployment'])
+
+    const { active, states } = classifyWorkloadLifecycle(afterFirstClear)
+    // Position is still the backend's truth...
+    expect(active).toBe('configure')
+    // ...and Provision is available-not-active, which is exactly what
+    // available means: it bears an action without being where we are.
+    expect(states.provision).toBe('available')
+  })
+
+  it('withdraws it once no member is bootstrapped', () => {
+    // The discriminator: an affordance that never withdraws is not gated.
+    expect(stageActions('provision', { lifecycle: 'configure' })).toEqual([])
+    expect(classifyWorkloadLifecycle({ lifecycle: 'configure' }).states.provision)
+      .toBe('informational')
+  })
+
+  it('still suppresses it while a job is in flight and on unknown', () => {
+    expect(stageActions('provision', {
+      lifecycle: 'configure', hasBootstrappedMembers: true, switching: true,
+    })).toEqual([])
+    expect(stageActions('provision', {
+      lifecycle: 'unknown', hasBootstrappedMembers: true,
+    })).toEqual([])
   })
 })

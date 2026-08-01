@@ -26,10 +26,17 @@ import FinaliseStage from './stages/FinaliseStage'
  *   - the backend's own derived lifecycle (workload.lifecycle, verbatim —
  *     never re-derived here), and
  *   - three local booleans this page tracks itself: whether a deploy,
- *     switch, or teardown job is currently in flight. Each action stage
- *     owns its own mutation(s) and reports its busy state up via a plain
- *     setState setter — no second lifecycle model, just an observation
- *     overlay on top of the one the backend already computed.
+ *     switch, or teardown job is currently in flight. `launching` covers
+ *     every write Provision owns — a catalog deploy AND a
+ *     clear-for-deployment — because both are Provision-stage writes and
+ *     the rail suppresses on stage busy-ness, not per-mutation. Each action
+ *     stage owns its mutation(s) and reports busy state up via a plain
+ *     setState setter, and
+ *   - one member-state fact (hasBootstrappedMembers), which position alone
+ *     cannot express.
+ *
+ * No second lifecycle model — an observation overlay on top of the one the
+ * backend already computed.
  */
 const HEADER_LIFECYCLE_LABEL: Record<string, string> = {
   provision: 'Provision',
@@ -105,6 +112,12 @@ export default function WorkloadDetail() {
     launching,
     switching,
     tearingDown,
+    // Member state, not position: clearing one of several siblings moves the
+    // position to configure while the rest still need clearing, so the rail
+    // has to be told what the workload NEEDS as well as where it IS.
+    hasBootstrappedMembers: workload.instances.some(
+      (i) => !i.reconcile_pending && i.requested_state === 'bootstrapped',
+    ),
   }
   const { active, states } = classifyWorkloadLifecycle(input)
 

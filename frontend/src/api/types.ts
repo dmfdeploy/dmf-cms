@@ -210,11 +210,13 @@ export interface NetBoxDevice {
 
 // S1 (#285): fail-soft — every facility response carries `reason` (""
 // means live data; a non-empty token names why a section is degraded).
-// Reads AND row shaping both sit inside the endpoint's guard, so an
-// unreachable source or a malformed/nullable row degrades to a reason
-// rather than a 500 (Constitution Arts. 1+8) — including
-// `netbox-rows-unparseable`, set when rows were dropped so the payload
-// never implies a completeness it doesn't have. Auth failures are still 401.
+// Reads AND row shaping both sit inside the endpoint's guard, so neither an
+// unreachable source nor a malformed row can produce a 500 (Arts. 1+8).
+// The two cases differ, and the tests pin the difference: a NULLABLE field
+// passes straight through with `reason` still "" (the row is readable, some
+// values are simply absent), whereas a row that cannot be read at all is
+// dropped and sets `netbox-rows-unparseable`, so the payload never implies a
+// completeness it lacks. Auth failures are still 401.
 export interface FacilitySummary {
   reason: string
   site_count: number

@@ -77,12 +77,10 @@ export type StageActionId =
   | 'deploy'
   /**
    * Flip an instance's desired state bootstrapped -> active in NetBox, so
-   * the automation lane may deploy it. A PROVISION-time action: it is what
-   * moves a workload from "members exist, no active intent" to an active
-   * intent, which is precisely the backend's provision -> configure
-   * transition. It sat on Finalise & Review before GATE-S1, outside this
-   * model entirely, where it could fire during another stage's job and even
-   * while Finalise itself was not-applicable.
+   * the automation lane may deploy it. Offered at PROVISION whenever any
+   * member is still bootstrapped — keyed to member state, NOT to position,
+   * because clearing the first of several siblings moves the position to
+   * configure while the rest still need clearing.
    */
   | 'clear-for-deployment'
   /** Re-point a flow at a different source (Configure, once running). */
@@ -110,6 +108,19 @@ export interface WorkloadLifecycleInput {
   switching?: boolean
   /** A teardown job is running. */
   tearingDown?: boolean
+  /**
+   * At least one member is still bootstrapped — i.e. recorded but not yet
+   * cleared to run. A MEMBER-STATE fact, deliberately separate from
+   * `lifecycle`, which is a POSITION fact.
+   *
+   * They are not the same question and conflating them stranded workloads:
+   * clearing one of two siblings flips the backend's derivation to
+   * `configure` (any_active wins), and reading the clear affordance off
+   * position alone then withdrew it from the sibling still waiting —
+   * permanently (GATE-S1-RV3 P1). Position says where the workload IS;
+   * this says what it still NEEDS.
+   */
+  hasBootstrappedMembers?: boolean
 }
 
 export interface LifecycleState {
@@ -154,10 +165,18 @@ export function stageActions(
 ): StageActionId[] {
   if (busy(input) || input.lifecycle === 'unknown') return []
   switch (id) {
-    case 'provision':
-      // Nothing is cleared to run yet: deploying, and clearing an instance
-      // for deployment, are the real next actions.
-      return input.lifecycle === 'provision' ? ['deploy', 'clear-for-deployment'] : []
+    case 'provision': {
+      const actions: StageActionId[] = []
+      // Deploying belongs to the position: it is the next step only while
+      // nothing has been cleared to run yet.
+      if (input.lifecycle === 'provision') actions.push('deploy')
+      // Clearing belongs to the MEMBERS, not the position. A bootstrapped
+      // member must always have a reachable clear path, so Provision keeps
+      // offering it even once the workload's position has moved on — it
+      // simply renders available-rather-than-active in that case.
+      if (input.hasBootstrappedMembers) actions.push('clear-for-deployment')
+      return actions
+    }
     case 'configure':
       return running(input) ? ['switch-source'] : []
     case 'finalise':
