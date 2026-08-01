@@ -204,18 +204,106 @@ export interface NetBoxDevice {
   role: string | null
 }
 
+// S1 (#285): fail-soft — every facility response carries `reason` (""
+// means live data; a non-empty token names why a section is degraded).
+// Never a raw 500 (Constitution Arts. 1+8).
 export interface FacilitySummary {
+  reason: string
   site_count: number
   device_count: number
   sites: Array<{
     name: string
-    status: string
+    // Drives the Facilities list page's link to /facilities/<slug>. Absent
+    // (null) only if NetBox itself omitted a slug for the site record.
+    slug: string | null
     device_count: number
   }>
 }
 
 export interface FacilityDevicesResponse {
+  reason: string
   devices: NetBoxDevice[]
+}
+
+// ------------------------------------------------------------------
+// Facility Detail (S1, #285) — GET /api/facility/{site}/detail
+// ------------------------------------------------------------------
+
+export interface FacilityNode {
+  name: string
+  kubelet_version: string
+  // null => node-exporter's node_uname_info had no matching row for this
+  // node (per-node degrade, not a page failure).
+  arch: string | null
+  // null => not recorded in NetBox for this node (an honest data gap —
+  // see `instance_class_reason` to tell that apart from a failed read).
+  instance_class: string | null
+}
+
+export interface FacilityNodesSection {
+  reason: string
+  instance_class_reason: string
+  items: FacilityNode[]
+}
+
+export interface FacilityPlatformService {
+  key: string
+  display_name: string
+  // null => no ingress in the cluster matched this service (may genuinely
+  // not be deployed in this env, e.g. an optional component left disabled).
+  namespace: string | null
+  url: string | null
+  images: string[]
+}
+
+export interface FacilityPlatformServicesSection {
+  reason: string
+  items: FacilityPlatformService[]
+}
+
+export interface FacilityVolume {
+  namespace: string
+  name: string
+  storageclass: string | null
+  // null => the usage-by-request series had no matching row — never a
+  // fabricated 0 (Constitution Art. 1).
+  requested_bytes: number | null
+}
+
+export interface FacilityStorageSection {
+  reason: string
+  items: FacilityVolume[]
+}
+
+// Scheduler-truth capacity (reused from capacity.py's own arithmetic).
+// Field names are deliberately "allocatable" / "requests_committed" —
+// never "used"/"free": requests-committed is a scheduler bound, not a
+// measurement of actual utilisation.
+export interface FacilityCapacity {
+  reason: string
+  node_name: string | null
+  allocatable_cpu_m: number | null
+  allocatable_mem_b: number | null
+  requests_committed_cpu_m: number | null
+  requests_committed_mem_b: number | null
+  pod_count: number | null
+}
+
+export interface FacilitySiteIdentity {
+  slug: string | null
+  name: string | null
+  reason: string
+}
+
+export interface FacilityDetailResponse {
+  requested_site: string
+  prometheus_configured: boolean
+  netbox_configured: boolean
+  site: FacilitySiteIdentity
+  nodes: FacilityNodesSection
+  platform_services: FacilityPlatformServicesSection
+  storage: FacilityStorageSection
+  capacity: FacilityCapacity
 }
 
 // ------------------------------------------------------------------

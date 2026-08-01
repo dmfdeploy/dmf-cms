@@ -16,6 +16,7 @@ import type {
   MonitoringMetrics,
   FacilitySummary,
   FacilityDevicesResponse,
+  FacilityDetailResponse,
   ChangesCommitsResponse,
   ChangesPullsResponse,
   AdminGroupsResponse,
@@ -209,6 +210,19 @@ export function useFacilityDevices() {
   return useQuery({
     queryKey: ['facility', 'devices'],
     queryFn: () => apiCall<FacilityDevicesResponse>('/api/facility/devices'),
+    refetchInterval: 60_000,
+    staleTime: 30_000,
+  })
+}
+
+// S1 (#285): the Facility Detail page — node/service/storage/capacity
+// truth. Same cadence as useFacilitySummary; this is inventory, not a
+// live-view surface.
+export function useFacilityDetail(site: string) {
+  return useQuery({
+    queryKey: ['facility', 'detail', site],
+    queryFn: () => apiCall<FacilityDetailResponse>(`/api/facility/${encodeURIComponent(site)}/detail`),
+    enabled: site.length > 0,
     refetchInterval: 60_000,
     staleTime: 30_000,
   })

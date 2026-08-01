@@ -129,7 +129,7 @@ from .switch_source import (
     dispatch_switch_source,
     resolve_topology_for_receiver,
 )
-from . import netbox, prometheus, promsd, forgejo, mxl, media_workloads, capacity, drain
+from . import netbox, prometheus, promsd, forgejo, mxl, media_workloads, capacity, drain, facility
 from starlette.concurrency import run_in_threadpool
 import asyncio
 from .security import (
@@ -3464,76 +3464,121 @@ def create_app(settings: Settings | None = None, contract: AppContract | None = 
 
     # ------------------------------------------------------------------
     # Facility (physical infrastructure) endpoints
+    #
+    # S1 (#285): fail-soft, mirroring /api/workspace/health's contract —
+    # every outcome is a 200 with an explicit `reason`, never a raw 500
+    # (Constitution Arts. 1+8). These two previously 500'd on any NetBox
+    # error; a facility page breaking on a transient NetBox hiccup is not
+    # more informative than a designed "NetBox is unreachable" state.
     # ------------------------------------------------------------------
     @app.get("/api/facility/summary")
     async def api_facility_summary(request: Request):
         if not _require_user(request):
             return JSONResponse({"error": "unauthorized"}, status_code=401)
         if not settings.netbox.configured:
-            return JSONResponse({"site_count": 0, "device_count": 0, "sites": []})
+            return JSONResponse(
+                {"reason": "netbox-not-configured", "site_count": 0, "device_count": 0, "sites": []}
+            )
         try:
-            sites = netbox.list_sites(
+            sites = await run_in_threadpool(
+                netbox.list_sites,
                 api_url=settings.netbox.api_url,
                 api_token=settings.netbox.api_token,
                 ssl_verify=settings.netbox.ssl_verify,
             )
-            devices = netbox.list_devices(
+            devices = await run_in_threadpool(
+                netbox.list_devices,
                 api_url=settings.netbox.api_url,
                 api_token=settings.netbox.api_token,
                 ssl_verify=settings.netbox.ssl_verify,
             )
-
-            device_count_by_site: dict[str, int] = {}
-            for d in devices:
-                site_name = d.get("site", {}).get("name", "unknown")
-                device_count_by_site[site_name] = device_count_by_site.get(site_name, 0) + 1
-
-            sites_list = [
-                {
-                    "name": s.get("name"),
-                    "status": s.get("status", {}).get("value", s.get("status")) if isinstance(s.get("status"), dict) else s.get("status"),
-                    "device_count": device_count_by_site.get(s.get("name"), 0),
-                }
-                for s in sites
-            ]
-
-            return JSONResponse({
-                "site_count": len(sites),
-                "device_count": len(devices),
-                "sites": sites_list,
-            })
         except Exception as exc:
-            return JSONResponse({"error": f"Failed to fetch facility summary: {exc}"}, status_code=500)
+            logger.warning("facility summary: NetBox read failed: %s", exc)
+            return JSONResponse(
+                {"reason": "netbox-unreachable", "site_count": 0, "device_count": 0, "sites": []}
+            )
+
+        device_count_by_site: dict[str, int] = {}
+        for d in devices:
+            site_name = d.get("site", {}).get("name", "unknown")
+            device_count_by_site[site_name] = device_count_by_site.get(site_name, 0) + 1
+
+        sites_list = [
+            {
+                "name": s.get("name"),
+                "slug": s.get("slug"),
+                "device_count": device_count_by_site.get(s.get("name"), 0),
+            }
+            for s in sites
+        ]
+
+        return JSONResponse({
+            "reason": "",
+            "site_count": len(sites),
+            "device_count": len(devices),
+            "sites": sites_list,
+        })
 
     @app.get("/api/facility/devices")
     async def api_facility_devices(request: Request):
         if not _require_user(request):
             return JSONResponse({"error": "unauthorized"}, status_code=401)
         if not settings.netbox.configured:
-            return JSONResponse({"devices": []})
+            return JSONResponse({"reason": "netbox-not-configured", "devices": []})
         try:
-            devices_data = netbox.list_devices(
+            devices_data = await run_in_threadpool(
+                netbox.list_devices,
                 api_url=settings.netbox.api_url,
                 api_token=settings.netbox.api_token,
                 ssl_verify=settings.netbox.ssl_verify,
             )
-
-            devices = [
-                {
-                    "id": d.get("id"),
-                    "name": d.get("name"),
-                    "type": d.get("device_type", {}).get("model", d.get("device_type")),
-                    "site": d.get("site", {}).get("name", d.get("site")),
-                    "status": d.get("status", {}).get("value", d.get("status")) if isinstance(d.get("status"), dict) else d.get("status"),
-                    "ip": d.get("primary_ip", {}).get("address") if d.get("primary_ip") else None,
-                    "role": d.get("role", {}).get("name", d.get("role")) if d.get("role") else None,
-                }
-                for d in devices_data
-            ]
-
-            return JSONResponse({"devices": devices})
         except Exception as exc:
-            return JSONResponse({"error": f"Failed to fetch devices: {exc}"}, status_code=500)
+            logger.warning("facility devices: NetBox read failed: %s", exc)
+            return JSONResponse({"reason": "netbox-unreachable", "devices": []})
+
+        devices = [
+            {
+                "id": d.get("id"),
+                "name": d.get("name"),
+                "type": d.get("device_type", {}).get("model", d.get("device_type")),
+                "site": d.get("site", {}).get("name", d.get("site")),
+                "status": d.get("status", {}).get("value", d.get("status")) if isinstance(d.get("status"), dict) else d.get("status"),
+                "ip": d.get("primary_ip", {}).get("address") if d.get("primary_ip") else None,
+                "role": d.get("role", {}).get("name", d.get("role")) if d.get("role") else None,
+            }
+            for d in devices_data
+        ]
+
+        return JSONResponse({"reason": "", "devices": devices})
+
+    @app.get("/api/facility/{site}/detail")
+    async def api_facility_detail(request: Request, site: str):
+        """Facility Detail page (S1, #285): node identity/arch/instance
+        class, platform services with as-deployed versions + real ingress
+        URLs, storage, and scheduler-truth capacity — see facility.py's
+        module docstring for the full fact -> source-series map.
+
+        Single-facility model (mirrors ``_resolve_topology_seam``): `site`
+        identifies the route, not a query filter — there is exactly one
+        NetBox site this console ever resolves to, so a stale/mismatched
+        slug in the URL still renders that one facility's live data rather
+        than a hard 404. Always 200; every section carries its own
+        `reason` (facility.py's fail-soft contract).
+        """
+        if not _require_user(request):
+            return JSONResponse({"error": "unauthorized"}, status_code=401)
+        payload = await run_in_threadpool(
+            facility.build_detail_payload,
+            prometheus_configured=settings.prometheus.configured,
+            prometheus_url=settings.prometheus.url,
+            netbox_configured=settings.netbox.configured,
+            netbox_api_url=settings.netbox.api_url,
+            netbox_api_token=settings.netbox.api_token,
+            netbox_ssl_verify=settings.netbox.ssl_verify,
+            apps=[(a.key, a.display_name) for a in contract.apps],
+        )
+        payload["requested_site"] = site
+        return JSONResponse(payload)
 
     # ------------------------------------------------------------------
     # Changes (audit trail) endpoints
