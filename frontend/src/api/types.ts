@@ -398,6 +398,19 @@ export interface CatalogEntry {
   dependencies: string[]
   // Link-out to the function's own console (e.g. nmos-crosspoint), shown when active.
   ingress_url: string | null
+  // umbrella #285 S3: the entry's declared provision.resources.requests,
+  // parsed server-side by capacity.py's own catalog-quantity parsers
+  // (main.py's _entry_to_dict). Optional (rather than required-nullable) so
+  // every pre-existing fixture across the test suite that builds a
+  // CatalogEntry literal without this field stays valid — a field this new
+  // page reads defensively should not force an edit onto every sibling
+  // fixture that has nothing to do with capacity. Null/absent both mean the
+  // same thing to a reader: the entry declares no resources block, OR it
+  // declares one but a quantity failed to parse — the two are
+  // indistinguishable from here on purpose, since either way the console
+  // has no honest number to show and must say so rather than guess or
+  // silently treat it as zero demand.
+  provision_demand?: { cpu_m: number; mem_b: number } | null
 }
 
 export interface CatalogListResponse {

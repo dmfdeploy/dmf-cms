@@ -272,11 +272,29 @@ function renderDetail(slug = 'studio-a') {
   )
 }
 
-// Scope assertions to one stage card via its <h2>, not aria landmark
+// Scope assertions to one flow step via its <h2>, not aria landmark
 // inference — robust regardless of how <section aria-label> maps to roles.
 function stageSection(label: string): HTMLElement {
   const heading = screen.getByRole('heading', { name: label, level: 2 })
   return heading.closest('section') as HTMLElement
+}
+
+/**
+ * ARC B: the flow folds. Only the step the workload is AT is pinned open;
+ * every other openable step is collapsed behind a Review control, and a
+ * locked step renders no body at all.
+ *
+ * So a test that reaches into a step it did not navigate to must open it
+ * first, exactly as the operator would. This helper is deliberately NOT a
+ * bypass — it clicks the same control the operator clicks, and it cannot
+ * open a locked step (there is no Review control on one), which is what
+ * keeps these tests honest about what the gate actually permits.
+ */
+function openStep(label: string): HTMLElement {
+  const section = stageSection(label)
+  const review = within(section).queryByRole('button', { name: 'Review' })
+  if (review) fireEvent.click(review)
+  return stageSection(label)
 }
 
 const REASON_PLACEHOLDER = 'Reason (required, recorded in the audit trail)'
@@ -289,60 +307,131 @@ afterEach(() => {
 
 // ---- rail: all six stages, every state -------------------------------
 
-describe('rail — all six stages always visible', () => {
-  it('renders six labelled stage cards for every backend lifecycle value, including unknown', async () => {
+describe('the flow is five steps under a six-stage vocabulary', () => {
+  // ARC B replaces S1's "six stage cards always visible". The MODEL is
+  // unchanged and still has to be taught in full — an EBU-literate viewer
+  // must be able to count six — but the WORKING FLOW covers the five
+  // orchestration stages, because Operate is something you watch rather
+  // than something you work through. Both halves are asserted here, and
+  // together they are the pedagogy guarantee umbrella #200 tests for.
+  it('renders five worked steps for every backend lifecycle value, including unknown', async () => {
     for (const lifecycle of ['provision', 'configure', 'operate', 'unknown'] as const) {
       cleanup()
       mkFetch({ workload: workload({ lifecycle }) })
       renderDetail()
       await screen.findByRole('heading', { name: 'studio-a' })
-      for (const label of ['Design', 'Plan', 'Provision', 'Configure', 'Operate', 'Finalise & Review']) {
+      for (const label of ['Design', 'Plan', 'Provision', 'Configure', 'Finalise & Review']) {
         expect(stageSection(label), `${label} @ lifecycle=${lifecycle}`).toBeTruthy()
       }
+      // Operate has no step, at any lifecycle value.
+      expect(
+        screen.queryByRole('heading', { name: 'Operate', level: 2 }),
+        `Operate must not be a step @ lifecycle=${lifecycle}`,
+      ).toBeNull()
     }
   })
-})
 
-describe('the honest undetermined rail (backend lifecycle=unknown)', () => {
-  it('places no active stage and says so honestly, instead of guessing', async () => {
-    mkFetch({ workload: workload({ lifecycle: 'unknown' }) })
-    renderDetail()
-    await screen.findByRole('heading', { name: 'studio-a' })
-
-    expect(
-      screen.getByText(/the backend could not determine this workload's stage/),
-    ).toBeTruthy()
-    expect(screen.queryByText('You are here')).toBeNull()
-
-    // Post-provision stages are not-applicable, rendered as prose with no
-    // control — never a guessed position, never a dead button.
-    for (const label of ['Provision', 'Configure', 'Operate', 'Finalise & Review']) {
-      const section = stageSection(label)
-      expect(within(section).queryByRole('button')).toBeNull()
-    }
-    // Design and Plan remain informational facts even on an undetermined stage.
-    expect(within(stageSection('Design')).getByText('MXL Crosspoint')).toBeTruthy()
-  })
-})
-
-describe('not-applicable stages are always prose, never a control', () => {
-  it('lifecycle=provision: Configure/Operate/Finalise explain themselves with no button', async () => {
+  it('names all six lifecycle stages in the vocabulary strip, verbatim, Operate included', async () => {
     mkFetch({ workload: workload({ lifecycle: 'provision' }) })
     renderDetail()
     await screen.findByRole('heading', { name: 'studio-a' })
 
+    const strip = screen.getByRole('navigation', { name: 'Media workload lifecycle' })
+    for (const label of [
+      'Design',
+      'Plan',
+      'Provision',
+      'Configure',
+      'Operate',
+      'Finalise & Review',
+    ]) {
+      expect(within(strip).getByText(label), `${label} missing from the strip`).toBeTruthy()
+    }
+  })
+
+  it('makes the Operate chip a link out to the monitoring surface, not a step', async () => {
+    mkFetch({ workload: workload({ lifecycle: 'operate' }) })
+    renderDetail()
+    await screen.findByRole('heading', { name: 'studio-a' })
+
+    const strip = screen.getByRole('navigation', { name: 'Media workload lifecycle' })
+    const operate = within(strip).getByRole('link', { name: 'Operate' })
+    expect(operate.getAttribute('href')).toBe('/media-workloads/studio-a/operate')
+  })
+
+  it('marks the workload as operating and points at monitoring rather than losing it', async () => {
+    // `current` is null at Operate exactly as it is on an undetermined
+    // position, so the page must distinguish the two. This is the
+    // off-flow half; the undetermined half is asserted below.
+    mkFetch({ workload: workload({ lifecycle: 'operate' }) })
+    renderDetail()
+    await screen.findByRole('heading', { name: 'studio-a' })
+
+    expect(screen.getByText(/This workload is operating/)).toBeTruthy()
+    expect(screen.getByRole('link', { name: 'open the monitoring view' })).toBeTruthy()
+    expect(screen.queryByText(/could not place this workload/)).toBeNull()
+  })
+})
+
+describe('the honest undetermined flow (backend lifecycle=unknown)', () => {
+  it('opens no step and says so honestly, instead of guessing', async () => {
+    mkFetch({ workload: workload({ lifecycle: 'unknown' }) })
+    renderDetail()
+    await screen.findByRole('heading', { name: 'studio-a' })
+
+    expect(screen.getByText(/could not place this workload in its lifecycle/)).toBeTruthy()
+    expect(screen.queryByText('Now')).toBeNull()
+    // Not the off-flow message: an unreadable workload and an operating one
+    // both report no current step, and the page must not blur them.
+    expect(screen.queryByText(/This workload is operating/)).toBeNull()
+
+    // The three runtime steps are locked, rendered as prose with no control
+    // — never a guessed position, never a dead button.
+    for (const label of ['Provision', 'Configure', 'Finalise & Review']) {
+      const section = stageSection(label)
+      expect(within(section).queryByRole('button'), `${label} bears a control`).toBeNull()
+    }
+  })
+
+  it('keeps Design and Plan readable, because a choice already made is still a fact', async () => {
+    // Carried over from S1 deliberately. Design and Plan describe CHOICES,
+    // not runtime, so an unreadable position is no reason to hide them —
+    // locking them would withhold truth the console is holding. They read
+    // as `record` rather than `complete`, because "complete" would claim
+    // the workload got past them and that is exactly what is unknown.
+    mkFetch({ workload: workload({ lifecycle: 'unknown' }) })
+    renderDetail()
+    await screen.findByRole('heading', { name: 'studio-a' })
+
+    for (const label of ['Design', 'Plan']) {
+      expect(stageSection(label).getAttribute('data-step-state')).toBe('record')
+    }
+    expect(within(openStep('Design')).getByText('MXL Crosspoint')).toBeTruthy()
+  })
+})
+
+describe('locked steps are always prose, never a control', () => {
+  it('lifecycle=provision: Configure and Finalise explain themselves with no button', async () => {
+    mkFetch({ workload: workload({ lifecycle: 'provision' }) })
+    renderDetail()
+    await screen.findByRole('heading', { name: 'studio-a' })
+
+    // S1 asserted this on 'not-applicable' stage cards, which rendered
+    // their own explanatory prose. Arc B gates them instead: the step is
+    // locked and states the reason, and — the stronger property — renders
+    // no body at all, so there is nothing inside to disable.
     const configureSection = stageSection('Configure')
-    expect(within(configureSection).getByText(/there is no source to configure/)).toBeTruthy()
+    expect(configureSection.getAttribute('data-step-state')).toBe('locked')
+    expect(within(configureSection).getByText(/there is no source to select/)).toBeTruthy()
     expect(within(configureSection).queryByRole('button')).toBeNull()
 
     const finaliseSection = stageSection('Finalise & Review')
+    expect(finaliseSection.getAttribute('data-step-state')).toBe('locked')
     expect(within(finaliseSection).getByText(/nothing to tear down/)).toBeTruthy()
     expect(within(finaliseSection).queryByRole('button', { name: /Teardown/ })).toBeNull()
 
-    const operateSection = stageSection('Operate')
-    expect(within(operateSection).getByText(/Operate will show live state/)).toBeTruthy()
-
-    // Only Provision — the one authorised action at this lifecycle — bears a button.
+    // Only Provision — the one authorised action at this lifecycle — bears
+    // a deploy control, and it is the pinned step so it needs no expanding.
     expect(within(stageSection('Provision')).getByRole('button', { name: '▶ Deploy' })).toBeTruthy()
   })
 
@@ -450,7 +539,7 @@ describe('Configure: switch click path', () => {
     renderDetail()
     await screen.findByRole('heading', { name: 'studio-a' })
 
-    const configureSection = stageSection('Configure')
+    const configureSection = openStep('Configure')
     const switchButton = await within(configureSection).findByRole('button', { name: 'Switch source' })
     fireEvent.click(switchButton)
 
@@ -476,7 +565,7 @@ describe('Configure: switch click path', () => {
 
     // The structured outcome is also the Finalise & Review "review" — the
     // same DMF_L3_SWITCH_OUTCOME data, not a re-derived summary.
-    const finaliseSection = stageSection('Finalise & Review')
+    const finaliseSection = openStep('Finalise & Review')
     expect(within(finaliseSection).getByText(/Last switch outcome/)).toBeTruthy()
   })
 
@@ -491,7 +580,7 @@ describe('Configure: switch click path', () => {
     })
     renderDetail()
     await screen.findByRole('heading', { name: 'studio-a' })
-    const configureSection = stageSection('Configure')
+    const configureSection = openStep('Configure')
     await within(configureSection).findByText(/Live source is unknown or stale/)
     expect(within(configureSection).queryByRole('button', { name: 'Switch source' })).toBeNull()
   })
@@ -506,7 +595,7 @@ describe('Finalise & Review: teardown click path', () => {
     renderDetail()
     await screen.findByRole('heading', { name: 'studio-a' })
 
-    const finaliseSection = stageSection('Finalise & Review')
+    const finaliseSection = openStep('Finalise & Review')
     fireEvent.click(within(finaliseSection).getByRole('button', { name: '⏏ Teardown' }))
 
     expect(teardown).toHaveLength(0)
@@ -530,7 +619,7 @@ describe('Finalise & Review: teardown click path', () => {
     })
     renderDetail()
     await screen.findByRole('heading', { name: 'studio-a' })
-    const finaliseSection = stageSection('Finalise & Review')
+    const finaliseSection = openStep('Finalise & Review')
     expect(within(finaliseSection).queryByRole('button', { name: '⏏ Teardown' })).toBeNull()
     expect(within(finaliseSection).getByText('Not currently deployed.')).toBeTruthy()
   })
@@ -550,7 +639,10 @@ describe('a job in flight suppresses every OTHER stage\'s action, not just its o
     renderDetail()
     await screen.findByRole('heading', { name: 'studio-a' })
 
-    const configureSection = stageSection('Configure')
+    const configureSection = openStep('Configure')
+    // Finalise is opened up front so the teardown control's disappearance
+    // below is a real suppression, not merely a step that stayed folded.
+    openStep('Finalise & Review')
     fireEvent.click(await within(configureSection).findByRole('button', { name: 'Switch source' }))
     fireEvent.change(within(configureSection).getByPlaceholderText(REASON_PLACEHOLDER), {
       target: { value: 'go' },
@@ -603,11 +695,18 @@ describe('Design: read-only template + composition', () => {
     renderDetail()
     await screen.findByRole('heading', { name: 'studio-a' })
 
-    const designSection = stageSection('Design')
+    const designSection = openStep('Design')
     expect(within(designSection).getByText('MXL Viewer')).toBeTruthy()
     expect(within(designSection).getByText('Renders a media flow.')).toBeTruthy()
     expect(await within(designSection).findByText(/composed of/)).toBeTruthy()
-    expect(within(designSection).queryByRole('button')).toBeNull()
+    // Design carries no ACTION. The only button in the step is FlowStep's
+    // own disclosure control — chrome, not an affordance the stage offers —
+    // so the assertion names it rather than banning buttons outright, which
+    // would now fail for a reason that has nothing to do with the invariant.
+    const designButtons = within(designSection)
+      .queryAllByRole('button')
+      .map((b) => b.textContent)
+    expect(designButtons).toEqual(['Hide'])
   })
 
   // umbrella #339 item 5: this is the state that produced the 404s — the
@@ -626,7 +725,11 @@ describe('Design: read-only template + composition', () => {
     renderDetail()
     await screen.findByRole('heading', { name: 'studio-a' })
 
-    const designSection = stageSection('Design')
+    // Arc B folds the flow: this fixture is a viewerWorkload (lifecycle
+    // 'operate'), so no step is pinned and Design is collapsed. The
+    // assertion is unchanged — only the step has to be opened first, the
+    // same click the operator makes.
+    const designSection = openStep('Design')
     expect(
       await within(designSection).findByText(/isn't in the current catalog/),
     ).toBeTruthy()
@@ -642,7 +745,7 @@ describe('Plan: the assigned facility', () => {
     mkFetch({ facilitySites: [{ name: 'dmf-lab', slug: 'dmf-lab', device_count: 4 }] })
     renderDetail()
     await screen.findByRole('heading', { name: 'studio-a' })
-    const planSection = stageSection('Plan')
+    const planSection = openStep('Plan')
     const link = await within(planSection).findByRole('link', { name: 'dmf-lab' })
     expect(link.getAttribute('href')).toBe('/facilities/dmf-lab')
   })
@@ -651,7 +754,7 @@ describe('Plan: the assigned facility', () => {
     mkFetch({ facilitySites: [] })
     renderDetail()
     await screen.findByRole('heading', { name: 'studio-a' })
-    const planSection = stageSection('Plan')
+    const planSection = openStep('Plan')
     expect(await within(planSection).findByText(/can't be shown/)).toBeTruthy()
     expect(within(planSection).queryByRole('link')).toBeNull()
   })

@@ -2,6 +2,7 @@ import { useMemo } from 'react'
 import { Link } from 'react-router-dom'
 import { useMediaWorkloadsGrouped } from '../../api/hooks'
 import type { MediaWorkload, MediaWorkloadInstance } from '../../api/types'
+import { lifecycleBadge, type LifecycleBadge } from '../../lib/workloadFlow'
 import LivePreviewBox from './LivePreviewBox'
 import {
   LIVE_TILE_CAP,
@@ -35,13 +36,43 @@ import {
  * The visual treatment (provider mark, tile faces, colour) is deliberately
  * NOT done here — that is the streamdeck skin pass. This commit is the
  * structure that skin will hang on.
+ *
+ * ADDENDUM (umbrella #285, operator direction 2026-08-01) adds three things
+ * without touching any of the above: the tile's lifecycle badge now renders
+ * lib/workloadFlow.ts's resting-grammar participle instead of the raw
+ * `provision`/`configure`/`operate`/`unknown` token (see BADGE_GRAMMAR_CLASS
+ * below for why it never guesses at progress this page cannot observe); a
+ * "Create media workload" entry point links out to the draft flow a sibling
+ * change builds at /media-workloads/new; and the Unassigned group — untagged
+ * instances, including facility-source-of-truth strays with no cluster
+ * object behind them — gets a designed explanation of why this console
+ * cannot dispose of one and what does (see UnassignedDisposalNote).
  */
 
-const LIFECYCLE_BADGE: Record<string, string> = {
-  provision: 'bg-blue-500/20 text-blue-300',
-  configure: 'bg-amber-500/20 text-amber-300',
-  operate: 'bg-green-500/20 text-green-300',
+/**
+ * Badge styling keyed by GRAMMAR, not by the label string (umbrella #285
+ * addendum). The tile never sees `in-flight` today — the grouped-inventory
+ * payload carries no job overlay — but the map still covers it rather than
+ * silently mis-colouring the day a caller adds one, and it costs nothing to
+ * keep the three states in one place next to their titles below.
+ */
+const BADGE_GRAMMAR_CLASS: Record<LifecycleBadge['grammar'], string> = {
+  resting: 'bg-blue-500/20 text-blue-300',
+  'in-flight': 'bg-amber-500/20 text-amber-300',
   unknown: 'bg-white/10 text-muted',
+}
+
+/**
+ * The explanatory title for the badge, keyed the same way. Spelling out what
+ * the participle MEANS matters here specifically because "planned" reads as
+ * a plain synonym for "provision" unless the operator knows the grammar is
+ * about the step just COMPLETED, not the step the workload is at (see
+ * lib/workloadFlow.ts's RESTING_GRAMMAR docstring for the full reasoning).
+ */
+const BADGE_TITLE: Record<LifecycleBadge['grammar'], (label: string) => string> = {
+  resting: (label) => `${label} — the last lifecycle step this workload has completed`,
+  'in-flight': (label) => `${label} — this step's job is running right now`,
+  unknown: () => 'The backend could not place this workload in the lifecycle yet',
 }
 
 /**
@@ -84,11 +115,28 @@ export default function MediaWorkloads() {
     return set
   }, [workloads])
 
+  // The 'unassigned' bucket, if the backend produced one this render. Looked
+  // up once here rather than inside the JSX below because both the tile grid
+  // (unchanged) and the new disposal-explanation panel need to agree on
+  // exactly which workload that is.
+  const unassignedWorkload = workloads.find((wl) => wl.slug === 'unassigned') ?? null
+
   return (
     <div className="flex-1 overflow-y-auto p-6">
-      <div className="hero">
-        <p className="kicker">Media Workloads</p>
-        <h1>Media Workloads</h1>
+      <div className="hero flex items-start justify-between gap-4">
+        <div>
+          <p className="kicker">Media Workloads</p>
+          <h1>Media Workloads</h1>
+        </div>
+        {/* Pulled forward from future scope (umbrella #285 addendum): the
+            operator creates a workload by naming a studio and working the
+            flow. This is a real route, not a modal — the draft flow itself
+            (design/plan/provision) lives on the page this navigates to,
+            built by a sibling change; this entry point's whole job is to be
+            reachable and honest about where it goes. */}
+        <Link to="/media-workloads/new" className="btn btn-primary shrink-0">
+          Create media workload
+        </Link>
       </div>
 
       {!isLoading && error != null && (
@@ -136,6 +184,12 @@ export default function MediaWorkloads() {
             </div>
           )}
 
+          {/* Unassigned-group disposal explanation (umbrella #285 addendum,
+              operator direction 2026-08-01: "the honest rendering exists, the
+              action does not"). See UnassignedDisposalNote below for why this
+              is prose and not a button. */}
+          {unassignedWorkload && <UnassignedDisposalNote workload={unassignedWorkload} />}
+
           {/* Invalid instances section (ADR-0046 §2) */}
           {data.invalid_instances && data.invalid_instances.length > 0 && (
             <div className="panel mt-4 border border-red-500/20 bg-red-500/5">
@@ -181,6 +235,19 @@ function WorkloadEntryTile({
   motionAllowed: boolean
 }) {
   const rep = representativeInstance(workload)
+  // Resting grammar only: the index page's grouped-inventory payload carries
+  // no job overlay (launching/switching/tearingDown all live in the flow
+  // page's local React state), so lifecycleBadge() always resolves the
+  // resting branch here. See the file docstring for why that is a floor, not
+  // a gap to fill by promoting reconcile_pending into the progressive form.
+  const badge = lifecycleBadge({ lifecycle: workload.lifecycle })
+  // A SEPARATE honest marker from the badge above, deliberately. Position
+  // and member-convergence are different questions (workloadLifecycle.ts's
+  // own distinction between "where it is" and "what it still needs") — this
+  // answers "is something here still catching up", and it can be true no
+  // matter what the resting badge says, including forever, for a member
+  // whose pod will never start.
+  const reconciling = workload.instances.some((i) => i.reconcile_pending)
 
   return (
     <Link
@@ -205,15 +272,24 @@ function WorkloadEntryTile({
       )}
 
       <div className="flex min-w-0 flex-1 flex-col gap-2">
-        <div className="flex items-center gap-2">
+        <div className="flex flex-wrap items-center gap-2">
           <h2 className="truncate text-base font-semibold capitalize">{workload.name}</h2>
           <span
-            className={`badge shrink-0 text-xs ${LIFECYCLE_BADGE[workload.lifecycle] ?? LIFECYCLE_BADGE.unknown}`}
+            className={`badge shrink-0 text-xs ${BADGE_GRAMMAR_CLASS[badge.grammar]}`}
+            title={BADGE_TITLE[badge.grammar](badge.label)}
           >
-            {workload.lifecycle}
+            {badge.label}
           </span>
           {workload.health === 'degraded' && (
             <span className="badge shrink-0 bg-red-500/20 text-xs text-red-300">degraded</span>
+          )}
+          {reconciling && (
+            <span
+              className="badge shrink-0 bg-amber-900/30 text-xs text-amber-300"
+              title="At least one member's requested and observed state disagree — waiting to converge"
+            >
+              reconciling
+            </span>
           )}
         </div>
 
@@ -224,5 +300,70 @@ function WorkloadEntryTile({
         </p>
       </div>
     </Link>
+  )
+}
+
+/* ─── the Unassigned group's disposal explanation ─── */
+
+/**
+ * WHY THIS IS PROSE AND NOT A BUTTON (umbrella #285 addendum, operator
+ * direction 2026-08-01: "the honest rendering exists, the action does not").
+ *
+ * The operator asked for a disposal (finalise) affordance on the Unassigned
+ * group — instances with no workload:<slug> tag, the live case being a
+ * NetBox record with no corresponding cluster object at all (an SoT-only
+ * stray, record #17 on the live env). Scouting the backend for a route this
+ * could call turned up none, and the absence is not an oversight to route
+ * around:
+ *
+ *   - The console has no NetBox delete seam anywhere. Its one NetBox write is
+ *     the lifecycle-tag flip in clear_for_deployment — by design, NetBox is
+ *     the facility source of truth and the console does not edit its
+ *     inventory, only the intent recorded against a member of it.
+ *   - Teardown does not dispose the record either: the mxl role's finalise
+ *     stage PATCHes the service back to lifecycle:bootstrapped and clears its
+ *     monitoring stamps, deliberately PRESERVING the record and its
+ *     workload:* tag. It also requires a running Helm release keyed to a
+ *     catalog entry, which a stray, by definition, does not have.
+ *   - The one code path that does delete an ipam.Service is dmf-runbooks'
+ *     internal launch-rollback, undoing records a FAILED launch had just
+ *     created a moment before. It is not operator-invocable, and presenting
+ *     it as a general disposal route would be wrong on both counts: it is
+ *     not reachable from here, and it is not what this situation needs.
+ *
+ * So the affordance the operator gets is the true one: a designed
+ * explanation of what these entries are, why the console cannot remove them,
+ * and what does. Rendering a "Dispose" button that the console cannot honour
+ * would be the dead control umbrella #285 exists to eliminate; saying nothing
+ * would be the silent version of the same lie.
+ */
+function UnassignedDisposalNote({ workload }: { workload: MediaWorkload }) {
+  const count = workload.instances.length
+  return (
+    <div className="panel mt-4 border border-white/10 bg-white/5">
+      <div className="border-b border-white/10 px-4 py-3">
+        <h2 className="text-lg font-semibold">About the Unassigned group</h2>
+      </div>
+      <div className="space-y-2 p-4 text-sm text-muted">
+        <p>
+          {count === 1 ? 'This instance is' : `These ${count} instances are`} recorded
+          in the facility source of truth with nothing running for {count === 1 ? 'it' : 'them'}.
+          That is normal for a while right after a teardown — the record stays
+          while nothing is deployed against it — but a leftover if nothing ever
+          ran against it at all.
+        </p>
+        <p>
+          This console cannot remove one of these records. It holds no seam to
+          delete a service record from the facility source of truth — by
+          design, the console changes what is recorded and what runs against a
+          record, never the record's existence.
+        </p>
+        <p>
+          What does remove one: deleting the service record in the facility
+          source of truth directly. A teardown will not do this — teardown
+          returns a record to recorded-but-not-running, it does not remove it.
+        </p>
+      </div>
+    </div>
   )
 }

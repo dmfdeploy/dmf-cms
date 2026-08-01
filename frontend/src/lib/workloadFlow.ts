@@ -57,9 +57,45 @@ function flowIndex(id: StageId): number | null {
   return i === -1 ? null : i
 }
 
+/**
+ * The steps whose content is a RECORD OF CHOICES rather than a description
+ * of something running: which template, which facility. They are readable
+ * whenever the workload exists at all, which is why they alone survive an
+ * undetermined position as `record` instead of locking.
+ *
+ * This mirrors the same split lib/workloadLifecycle.ts already draws in its
+ * own content predicate ("Design and Plan always do... the three
+ * post-Provision stages describe a running thing"). It is restated here
+ * rather than imported because that predicate is private to the affordance
+ * layer, and the two answer different questions — one decides whether a
+ * stage has anything to say, this one decides whether the flow may show it
+ * without claiming a position it cannot read.
+ *
+ * The `undetermined &&` guard on this branch is DEFENSIVE, not load-bearing,
+ * and no test pins it — deliberately, because none can. The `complete`
+ * branch is evaluated first and always claims both these steps at any
+ * readable position: classifyWorkloadLifecycle's active stage is only ever
+ * provision, configure, finalise or operate, never design or plan, so the
+ * active index is >= 2 in every readable case and both record steps sit
+ * behind it. Removing the guard is a provably equivalent mutation today.
+ * It stays because it is what makes the branch correct on its own terms if
+ * the ladder is ever reordered or a lifecycle value that maps here is added.
+ */
+const RECORD_STEPS: FlowStepId[] = ['design', 'plan']
+
 export type FlowStepState =
   /** Behind the workload's position: settled, and still reviewable. */
   | 'complete'
+  /**
+   * Readable record, with no claim about position. Reached only when the
+   * backend could not place the workload: Design and Plan describe CHOICES
+   * (which template, which facility) rather than runtime, so they stay
+   * readable even then. Locking them would hide truth the console holds —
+   * S1 made that call deliberately and this state is what preserves it.
+   * Distinct from `complete`, which would assert the workload got past
+   * them, and that is exactly what an undetermined position cannot say.
+   */
+  | 'record'
   /** The workload is here now. At most one step per render. */
   | 'current'
   /**
@@ -142,6 +178,7 @@ export function classifyWorkloadFlow(input: WorkloadLifecycleInput): FlowState {
     if (stageActions(id, input).length > 0) steps[id] = 'open'
     else if (activeIndex !== null && index === activeIndex) steps[id] = 'current'
     else if (reached !== null && index < reached) steps[id] = 'complete'
+    else if (undetermined && RECORD_STEPS.includes(id)) steps[id] = 'record'
     else steps[id] = 'locked'
   })
 
