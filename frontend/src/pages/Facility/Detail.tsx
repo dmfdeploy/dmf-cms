@@ -180,7 +180,6 @@ function NodesPanel({ data }: { data: FacilityDetailResponse }) {
                 <th>Name</th>
                 <th>Kubernetes version</th>
                 <th>Architecture</th>
-                <th>Instance class</th>
               </tr>
             </thead>
             <tbody>
@@ -189,15 +188,6 @@ function NodesPanel({ data }: { data: FacilityDetailResponse }) {
                   <td className="font-medium text-text">{n.name}</td>
                   <td className="font-mono text-xs">{n.kubelet_version}</td>
                   <td className="font-mono text-xs">{n.arch ?? <span className="text-muted">cannot be read</span>}</td>
-                  <td className="text-xs">
-                    {n.instance_class ? (
-                      n.instance_class
-                    ) : nodes.instance_class_reason !== '' ? (
-                      <span className="text-warn">{facilityReasonCopy(nodes.instance_class_reason)}</span>
-                    ) : (
-                      <span className="text-muted">not recorded in NetBox</span>
-                    )}
-                  </td>
                 </tr>
               ))}
             </tbody>

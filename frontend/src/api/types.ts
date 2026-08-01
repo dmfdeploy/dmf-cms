@@ -235,14 +235,10 @@ export interface FacilityNode {
   // null => node-exporter's node_uname_info had no matching row for this
   // node (per-node degrade, not a page failure).
   arch: string | null
-  // null => not recorded in NetBox for this node (an honest data gap —
-  // see `instance_class_reason` to tell that apart from a failed read).
-  instance_class: string | null
 }
 
 export interface FacilityNodesSection {
   reason: string
-  instance_class_reason: string
   items: FacilityNode[]
 }
 
