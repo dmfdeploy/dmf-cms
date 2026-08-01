@@ -1,9 +1,10 @@
 import { useState } from 'react'
 import { useNavigate } from 'react-router-dom'
-import { useCatalog, useDeployCatalog, useFacilitySummary } from '../../api/hooks'
+import { isOperation, useCatalog, useDeployCatalog, useFacilitySummary } from '../../api/hooks'
 import type { CatalogEntry, FacilitySummary } from '../../api/types'
 import { classifyDraftFlow, FLOW_STEPS, type DraftProgress, type FlowStepId } from '../../lib/workloadFlow'
 import { isValidWorkloadSlug } from '../../lib/workloadSlug'
+import { APIError } from '../../api/client'
 import ReasonConfirm from '../../components/ReasonConfirm'
 import FlowStep from './FlowStep'
 
@@ -18,9 +19,14 @@ import FlowStep from './FlowStep'
  * (POST /api/catalog/{key}/deploy, extra_vars.workload_slug). There is no
  * create endpoint and this page adds none. So the studio name, the chosen
  * template and the resolved facility live in plain React state until
- * Provision fires — at which point the deploy call is what actually causes
- * the workload to start existing, and the page hands off to the real
- * (backend-driven) detail route.
+ * Provision fires — at which point the deploy is ACCEPTED, and the page
+ * hands off to the real (backend-driven) detail route CARRYING THAT LAUNCH.
+ *
+ * Acceptance is not existence, and the difference is a page state rather
+ * than a nuance: the workload begins to exist only when the launcher stamps
+ * the tag and the inventory reports it, some seconds later. The destination
+ * renders a designed materializing view for that window (see
+ * WorkloadMaterializing.tsx) instead of denying the workload exists.
  *
  * The cost of that is real and stated where the operator can see it, next
  * to the field that starts the draft: refresh this tab before Provision and
@@ -44,6 +50,34 @@ const FLOW_STEP_LABELS: Record<FlowStepId, string> = {
   provision: 'Provision',
   configure: 'Configure',
   finalise: 'Finalise & Review',
+}
+
+/**
+ * What the console can honestly say after a deploy that did not return
+ * cleanly (GATE-B P1).
+ *
+ * `refused` — the server answered and rejected the request, so nothing was
+ *   launched. Safe to say so.
+ * `unknown` — the request threw before an answer came back (connection lost,
+ *   unparseable reply). The POST may well have reached AWX. The console does
+ *   NOT know, and must not resolve that ambiguity in either direction: the
+ *   operator needs to go and look, not be told to try again.
+ */
+type DeployOutcome = { kind: 'refused'; status: number } | { kind: 'unknown' }
+
+/**
+ * Designed refusal copy keyed on HTTP status, per Art. 8 — what happened,
+ * what it means, what to do next. Deliberately NOT the backend's own error
+ * string: APIError.message carries a raw token ("reason-required",
+ * "conflicting lifecycle operation in progress") that is our implementation
+ * leaking, and Art. 3 keeps that behind expert level.
+ */
+const REFUSAL_COPY: Record<number, string> = {
+  400: 'The request was rejected as malformed — check the workload identity and reason.',
+  403: 'Your role is not permitted to deploy on this facility.',
+  404: 'That template is no longer in the catalog.',
+  409: 'A deploy or teardown is already in flight for this template. Wait for it to finish.',
+  503: 'The automation platform is not available right now.',
 }
 
 // Only Plan and Provision ever render a locked step in the draft (Design
@@ -81,7 +115,9 @@ export default function CreateWorkload() {
   const [slugTouched, setSlugTouched] = useState(false)
   const [selectedKey, setSelectedKey] = useState<string | null>(null)
   const [arming, setArming] = useState(false)
-  const [deployFailed, setDeployFailed] = useState(false)
+  // A failed deploy has TWO distinguishable outcomes and the console must
+  // not flatten them (GATE-B P1). See handleProvisionConfirm for why.
+  const [deployOutcome, setDeployOutcome] = useState<DeployOutcome | null>(null)
 
   const { data: catalogData, isLoading: catalogLoading, isError: catalogFailed } = useCatalog()
   const { data: facilityData, isLoading: facilityLoading, isError: facilityFailed } = useFacilitySummary()
@@ -117,19 +153,46 @@ export default function CreateWorkload() {
   async function handleProvisionConfirm(reason: string) {
     if (!selectedEntry) return
     try {
-      await deployMutation.mutateAsync({ key: selectedEntry.key, reason, workload: trimmedSlug })
-      // The deploy call is the moment the workload starts existing; from
-      // here the real, backend-driven flow (WorkloadDetail) takes over.
-      navigate(`/media-workloads/${encodeURIComponent(trimmedSlug)}`)
+      const result = await deployMutation.mutateAsync({
+        key: selectedEntry.key,
+        reason,
+        workload: trimmedSlug,
+      })
+      // A DEPLOY IS ACCEPTED, NOT COMPLETED (GATE-B P1). The workload's
+      // identity does not exist yet: it comes into being when the launcher
+      // stamps the workload:<slug> tag and the inventory picks it up. So the
+      // navigation carries the launch — whichever of the two shapes the seam
+      // returned — and the destination renders the materializing story until
+      // the record appears. Navigating bare would land the operator on
+      // "Workload not found" for the workload they just created.
+      navigate(`/media-workloads/${encodeURIComponent(trimmedSlug)}`, {
+        state: {
+          launch: isOperation(result)
+            ? { entryKey: selectedEntry.key, operationId: result.operation_id }
+            : { entryKey: selectedEntry.key, jobId: result.job_id },
+        },
+      })
     } catch (e) {
-      // Art. 8: the operator gets what happened and that nothing was
-      // created, never the raw exception. Closing the arm panel here (rather
-      // than leaving it open on a stale mutation) and rendering the failure
-      // as a standing fact of the step is what keeps this loop closed
-      // (Art. 2) instead of a toast that could vanish before it's read.
+      // Art. 8: the operator gets what happened and what it means, never the
+      // raw exception. Closing the arm panel here (rather than leaving it
+      // open on a stale mutation) and rendering the failure as a standing
+      // fact of the step is what keeps this loop closed (Art. 2) instead of
+      // a toast that could vanish before it is read.
+      //
+      // THE DISTINCTION THAT MATTERS (GATE-B P1). An APIError means the
+      // server answered and refused — nothing was launched, and saying so is
+      // safe. ANY OTHER throw means the request may have reached AWX and we
+      // simply never learned the outcome: a dropped connection after the
+      // POST left, a reply we could not parse. Reporting that as "nothing
+      // was created" would be a claim the console cannot support, and the
+      // expensive direction to be wrong in — an operator told nothing
+      // happened will deploy again, on top of a workload that may already be
+      // coming up.
       console.error('Provision failed:', e)
       setArming(false)
-      setDeployFailed(true)
+      setDeployOutcome(
+        e instanceof APIError ? { kind: 'refused', status: e.status } : { kind: 'unknown' },
+      )
     }
   }
 
@@ -224,9 +287,9 @@ export default function CreateWorkload() {
                 slug={trimmedSlug}
                 arming={arming}
                 pending={deployMutation.isPending}
-                failed={deployFailed}
+                outcome={deployOutcome}
                 onArm={() => {
-                  setDeployFailed(false)
+                  setDeployOutcome(null)
                   setArming(true)
                 }}
                 onCancel={() => setArming(false)}
@@ -400,7 +463,7 @@ function ProvisionSection({
   slug,
   arming,
   pending,
-  failed,
+  outcome,
   onArm,
   onCancel,
   onConfirm,
@@ -409,7 +472,7 @@ function ProvisionSection({
   slug: string
   arming: boolean
   pending: boolean
-  failed: boolean
+  outcome: DeployOutcome | null
   onArm: () => void
   onCancel: () => void
   onConfirm: (reason: string) => void
@@ -452,10 +515,24 @@ function ProvisionSection({
             the panel closing (see handleProvisionConfirm's catch branch) —
             the same reason ProvisionStage's clear-for-deployment failure
             lives on the stage rather than inside its own armed subtree. */}
-        {!arming && failed && (
+        {!arming && outcome?.kind === 'refused' && (
           <p className="mt-2 text-xs text-red-300">
-            Provisioning didn&apos;t go through — nothing was created for workload:{slug}. Check
-            your access and the reason, then try again.
+            Provisioning didn&apos;t go through — nothing was created for workload:{slug}.{' '}
+            {REFUSAL_COPY[outcome.status] ??
+              'The facility refused the request. Check your access and the reason, then try again.'}
+          </p>
+        )}
+        {/* The honest half of the split. The console lost the connection
+            before it learned what happened, so it says exactly that and
+            sends the operator to look — never "nothing was created", which
+            would invite a second deploy on top of a workload that may
+            already be starting. */}
+        {!arming && outcome?.kind === 'unknown' && (
+          <p className="mt-2 text-xs text-amber-300">
+            Outcome unknown — the connection was lost before the facility answered, so
+            the console cannot tell whether the deploy for workload:{slug} started.
+            Check Media Workloads before trying again: deploying a second time when the
+            first one did start is the more expensive mistake.
           </p>
         )}
       </div>

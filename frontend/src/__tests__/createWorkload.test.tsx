@@ -23,7 +23,9 @@ import { cleanup, fireEvent, render, screen, waitFor, within } from '@testing-li
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query'
 import { MemoryRouter, Route, Routes } from 'react-router-dom'
 import CreateWorkload from '../pages/MediaWorkloads/CreateWorkload'
-import type { CatalogEntry } from '../api/types'
+import WorkloadDetail from '../pages/MediaWorkloads/WorkloadDetail'
+import { readLaunchState } from '../pages/MediaWorkloads/WorkloadMaterializing'
+import type { CatalogEntry, MediaWorkload } from '../api/types'
 
 // ---- fixtures ---------------------------------------------------------
 
@@ -61,11 +63,23 @@ interface FetchOpts {
   facilitySites?: Array<{ name: string; slug: string | null; device_count: number }>
   deployStatus?: number
   deployResult?: Record<string, unknown>
+  /** Throw from fetch itself — transport loss, NOT an HTTP error response. */
+  deployThrows?: boolean
+  /** Workloads the grouped inventory reports. Empty = not recorded yet. */
+  workloads?: MediaWorkload[]
+  /** Job status the destination polls, by job id. */
+  jobStatus?: Record<number, { status: string; is_done: boolean }>
+  /** Operation status the destination polls, for the async launch path. */
+  operation?: Record<string, unknown>
 }
 
 function mkFetch(opts: FetchOpts = {}) {
   const catalog = opts.catalog ?? [catalogEntry()]
-  const calls = { deploy: [] as Array<{ url: string; init?: RequestInit }> }
+  // Mutable so a test can simulate the launcher stamping the tag partway
+  // through the journey, which is the real sequence.
+  let workloads: MediaWorkload[] = opts.workloads ?? []
+  const jobStatus: Record<number, { status: string; is_done: boolean }> = { ...(opts.jobStatus ?? {}) }
+  const calls = { deploy: [] as Array<{ url: string; init?: RequestInit }>, grouped: 0 }
 
   const fetchMock = vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
     const url = (typeof input === 'string' ? input : (input as Request).url).toString()
@@ -80,18 +94,54 @@ function mkFetch(opts: FetchOpts = {}) {
     }
     if (url.match(/\/api\/catalog\/[^/]+\/deploy$/)) {
       calls.deploy.push({ url, init })
+      // A THROW, not a response: this is the transport-loss path, where the
+      // console never learns whether AWX got the request.
+      if (opts.deployThrows) throw new TypeError('Failed to fetch')
       if (opts.deployStatus) return json({ error: 'boom' }, opts.deployStatus)
       return json(opts.deployResult ?? { job_id: 900, status: 'launched', request_id: 'req-1' })
+    }
+    if (url.endsWith('/api/media-workloads/grouped')) {
+      calls.grouped += 1
+      return json({
+        configured: true,
+        degraded: false,
+        scope: [],
+        workloads,
+        invalid_instances: [],
+      })
+    }
+    const jobMatch = url.match(/\/api\/catalog\/[^/]+\/status\/(\d+)$/)
+    if (jobMatch) {
+      const id = Number(jobMatch[1])
+      const st = jobStatus[id] ?? { status: 'running', is_done: false }
+      return json({ job_id: id, status: st.status, is_done: st.is_done, is_running: !st.is_done })
+    }
+    const opMatch = url.match(/\/api\/operations\/(.+)$/)
+    if (opMatch) {
+      return json(opts.operation ?? { operation_id: opMatch[1], state: 'launching', job_id: null })
     }
     return json({})
   })
   vi.stubGlobal('fetch', fetchMock)
-  return { ...calls, fetchMock }
+  return {
+    ...calls,
+    fetchMock,
+    setWorkloads: (next: MediaWorkload[]) => {
+      workloads = next
+    },
+    setJobStatus: (id: number, next: { status: string; is_done: boolean }) => {
+      jobStatus[id] = next
+    },
+  }
 }
 
-// A stand-in for the real WorkloadDetail route — this leg only needs to
-// prove navigation LANDS on /media-workloads/<slug>, not what that page
-// renders (that page is a sibling's owned file).
+// GATE-B item 1: this used to mount a STUB at the destination
+// (<div>Workload detail: studio-a</div>), which made the create journey look
+// finished while hiding the actual bug — the real page had no idea a launch
+// had just happened and rendered "Workload not found" for the workload the
+// operator had just created. The stub was the reason the defect shipped, so
+// the harness now mounts the REAL WorkloadDetail and the journey is asserted
+// end to end.
 function renderCreate() {
   const queryClient = new QueryClient({ defaultOptions: { queries: { retry: false } } })
   render(
@@ -99,7 +149,7 @@ function renderCreate() {
       <MemoryRouter initialEntries={['/media-workloads/new']}>
         <Routes>
           <Route path="/media-workloads/new" element={<CreateWorkload />} />
-          <Route path="/media-workloads/:slug" element={<div>Workload detail: studio-a</div>} />
+          <Route path="/media-workloads/:slug" element={<WorkloadDetail />} />
         </Routes>
       </MemoryRouter>
     </QueryClientProvider>,
@@ -256,16 +306,19 @@ describe('studio name → shown workload identity', () => {
 
 // ---- the deploy POST: the actual persistence seam -----------------------
 
-describe('Provision: the deploy POST', () => {
-  async function reachProvision() {
-    await chooseTemplate()
-    typeStudioName('Studio A')
-    await waitFor(() =>
-      expect(within(stepSection('Provision')).queryByText(/This step opens once Plan is complete/)).toBeNull(),
-    )
-    return stepSection('Provision')
-  }
+// The ladder to a workable Provision step, shared by the deploy-POST tests
+// and the journey tests below so both start from an identical state rather
+// than two setups that can drift apart.
+async function reachProvision() {
+  await chooseTemplate()
+  typeStudioName('Studio A')
+  await waitFor(() =>
+    expect(within(stepSection('Provision')).queryByText(/This step opens once Plan is complete/)).toBeNull(),
+  )
+  return stepSection('Provision')
+}
 
+describe('Provision: the deploy POST', () => {
   it('carries both the mandatory reason and the workload slug, then navigates to the real workload route', async () => {
     const { deploy } = mkFetch()
     renderCreate()
@@ -284,7 +337,10 @@ describe('Provision: the deploy POST', () => {
     expect(confirm.disabled).toBe(false)
     fireEvent.click(confirm)
 
-    await screen.findByText('Workload detail: studio-a')
+    // The destination is the REAL WorkloadDetail. The workload does not exist
+    // yet — the launcher has not stamped the tag — so what must appear is the
+    // materializing state, never a not-found.
+    await screen.findByText('Deploy accepted.')
     expect(deploy).toHaveLength(1)
     const body = JSON.parse(deploy[0].init?.body as string)
     expect(body.reason).toBe('demo launch')
@@ -310,7 +366,188 @@ describe('Provision: the deploy POST', () => {
       expect(within(provision).getByText(/didn't go through — nothing was created/)).toBeTruthy(),
     )
     expect(within(provision).queryByPlaceholderText('Reason (required, recorded in the audit trail)')).toBeNull()
-    // Never left on the real workload route — nothing was actually created.
-    expect(screen.queryByText('Workload detail: studio-a')).toBeNull()
+    // Never navigated away — nothing was created, so there is nothing to
+    // navigate TO. Asserted against what the real destination would render
+    // (its materializing state); the old form of this assertion named the
+    // stub route element, which means it kept passing after the stub was
+    // removed and would have kept passing if the page HAD navigated.
+    expect(screen.queryByText('Deploy accepted.')).toBeNull()
+    expect(screen.getByRole('heading', { name: 'Create media workload' })).toBeTruthy()
+  })
+})
+
+// ---------------------------------------------------------------------------
+// The create JOURNEY (umbrella #285, GATE-B item 1)
+//
+// Deploy-accept is not existence. These drive the whole handoff against the
+// REAL destination component: what the operator sees between "the POST
+// resolved" and "the launcher stamped the tag", what happens when the launch
+// job fails, and what the console says when it never learned the outcome at
+// all. The bug these exist to prevent is the console denying the existence of
+// a workload it had just created.
+// ---------------------------------------------------------------------------
+
+/**
+ * Drive the create form all the way to a fired deploy, reusing the same
+ * reachProvision() ladder the other tests use so the journey starts from the
+ * identical state rather than a second, drifting setup.
+ */
+async function armAndConfirm() {
+  renderCreate()
+  await screen.findByRole('heading', { name: 'Design' })
+  const provision = await reachProvision()
+  fireEvent.click(within(provision).getByRole('button', { name: '▶ Provision now' }))
+  fireEvent.change(
+    within(provision).getByPlaceholderText('Reason (required, recorded in the audit trail)'),
+    { target: { value: 'demo launch' } },
+  )
+  fireEvent.click(within(provision).getByRole('button', { name: 'Confirm provision' }))
+}
+
+function workloadFixture(): MediaWorkload {
+  return {
+    slug: 'studio-a',
+    name: 'studio-a',
+    lifecycle: 'provision',
+    health: 'ok',
+    instances: [],
+    functions: [],
+  }
+}
+
+describe('the destination never denies a just-launched workload', () => {
+  it('renders the materializing state, not "Workload not found"', async () => {
+    mkFetch({ workloads: [] })
+    await armAndConfirm()
+
+    await screen.findByText('Deploy accepted.')
+    // THE regression this whole item exists for.
+    expect(screen.queryByText('Workload not found')).toBeNull()
+    expect(screen.queryByText(/No workload named/)).toBeNull()
+    // It says what it is waiting for rather than implying the record exists.
+    expect(screen.getByText(/appears here once the launcher records it/)).toBeTruthy()
+  })
+
+  it('still renders not-found for a slug that arrives WITHOUT a launch', async () => {
+    // The materializing state must be reachable only via the create handoff —
+    // otherwise a genuinely missing workload would render as "provisioning"
+    // forever, which is the same lie pointed the other way.
+    mkFetch({ workloads: [] })
+    const queryClient = new QueryClient({ defaultOptions: { queries: { retry: false } } })
+    render(
+      <QueryClientProvider client={queryClient}>
+        <MemoryRouter initialEntries={['/media-workloads/ghost']}>
+          <Routes>
+            <Route path="/media-workloads/:slug" element={<WorkloadDetail />} />
+          </Routes>
+        </MemoryRouter>
+      </QueryClientProvider>,
+    )
+    expect(await screen.findByText('Workload not found')).toBeTruthy()
+    expect(screen.queryByText('Deploy accepted.')).toBeNull()
+  })
+
+  it('becomes the real flow once the launcher records the workload', async () => {
+    // The happy path ends by the materializing view disappearing ON ITS OWN,
+    // driven by the INVENTORY. This drives the real causal chain rather than
+    // waiting out a poll: the launcher stamps the tag, the job finishes, the
+    // finished job prompts a re-read, and the re-read is what swaps the page.
+    // Note the ordering — the workload is recorded BEFORE the job completes,
+    // which is the actual sequence; the job finishing is merely when the
+    // console next looks.
+    const h = mkFetch({ workloads: [], jobStatus: { 900: { status: 'running', is_done: false } } })
+    await armAndConfirm()
+    await screen.findByText('Deploy accepted.')
+    expect(screen.queryByText('Workload not found')).toBeNull()
+
+    h.setWorkloads([workloadFixture()])
+    h.setJobStatus(900, { status: 'successful', is_done: true })
+
+    await waitFor(
+      () => expect(screen.queryByText('Deploy accepted.')).toBeNull(),
+      { timeout: 8000 },
+    )
+    // It became the actual flow page, not a third state.
+    expect(screen.getByRole('navigation', { name: 'Media workload lifecycle' })).toBeTruthy()
+  }, 15000)
+})
+
+describe('a failed launch job surfaces, and stops promising a workload', () => {
+  it('says the job did not succeed instead of waiting forever', async () => {
+    mkFetch({ workloads: [], jobStatus: { 900: { status: 'failed', is_done: true } } })
+    await armAndConfirm()
+
+    expect(await screen.findByText(/did not succeed/, {}, { timeout: 4000 })).toBeTruthy()
+    // And it stops claiming something is coming.
+    expect(screen.queryByText(/appears here once the launcher records it/)).toBeNull()
+  })
+})
+
+describe('an outcome the console never learned is never reported as "nothing happened"', () => {
+  it('says OUTCOME UNKNOWN when the connection is lost mid-deploy', async () => {
+    mkFetch({ deployThrows: true })
+    await armAndConfirm()
+
+    const provision = stepSection('Provision')
+    await waitFor(() => expect(provision.textContent).toMatch(/Outcome unknown/))
+    // The specific claim that must NOT be made: transport loss cannot
+    // establish that nothing was created.
+    expect(provision.textContent).not.toMatch(/nothing was created/)
+    expect(provision.textContent).toMatch(/Check Media Workloads before trying again/)
+  })
+
+  it('DOES say nothing was created when the server itself refused', async () => {
+    // The other half of the split: a 409 is an answer, so the stronger
+    // statement is earned here.
+    mkFetch({ deployStatus: 409 })
+    await armAndConfirm()
+
+    const provision = stepSection('Provision')
+    await waitFor(() => expect(provision.textContent).toMatch(/nothing was created/))
+    expect(provision.textContent).toMatch(/already in flight/)
+    expect(provision.textContent).not.toMatch(/Outcome unknown/)
+  })
+})
+
+describe('readLaunchState narrows untrusted router state', () => {
+  // Router state is not validated by anything upstream — it survives history
+  // entries, back/forward, and anything a caller chooses to put there. A
+  // malformed launch must resolve to null (so the page falls through to the
+  // ordinary not-found) rather than half-populating a launch whose entryKey
+  // would compose a broken job-status URL like /api/catalog//status/900.
+  it('accepts a well-formed launch, in both shapes the deploy seam returns', () => {
+    expect(readLaunchState({ launch: { entryKey: 'mxl-viewer', jobId: 900 } })).toEqual({
+      entryKey: 'mxl-viewer',
+      operationId: undefined,
+      jobId: 900,
+    })
+    expect(readLaunchState({ launch: { entryKey: 'mxl-viewer', operationId: 'op-1' } })).toEqual({
+      entryKey: 'mxl-viewer',
+      operationId: 'op-1',
+      jobId: undefined,
+    })
+  })
+
+  it('rejects a launch with a missing, empty or non-string entry key', () => {
+    // The empty-string case is the one that matters: it is truthy-adjacent
+    // enough to slip a bare `typeof === "string"` check and then silently
+    // produce a malformed request path.
+    expect(readLaunchState({ launch: { entryKey: '', jobId: 900 } })).toBeNull()
+    expect(readLaunchState({ launch: { jobId: 900 } })).toBeNull()
+    expect(readLaunchState({ launch: { entryKey: 7, jobId: 900 } })).toBeNull()
+  })
+
+  it('rejects anything that is not a launch at all', () => {
+    expect(readLaunchState(null)).toBeNull()
+    expect(readLaunchState(undefined)).toBeNull()
+    expect(readLaunchState('mxl-viewer')).toBeNull()
+    expect(readLaunchState({})).toBeNull()
+    expect(readLaunchState({ launch: null })).toBeNull()
+    expect(readLaunchState({ launch: 'mxl-viewer' })).toBeNull()
+  })
+
+  it('drops job/operation fields of the wrong type rather than passing them through', () => {
+    const parsed = readLaunchState({ launch: { entryKey: 'k', jobId: '900', operationId: 42 } })
+    expect(parsed).toEqual({ entryKey: 'k', operationId: undefined, jobId: undefined })
   })
 })

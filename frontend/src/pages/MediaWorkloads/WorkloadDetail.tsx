@@ -15,6 +15,7 @@ import {
 import type { SwitchSourceResult } from '../../api/types'
 import FlowStep from './FlowStep'
 import LifecycleStrip from './LifecycleStrip'
+import WorkloadMaterializing, { readLaunchState } from './WorkloadMaterializing'
 import DesignStage from './stages/DesignStage'
 import PlanStage from './stages/PlanStage'
 import ProvisionStage from './stages/ProvisionStage'
@@ -96,7 +97,11 @@ const LOCKED_REASON: Record<FlowStepId, string> = {
 
 export default function WorkloadDetail() {
   const { slug } = useParams<{ slug: string }>()
-  const { hash } = useLocation()
+  const { hash, state: routerState } = useLocation()
+  // Present only when the operator arrived straight from Create. It is the
+  // ONLY thing that distinguishes "this workload does not exist" from "this
+  // workload was launched seconds ago and has not been recorded yet".
+  const launch = readLaunchState(routerState)
   const { data, isLoading, error } = useMediaWorkloadsGrouped()
   const { data: catalogData, isLoading: catalogLoading } = useCatalog()
 
@@ -133,6 +138,15 @@ export default function WorkloadDetail() {
         </div>
       </div>
     )
+  }
+
+  // A workload that is ABSENT because it was just launched is not a
+  // not-found (GATE-B P1). Create hands the launch through router state, and
+  // until the launcher stamps the tag this page owes the operator the
+  // materializing story — deploy accepted, job running, record pending — not
+  // a flat denial that the thing they just created exists.
+  if (!workload && launch) {
+    return <WorkloadMaterializing slug={slug ?? ''} launch={launch} />
   }
 
   if (!workload) {
@@ -246,8 +260,10 @@ export default function WorkloadDetail() {
       {undetermined && (
         <div className="panel mt-4 border border-amber-500/20 bg-amber-500/10 px-4 py-3 text-sm text-amber-200">
           The facility source of truth could not place this workload in its lifecycle, so
-          no step below is open and nothing is offered. The steps stay closed until the
-          workload can be read again — a guessed position would be worse than none.
+          nothing is offered anywhere below and no step claims to be the current one — a
+          guessed position would be worse than none. Design and Plan stay readable as a
+          record of the choices already made; the three steps that describe something
+          running are locked until the workload can be read again.
         </div>
       )}
 

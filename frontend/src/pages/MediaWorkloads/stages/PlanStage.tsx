@@ -25,6 +25,17 @@ import StageCard from './StageCard'
  *    "used"/"free", because committed is a scheduler bound, not a
  *    utilisation measurement.
  *
+ *    WHY COMMITTED IS NOT THIS-WORKLOAD-EXCLUDED (GATE-B). It would be
+ *    natural to read committed as "what everything ELSE has taken", and the
+ *    label used to say exactly that. It was false in the one direction that
+ *    matters: once this workload is deployed, its own requests are inside
+ *    that number, so committed + requests double-counts it. Excluding them
+ *    would need per-pod attribution, and the console has none — capacity.py
+ *    reads NODE-level kube-state-metrics aggregates through Prometheus, with
+ *    no pod-to-workload join anywhere in the payload. Rather than invent one
+ *    or quietly keep a wrong label, the copy states what the number actually
+ *    is. The two figures are for reading side by side, not for arithmetic.
+ *
  *    This is deliberately NOT a fit/no-fit verdict (Constitution Art. 1).
  *    capacity.py's own preflight gate (test_capacity_gate.py) already
  *    renders that verdict at the one moment it actually matters — the
@@ -326,7 +337,8 @@ function CapacityComparison({ demand, capacity }: { demand: DemandSummary; capac
         </div>
       </div>
       <p className="mt-2 text-xs text-muted">
-        Committed (already requested by other pods on this facility — a scheduler bound, not a
+        Committed (every request the scheduler has already promised on this facility,
+        including this workload&apos;s own once it is deployed — a scheduler bound, not a
         measurement of usage):{' '}
         {capacity.cpuCommittedM != null ? formatCpuM(capacity.cpuCommittedM) : '—'} CPU ·{' '}
         {capacity.memCommittedB != null ? formatMemB(capacity.memCommittedB) : '—'} memory
