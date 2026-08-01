@@ -122,6 +122,8 @@ interface FetchOpts {
   workload?: MediaWorkload
   catalog?: CatalogEntry[]
   topology?: Record<string, unknown>
+  /** Per-instance HTTP status for the topology read, for the 404 path. */
+  topologyStatus?: Record<string, number>
   deployResult?: Record<string, unknown>
   teardownResult?: Record<string, unknown>
   switchResult?: Record<string, unknown>
@@ -196,6 +198,8 @@ function mkFetch(opts: FetchOpts = {}) {
     const topoMatch = url.match(/\/api\/media-workloads\/([^/]+)\/topology$/)
     if (topoMatch) {
       const name = decodeURIComponent(topoMatch[1])
+      const status = opts.topologyStatus?.[name]
+      if (status != null) return json({ error: 'receiver-not-found', detail: 'no catalog entry' }, status)
       return json(opts.topology?.[name] ?? {})
     }
     if (url.match(/\/api\/media-workloads\/[^/]+\/switch-source$/)) {
@@ -604,6 +608,29 @@ describe('Design: read-only template + composition', () => {
     expect(within(designSection).getByText('Renders a media flow.')).toBeTruthy()
     expect(await within(designSection).findByText(/composed of/)).toBeTruthy()
     expect(within(designSection).queryByRole('button')).toBeNull()
+  })
+
+  // umbrella #339 item 5: this is the state that produced the 404s — the
+  // function key is gone from the catalog, so its instance has no topology.
+  // The drift warning was always right; only the fetch treated the answer as
+  // a failure. The warning must survive the fetch becoming uneventful.
+  it('keeps the catalog-drift warning when the instance has no topology to fetch', async () => {
+    mkFetch({
+      workload: viewerWorkload(),
+      catalog: [],
+      topologyStatus: { 'viewer-1': 404 },
+    })
+    renderDetail()
+    await screen.findByRole('heading', { name: 'studio-a' })
+
+    const designSection = stageSection('Design')
+    expect(
+      await within(designSection).findByText(/isn't in the current catalog/),
+    ).toBeTruthy()
+    // No composition line, and no failure surfaced in its place: "there is no
+    // topology here" is an answer, not an error to report.
+    expect(within(designSection).queryByText(/composed of/)).toBeNull()
+    expect(within(designSection).queryByText(/could not|failed|error/i)).toBeNull()
   })
 })
 

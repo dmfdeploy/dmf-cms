@@ -375,17 +375,32 @@ export function useInstanceMxlStatus(
 
 // umbrella #201 WP5 — read seam the switch UI needs (not itself in the
 // spec's own endpoint list; see api_media_workloads_topology's own
-// docstring in main.py). A 404 (receiver-not-found/receiver-not-topology)
-// is the common, expected case for any instance without a topology — never
-// retried, and the caller (the Configure stage's switch control) treats `isError` as "no
-// switch control here", not a fetch failure to surface.
+// docstring in main.py).
+//
+// A 404 is the ORDINARY answer here, not a failure: the endpoint returns it
+// for receiver-not-found (the instance is not a catalog key at all — every
+// function key the catalog has since dropped) and receiver-not-topology (it
+// is, but carries no topology_ref — every non-viewer instance). Both mean
+// "this instance has no topology", which is a fact, so it resolves to null
+// data rather than an error state (umbrella #339 item 5). 422
+// (topology-invalid) is a genuine catalog-authoring defect and still errors.
+//
+// Both callers — the Design stage's composition line and the Configure
+// stage's switch control — already render nothing on absent data, so the
+// fail-closed switch contract is unchanged: no topology, no switch offered.
 export function useInstanceTopology(instance: string, opts?: { enabled?: boolean }) {
   return useQuery({
     queryKey: ['media-workloads-topology', instance],
-    queryFn: () =>
-      apiCall<InstanceTopology>(
-        `/api/media-workloads/${encodeURIComponent(instance)}/topology`,
-      ),
+    queryFn: async (): Promise<InstanceTopology | null> => {
+      try {
+        return await apiCall<InstanceTopology>(
+          `/api/media-workloads/${encodeURIComponent(instance)}/topology`,
+        )
+      } catch (e) {
+        if (e instanceof APIError && e.status === 404) return null
+        throw e
+      }
+    },
     enabled: opts?.enabled ?? true,
     retry: false,
   })
