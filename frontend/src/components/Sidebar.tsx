@@ -42,7 +42,7 @@ const allNavItems: NavItem[] = [
   { label: 'Facilities', path: '/facilities', icon: 'sites', section: 'rail' },
   // Surface gate per ADR-0037 §5: engineer+admin role (the #173 v1 gate) OR
   // the media-engineers tenancy group — first frontend groups[] consumer.
-  { label: 'Media Workloads', path: '/media-workloads', icon: 'inventory', section: 'rail', onlyRoles: ['engineer', 'admin'], onlyGroups: ['media-engineers'] },
+  { label: 'Media Workloads', path: '/media-workloads', icon: 'media', section: 'rail', onlyRoles: ['engineer', 'admin'], onlyGroups: ['media-engineers'] },
   { label: 'Admin', path: '/admin', icon: 'shield', section: 'secondary', onlyRoles: ['admin'] },
 ]
 
@@ -50,10 +50,30 @@ const icons: Record<string, React.ReactNode> = {
   home: (
     <path d="M10 20v-6h4v6h5v-8h3L12 3 2 12h3v8z" fill="currentColor" />
   ),
-  // Workspace: 9-square app-grid (IA §3) — launcher-into-operations, not a
-  // blank SaaS canvas.
+  // Workspace: 4-cell app-grid (IA §3) — launcher-into-operations, not a
+  // blank SaaS canvas. Four cells, not nine (umbrella #286, operator
+  // direction 2026-08-01): lucide's LayoutGrid geometry, drawn inline like
+  // every other glyph here rather than pulled in as a component.
   grid: (
-    <path d="M4 4h4v4H4zM10 4h4v4h-4zM16 4h4v4h-4zM4 10h4v4H4zM10 10h4v4h-4zM16 10h4v4h-4zM4 16h4v4H4zM10 16h4v4h-4zM16 16h4v4h-4z" stroke="currentColor" strokeWidth="1.5" fill="none" strokeLinejoin="round" />
+    <>
+      <rect x="3" y="3" width="7" height="7" rx="1" stroke="currentColor" strokeWidth="2" fill="none" strokeLinejoin="round" />
+      <rect x="14" y="3" width="7" height="7" rx="1" stroke="currentColor" strokeWidth="2" fill="none" strokeLinejoin="round" />
+      <rect x="14" y="14" width="7" height="7" rx="1" stroke="currentColor" strokeWidth="2" fill="none" strokeLinejoin="round" />
+      <rect x="3" y="14" width="7" height="7" rx="1" stroke="currentColor" strokeWidth="2" fill="none" strokeLinejoin="round" />
+    </>
+  ),
+  // Media Workloads: display + speaker — lucide's MonitorSpeaker geometry,
+  // the closest single bundled glyph to the operator's camera/mic/display
+  // composite (umbrella #286, 2026-08-01). Bundled and inline, so no new
+  // dependency and nothing for CSP to fetch.
+  media: (
+    <>
+      <path d="M5.5 20H8" stroke="currentColor" strokeWidth="2" fill="none" strokeLinecap="round" strokeLinejoin="round" />
+      <path d="M17 9h.01" stroke="currentColor" strokeWidth="2" fill="none" strokeLinecap="round" strokeLinejoin="round" />
+      <rect x="12" y="4" width="10" height="16" rx="2" stroke="currentColor" strokeWidth="2" fill="none" strokeLinejoin="round" />
+      <path d="M8 6H4a2 2 0 0 0-2 2v6a2 2 0 0 0 2 2h4" stroke="currentColor" strokeWidth="2" fill="none" strokeLinecap="round" strokeLinejoin="round" />
+      <circle cx="17" cy="15" r="1" stroke="currentColor" strokeWidth="2" fill="none" />
+    </>
   ),
   sites: (
     <path d="M19 21V5a2 2 0 00-2-2H7a2 2 0 00-2 2v16m14 0h2m-2 0h-5m-9 0H3m2 0h5M9 7h1m-1 4h1m4-4h1m-1 4h1m-5 10v-5a1 1 0 011-1h2a1 1 0 011 1v5m-4 0h4" stroke="currentColor" strokeWidth="2" fill="none" strokeLinecap="round" strokeLinejoin="round" />
