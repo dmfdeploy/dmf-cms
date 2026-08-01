@@ -6,6 +6,8 @@ import Shell from './components/Shell'
 import ProtectedRoute from './components/ProtectedRoute'
 import Workspace from './pages/Workspace'
 import Facility from './pages/Facility'
+import FacilityDetail from './pages/Facility/Detail'
+import WorkloadDetail from './pages/MediaWorkloads/WorkloadDetail'
 import Activity from './pages/Activity'
 import Monitoring from './pages/Monitoring'
 import MediaWorkloads from './pages/MediaWorkloads'
@@ -57,6 +59,9 @@ export default function App() {
         {/* IA §9 (#174 WP1): Facilities rail; permanent redirect keeps old
             /facility bookmarks working. */}
         <Route path="/facilities" element={<ProtectedRoute><Facility /></ProtectedRoute>} />
+        {/* S1 (#285): the list is one entry for the current facility; the
+            detail page is where node/service/capacity truth now lives. */}
+        <Route path="/facilities/:site" element={<ProtectedRoute><FacilityDetail /></ProtectedRoute>} />
         <Route path="/facility" element={<Navigate to="/facilities" replace />} />
         {/* WP3 (#174): Workflows + Changes merged into Activity, two lanes. */}
         <Route path="/activity/:lane?" element={<ProtectedRoute><Activity /></ProtectedRoute>} />
@@ -67,6 +72,9 @@ export default function App() {
         {/* WP4 (#173): MXL Flows retired into the Media Workloads live-view panel. */}
         <Route path="/mxl-flows" element={<Navigate to="/media-workloads" replace />} />
         <Route path="/media-workloads" element={<ProtectedRoute><MediaWorkloads /></ProtectedRoute>} />
+        {/* S1 (#285): workload detail carries the EBU lifecycle rail — the
+            surface Catalog and Activity content relocated onto. */}
+        <Route path="/media-workloads/:slug" element={<ProtectedRoute><WorkloadDetail /></ProtectedRoute>} />
         <Route path="/admin" element={<ProtectedRoute><Admin /></ProtectedRoute>} />
         <Route path="/settings" element={<ProtectedRoute><Settings /></ProtectedRoute>} />
         <Route path="*" element={<Navigate to="/" replace />} />

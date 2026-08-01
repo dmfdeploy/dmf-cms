@@ -1,5 +1,3 @@
-import { useEffect, useState } from 'react'
-import { useInstanceMxlStatus } from '../../api/hooks'
 import type { ClearForDeploymentResult, MediaWorkloadInstance } from '../../api/types'
 import ClearForDeployment from './ClearForDeployment'
 import {
@@ -8,7 +6,7 @@ import {
   requestedBadge,
   REQUESTED_TITLE,
 } from './stateBadges'
-import { PREVIEW_TICK_MS, STATUS_POLL_MS } from './liveView'
+import LivePreviewBox, { useLivePreview } from './LivePreviewBox'
 
 /**
  * A single Media Function instance as a media-native tile (WP-C).
@@ -32,26 +30,13 @@ export interface WorkloadTileProps {
   motionAllowed: boolean
   onOpen: (instance: MediaWorkloadInstance) => void
   onCleared?: (result: ClearForDeploymentResult) => void
-}
-
-function PlaceholderThumb({ label }: { label: string }) {
-  return (
-    <div className="flex h-full w-full flex-col items-center justify-center gap-1 text-muted">
-      <svg
-        className="h-8 w-8 opacity-60"
-        viewBox="0 0 24 24"
-        fill="none"
-        stroke="currentColor"
-        strokeWidth="1.5"
-        aria-hidden="true"
-      >
-        <rect x="3" y="5" width="18" height="14" rx="2" />
-        <circle cx="9" cy="11" r="1.5" />
-        <path d="M4 17l5-4 3 2 4-3 4 3" />
-      </svg>
-      <span className="text-[10px] uppercase tracking-wide">{label}</span>
-    </div>
-  )
+  /**
+   * Whether the C5 clear-for-deployment control may appear in the footer.
+   * The Operate stage passes false: the lifecycle rail authorises actions
+   * per stage, and Operate deliberately carries none — a control smuggled in
+   * via a shared tile would break that invariant from the side.
+   */
+  showClear?: boolean
 }
 
 export default function WorkloadTile({
@@ -61,60 +46,13 @@ export default function WorkloadTile({
   motionAllowed,
   onOpen,
   onCleared,
+  showClear = true,
 }: WorkloadTileProps) {
-  const isMxl = instance.function_key?.startsWith('mxl') ?? false
-  const liveEligible = isMxl && (instance.live_view ?? false)
-
-  // Status query: enabled whenever this tile can poll (grid + visible + live).
-  // It auto-refetches ONLY when motion is allowed; otherwise it fetches once
-  // and holds a static last frame with an explicit Refresh affordance (P2/P3).
-  const canPoll = liveEligible && active
-  const status = useInstanceMxlStatus(instance.instance, {
-    enabled: canPoll,
-    refetchInterval: canPoll && motionAllowed ? STATUS_POLL_MS : false,
+  const { isMxl, caption, showRefresh, liveDot, refresh } = useLivePreview({
+    instance,
+    active,
+    motionAllowed,
   })
-
-  // Preview cache-bust tick — only churns while motion is allowed.
-  const [tick, setTick] = useState(0)
-  useEffect(() => {
-    if (!canPoll || !motionAllowed) return
-    const id = setInterval(
-      () => setTick((t) => (t + 1) % 100000),
-      PREVIEW_TICK_MS,
-    )
-    return () => clearInterval(id)
-  }, [canPoll, motionAllowed])
-
-  // A fresh src is a fresh chance for a recovered preview to render.
-  const [imgError, setImgError] = useState(false)
-  useEffect(() => setImgError(false), [tick])
-
-  const data = status.data
-  const available = data?.available === true
-  const hasPreview = available && data?.preview === true
-  const showImage = canPoll && hasPreview && !imgError
-
-  const manualRefresh = () => {
-    setTick((t) => (t + 1) % 100000)
-    if (canPoll) status.refetch()
-  }
-
-  // Caption: honest about whether the frame is live, paused, or unavailable.
-  let caption: string
-  if (!liveEligible) {
-    caption = 'No live view for this function'
-  } else if (!active) {
-    caption = 'Paused — tab not visible'
-  } else if (!available) {
-    const reason = data?.reason ?? (status.isLoading ? 'connecting' : 'unavailable')
-    caption = `Live view unavailable (${reason})`
-  } else if (!hasPreview) {
-    caption = 'Sidecar live · no preview on this side'
-  } else if (motionAllowed) {
-    caption = 'Live · sidecar preview'
-  } else {
-    caption = 'Last frame — press Refresh for a new one'
-  }
 
   const openable = isMxl // live modal, or the split-node aggregate fallback
   const open = () => openable && onOpen(instance)
@@ -140,25 +78,12 @@ export default function WorkloadTile({
             : undefined
         }
       >
-        <div
-          className="relative aspect-video w-full overflow-hidden rounded-md border border-white/10 bg-black/40"
-          title="Preview proxied from the instance's MXL sidecar; placement (node) from NetBox"
-        >
-          {showImage ? (
-            <img
-              src={`/api/media-workloads/${encodeURIComponent(
-                instance.instance,
-              )}/mxl/preview?t=${tick}`}
-              alt={`Live preview of ${displayName}`}
-              className="h-full w-full object-cover"
-              onError={() => setImgError(true)}
-            />
-          ) : (
-            <PlaceholderThumb
-              label={liveEligible ? (available ? 'no preview' : 'offline') : 'no live view'}
-            />
-          )}
-        </div>
+        <LivePreviewBox
+          instance={instance}
+          displayName={displayName}
+          active={active}
+          motionAllowed={motionAllowed}
+        />
 
         <div className="flex items-start justify-between gap-2">
           <div className="min-w-0">
@@ -196,7 +121,7 @@ export default function WorkloadTile({
         </div>
 
         <div className="flex items-center gap-2 text-xs text-muted">
-          {liveEligible && active && available && motionAllowed && (
+          {liveDot && (
             <span className="inline-block h-2 w-2 rounded-full bg-green-400" aria-hidden="true" />
           )}
           <span className="truncate">{caption}</span>
@@ -205,14 +130,16 @@ export default function WorkloadTile({
 
       {/* Footer: refresh affordance for held frames + the C5 clear control. */}
       <div className="flex flex-wrap items-center gap-2">
-        {liveEligible && active && !motionAllowed && (
-          <button className="btn btn-secondary btn-sm" onClick={manualRefresh}>
+        {showRefresh && (
+          <button className="btn btn-secondary btn-sm" onClick={refresh}>
             Refresh
           </button>
         )}
-        {!instance.reconcile_pending && instance.requested_state === 'bootstrapped' && (
-          <ClearForDeployment instance={instance.instance} onCleared={onCleared} />
-        )}
+        {showClear &&
+          !instance.reconcile_pending &&
+          instance.requested_state === 'bootstrapped' && (
+            <ClearForDeployment instance={instance.instance} onCleared={onCleared} />
+          )}
       </div>
     </div>
   )
