@@ -490,6 +490,52 @@ describe('a launch job that does not succeed surfaces, and stops promising a wor
     })
   }
 
+  it('does not deny that a failed job may already have recorded the workload', async () => {
+    // The launcher writes the tagged record PART-WAY through the run and the
+    // fault boundary sits after it, so a job that fails later has already
+    // created it — and the run guard only MARKS failed_rollback_required, it
+    // does not roll back. Copy that said "nothing is recorded" was therefore
+    // misinformation about the facility, not a loose sentence.
+    mkFetch({ workloads: [], jobStatus: { 900: { status: 'failed', is_done: true } } })
+    await armAndConfirm()
+
+    const panel = await screen.findByLabelText('Workload provisioning')
+    await waitFor(() => expect(panel.textContent).toMatch(/did not succeed/))
+    expect(panel.textContent).toMatch(/may still have recorded the workload before it failed/)
+    expect(panel.textContent).toMatch(/until a rollback is run/)
+    // The claim that must NOT be made on this path.
+    expect(panel.textContent).not.toMatch(/[Nn]othing was recorded/)
+  })
+
+  it('DOES say nothing was recorded when the job never started', async () => {
+    // The one branch where the stronger statement is earned: an operation
+    // error means no task ran, so no mutation happened.
+    mkFetch({
+      workloads: [],
+      deployResult: { operation_id: 'op-err', state: 'launching' },
+      operation: { operation_id: 'op-err', state: 'error', job_id: null, error: 'no capacity' },
+    })
+    await armAndConfirm()
+
+    const panel = await screen.findByLabelText('Workload provisioning')
+    await waitFor(() => expect(panel.textContent).toMatch(/did not succeed/), { timeout: 8000 })
+    expect(panel.textContent).toMatch(/nothing ran and nothing was recorded/)
+    expect(panel.textContent).not.toMatch(/may still have recorded/)
+  }, 15000)
+
+  it('still becomes the real flow if a failed launch left the record behind', async () => {
+    // "Failed" bounds what the console knows, not what the facility contains:
+    // if the inventory does report the workload, the page must swap exactly as
+    // it would have on a clean launch rather than staying stuck on the failure.
+    const h = mkFetch({ workloads: [], jobStatus: { 900: { status: 'failed', is_done: true } } })
+    await armAndConfirm()
+    await screen.findByText(/did not succeed/)
+
+    h.setWorkloads([workloadFixture()])
+    await waitFor(() => expect(screen.queryByText(/did not succeed/)).toBeNull(), { timeout: 8000 })
+    expect(screen.getByRole('navigation', { name: 'Media workload lifecycle' })).toBeTruthy()
+  }, 15000)
+
   it('does NOT treat a still-running job as terminal', async () => {
     // The other side of the boundary: without this, a set containing every
     // string would also pass the cases above.
@@ -501,11 +547,21 @@ describe('a launch job that does not succeed surfaces, and stops promising a wor
   })
 
   it('does NOT treat a successful job as a failure', async () => {
+    // As first written this awaited 'Deploy accepted.', which renders on MOUNT
+    // — before the job-status poll has resolved — so the no-failure assertion
+    // ran against the initial render and held no matter what the component
+    // did with a successful job. It was vacuous AS NAMED: the boundary was
+    // covered elsewhere in the file, which is exactly what made it easy to
+    // miss. Now it waits for the successful status to have been OBSERVED
+    // before asserting, so it discriminates on its own.
     mkFetch({ workloads: [], jobStatus: { 900: { status: 'successful', is_done: true } } })
     await armAndConfirm()
 
-    await screen.findByText('Deploy accepted.')
+    // The success-specific copy only renders once jobStatus === 'successful'
+    // has reached the component, so finding it proves the status was applied.
+    await screen.findByText(/The job has finished but the record still is not readable/)
     expect(screen.queryByText(/did not succeed/)).toBeNull()
+    expect(screen.queryByText(/finished as "successful"/)).toBeNull()
   })
 })
 
