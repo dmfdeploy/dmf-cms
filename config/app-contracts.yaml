@@ -4,21 +4,30 @@ catalog_source: config/app-contracts.yaml
 # `cluster:` declares WHERE each service runs, so the Facility Detail page can
 # look for it in the cluster's own container metrics (kube_pod_container_info)
 # instead of inferring presence from an ingress the service may deliberately
-# not have — AWX is exactly that case. Both fields are copied from dmf-infra's
-# own role defaults, which are the authority:
-#   namespace       <- k3s-lab-bootstrap/roles/**/defaults/main.yml
-#                      (authentik_namespace, awx_namespace, forgejo_namespace,
-#                       grafana_namespace, librenms_namespace, netbox_namespace,
-#                       zot_namespace)
-#   image_contains  <- the app's own image repository path, which is what tells
-#                      its container apart from the sidecars sharing the same
-#                      namespace (a netbox namespace also runs valkey and
-#                      postgres; `monitoring` runs prometheus, loki and promtail
-#                      alongside grafana). Verified for the registry against
-#                      dmf-infra's `zot_image: ghcr.io/project-zot/zot-...`.
-# An entry with no `cluster:` block is never claimed absent — the page says it
-# has no declared cluster location instead, because "we didn't look" and "it
-# isn't there" are different facts (Constitution Art. 1).
+# not have — AWX is exactly that case.
+#
+#   namespace           <- dmf-infra k3s-lab-bootstrap/roles/**/defaults/main.yml
+#                          (authentik_namespace, awx_namespace, forgejo_namespace,
+#                           grafana_namespace, librenms_namespace, netbox_namespace,
+#                           zot_namespace). These are config-verified.
+#   image_repositories  <- the repository path of the service's OWN image(s).
+#                          The matcher compares the final path segment (the
+#                          image name) after stripping the registry host — see
+#                          facility.py's _repository_matches for why only that
+#                          segment, and what the zot mirror does to the rest.
+#                          Full paths are declared anyway because the path is
+#                          what a human checks against upstream.
+#
+# UNPROVEN-LIVE: only the registry entry is pinned in dmf-infra config
+# (`zot_image: ghcr.io/project-zot/zot-linux-arm64:v2.1.2`). The other six come
+# from their charts' own image defaults, which dmf-infra does not override, so
+# nothing here confirms them and this arc took no live probes. A wrong entry
+# degrades its row to "no matching pods in cluster metrics" — a falsifiable
+# statement about the check, never a claim that the service is absent.
+#
+# An entry with no `cluster:` block is never claimed absent either — the page
+# says it has no declared cluster location instead, because "we didn't look"
+# and "it isn't there" are different facts (Constitution Art. 1).
 apps:
   - key: auth
     display_name: Authentik
@@ -28,7 +37,8 @@ apps:
     summary: Identity provider and OIDC source.
     cluster:
       namespace: authentik
-      image_contains: authentik
+      image_repositories:
+        - goauthentik/server
   - key: awx
     display_name: AWX
     lane: public
@@ -37,7 +47,12 @@ apps:
     summary: Workflow execution and job history.
     cluster:
       namespace: awx
-      image_contains: awx
+      # The AWX application image only. `ansible/awx-operator` (the operator
+      # that installs it) and `ansible/awx-ee` (the execution environment that
+      # job pods run in, mirrored to <zot>/dmf/awx-ee by dmf-infra playbook
+      # 630) share this namespace and are NOT AWX's own version.
+      image_repositories:
+        - ansible/awx
   - key: forgejo
     display_name: Forgejo
     lane: public
@@ -46,7 +61,8 @@ apps:
     summary: Reviewable config and change history.
     cluster:
       namespace: forgejo
-      image_contains: forgejo
+      image_repositories:
+        - forgejo/forgejo
   - key: grafana
     display_name: Grafana
     lane: private
@@ -54,8 +70,14 @@ apps:
       primary: https://grafana.dmf.example.com/
     summary: Deep charts and long-form observability.
     cluster:
+      # A shared namespace: prometheus, loki, promtail, blackbox-exporter and
+      # dmf-promsd all live here too (grafana_namespace, loki_namespace,
+      # promtail_namespace, blackbox_namespace, prometheus_namespace,
+      # dmf_promsd_namespace are all `monitoring`). Only grafana/grafana is
+      # Grafana.
       namespace: monitoring
-      image_contains: grafana
+      image_repositories:
+        - grafana/grafana
   - key: librenms
     display_name: LibreNMS
     lane: private
@@ -63,8 +85,11 @@ apps:
       primary: https://librenms.dmf.example.com/
     summary: Network monitoring and device telemetry.
     cluster:
+      # dmf-infra's librenms_proxy_image (nginx:1.27-alpine) runs beside it in
+      # this namespace and is not LibreNMS's version.
       namespace: librenms
-      image_contains: librenms
+      image_repositories:
+        - librenms/librenms
   - key: netbox
     display_name: NetBox
     lane: private
@@ -72,8 +97,11 @@ apps:
       primary: https://netbox.dmf.example.com/
     summary: Inventory, topology, and source of truth.
     cluster:
+      # The chart also deploys valkey (bitnami/valkey, pinned in dmf-infra's
+      # netbox values template) and postgres into this namespace.
       namespace: netbox
-      image_contains: netbox
+      image_repositories:
+        - netboxcommunity/netbox
   - key: registry
     display_name: Registry
     lane: private
@@ -82,4 +110,10 @@ apps:
     summary: Image registry and artifact storage.
     cluster:
       namespace: zot
-      image_contains: zot
+      # dmf-infra bakes the architecture into the image name and does NOT
+      # template it (`zot_image: ghcr.io/project-zot/zot-linux-arm64`), so both
+      # variants are declared here rather than leaving an amd64 env reading
+      # "no matching pods" for a registry that is plainly running.
+      image_repositories:
+        - project-zot/zot-linux-arm64
+        - project-zot/zot-linux-amd64

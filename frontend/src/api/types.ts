@@ -262,7 +262,9 @@ export interface FacilityPlatformService {
   // the contract declares no cluster location, so nothing was searched —
   // which is not the same as the service being absent.
   namespace: string | null
-  image_contains: string | null
+  // The image repositories that identify this service's own containers, so
+  // a neighbour sharing the namespace is never reported as its version.
+  image_repositories: string[]
   // Access route when the cluster has an ingress for it. Absence of a URL is
   // never evidence the service isn't running (AWX runs without one).
   url: string | null
