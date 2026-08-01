@@ -1,6 +1,10 @@
 import { Link } from 'react-router-dom'
 import { useCatalog, useFacilityDetail, useFacilitySummary } from '../../../api/hooks'
-import type { CatalogEntry, FacilityDetailResponse, MediaWorkload } from '../../../api/types'
+import type {
+  CatalogListResponse,
+  FacilityDetailResponse,
+  MediaWorkload,
+} from '../../../api/types'
 import type { StageState } from '../../../lib/workloadLifecycle'
 import StageCard from './StageCard'
 
@@ -60,8 +64,12 @@ export default function PlanStage({
 }) {
   const { data, isLoading, isError } = useFacilitySummary()
   const sites = data?.sites ?? []
+  // Passed WHOLE to summarizeDemand rather than pre-flattened to
+  // `data?.entries ?? []`: that flattening is precisely what turned a failed
+  // catalog read into an empty list, and an empty list into the confident
+  // claim that no template declares a demand. The read's outcome has to
+  // reach the summariser for it to tell those two apart.
   const catalog = useCatalog()
-  const catalogEntries = catalog.data?.entries ?? []
   // Called unconditionally (React's hook-order rule) with '' when there is
   // no single addressable site — useFacilityDetail no-ops on an empty site
   // (see hooks.ts's `enabled: site.length > 0`), and the section below
@@ -126,7 +134,7 @@ export default function PlanStage({
             <h3 className="text-xs uppercase tracking-wide text-muted">Capacity</h3>
             {singleSite.slug ? (
               <CapacityComparison
-                demand={summarizeDemand(workload, catalogEntries, catalog.isLoading)}
+                demand={summarizeDemand(workload, catalog)}
                 capacity={summarizeCapacity(facilityDetail)}
               />
             ) : (
@@ -154,6 +162,8 @@ export default function PlanStage({
 
 type DemandSummary =
   | { kind: 'loading' }
+  /** The catalog read did not produce a catalog. See summarizeDemand. */
+  | { kind: 'unreadable' }
   | { kind: 'no-functions' }
   | { kind: 'none-declared'; total: number }
   | { kind: 'partial'; cpuM: number; memB: number; missing: number; total: number }
@@ -171,13 +181,32 @@ type DemandSummary =
  * purpose. Never silently drops the missing ones from the total while
  * presenting the partial sum as complete — a workload with 2 of 3
  * templates undeclared says so, in those terms.
+ *
+ * WHY THIS TAKES THE QUERY AND NOT AN ENTRY LIST (operator review, PR #66).
+ * It used to receive `catalog.data?.entries ?? []` plus `isLoading` alone,
+ * and that pairing cannot express the outcome that matters. A FAILED
+ * /api/catalog read leaves data undefined and loading false, so the list
+ * arrived empty, every join missed, missing === total, and the stage
+ * announced "None of this workload's N templates declare a resource demand"
+ * — a confident negative manufactured out of an unhandled error path. The
+ * console had learned nothing about these templates and said something
+ * definite about all of them.
+ *
+ * So an unusable read is its own state. `isError` decides it even when a
+ * previous success left entries cached, matching what the Facility body
+ * above already does with the same signal: the newest read is the one the
+ * stage speaks for, and a stale sum presented as current is the same class
+ * of claim in a quieter voice. Undefined-data-while-not-loading lands here
+ * too — whatever put the query in that shape, it is not a catalog, and
+ * "not read" must never render as "nothing declared".
  */
 function summarizeDemand(
   workload: MediaWorkload,
-  catalogEntries: CatalogEntry[],
-  catalogLoading: boolean,
+  catalog: { isLoading: boolean; isError: boolean; data?: CatalogListResponse },
 ): DemandSummary {
-  if (catalogLoading) return { kind: 'loading' }
+  if (catalog.isLoading) return { kind: 'loading' }
+  if (catalog.isError || !catalog.data) return { kind: 'unreadable' }
+  const catalogEntries = catalog.data.entries
   const total = workload.functions.length
   if (total === 0) return { kind: 'no-functions' }
 
@@ -272,6 +301,16 @@ function RequestsCell({ demand }: { demand: DemandSummary }) {
   switch (demand.kind) {
     case 'loading':
       return <p className="text-muted">Loading this workload&apos;s declared demand…</p>
+    case 'unreadable':
+      // Deliberately says nothing about how many templates declare a demand,
+      // because the console does not know: an unread catalog cannot support
+      // a count in either direction.
+      return (
+        <p className="text-amber-200/80">
+          The catalog could not be read, so what this workload&apos;s templates declare is
+          unknown — a gap in the reading, not a demand of zero.
+        </p>
+      )
     case 'no-functions':
       return (
         <p className="text-muted">This workload has no functions recorded yet, so there is nothing to sum.</p>
