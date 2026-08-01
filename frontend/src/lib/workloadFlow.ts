@@ -138,10 +138,11 @@ export interface FlowState {
  * Resolve every step's flow state from the S1 classification.
  *
  * The ladder, in order of precedence per step:
- *   1. bears an action (stageActions non-empty) → `open`
- *   2. is the active stage                      → `current`
- *   3. sits behind the active stage             → `complete`
- *   4. otherwise                                → `locked`
+ *   1. bears an action (stageActions non-empty)      → `open`
+ *   2. is the active stage                           → `current`
+ *   3. sits behind the active stage                  → `complete`
+ *   4. is a record step and the position is unknown  → `record`
+ *   5. otherwise                                     → `locked`
  *
  * Rule 1 outranks the rest for a reason that is not cosmetic. At position
  * `configure` with a sibling still bootstrapped, Provision sits BEHIND the

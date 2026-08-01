@@ -43,10 +43,12 @@ import {
  * `provision`/`configure`/`operate`/`unknown` token (see BADGE_GRAMMAR_CLASS
  * below for why it never guesses at progress this page cannot observe); a
  * "Create media workload" entry point links out to the draft flow a sibling
- * change builds at /media-workloads/new; and the Unassigned group — untagged
- * instances, including facility-source-of-truth strays with no cluster
- * object behind them — gets a designed explanation of why this console
- * cannot dispose of one and what does (see UnassignedDisposalNote).
+ * change builds at /media-workloads/new; and the Unassigned group — defined
+ * by ONE thing only, the absence of a workload:<slug> tag, and NOT by
+ * anything about runtime — gets a designed explanation of why this console
+ * cannot dispose of a record and what does (see UnassignedDisposalNote).
+ * Facility-source-of-truth strays (no cluster object at all) are a SUBSET of
+ * that group, not a synonym for it: an untagged instance can be running.
  */
 
 /**
@@ -324,7 +326,10 @@ function WorkloadEntryTile({
  *     stage PATCHes the service back to lifecycle:bootstrapped and clears its
  *     monitoring stamps, deliberately PRESERVING the record and its
  *     workload:* tag. It also requires a running Helm release keyed to a
- *     catalog entry, which a stray, by definition, does not have.
+ *     catalog entry — which an SoT-only stray, having no cluster object, does
+ *     not have. (An untagged instance that IS running does have one, and can
+ *     be torn down the ordinary way; it is the record that outlives the
+ *     teardown, which is the whole point of this note.)
  *   - The one code path that does delete an ipam.Service is dmf-runbooks'
  *     internal launch-rollback, undoing records a FAILED launch had just
  *     created a moment before. It is not operator-invocable, and presenting
@@ -339,6 +344,9 @@ function WorkloadEntryTile({
  */
 function UnassignedDisposalNote({ workload }: { workload: MediaWorkload }) {
   const count = workload.instances.length
+  // Observed runtime, not requested intent (ADR-0037): only a probe-proven
+  // 'running' counts as running, so 'unknown' never reads as idle.
+  const noneRunning = workload.instances.every((i) => i.observed_state !== 'running')
   return (
     <div className="panel mt-4 border border-white/10 bg-white/5">
       <div className="border-b border-white/10 px-4 py-3">
@@ -347,10 +355,20 @@ function UnassignedDisposalNote({ workload }: { workload: MediaWorkload }) {
       <div className="space-y-2 p-4 text-sm text-muted">
         <p>
           {count === 1 ? 'This instance is' : `These ${count} instances are`} recorded
-          in the facility source of truth with nothing running for {count === 1 ? 'it' : 'them'}.
-          That is normal for a while right after a teardown — the record stays
-          while nothing is deployed against it — but a leftover if nothing ever
-          ran against it at all.
+          in the facility source of truth without a workload assignment — no{' '}
+          <span className="font-mono">workload:</span> tag naming which workload{' '}
+          {count === 1 ? 'it belongs' : 'they belong'} to. That is the only thing this
+          group means.
+        </p>
+        {/* Runtime is a SEPARATE question from assignment, and the two must not
+            be welded together (GATE-B). An unassigned member can be running
+            perfectly well — it is missing a tag, not a deployment — so the
+            has-nothing-running clause is stated only when the members actually
+            observe that way, and never as the definition of the group. */}
+        <p>
+          {noneRunning
+            ? `Nothing is observed running for ${count === 1 ? 'it' : 'them'} right now — normal for a while after a teardown, and a leftover if nothing ever ran against ${count === 1 ? 'it' : 'them'} at all.`
+            : `Some of what is recorded here is observed running. An unassigned instance is one the source of truth has not filed under a workload; it is not necessarily idle.`}
         </p>
         <p>
           This console cannot remove one of these records. It holds no seam to

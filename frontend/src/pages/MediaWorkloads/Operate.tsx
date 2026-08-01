@@ -12,8 +12,11 @@ import { LIVE_TILE_CAP, useDocumentVisible, usePrefersReducedMotion } from './li
  *
  * WHY THIS IS A SEPARATE ROUTE, NOT A STAGE ON THE FLOW. The guided flow
  * (workloadFlow.ts) walks five steps the operator WORKS THROUGH in order;
- * Operate is a thing they WATCH, indefinitely, with no "only then" gate and
- * no next step to open. Folding it back onto the flow page would either
+ * Operate is a thing they WATCH, indefinitely, with no "only then" gate of
+ * its own — nothing has to finish here before anything else opens. (The flow
+ * does continue past it: Finalise & Review is open throughout, because a
+ * running workload can always be torn down. Operate simply is not the thing
+ * that gates it.) Folding it back onto the flow page would either
  * force it through the same locked/open/complete vocabulary it doesn't fit,
  * or special-case it there — both worse than the mount the orchestrator
  * already wired: its own URL, reachable independent of where the flow

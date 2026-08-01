@@ -23,9 +23,14 @@ import { InsideFlowStep } from '../FlowStep'
  * near-duplicate the operator called "confused" about the S1 rail.
  *
  * The alternative was stripping StageCard out of all five stage components.
- * A context flag was chosen instead so the stage components stay untouched:
- * they are also mounted from the draft-create flow, and one wrapper deciding
- * its own chrome is cheaper to keep honest than five call sites agreeing.
+ * A context flag was chosen instead so those five files stay untouched by
+ * this arc — one wrapper deciding its own chrome is a smaller, more
+ * reviewable change than five components each losing their outer element,
+ * and it leaves the panels renderable with full chrome if anything ever
+ * mounts them outside a flow step. (Nothing does today: WorkloadDetail is
+ * the only caller. CreateWorkload deliberately does NOT reuse them — a
+ * draft has no MediaWorkload to hand them — it renders its own draft
+ * equivalents and only references these files in comments.)
  */
 const STATE_LABEL: Record<StageState, string> = {
   active: 'You are here',
