@@ -266,6 +266,32 @@ def is_transient_awx_failure(exc: BaseException) -> bool:
     return isinstance(exc, urllib.error.URLError)
 
 
+def is_connection_refused(exc: BaseException) -> bool:
+    """True when the AWX API refused the TCP connection outright.
+
+    On the scale-to-zero deployment this is the signature of ``awx-web``
+    sitting at zero replicas: the Service still resolves, but it has no
+    endpoints, so connect() fails with ECONNREFUSED rather than a DNS
+    failure or a timeout. Verified on the live env — the console pod gets
+    ``URLError(ConnectionRefusedError(111))`` against
+    ``awx-service.awx.svc.cluster.local``.
+
+    IMPORTANT — what this does NOT prove: it says the API is not accepting
+    connections, not *why*. Deliberately-asleep, deliberately stopped, and
+    crashed-with-no-endpoints are indistinguishable from here (the only
+    authoritative discriminator is ``spec.replicas``, which lives on the
+    AWX layer and which the console does not read). Callers must therefore
+    render "not running", never "asleep" — claiming the latter would
+    present a guess as fact (Constitution Art. 1).
+    """
+    if isinstance(exc, urllib.error.HTTPError):
+        # AWX answered; a status code is not a refused connection.
+        return False
+    if isinstance(exc, urllib.error.URLError):
+        exc = exc.reason
+    return isinstance(exc, ConnectionRefusedError)
+
+
 _RETRYABLE = (AWXAPIError, AWXTransportError, urllib.error.URLError)
 
 

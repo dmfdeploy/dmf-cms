@@ -125,6 +125,9 @@ export interface AdminJob {
 
 export interface AdminJobsResponse {
   jobs: AdminJob[]
+  // Fail-soft state token from /api/changes/jobs — "" when AWX answered.
+  // Optional so older payloads (and fixtures) classify as ok.
+  reason?: '' | 'awx-unconfigured' | 'awx-not-running' | 'awx-unreachable'
 }
 
 // ------------------------------------------------------------------

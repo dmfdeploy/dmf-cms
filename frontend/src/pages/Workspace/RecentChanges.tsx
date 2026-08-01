@@ -1,6 +1,7 @@
 import { Link } from 'react-router-dom'
 import { useChangesJobs } from '../../api/hooks'
 import { describeJob, jobOutcome } from '../../lib/labels'
+import { classifyChanges, changesEmptyCopy } from '../../lib/changesState'
 
 const statusColor: Record<string, string> = {
   new: 'badge-status-new',
@@ -18,7 +19,10 @@ const statusColor: Record<string, string> = {
 // Workspace answers the third North-Star question without a hunt.
 export default function RecentChanges() {
   const jobs = useChangesJobs()
-  const recent = (jobs.data?.jobs ?? []).slice(0, 5)
+  // Shared classifier — the Activity → History jobs lane reads the same
+  // states from the same tokens (Art. 1: the two must never disagree).
+  const state = classifyChanges(jobs)
+  const recent = state.jobs.slice(0, 5)
 
   return (
     <div className="panel mb-6">
@@ -29,14 +33,15 @@ export default function RecentChanges() {
         </Link>
       </div>
       <div className="divide-y divide-panel">
-        {jobs.isLoading ? (
+        {state.phase === 'loading' ? (
           <div className="px-6 py-6 text-center text-muted text-sm">Loading recent changes…</div>
-        ) : jobs.isError ? (
-          <div className="px-6 py-6 text-center text-muted text-sm">
-            Recent changes are temporarily unavailable. Retrying automatically.
-          </div>
         ) : recent.length === 0 ? (
-          <div className="px-6 py-6 text-center text-muted text-sm">No recent changes recorded</div>
+          // Every empty state is designed and names its own cause (Art. 8).
+          // A not-running AWX is not a console fault and must not read as
+          // one, and it must not read as "nothing happened" either.
+          <div className="px-6 py-6 text-center text-muted text-sm">
+            {changesEmptyCopy(state.phase)}
+          </div>
         ) : (
           recent.map((job) => (
             <div key={job.id} className="px-6 py-3 flex items-center justify-between gap-4">
