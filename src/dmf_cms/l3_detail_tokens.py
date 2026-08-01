@@ -15,6 +15,9 @@ keeps this set in sync with dmf-runbooks' own emissions.
 from __future__ import annotations
 
 KV_DETAIL_TOKENS = frozenset({
+    # ── Literal emissions ────────────────────────────────────────────────
+    # Each of these appears verbatim in a dmf-runbooks fail_msg / marker
+    # line: one call site, one fixed string.
     "authority-constant-mismatch", "helm-values-fetch-failed", "lock-lost",
     "lock-race", "lock-verify-failed", "reserved-var", "reserved-var-run-id",
     "snapshot-collision", "snapshot-race", "snapshot-verify-failed",
@@ -23,4 +26,23 @@ KV_DETAIL_TOKENS = frozenset({
     "switch-source-instance-mismatch", "switch-final-readback-mismatch",
     "topology-facility-ambiguous", "topology-facility-mismatch",
     "topology-invalid", "topology-wrong-entry",
+    # ── The switch play's STAGE vocabulary (umbrella #334) ───────────────
+    # These do NOT appear as literals anywhere. The switch play emits them
+    # through ONE templated site — playbooks/switch-mxl-fabrics-demo.yml's
+    #     detail={{ _switch_stage | default('pre-lock') }}
+    # — so the value is whatever `_switch_stage` was set to when the refusal
+    # fired, or the default when it fired before any stage was entered.
+    # The members below are the seven `_switch_stage:` set_fact values in
+    # that playbook plus that default; they are enumerated from the source
+    # construction, not guessed, and the drift test re-derives them the same
+    # way so this list cannot quietly fall behind.
+    #
+    # Why their absence mattered rather than being cosmetic: `detail` is a
+    # CLOSED enum (``_kv_value_ok``), and ``_sanitize_kv`` DROPS any kv token
+    # whose value is not a member. Until this addition the console silently
+    # discarded the stage field on every real switch refusal — the one field
+    # that distinguishes "nothing was touched" (pre-lock) from "the viewer's
+    # release has already been re-pointed" (repoint).
+    "pre-lock", "coordinator-read", "chart-resolve", "baseline-capture",
+    "quiesce", "repoint", "select", "final-readback",
 })

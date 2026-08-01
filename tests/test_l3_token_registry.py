@@ -101,9 +101,69 @@ _EXPECTED_RUNBOOKS_DETAIL_TOKENS = frozenset({
     "topology-facility-mismatch",         # topology_validate.yml
     "topology-invalid",                   # switch_validate.yml, topology_validate.yml
     "topology-wrong-entry",               # topology_validate.yml
+    # umbrella #334: the switch play's STAGE vocabulary, emitted through ONE
+    # TEMPLATED site — `detail={{ _switch_stage | default('pre-lock') }}` in
+    # playbooks/switch-mxl-fabrics-demo.yml. No literal `detail=<stage>`
+    # exists anywhere, which is why a literal-only scan never saw these.
+    # Seven `_switch_stage:` set_fact values plus that default.
+    "baseline-capture",                   # switch-mxl-fabrics-demo.yml (_switch_stage)
+    "chart-resolve",                      # switch-mxl-fabrics-demo.yml (_switch_stage)
+    "coordinator-read",                   # switch-mxl-fabrics-demo.yml (_switch_stage)
+    "final-readback",                     # switch-mxl-fabrics-demo.yml (_switch_stage)
+    "pre-lock",                           # the templated site's own default
+    "quiesce",                            # switch-mxl-fabrics-demo.yml (_switch_stage)
+    "repoint",                            # switch-mxl-fabrics-demo.yml (_switch_stage)
+    "select",                             # switch-mxl-fabrics-demo.yml (_switch_stage)
 })
 
 _DETAIL_KV_RE = re.compile(r"detail=([a-zA-Z0-9_-]+)")
+
+# umbrella #334: the switch play sets this fact to name the stage in flight,
+# and the ONE templated detail= site renders it. Scanned so the live check
+# derives the stage vocabulary from the same source the playbook does.
+_SWITCH_STAGE_RE = re.compile(r"^\s*_switch_stage:\s*([a-zA-Z0-9_-]+)\s*$", re.M)
+# The default that site applies when a refusal fires before any stage was
+# entered: `detail={{ _switch_stage | default('pre-lock') }}`.
+_SWITCH_STAGE_DEFAULT_RE = re.compile(
+    r"detail=\{\{\s*_switch_stage\s*\|\s*default\(\s*'([a-zA-Z0-9_-]+)'\s*\)"
+)
+
+
+def _emitting_lines(text: str) -> str:
+    """Drop whole-line YAML comments before scanning (umbrella #334).
+
+    The scan is plain-text, so it cannot tell an EMISSION from PROSE that
+    happens to quote one — and dmf-runbooks' task files discuss their own
+    token vocabulary in comments at length. That produced two distinct
+    false positives, both real:
+
+    * ``switch-final-readback-`` — a comment quoting
+      ``detail=switch-final-readback-mismatch`` that WRAPS mid-token, so the
+      regex matched the truncated prefix and stopped at the newline. The
+      hypothesis that this was an emitter bug is refuted: the string exists
+      nowhere in dmf-runbooks except two comments and one complete literal
+      emission (umbrella #334 facet 2).
+    * ``chart-resolve`` — a security comment in
+      ``_emit_switch_refused_literal.yml`` giving an INJECTION EXAMPLE
+      (a receiver_instance of ``"x detail=chart-resolve"``). It names a real
+      stage, but that line emits nothing.
+
+    Admitting either would put a token in the console's closed enum on the
+    authority of a sentence. That is precisely what R5b removed
+    ``snapshot=skipped`` for — it had never shipped as a real emission, only
+    as a mention in dmf-runbooks' own comments — so the precedent here is
+    established, not invented.
+
+    Deliberately only whole-line comments: an inline ``#`` cannot be stripped
+    safely without parsing YAML quoting, and no current false positive needs
+    it. A task ``name:`` that discusses tokens in prose is likewise left
+    alone — the two it contributes (``quiesce``, ``repoint``) are genuine
+    stage values that the templated scan below derives independently, so
+    they are correct by derivation rather than by that coincidence.
+    """
+    return "\n".join(
+        line for line in text.splitlines() if not line.lstrip().startswith("#")
+    )
 
 # umbrella #202: component repos sit as SIBLINGS of dmf-cms under a common
 # parent directory (post-public-release layout) — this file lives at
@@ -119,6 +179,56 @@ _RUNBOOKS_TASKS_DIR = _RUNBOOKS_ROOT / "roles" / "l3_run_guard" / "tasks"
 # would be invisible to a tasks-dir-only glob. Scanned in ADDITION to the
 # tasks dir below, not instead of it.
 _RUNBOOKS_SWITCH_DEMO_PLAYBOOK = _RUNBOOKS_ROOT / "playbooks" / "switch-mxl-fabrics-demo.yml"
+
+
+def test_emitting_lines_drops_tokens_that_only_appear_in_comments():
+    """Pin ``_emitting_lines`` directly, not through the live scan.
+
+    Whether comment-stripping changes the SCANNED SET depends on what
+    dmf-runbooks' comments happen to mention today: in the tasks directory
+    every comment-borne token currently also happens to be a legitimate
+    registry member, so disabling the strip there changes nothing right now.
+    That makes the behaviour CONTINGENTLY inert, not correct-by-construction
+    — the moment a comment mentions a token nothing emits, stripping becomes
+    load-bearing again, and a check that only exercised today's source would
+    not notice it had stopped working.
+
+    So the helper is pinned on synthetic input instead, where the property is
+    unconditional: a token appearing only in a comment must never reach the
+    scan, and a real emission on an ordinary line must always survive.
+    """
+    text = "\n".join([
+        "# a comment quoting detail=comment-only-token in prose",
+        "        fail_msg: DMF_L3_REFUSED: detail=real-emission",
+        "   # indented comment mentioning detail=also-comment-only",
+    ])
+    found = set(_DETAIL_KV_RE.findall(_emitting_lines(text)))
+    assert found == {"real-emission"}, (
+        f"comment-borne tokens leaked into the scan: {sorted(found)}"
+    )
+
+
+def test_emitting_lines_drops_a_comment_that_wraps_mid_token():
+    """The exact umbrella #334 facet-2 shape, as a regression guard.
+
+    dmf-runbooks' switch playbook quotes its own
+    ``detail=switch-final-readback-mismatch`` inside a comment that WRAPS
+    after the hyphen. A literal scan matched the truncated prefix and stopped
+    at the newline, inventing a token no code path emits — which is what the
+    issue suspected might be an emitter bug. It is not: the string exists
+    nowhere in dmf-runbooks outside two comments and one complete literal
+    emission.
+    """
+    text = "\n".join([
+        '# ... the convention used one line away in "DMF_L3_SWITCH_REFUSED: detail=switch-final-readback-',
+        '# mismatch". It is deliberately a SMALL, stable vocabulary.',
+        "        fail_msg: DMF_L3_SWITCH_REFUSED: detail=switch-final-readback-mismatch",
+    ])
+    found = set(_DETAIL_KV_RE.findall(_emitting_lines(text)))
+    assert "switch-final-readback-" not in found, (
+        "the truncated comment-wrap artifact reached the scan"
+    )
+    assert found == {"switch-final-readback-mismatch"}
 
 
 def test_kv_detail_tokens_matches_documented_expected_set():
@@ -155,9 +265,18 @@ def test_kv_detail_tokens_matches_live_runbooks_source_when_sibling_present():
 
     found: set[str] = set()
     for path in _RUNBOOKS_TASKS_DIR.glob("*.yml"):
-        found.update(_DETAIL_KV_RE.findall(path.read_text()))
+        found.update(_DETAIL_KV_RE.findall(_emitting_lines(path.read_text())))
     if _RUNBOOKS_SWITCH_DEMO_PLAYBOOK.is_file():
-        found.update(_DETAIL_KV_RE.findall(_RUNBOOKS_SWITCH_DEMO_PLAYBOOK.read_text()))
+        demo = _RUNBOOKS_SWITCH_DEMO_PLAYBOOK.read_text()
+        found.update(_DETAIL_KV_RE.findall(_emitting_lines(demo)))
+        # umbrella #334: the stage vocabulary reaches the marker through a
+        # TEMPLATE, so a literal scan is structurally blind to it. Derive it
+        # from the same two places the playbook does — the `_switch_stage`
+        # set_facts, and the default on the templated detail= site itself.
+        # Without this the check would still pass while the console's enum
+        # silently lacked every stage value it actually receives.
+        found.update(_SWITCH_STAGE_RE.findall(demo))
+        found.update(_SWITCH_STAGE_DEFAULT_RE.findall(demo))
 
     assert found == main._KV_DETAIL_TOKENS, (
         f"Live scan of {_RUNBOOKS_TASKS_DIR} found detail= values "
