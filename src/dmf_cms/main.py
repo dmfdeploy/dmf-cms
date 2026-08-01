@@ -3466,10 +3466,11 @@ def create_app(settings: Settings | None = None, contract: AppContract | None = 
     # Facility (physical infrastructure) endpoints
     #
     # S1 (#285): fail-soft, mirroring /api/workspace/health's contract —
-    # every outcome is a 200 with an explicit `reason`, never a raw 500
-    # (Constitution Arts. 1+8). These two previously 500'd on any NetBox
-    # error; a facility page breaking on a transient NetBox hiccup is not
-    # more informative than a designed "NetBox is unreachable" state.
+    # every DATA outcome is a 200 with an explicit `reason` (an
+    # unauthenticated request is still a 401, immediately below). These two
+    # previously 500'd on any NetBox error; a facility page breaking on a
+    # transient NetBox hiccup is not more informative than a designed
+    # "NetBox is unreachable" state (Constitution Arts. 1+8).
     # ------------------------------------------------------------------
     @app.get("/api/facility/summary")
     async def api_facility_summary(request: Request):

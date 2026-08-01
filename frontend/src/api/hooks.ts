@@ -428,9 +428,16 @@ export function useClearForDeployment() {
     // changes the inventory that decides whether the control should still
     // be offered. Without this the stale, already-taken action stays
     // clickable until the next 15s poll.
-    onSuccess: () => {
-      void queryClient.invalidateQueries({ queryKey: ['media-workloads-grouped'] })
-      void queryClient.invalidateQueries({ queryKey: ['media-workloads'] })
+    // RETURNED, not fired-and-forgotten: react-query keeps the mutation
+    // pending until this settles, so `busy` cannot fall before the fresh
+    // inventory has landed. With `void` the refetch raced the re-render and
+    // a stale Clear/Deploy could flash back during a slow NetBox read
+    // (GATE-S1-RV3 P2). The loop closes atomically or not at all.
+    onSuccess: async () => {
+      await Promise.all([
+        queryClient.invalidateQueries({ queryKey: ['media-workloads-grouped'] }),
+        queryClient.invalidateQueries({ queryKey: ['media-workloads'] }),
+      ])
     },
     mutationFn: ({ instance, reason }: { instance: string; reason: string }) =>
       apiCall<ClearForDeploymentResult>(

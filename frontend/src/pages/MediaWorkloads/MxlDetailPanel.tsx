@@ -70,6 +70,16 @@ export default function MxlDetailPanel() {
 
   return (
     <div className="rounded-lg border border-white/10 bg-black/20 p-4">
+      {/* A held frame must SAY it is held. Rendering cached numbers with no
+          label while the poll is paused presents a stale reading as a live
+          one — the comment above promised this label; now it exists
+          (GATE-S1-RV3 P2). */}
+      {!active && (
+        <div className="mb-3 rounded-lg border border-white/10 bg-black/30 px-3 py-2 text-sm text-muted">
+          Paused — showing the last reading. Resumes when this tab is visible
+          and reduced motion is off.
+        </div>
+      )}
       {!data.reachable && (
         <div className="mb-3 rounded-lg border border-amber-500/20 bg-amber-500/10 px-3 py-2 text-sm text-amber-200">
           No live-status sidecar is reachable right now.

@@ -92,8 +92,17 @@ function FacilityEntry({ data }: { data: ReturnType<typeof useFacilitySummary>['
   }
 
   if (!site.slug) {
+    // Both facts, not the first one that matched: a site with no slug AND
+    // dropped rows is two separate things wrong, and reporting only the
+    // link failure hides that what is shown is also incomplete
+    // (GATE-S1-RV3 P3).
     return (
       <div className="panel py-6 px-6">
+        {partial && (
+          <p className="mb-2 text-xs text-warn">
+            Some NetBox records could not be read — this facility may be incomplete.
+          </p>
+        )}
         <p className="text-sm text-muted">
           NetBox has a site record for &quot;{site.name}&quot; but no slug for it — the
           facility detail page cannot be linked to until one is set.

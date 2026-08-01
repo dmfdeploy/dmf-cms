@@ -133,6 +133,11 @@ interface FetchOpts {
   // Same idea for the clear POST: awaited before the response resolves, so
   // "a clear is pending" is an observable state rather than a race.
   clearDelay?: Promise<unknown>
+  /** Force the clear POST to fail, for the stage-level failure test. */
+  clearStatus?: number
+  /** Gate grouped reads after the Nth call, to test the slow-refetch race. */
+  groupedDelayAfter?: number
+  groupedGate?: Promise<unknown>
 }
 
 function mkFetch(opts: FetchOpts = {}) {
@@ -179,6 +184,9 @@ function mkFetch(opts: FetchOpts = {}) {
     if (url.endsWith('/api/catalog')) return json({ entries: catalog })
     if (url.endsWith('/api/media-workloads/grouped')) {
       calls.grouped += 1
+      if (opts.groupedGate && opts.groupedDelayAfter != null && calls.grouped > opts.groupedDelayAfter) {
+        await opts.groupedGate
+      }
       return json(groupedResponse)
     }
     if (url.endsWith('/api/facility/summary')) {
@@ -216,6 +224,7 @@ function mkFetch(opts: FetchOpts = {}) {
     if (url.match(/\/api\/media-workloads\/[^/]+\/clear$/)) {
       calls.clear.push({ url, init })
       if (opts.clearDelay) await opts.clearDelay
+      if (opts.clearStatus) return json({ error: 'nope' }, opts.clearStatus)
       return json(
         opts.clearResult ?? {
           instance: 'crosspoint-1',
@@ -754,10 +763,13 @@ describe('a successful clear closes its own loop', () => {
     fireEvent.click(within(provision).getByRole('button', { name: 'Confirm' }))
 
     // The fixture TRANSITIONS, as the real backend would: the instance is now
-    // cleared, so the next read no longer reports it as bootstrapped.
+    // cleared, so the next read no longer reports it as bootstrapped. With a
+    // SINGLE member now active and healthy the backend's derivation is
+    // `operate` (all_active + all_healthy), not `configure` — configure is
+    // what it returns while some member still lags.
     h.setWorkload(
       workload({
-        lifecycle: 'configure',
+        lifecycle: 'operate',
         instances: [instance({ requested_state: 'active', observed_state: 'running' })],
       }),
     )
@@ -769,6 +781,110 @@ describe('a successful clear closes its own loop', () => {
       expect(
         within(stageSection('Provision')).queryByRole('button', { name: 'Clear for deployment' }),
       ).toBeNull(),
+    )
+  })
+})
+
+describe("clearing one sibling never strands the other (GATE-S1-RV3 P1)", () => {
+  it('keeps the second bootstrapped instance clearable after the first is cleared', async () => {
+    // Codex's exact scenario. Clearing one member flips the backend
+    // derivation to configure (any_active wins), which used to withdraw the
+    // clear affordance from the rail and strand the remaining sibling with
+    // no path forward at all.
+    const h = mkFetch({
+      workload: workload({
+        lifecycle: 'provision',
+        instances: [
+          instance({ instance: 'mxl-a', requested_state: 'bootstrapped', observed_state: 'unknown' }),
+          instance({ instance: 'mxl-b', requested_state: 'bootstrapped', observed_state: 'unknown' }),
+        ],
+      }),
+    })
+    renderDetail()
+    await screen.findByRole('heading', { name: 'studio-a' })
+    expect(
+      within(stageSection('Provision')).getAllByRole('button', { name: 'Clear for deployment' }),
+    ).toHaveLength(2)
+
+    const provision = stageSection('Provision')
+    fireEvent.click(within(provision).getAllByRole('button', { name: 'Clear for deployment' })[0])
+    fireEvent.change(within(provision).getByRole('textbox'), { target: { value: 'go' } })
+    fireEvent.click(within(provision).getByRole('button', { name: 'Confirm' }))
+
+    // The backend now derives `configure`: one member active, one still not.
+    h.setWorkload(
+      workload({
+        lifecycle: 'configure',
+        instances: [
+          instance({ instance: 'mxl-a', requested_state: 'active', observed_state: 'running' }),
+          instance({ instance: 'mxl-b', requested_state: 'bootstrapped', observed_state: 'unknown' }),
+        ],
+      }),
+    )
+
+    // The surviving sibling keeps a reachable clear path, and the rail still
+    // reports the backend's position honestly.
+    await waitFor(() =>
+      expect(
+        within(stageSection('Provision')).queryAllByRole('button', { name: 'Clear for deployment' }),
+      ).toHaveLength(1),
+    )
+  })
+})
+
+describe('failure and loop-closure are visible and atomic', () => {
+  it('shows a clear failure at stage level, after the confirm panel closes', async () => {
+    const h = mkFetch({
+      workload: workload({
+        lifecycle: 'provision',
+        instances: [instance({ requested_state: 'bootstrapped', observed_state: 'unknown' })],
+      }),
+      clearStatus: 500,
+    })
+    renderDetail()
+    await screen.findByRole('heading', { name: 'studio-a' })
+
+    const provision = stageSection('Provision')
+    fireEvent.click(within(provision).getByRole('button', { name: 'Clear for deployment' }))
+    fireEvent.change(within(provision).getByRole('textbox'), { target: { value: 'go' } })
+    fireEvent.click(within(provision).getByRole('button', { name: 'Confirm' }))
+
+    // Panel closed, failure still stated — no re-arming required to see it.
+    await waitFor(() =>
+      expect(within(stageSection('Provision')).getByText(/was not recorded/)).toBeTruthy(),
+    )
+    expect(within(stageSection('Provision')).queryByRole('textbox')).toBeNull()
+    expect(h.calls.clear).toHaveLength(1)
+  })
+
+  it('holds the write pending until the refreshed inventory lands', async () => {
+    // The slow-refetch interval: with a fire-and-forget invalidation, `busy`
+    // fell first and a stale Clear/Deploy flashed back while NetBox was
+    // still being re-read.
+    let releaseGrouped: (v: unknown) => void = () => {}
+    const h = mkFetch({
+      workload: workload({
+        lifecycle: 'provision',
+        instances: [instance({ requested_state: 'bootstrapped', observed_state: 'unknown' })],
+      }),
+      groupedDelayAfter: 1,
+      groupedGate: new Promise((r) => { releaseGrouped = r }),
+    })
+    renderDetail()
+    await screen.findByRole('heading', { name: 'studio-a' })
+
+    const provision = stageSection('Provision')
+    fireEvent.click(within(provision).getByRole('button', { name: 'Clear for deployment' }))
+    fireEvent.change(within(provision).getByRole('textbox'), { target: { value: 'go' } })
+    fireEvent.click(within(provision).getByRole('button', { name: 'Confirm' }))
+
+    await waitFor(() => expect(h.calls.clear).toHaveLength(1))
+    // While the re-read is outstanding the write surface stays withdrawn.
+    expect(within(stageSection('Provision')).queryByRole('button', { name: /Deploy/ })).toBeNull()
+
+    releaseGrouped(null)
+    await waitFor(() =>
+      expect(within(stageSection('Provision')).queryByRole('button', { name: /Deploy/ })).not.toBeNull(),
     )
   })
 })

@@ -180,6 +180,16 @@ export default function ProvisionStage({
               </div>
             ))}
           </div>
+          {/* Failure is rendered by the STAGE, so it stays visible after the
+              confirm panel closes. Inside the armed branch it vanished with
+              the panel, which meant a failed write looked like nothing had
+              happened at all (GATE-S1-RV3 P2, item 16). */}
+          {clearMutation.isError && (
+            <p className="mt-2 text-xs text-red-300">
+              The desired state was not recorded — nothing changed. Check your
+              access, then retry.
+            </p>
+          )}
           {lastClearResult && (
             <p className="mt-2 text-xs text-green-300">
               {lastClearResult.instance}: requested state is now {lastClearResult.requested_state} (was{' '}

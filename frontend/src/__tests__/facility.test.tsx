@@ -289,6 +289,34 @@ describe('partial NetBox data is stated, not swallowed', () => {
     expect(screen.getByText('DMF Lab')).toBeTruthy()
   })
 
+  it('states BOTH faults when the site also has no slug', async () => {
+    // Ordering matters: the no-slug branch returned early and swallowed the
+    // partial warning, so the operator learned the link was broken but not
+    // that the data was incomplete (GATE-S1-RV3 P3).
+    stubFetch({
+      '/api/facility/summary': summary({
+        reason: 'netbox-rows-unparseable',
+        sites: [{ name: 'DMF Lab', slug: null, device_count: 0 }],
+      }),
+    })
+    renderWithQuery(<MemoryRouter><Facility /></MemoryRouter>)
+    expect(await screen.findByText(/Some NetBox records could not be read/)).toBeTruthy()
+    expect(screen.getByText(/no slug for it/)).toBeTruthy()
+  })
+
+  it('states only the slug fault when the rows were all readable', async () => {
+    // The other ordering, so neither message becomes unconditional.
+    stubFetch({
+      '/api/facility/summary': summary({
+        reason: '',
+        sites: [{ name: 'DMF Lab', slug: null, device_count: 0 }],
+      }),
+    })
+    renderWithQuery(<MemoryRouter><Facility /></MemoryRouter>)
+    expect(await screen.findByText(/no slug for it/)).toBeTruthy()
+    expect(screen.queryByText(/could not be read/)).toBeNull()
+  })
+
   it('says nothing of the sort when every row parsed', async () => {
     stubFetch({ '/api/facility/summary': summary() })
     renderWithQuery(<MemoryRouter><Facility /></MemoryRouter>)
