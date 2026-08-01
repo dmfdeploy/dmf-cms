@@ -116,7 +116,7 @@ from .authentik import (
     list_groups,
     list_users,
 )
-from .awx import AWXAPIError, AWXAutoscaleError, AWXJobInfo, AWXTransportError, list_job_templates, launch_job, get_job, get_job_status, get_job_events_for_task, wait_for_job, lookup_job_template_by_name, list_recent_jobs, find_active_job_for_template, ensure_awx_awake, call_with_readiness_retry
+from .awx import AWXAPIError, AWXAutoscaleError, AWXJobInfo, AWXTransportError, list_job_templates, launch_job, get_job, get_job_status, get_job_events_for_task, wait_for_job, lookup_job_template_by_name, list_recent_jobs, find_active_job_for_template, ensure_awx_awake, call_with_readiness_retry, is_connection_refused
 from .catalog import CatalogEntry, load_catalog_entries, get_lifecycle_status, load_topology_instance, CATALOG_DIR
 from .catalog import _netbox_service_names as _catalog_service_names
 from .contracts import AppContract, load_app_contract
@@ -3540,10 +3540,35 @@ def create_app(settings: Settings | None = None, contract: AppContract | None = 
     # ------------------------------------------------------------------
     @app.get("/api/changes/jobs")
     async def api_changes_jobs(request: Request):
+        """Recent facility-automation runs, fail-soft (dmfdeploy/dmfdeploy#285).
+
+        Mirrors the ``/api/workspace/health`` contract: every outcome is a
+        200 with an explicit ``reason`` token, never a raw 500 (Constitution
+        Arts. 1+8 — degraded states are designed content, not errors). The
+        widget used to collapse *every* failure into "temporarily
+        unavailable. Retrying automatically.", which read as a console bug
+        on an env where AWX is simply scaled to zero on purpose.
+
+        Reason tokens, all rendered by ``lib/changesState.ts``:
+          ``""``                — AWX answered; ``jobs`` is authoritative
+                                  (an empty list here genuinely means no
+                                  matching runs).
+          ``awx-unconfigured``  — no AWX wired into this env.
+          ``awx-not-running``   — the API refused the connection while
+                                  autoscale is enabled. Deliberately NOT
+                                  called "asleep": see
+                                  ``awx.is_connection_refused`` — we cannot
+                                  discriminate asleep from stopped without
+                                  reading ``spec.replicas``, which is AWX-layer
+                                  state the console does not own.
+          ``awx-unreachable``   — any other failure (DNS, TLS, timeout, 5xx,
+                                  auth). Honest error state; the client keeps
+                                  its retry cadence.
+        """
         if not _require_user(request):
             return JSONResponse({"error": "unauthorized"}, status_code=401)
         if not settings.awx.configured:
-            return JSONResponse({"jobs": []})
+            return JSONResponse({"jobs": [], "reason": "awx-unconfigured"})
         try:
             jobs_data = list_recent_jobs(
                 api_url=settings.awx.api_url,
@@ -3571,9 +3596,14 @@ def create_app(settings: Settings | None = None, contract: AppContract | None = 
                 if j.get("name", "") in allowed
             ]
 
-            return JSONResponse({"jobs": jobs})
+            return JSONResponse({"jobs": jobs, "reason": ""})
         except Exception as exc:
-            return JSONResponse({"error": f"Failed to fetch jobs: {exc}"}, status_code=500)
+            # Autoscale enabled + refused connection is the scale-to-zero
+            # signature. Anything else is an honest unreachable.
+            refused = settings.awx_autoscale.enabled and is_connection_refused(exc)
+            reason = "awx-not-running" if refused else "awx-unreachable"
+            logger.warning("recent changes: AWX job fetch failed (%s): %s", reason, exc)
+            return JSONResponse({"jobs": [], "reason": reason})
 
     @app.get("/api/changes/commits")
     async def api_changes_commits(request: Request):

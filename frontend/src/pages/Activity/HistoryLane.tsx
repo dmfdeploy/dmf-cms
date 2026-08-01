@@ -2,6 +2,7 @@ import { useChangesJobs, useChangesCommits, useChangesPulls } from '@/api/hooks'
 import { GitCommit, GitPullRequest, MousePointerClick, Zap, ExternalLink } from 'lucide-react'
 import { useActivityStore, type ConsoleActionType } from '../../store/activity'
 import { describeJob, jobOutcome } from '../../lib/labels'
+import { classifyChanges, changesEmptyCopy } from '../../lib/changesState'
 
 // Human title per console-originated action (#185 WP-E: AWX writes join the
 // clear record in this lane).
@@ -31,6 +32,9 @@ export default function HistoryLane() {
   const commits = useChangesCommits()
   const pulls = useChangesPulls()
   const consoleActions = useActivityStore((s) => s.records)
+  // Same classifier as the Workspace RecentChanges widget — one endpoint,
+  // one set of designed states (Art. 1).
+  const jobsState = classifyChanges(jobs)
 
   const isLoading = jobs.isLoading || commits.isLoading || pulls.isLoading
 
@@ -97,10 +101,14 @@ export default function HistoryLane() {
         <div className="divide-y divide-panel">
           {isLoading ? (
             <div className="px-6 py-8 text-center text-muted text-sm">Loading jobs...</div>
-          ) : jobs.data?.jobs?.length === 0 ? (
-            <div className="px-6 py-8 text-center text-muted text-sm">No recent jobs</div>
+          ) : jobsState.jobs.length === 0 ? (
+            // Was a bare "No recent jobs", which claimed AWX had answered
+            // even when it had not. The token now names the real cause.
+            <div className="px-6 py-8 text-center text-muted text-sm">
+              {changesEmptyCopy(jobsState.phase)}
+            </div>
           ) : (
-            jobs.data?.jobs?.slice(0, 10).map((job: typeof jobs.data.jobs[0]) => (
+            jobsState.jobs.slice(0, 10).map((job) => (
               <div key={job.id} className="px-6 py-4 hover:bg-panel/30 transition">
                 <div className="flex items-start justify-between">
                   <div className="flex-1">
