@@ -3880,6 +3880,21 @@ def create_app(settings: Settings | None = None, contract: AppContract | None = 
             if ingress_host and not ingress_host.endswith(".example.com")
             else None
         )
+        # umbrella #285 S3: the Plan stage's capacity comparison needs each
+        # entry's declared demand alongside everything else this payload
+        # already carries. Reuse capacity.py's own fail-closed reader
+        # (read_entry_demand) rather than re-parsing provision.resources.requests
+        # here — one parser, one grammar, one place a catalog author's malformed
+        # quantity gets caught, instead of two that could quietly drift apart.
+        # `demand` is None for both "no resources block declared" and
+        # "declared but unparseable" (read_entry_demand's own two refusal
+        # reasons collapse to one signal here) — the console must never guess
+        # a demand the catalog didn't actually declare, so this never coerces
+        # a refusal into a fabricated 0. Never raises: read_entry_demand is
+        # itself fail-closed end to end, so a malformed catalog entry degrades
+        # this one field to null, never the whole /api/catalog response.
+        demand, _demand_refusal_reason = capacity.read_entry_demand(provision)
+        provision_demand = {"cpu_m": demand[0], "mem_b": demand[1]} if demand else None
         return {
             "key": entry.key,
             "display_name": entry.display_name,
@@ -3900,6 +3915,7 @@ def create_app(settings: Settings | None = None, contract: AppContract | None = 
             "dependencies": entry.dependencies or [],
             # Link-out to the function's own console when it declares a real host.
             "ingress_url": ingress_url,
+            "provision_demand": provision_demand,
         }
 
     @app.get("/api/catalog")

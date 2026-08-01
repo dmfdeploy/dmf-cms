@@ -150,7 +150,36 @@ describe('busy and unknown suppressions reach every step', () => {
     expect(current).toBeNull()
     expect(undetermined).toBe(true)
     expect(offFlow).toBe(false)
-    for (const id of FLOW_STEPS) expect(steps[id]).toBe('locked')
+    // No step is action-bearing, so none is open — that is the suppression.
+    for (const id of FLOW_STEPS) expect(steps[id]).not.toBe('open')
+    // The three steps that describe a RUNNING thing lock: with no readable
+    // position there is nothing true to say about runtime.
+    for (const id of ['provision', 'configure', 'finalise'] as const) {
+      expect(steps[id]).toBe('locked')
+    }
+  })
+
+  it('keeps the record steps readable on an undetermined position, without claiming completion', () => {
+    // Design and Plan describe CHOICES, not runtime. S1 kept them readable
+    // on an unplaceable workload on purpose, and the flow must not quietly
+    // regress that into a lock: locking them hides truth the console holds.
+    // They are `record`, NOT `complete` — the latter would assert the
+    // workload got past them, which is exactly what is unknown here.
+    const { steps } = classifyWorkloadFlow({ lifecycle: 'unknown' })
+    expect(steps.design).toBe('record')
+    expect(steps.plan).toBe('record')
+    expect(isStepOpenable(steps.design)).toBe(true)
+    expect(isStepOpenable(steps.plan)).toBe(true)
+  })
+
+  it('never reports `record` once the position is readable', () => {
+    // `record` exists only to survive an unreadable position. Anywhere else
+    // it would be a third way of saying "behind the workload", competing
+    // with `complete` for the same meaning.
+    for (const input of ALL_INPUTS.filter((i) => i.lifecycle !== 'unknown')) {
+      const { steps } = classifyWorkloadFlow(input)
+      for (const id of FLOW_STEPS) expect(steps[id]).not.toBe('record')
+    }
   })
 })
 

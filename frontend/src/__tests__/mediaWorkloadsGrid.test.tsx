@@ -9,11 +9,12 @@
  * tile (reason required + Activity record).
  */
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
-import { act, cleanup, render, screen, fireEvent } from '@testing-library/react'
+import { act, cleanup, render, screen, fireEvent, within } from '@testing-library/react'
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query'
 import { MemoryRouter, Route, Routes } from 'react-router-dom'
 import MediaWorkloads from '../pages/MediaWorkloads'
 import WorkloadDetail from '../pages/MediaWorkloads/WorkloadDetail'
+import WorkloadOperate from '../pages/MediaWorkloads/Operate'
 import {
   LIVE_TILE_CAP,
   MODAL_STATUS_POLL_MS,
@@ -200,6 +201,14 @@ function mkFetch(opts: HarnessOpts) {
 // lifecycle rail, so the tests follow them there rather than being deleted —
 // the polling bounds and focus management below are exactly the kind of
 // reviewed behaviour a relocation quietly loses if nothing keeps watching.
+//
+// ARC B moved a subset AGAIN, for the same reason and with the same
+// treatment. Operate left the workload flow page onto its own monitoring
+// route (operator direction 2026-08-01), taking the tile grid, the live
+// modal and every polling bound with it — so those blocks now mount
+// renderOperatePage() and the switch/clear blocks stay here. Nothing was
+// deleted in the move: if a bound below stops being asserted, it is because
+// someone removed it deliberately, not because a page got renamed.
 function renderPage() {
   const queryClient = new QueryClient({ defaultOptions: { queries: { retry: false } } })
   render(
@@ -211,6 +220,38 @@ function renderPage() {
       </MemoryRouter>
     </QueryClientProvider>,
   )
+}
+
+/**
+ * The Operate route — where the live view, the modal and every polling bound
+ * moved in Arc B. Mounted at the real path so useParams resolves the slug
+ * exactly as the app does.
+ */
+function renderOperatePage(slug = 'test') {
+  const queryClient = new QueryClient({ defaultOptions: { queries: { retry: false } } })
+  render(
+    <QueryClientProvider client={queryClient}>
+      <MemoryRouter initialEntries={[`/media-workloads/${slug}/operate`]}>
+        <Routes>
+          <Route path="/media-workloads/:slug/operate" element={<WorkloadOperate />} />
+        </Routes>
+      </MemoryRouter>
+    </QueryClientProvider>,
+  )
+}
+
+/**
+ * ARC B: the flow folds — only the step the workload is AT is pinned open.
+ * A test reaching into another step opens it the way an operator would, by
+ * clicking the same Review control. It cannot open a locked step, which is
+ * what keeps these assertions honest about what the gate permits.
+ */
+function openStep(label: string): HTMLElement {
+  const heading = screen.getByRole('heading', { name: label, level: 2 })
+  const section = heading.closest('section') as HTMLElement
+  const review = within(section).queryByRole('button', { name: 'Review' })
+  if (review) fireEvent.click(review)
+  return heading.closest('section') as HTMLElement
 }
 
 /** The list page itself, for the entry-tile behaviours that stayed here. */
@@ -264,7 +305,7 @@ describe('grid: deterministic order + display-name join', () => {
         inst({ instance: 'mxl-b', function_key: 'unknown-fn' }),
       ],
     })
-    renderPage()
+    renderOperatePage()
 
     // display_name from catalog for known keys; fallback to function_key.
     expect(await screen.findAllByText('MXL Video Test View')).toHaveLength(2)
@@ -287,7 +328,7 @@ describe('polling bounds (codex P2/P3)', () => {
   it('does not poll status or render a live thumbnail when the tab is hidden', async () => {
     Object.defineProperty(document, 'visibilityState', { value: 'hidden', configurable: true })
     const { statusCalls } = mkFetch({})
-    renderPage()
+    renderOperatePage()
 
     await screen.findByText('MXL Video Test View')
     // No live thumbnail (placeholder shown instead) and status never fetched.
@@ -299,7 +340,7 @@ describe('polling bounds (codex P2/P3)', () => {
     // First: motion allowed (matchMedia absent -> not reduced).
     vi.useFakeTimers()
     mkFetch({})
-    renderPage()
+    renderOperatePage()
     await settle() // settle initial status fetch
 
     const img = screen.getByAltText(/Live preview of/) as HTMLImageElement
@@ -322,7 +363,7 @@ describe('polling bounds (codex P2/P3)', () => {
     }))
     vi.useFakeTimers()
     const rm = mkFetch({})
-    renderPage()
+    renderOperatePage()
     await settle()
 
     const img2 = screen.getByAltText(/Live preview of/) as HTMLImageElement
@@ -341,7 +382,7 @@ describe('polling bounds (codex P2/P3)', () => {
       inst({ instance: `mxl-${String(i).padStart(2, '0')}` }),
     )
     const cap = mkFetch({ instances: many })
-    renderPage()
+    renderOperatePage()
     await settle()
 
     const imgs = screen.getAllByAltText(/Live preview of/) as HTMLImageElement[]
@@ -371,7 +412,7 @@ describe('polling bounds (codex P2/P3)', () => {
     const h = mkFetch({
       instances: [inst({ instance: 'mxl-a' }), inst({ instance: 'mxl-b' })],
     })
-    renderPage()
+    renderOperatePage()
     await settle()
     await settle(STATUS_POLL_MS * 2)
     const bBefore = h.statusCalls['mxl-b'] ?? 0
@@ -394,7 +435,7 @@ describe('polling bounds (codex P2/P3)', () => {
   it('never hits the retired legacy aggregate on the live path', async () => {
     vi.useFakeTimers()
     const h = mkFetch({})
-    renderPage()
+    renderOperatePage()
     await settle()
     await settle(STATUS_POLL_MS * 3)
 
@@ -416,7 +457,7 @@ describe('polling bounds (codex P2/P3)', () => {
 describe('fixed 16:9 box (hard gate 5)', () => {
   it('swaps a dropped frame for a placeholder without removing the aspect box', async () => {
     mkFetch({})
-    renderPage()
+    renderOperatePage()
     const img = (await screen.findByAltText(/Live preview of/)) as HTMLImageElement
     const box = img.parentElement as HTMLElement
     expect(box.className).toContain('aspect-video')
@@ -432,7 +473,7 @@ describe('fixed 16:9 box (hard gate 5)', () => {
 describe('live modal', () => {
   it('opens on tile click and closes on Escape', async () => {
     mkFetch({})
-    renderPage()
+    renderOperatePage()
     const tile = (await screen.findByText('MXL Video Test View')).closest('[role="button"]')!
     fireEvent.click(tile)
 
@@ -448,7 +489,7 @@ describe('live modal', () => {
 
   it('moves focus into the dialog on open (aria-modal focus management)', async () => {
     mkFetch({})
-    renderPage()
+    renderOperatePage()
     const tile = (await screen.findByText('MXL Video Test View')).closest('[role="button"]')!
     fireEvent.click(tile)
     const dialog = await screen.findByRole('dialog')
@@ -460,7 +501,7 @@ describe('live modal', () => {
     expect(MODAL_STATUS_POLL_MS).toBe(200) // the flow stats/head index must tick at 200ms, not slower
     vi.useFakeTimers()
     const h = mkFetch({})
-    renderPage()
+    renderOperatePage()
     await settle()
 
     const tile = screen.getByText('MXL Video Test View').closest('[role="button"]')!
@@ -554,14 +595,16 @@ describe('switch source on the Configure stage (umbrella #201 WP5)', () => {
   it('renders no switch control when the instance carries no topology', async () => {
     mkFetch({})
     renderPage()
-    await screen.findAllByText('Configure') // rail pill + stage card
+    await screen.findAllByText('Configure') // strip chip + step header
+    openStep('Configure')
     expect(screen.queryByRole('button', { name: 'Switch source' })).toBeNull()
   })
 
   it('lists the topology\'s OTHER sources only, and shows the current one before arming', async () => {
     mkFetch({ topology: topologyMxlA() })
     renderPage()
-    await screen.findAllByText('Configure') // rail pill + stage card
+    await screen.findAllByText('Configure') // strip chip + step header
+    openStep('Configure')
 
     expect(await screen.findByText('source-a')).toBeTruthy() // current active source shown
 
@@ -584,7 +627,8 @@ describe('switch source on the Configure stage (umbrella #201 WP5)', () => {
       }),
     })
     renderPage()
-    await screen.findAllByText('Configure') // rail pill + stage card
+    await screen.findAllByText('Configure') // strip chip + step header
+    openStep('Configure')
 
     expect(await screen.findByText('source-b')).toBeTruthy() // the OBSERVED source, shown
 
@@ -604,7 +648,8 @@ describe('switch source on the Configure stage (umbrella #201 WP5)', () => {
       }),
     })
     renderPage()
-    await screen.findAllByText('Configure') // rail pill + stage card
+    await screen.findAllByText('Configure') // strip chip + step header
+    openStep('Configure')
 
     // GATE-S1 P2c: fail-closed is now ABSENCE, not a disabled button. A
     // greyed control still advertises an affordance the console will refuse,
@@ -626,7 +671,8 @@ describe('switch source on the Configure stage (umbrella #201 WP5)', () => {
       }),
     })
     renderPage()
-    await screen.findAllByText('Configure') // rail pill + stage card
+    await screen.findAllByText('Configure') // strip chip + step header
+    openStep('Configure')
 
     // GATE-S1 P2c: fail-closed is now ABSENCE, not a disabled button. A
     // greyed control still advertises an affordance the console will refuse,
@@ -659,7 +705,8 @@ describe('switch source on the Configure stage (umbrella #201 WP5)', () => {
       },
     })
     renderPage()
-    await screen.findAllByText('Configure') // rail pill + stage card
+    await screen.findAllByText('Configure') // strip chip + step header
+    openStep('Configure')
 
     fireEvent.click(await screen.findByRole('button', { name: 'Switch source' }))
     const confirm = screen.getByRole('button', { name: 'Confirm switch' }) as HTMLButtonElement
@@ -710,7 +757,8 @@ describe('switch source on the Configure stage (umbrella #201 WP5)', () => {
       },
     })
     renderPage()
-    await screen.findAllByText('Configure') // rail pill + stage card
+    await screen.findAllByText('Configure') // strip chip + step header
+    openStep('Configure')
 
     fireEvent.click(await screen.findByRole('button', { name: 'Switch source' }))
     fireEvent.change(screen.getByRole('textbox'), { target: { value: 'go' } })
@@ -750,7 +798,8 @@ describe('switch source on the Configure stage (umbrella #201 WP5)', () => {
       },
     })
     renderPage()
-    await screen.findAllByText('Configure') // rail pill + stage card
+    await screen.findAllByText('Configure') // strip chip + step header
+    openStep('Configure')
 
     fireEvent.click(await screen.findByRole('button', { name: 'Switch source' }))
     fireEvent.change(screen.getByRole('textbox'), { target: { value: 'go' } })
@@ -785,6 +834,10 @@ describe('switch source on the Configure stage (umbrella #201 WP5)', () => {
 
     await settle(0) // let the Configure stage's topology fetch resolve
 
+    // Arc B: no step is pinned at lifecycle=operate, so Configure is folded
+    // until opened — the same click the operator makes.
+    openStep('Configure')
+    await settle(0) // flush the disclosure re-render under fake timers
     fireEvent.click(screen.getByRole('button', { name: 'Switch source' }))
 
     const confirm = screen.getByRole('button', { name: 'Confirm switch' }) as HTMLButtonElement
@@ -816,7 +869,10 @@ describe('grouped endpoint + degraded rendering (P3)', () => {
   it('requests /api/media-workloads/grouped (not the flat endpoint)', async () => {
     const { fetchMock } = mkFetch({})
     renderPage()
-    await screen.findByText('MXL Video Test View')
+    // Anchored on the flow page's own heading rather than a tile display
+    // name: the tiles moved to the Operate route in Arc B, and this test is
+    // about which inventory endpoint the page reads, not about tiles.
+    await screen.findByRole('heading', { name: 'test', level: 1 })
 
     const urls = fetchMock.mock.calls.map(
       (c: [RequestInfo | URL, RequestInit?]) =>
@@ -877,6 +933,179 @@ describe('grouped endpoint + degraded rendering (P3)', () => {
 })
 
 
+// umbrella #285 addendum (operator direction 2026-08-01): the index-page
+// tile badge, the "Create media workload" entry point, and the Unassigned
+// group's disposal explanation. All three render on the LIST page, so these
+// tests drive renderListPage() (like the grouped/degraded describe above),
+// not renderPage() (which mounts WorkloadDetail at a fixed slug).
+//
+// mkFetch's harness bakes a single workload named 'test' into the grouped
+// response, which cannot express multiple workloads or a distinct
+// 'unassigned' slug/name — so, exactly like the existing "degraded does not
+// blank page" test above, these stub fetch directly.
+function mkListFetch(workloads: MediaWorkloadsGroupedResponse['workloads']) {
+  const fetchMock = vi.fn(async (input: RequestInfo | URL) => {
+    const url = (typeof input === 'string' ? input : (input as Request).url).toString()
+    if (url.endsWith('/api/catalog')) return json({ entries: [catalogEntry()] })
+    if (url.endsWith('/api/media-workloads/grouped')) {
+      const body: MediaWorkloadsGroupedResponse = {
+        configured: true,
+        degraded: false,
+        scope: [],
+        workloads,
+        invalid_instances: [],
+      }
+      return json(body)
+    }
+    // Live-preview status polling isn't under test here; answer with an
+    // unavailable sidecar so no tile claims a live thumbnail to churn.
+    if (url.match(/\/api\/media-workloads\/[^/]+\/mxl\/status/)) {
+      return json({ available: false, reason: 'no-sidecar' })
+    }
+    return json({})
+  })
+  vi.stubGlobal('fetch', fetchMock)
+  return { fetchMock }
+}
+
+describe('tile lifecycle badge grammar (umbrella #285 addendum)', () => {
+  it.each([
+    ['provision', 'planned'],
+    ['configure', 'provisioned'],
+    ['operate', 'configured'],
+    ['unknown', 'unknown'],
+  ] as const)('renders the resting participle for position %s', async (lifecycle, participle) => {
+    mkListFetch([
+      {
+        slug: 'test',
+        name: 'test',
+        lifecycle,
+        health: 'ok',
+        instances: [{ ...inst(), workload_assignment: 'ok' }],
+        functions: [],
+      },
+    ])
+    renderListPage()
+
+    expect(await screen.findByText(participle)).toBeTruthy()
+    // The raw backend token must not leak onto the tile in its place — the
+    // whole point of the grammar helper is that the reader never sees
+    // "provision"/"configure"/"operate" printed as if they were labels.
+    if (lifecycle !== participle) {
+      expect(screen.queryByText(lifecycle, { selector: 'span' })).toBeNull()
+    }
+  })
+
+  it('does NOT render a progressive ("provisioning") form for a reconcile_pending member', async () => {
+    // The index page's grouped payload carries no job overlay, so a member
+    // stuck disagreeing between requested and observed must never read as
+    // in-flight progress — see lifecycleBadge's docstring (workloadFlow.ts)
+    // for the exact failure this pins: a crashed pod that will never start
+    // still holds reconcile_pending=true forever, and "provisioning" would
+    // present that stall as motion.
+    mkListFetch([
+      {
+        slug: 'test',
+        name: 'test',
+        lifecycle: 'configure',
+        health: 'ok',
+        instances: [
+          { ...inst({ requested_state: 'active', observed_state: 'failing', reconcile_pending: true }), workload_assignment: 'ok' },
+        ],
+        functions: [],
+      },
+    ])
+    renderListPage()
+
+    // Resting form for 'configure' is 'provisioned' — present.
+    expect(await screen.findByText('provisioned')).toBeTruthy()
+    // The progressive form for the same stage must be absent everywhere.
+    expect(screen.queryByText('provisioning')).toBeNull()
+    // The disagreement is instead named honestly, as its own marker.
+    expect(screen.getByText('reconciling')).toBeTruthy()
+  })
+
+  it('renders no reconciling marker when every member is converged', async () => {
+    mkListFetch([
+      {
+        slug: 'test',
+        name: 'test',
+        lifecycle: 'operate',
+        health: 'ok',
+        instances: [{ ...inst(), workload_assignment: 'ok' }], // reconcile_pending: false
+        functions: [],
+      },
+    ])
+    renderListPage()
+
+    expect(await screen.findByText('configured')).toBeTruthy()
+    expect(screen.queryByText('reconciling')).toBeNull()
+  })
+})
+
+describe('"Create media workload" entry point (umbrella #285 addendum)', () => {
+  it('links to /media-workloads/new', async () => {
+    mkListFetch([])
+    renderListPage()
+
+    // Waits for the grouped fetch to resolve (empty-scope designed state)
+    // before asserting, so the link is checked in its settled render.
+    await screen.findByText('No Media Function instances in your scope.')
+    const link = screen.getByRole('link', { name: 'Create media workload' }) as HTMLAnchorElement
+    expect(link.getAttribute('href')).toBe('/media-workloads/new')
+  })
+})
+
+describe('Unassigned group disposal explanation (umbrella #285 addendum)', () => {
+  it('renders the designed explanation and no disposal button', async () => {
+    mkListFetch([
+      {
+        slug: 'unassigned',
+        name: 'Unassigned',
+        lifecycle: 'unknown',
+        health: 'ok',
+        instances: [
+          { ...inst({ instance: 'stray-1' }), workload_assignment: 'unassigned' },
+        ],
+        functions: [],
+      },
+    ])
+    renderListPage()
+
+    expect(await screen.findByText('About the Unassigned group')).toBeTruthy()
+    // (a) what these entries are
+    expect(screen.getByText(/recorded in the facility source of truth/)).toBeTruthy()
+    // (b) the console cannot dispose, and why
+    expect(screen.getByText(/cannot remove one of these records/)).toBeTruthy()
+    expect(screen.getByText(/holds no seam to/)).toBeTruthy()
+    // (c) what does dispose of one, and that teardown does not
+    expect(screen.getByText(/deleting the service record in the facility/)).toBeTruthy()
+    expect(screen.getByText(/teardown will not do this/)).toBeTruthy()
+
+    // Never a disabled/dead "Dispose" control — no button naming disposal
+    // exists anywhere on the page.
+    expect(screen.queryByRole('button', { name: /dispose/i })).toBeNull()
+    expect(screen.queryByText(/coming soon/i)).toBeNull()
+  })
+
+  it('renders nothing extra when there is no unassigned group', async () => {
+    mkListFetch([
+      {
+        slug: 'test',
+        name: 'test',
+        lifecycle: 'operate',
+        health: 'ok',
+        instances: [{ ...inst(), workload_assignment: 'ok' }],
+        functions: [],
+      },
+    ])
+    renderListPage()
+
+    await screen.findByText('test')
+    expect(screen.queryByText('About the Unassigned group')).toBeNull()
+  })
+})
+
 describe('bounds are universal, including the fallback panel (GATE-S1-RV)', () => {
   it('does not poll the legacy aggregate while the tab is hidden', async () => {
     // The live_view=false fallback was the last unbounded 200ms poller. It
@@ -884,7 +1113,7 @@ describe('bounds are universal, including the fallback panel (GATE-S1-RV)', () =
     Object.defineProperty(document, 'visibilityState', { value: 'hidden', configurable: true })
     vi.useFakeTimers()
     const h = mkFetch({ instances: [inst({ instance: 'mxl-a', live_view: false })] })
-    renderPage()
+    renderOperatePage()
     await settle()
     await settle(STATUS_POLL_MS * 3)
 

@@ -1,6 +1,14 @@
-import { useId, useState, type ReactNode } from 'react'
+import { createContext, useId, useState, type ReactNode } from 'react'
 import type { FlowStepState } from '../../lib/workloadFlow'
 import { isStepOpenable } from '../../lib/workloadFlow'
+
+/**
+ * True for anything rendered inside a flow step. stages/StageCard.tsx reads
+ * it and suppresses its own header/badge, so a stage panel contributes
+ * content here and full chrome anywhere else — see StageCard's docstring
+ * for why the flag lives in context rather than in a prop.
+ */
+export const InsideFlowStep = createContext(false)
 
 /**
  * One step of the guided sequential flow (umbrella #285, operator direction
@@ -16,24 +24,37 @@ import { isStepOpenable } from '../../lib/workloadFlow'
  *              control: a locked step provably bears no action at all
  *              (lib/workloadFlow.ts pins that as a property), so there is
  *              nothing here to disable.
- *   current  — the operator's work right now. Open, and not collapsible:
+ *   pinned   — the workload's POSITION. Open, and not collapsible:
  *              collapsing the thing you are being asked to do is a way to
  *              lose it.
- *   complete } reviewable. Collapsed by default so the flow reads as a
- *   open     } path rather than a wall, and expandable because the operator
+ *   others   — reviewable, collapsed by default so the flow reads as a path
+ *              rather than a wall, and expandable because the operator
  *              direction is explicit that completed stages remain
- *              reviewable. `open` additionally carries a live action, so it
- *              advertises that in its summary rather than hiding it behind
- *              a fold the operator has no reason to suspect.
+ *              reviewable. An `open` step additionally carries a live
+ *              action, so it advertises that in its summary rather than
+ *              hiding it behind a fold the operator has no reason to
+ *              suspect.
  *
- * The step NUMBER is passed in rather than derived here so this component
- * never has an opinion about flow order — lib/workloadFlow.ts owns that.
+ * WHY `pinned` IS A PROP AND NOT INFERRED FROM `state`. The obvious version
+ * of this component expanded whichever step read `current`. That is wrong,
+ * and the existing S1 tests caught it: a workload sitting AT Configure has
+ * a Configure step that bears switch-source, so the flow reports it `open`
+ * rather than `current` — affordance outranks position in that ladder by
+ * design. Keying disclosure off the state string therefore folded away the
+ * exact control the operator had navigated there to use. Position and
+ * affordance are different questions, and the caller — which has both
+ * answers — passes the one that governs disclosure.
+ *
+ * The step NUMBER is likewise passed in rather than derived here, so this
+ * component never has an opinion about flow order; lib/workloadFlow.ts owns
+ * that.
  */
 
 const STATE_LABEL: Record<FlowStepState, string> = {
   current: 'Now',
   open: 'Ready',
   complete: 'Done',
+  record: 'Record',
   locked: 'Locked',
 }
 
@@ -41,6 +62,7 @@ const STATE_BADGE_CLASS: Record<FlowStepState, string> = {
   current: 'bg-accent/20 text-accent',
   open: 'bg-green-900/30 text-green-300',
   complete: 'bg-white/10 text-muted',
+  record: 'bg-white/10 text-muted',
   locked: 'bg-white/5 text-muted',
 }
 
@@ -48,22 +70,40 @@ const STATE_PANEL_CLASS: Record<FlowStepState, string> = {
   current: 'border-accent/50',
   open: 'border-green-500/30',
   complete: 'border-white/10',
+  record: 'border-white/10',
   locked: 'border-dashed border-white/10',
 }
 
 export default function FlowStep({
+  anchorId,
   number,
   label,
   state,
+  pinned,
   lockedReason,
   summary,
+  startExpanded,
   children,
 }: {
+  /**
+   * DOM id, so the step is addressable as a fragment. The Operate page's
+   * "request configuration change" link points at #configure, which is the
+   * only reason this exists — a request to change configuration should land
+   * the operator ON the Configure step, not at the top of the page for them
+   * to find it again.
+   */
+  anchorId?: string
   /** 1-based position in the flow, for the operator's sense of place. */
   number: number
   /** Verbatim EBU stage name — never abbreviated or re-worded. */
   label: string
   state: FlowStepState
+  /**
+   * This step is the workload's position — the operator's work right now.
+   * Open, and not collapsible. See the file docstring for why this is not
+   * inferred from `state`.
+   */
+  pinned?: boolean
   /**
    * Why this step cannot be worked yet. Required for locked steps: a lock
    * with no stated reason is the silent version of a disabled button
@@ -72,23 +112,33 @@ export default function FlowStep({
   lockedReason?: string
   /** One line the operator can read without expanding the step. */
   summary?: ReactNode
+  /**
+   * Start folded-open even though this is not the pinned step — set when
+   * the operator arrived by a fragment link aimed at this step. It only
+   * changes the INITIAL fold; a locked step still renders no content, so
+   * this can never be used to reach a control the gate closed.
+   */
+  startExpanded?: boolean
   children: ReactNode
 }) {
   const openable = isStepOpenable(state)
-  // The current step is open and stays open; everything else the operator
+  // The pinned step is open and stays open; everything else the operator
   // may open starts folded so the page reads as a path.
-  const [expanded, setExpanded] = useState(state === 'current')
+  const [expanded, setExpanded] = useState(Boolean(pinned) || Boolean(startExpanded))
   const bodyId = useId()
 
-  // `current` is deliberately not collapsible — see the file docstring.
-  const collapsible = openable && state !== 'current'
-  const showBody = openable && (state === 'current' || expanded)
+  const collapsible = openable && !pinned
+  const showBody = openable && (Boolean(pinned) || expanded)
 
   return (
     <section
+      id={anchorId}
       className={`panel border ${STATE_PANEL_CLASS[state]}`}
       aria-label={`Step ${number}: ${label}`}
       data-step-state={state}
+      // scroll-mt keeps the step header clear of the sticky page chrome
+      // when the browser jumps to the fragment.
+      style={{ scrollMarginTop: '1rem' }}
     >
       <div className="flex items-center justify-between gap-3 border-b border-white/10 px-4 py-3">
         <div className="flex min-w-0 items-center gap-3">
@@ -123,7 +173,7 @@ export default function FlowStep({
 
       {showBody && (
         <div id={bodyId} className="p-4 text-sm">
-          {children}
+          <InsideFlowStep.Provider value={true}>{children}</InsideFlowStep.Provider>
         </div>
       )}
 

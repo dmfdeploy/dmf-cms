@@ -8,6 +8,8 @@ import Workspace from './pages/Workspace'
 import Facility from './pages/Facility'
 import FacilityDetail from './pages/Facility/Detail'
 import WorkloadDetail from './pages/MediaWorkloads/WorkloadDetail'
+import WorkloadOperate from './pages/MediaWorkloads/Operate'
+import CreateWorkload from './pages/MediaWorkloads/CreateWorkload'
 import Activity from './pages/Activity'
 import Monitoring from './pages/Monitoring'
 import MediaWorkloads from './pages/MediaWorkloads'
@@ -72,9 +74,19 @@ export default function App() {
         {/* WP4 (#173): MXL Flows retired into the Media Workloads live-view panel. */}
         <Route path="/mxl-flows" element={<Navigate to="/media-workloads" replace />} />
         <Route path="/media-workloads" element={<ProtectedRoute><MediaWorkloads /></ProtectedRoute>} />
-        {/* S1 (#285): workload detail carries the EBU lifecycle rail — the
-            surface Catalog and Activity content relocated onto. */}
+        {/* Arc B (#285): creating a workload. Declared before the :slug route
+            for readability only — react-router v6 ranks a static segment above
+            a dynamic one regardless of order, so "new" can never be swallowed
+            as a slug. */}
+        <Route path="/media-workloads/new" element={<ProtectedRoute><CreateWorkload /></ProtectedRoute>} />
+        {/* Arc B (#285): the workload surface is the guided sequential flow —
+            the five orchestration stages, gated, under the six-stage
+            vocabulary strip. Catalog and Activity content relocated here in S1. */}
         <Route path="/media-workloads/:slug" element={<ProtectedRoute><WorkloadDetail /></ProtectedRoute>} />
+        {/* Arc B (#285): Operate left the flow page entirely (operator
+            direction 2026-08-01). It is still a lifecycle stage; its surface
+            is monitoring, so it gets its own route rather than a step. */}
+        <Route path="/media-workloads/:slug/operate" element={<ProtectedRoute><WorkloadOperate /></ProtectedRoute>} />
         <Route path="/admin" element={<ProtectedRoute><Admin /></ProtectedRoute>} />
         <Route path="/settings" element={<ProtectedRoute><Settings /></ProtectedRoute>} />
         <Route path="*" element={<Navigate to="/" replace />} />
