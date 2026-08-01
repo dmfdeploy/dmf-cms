@@ -25,14 +25,18 @@ interface NavItem {
 // reachable by URL, so this is one line each to reverse.
 //
 // Their content did not vanish, it MOVED, which is the whole point of the cut:
-//   Catalog   -> workload detail, Design stage (the template + its composition)
-//               and Provision stage (the deploy action)
+//   Catalog   -> workload detail: Design (template + composition),
+//               Provision (deploy + clear-for-deployment), and
+//               Finalise & Review (teardown — Catalog owned that too)
 //   Activity  -> workload detail, Provision stage (job progress/outcome) and
 //               Finalise & Review (job log + outcome marker)
 //   Monitoring -> expert lane only; the operator-facing health answer is
 //               Workspace → Problems, which is where it already lived
-// Hiding Activity was gated on the Provision/Finalise relocations landing
-// first — the deploy/switch feedback loop must never go dark.
+// Hiding Activity was gated on the Provision/Finalise work EXISTING before
+// this ships — not on commit order. The hide lands in the first commit of
+// this branch and the rail in a later one, so within the branch the hide
+// precedes its replacement; the gate is that no release carries one without
+// the other, because the deploy/switch feedback loop must never go dark.
 const allNavItems: NavItem[] = [
   { label: 'Workspace', path: '/', icon: 'grid', section: 'rail' },
   { label: 'Facilities', path: '/facilities', icon: 'sites', section: 'rail' },

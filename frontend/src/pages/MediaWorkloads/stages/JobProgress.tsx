@@ -58,7 +58,11 @@ export function OperationStatusLine({
       <span className={`font-medium ${OPERATION_CLASS[operation.state]}`}>
         {OPERATION_LABEL[operation.state]}
       </span>
-      {operation.error && <span className="text-red-400">{operation.error}</span>}
+      {operation.error && (
+        <span className="text-red-400">
+          Launch did not start — {operation.error}
+        </span>
+      )}
     </div>
   )
 }

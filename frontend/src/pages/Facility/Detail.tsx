@@ -13,8 +13,9 @@ import type { FacilityDetailResponse } from '@/api/types'
 //
 // Every section renders its OWN `reason` (facility.py's fail-soft
 // contract) — a Prometheus outage degrades nodes/platform_services/
-// storage/capacity together but never touches the NetBox-only site/
-// instance-class facts, and vice versa. No disabled controls, no
+// storage/capacity together but never touches the NetBox-only site
+// identity facts, and vice versa. (Instance class is deliberately not
+// shown at all — nothing can source it; see facility.py.) No disabled controls, no
 // "loading" spinner standing in for "we cannot read this" (Constitution
 // Art. 1).
 
@@ -71,7 +72,10 @@ export function facilityReasonCopy(reason: string): string {
     case 'site-ambiguous':
       return 'NetBox does not resolve to exactly one site, so the facility identity cannot be confirmed.'
     default:
-      return reason
+      // Art. 8: an unrecognised token is OUR gap, not the operator's
+      // vocabulary. Say what it means for them and keep the raw token for
+      // the expert lane rather than printing it as the whole explanation.
+      return 'This section cannot be read right now. Retrying automatically.'
   }
 }
 

@@ -130,6 +130,9 @@ interface FetchOpts {
   // Holds the switch-source POST open until releaseSwitch() is called — the
   // one seam the cross-stage busy-suppression test needs to control timing.
   holdSwitch?: boolean
+  // Same idea for the clear POST: awaited before the response resolves, so
+  // "a clear is pending" is an observable state rather than a race.
+  clearDelay?: Promise<unknown>
 }
 
 function mkFetch(opts: FetchOpts = {}) {
@@ -147,6 +150,7 @@ function mkFetch(opts: FetchOpts = {}) {
     teardown: [] as Array<{ url: string; init?: RequestInit }>,
     switch: [] as Array<{ url: string; init?: RequestInit }>,
     clear: [] as Array<{ url: string; init?: RequestInit }>,
+    grouped: 0,
   }
 
   let releaseSwitch: (() => void) | undefined
@@ -173,7 +177,10 @@ function mkFetch(opts: FetchOpts = {}) {
       })
     }
     if (url.endsWith('/api/catalog')) return json({ entries: catalog })
-    if (url.endsWith('/api/media-workloads/grouped')) return json(groupedResponse)
+    if (url.endsWith('/api/media-workloads/grouped')) {
+      calls.grouped += 1
+      return json(groupedResponse)
+    }
     if (url.endsWith('/api/facility/summary')) {
       const sites = opts.facilitySites ?? [{ name: 'dmf-lab', slug: 'dmf-lab', device_count: 3 }]
       return json({ site_count: sites.length, device_count: 0, sites })
@@ -208,6 +215,7 @@ function mkFetch(opts: FetchOpts = {}) {
     }
     if (url.match(/\/api\/media-workloads\/[^/]+\/clear$/)) {
       calls.clear.push({ url, init })
+      if (opts.clearDelay) await opts.clearDelay
       return json(
         opts.clearResult ?? {
           instance: 'crosspoint-1',
@@ -235,7 +243,7 @@ function mkFetch(opts: FetchOpts = {}) {
     return json({})
   })
   vi.stubGlobal('fetch', fetchMock)
-  return { ...calls, fetchMock, releaseSwitch: () => releaseSwitch?.() }
+  return { ...calls, calls, fetchMock, releaseSwitch: () => releaseSwitch?.() }
 }
 
 function renderDetail(slug = 'studio-a') {
@@ -325,10 +333,12 @@ describe('not-applicable stages are always prose, never a control', () => {
     expect(within(stageSection('Provision')).getByRole('button', { name: '▶ Deploy' })).toBeTruthy()
   })
 
-  it('renders the desired-state clear control in Finalise even while its own teardown action is not-applicable', async () => {
-    // ClearForDeployment is a different write seam the lifecycle module
-    // doesn't model at all — it must not be swept up in the not-applicable
-    // "no control" rule that governs teardown/deploy/switch specifically.
+  it('renders the desired-state clear control on Provision, under the rail, and never on Finalise', async () => {
+    // GATE-S1 P1: this control used to render on Finalise OUTSIDE the action
+    // model, so it survived the not-applicable rule and the busy suppression
+    // alike. It is a provision-time action — it moves a workload from "no
+    // active intent" to an active one — so it now flows through
+    // stageActions('provision') like every other write.
     const wl = workload({
       lifecycle: 'provision',
       instances: [instance({ requested_state: 'bootstrapped', observed_state: 'unknown' })],
@@ -337,9 +347,41 @@ describe('not-applicable stages are always prose, never a control', () => {
     renderDetail()
     await screen.findByRole('heading', { name: 'studio-a' })
 
+    expect(
+      within(stageSection('Provision')).getByRole('button', { name: 'Clear for deployment' }),
+    ).toBeTruthy()
+
     const finaliseSection = stageSection('Finalise & Review')
     expect(within(finaliseSection).getByText(/nothing to tear down/)).toBeTruthy()
-    expect(within(finaliseSection).getByRole('button', { name: 'Clear for deployment' })).toBeTruthy()
+    expect(
+      within(finaliseSection).queryByRole('button', { name: 'Clear for deployment' }),
+    ).toBeNull()
+  })
+
+  it('suppresses the clear control while a job is in flight, like every other action', async () => {
+    // The point of bringing it under the model: busy suppression now reaches
+    // it. Before, a NetBox intent flip could fire mid-job.
+    const wl = workload({
+      lifecycle: 'provision',
+      instances: [instance({ requested_state: 'bootstrapped', observed_state: 'unknown' })],
+    })
+    mkFetch({ workload: wl })
+    renderDetail()
+    await screen.findByRole('heading', { name: 'studio-a' })
+
+    // Arm and fire a deploy so a launch job is in flight.
+    const provision = stageSection('Provision')
+    fireEvent.click(within(provision).getByRole('button', { name: /Deploy/ }))
+    // Scope to the reason field: the deploy panel also carries the optional
+    // workload-slug input, so an unscoped textbox query is ambiguous.
+    fireEvent.change(within(provision).getAllByRole('textbox')[0], { target: { value: 'go' } })
+    fireEvent.click(within(provision).getByRole('button', { name: /Confirm deploy/ }))
+
+    await waitFor(() =>
+      expect(
+        within(stageSection('Provision')).queryByRole('button', { name: 'Clear for deployment' }),
+      ).toBeNull(),
+    )
   })
 })
 
@@ -637,5 +679,71 @@ describe('the Media Workloads list — single entry per workload', () => {
     // Degraded inventory + invalid-assignment honesty survive the simplification.
     expect(screen.getByText('Invalid workload assignments')).toBeTruthy()
     expect(screen.getByText(/bad-svc/)).toBeTruthy()
+  })
+})
+
+// ---------------------------------------------------------------------------
+// GATE-S1-RV: each defect class gets a test that FAILS if the fix is reverted.
+// ---------------------------------------------------------------------------
+
+describe('a clear in flight owns the rail like any other write', () => {
+  it('suppresses Deploy and sibling clears while a clear POST is pending', async () => {
+    // Before the fix, clear owned a private mutation the stage could not see,
+    // so Deploy and other instances' clears stayed live mid-write.
+    let releaseClear: (v: unknown) => void = () => {}
+    const wl = workload({
+      lifecycle: 'provision',
+      instances: [
+        instance({ instance: 'mxl-a', requested_state: 'bootstrapped', observed_state: 'unknown' }),
+        instance({ instance: 'mxl-b', requested_state: 'bootstrapped', observed_state: 'unknown' }),
+      ],
+    })
+    mkFetch({
+      workload: wl,
+      // Hold the clear POST open so "pending" is observable.
+      clearDelay: new Promise((r) => { releaseClear = r }),
+    })
+    renderDetail()
+    await screen.findByRole('heading', { name: 'studio-a' })
+
+    const provision = stageSection('Provision')
+    const clears = within(provision).getAllByRole('button', { name: 'Clear for deployment' })
+    expect(clears).toHaveLength(2)
+
+    fireEvent.click(clears[0])
+    fireEvent.change(within(provision).getByRole('textbox'), { target: { value: 'go' } })
+    fireEvent.click(within(provision).getByRole('button', { name: 'Confirm' }))
+
+    // While the POST is open the whole write surface is suppressed.
+    await waitFor(() =>
+      expect(within(stageSection('Provision')).queryAllByRole('button', { name: 'Clear for deployment' }))
+        .toHaveLength(0),
+    )
+    expect(within(stageSection('Provision')).queryByRole('button', { name: /Deploy/ })).toBeNull()
+
+    releaseClear(null)
+  })
+})
+
+describe('a successful clear closes its own loop', () => {
+  it('re-reads the grouped inventory instead of leaving a stale repeatable action', async () => {
+    // The control decides whether to render from the inventory. Without
+    // invalidation the already-taken action stayed clickable until the 15s
+    // poll — the operator could fire it twice at a state that had moved.
+    const wl = workload({
+      lifecycle: 'provision',
+      instances: [instance({ requested_state: 'bootstrapped', observed_state: 'unknown' })],
+    })
+    const h = mkFetch({ workload: wl })
+    renderDetail()
+    await screen.findByRole('heading', { name: 'studio-a' })
+
+    const before = h.calls.grouped
+    const provision = stageSection('Provision')
+    fireEvent.click(within(provision).getByRole('button', { name: 'Clear for deployment' }))
+    fireEvent.change(within(provision).getByRole('textbox'), { target: { value: 'go' } })
+    fireEvent.click(within(provision).getByRole('button', { name: 'Confirm' }))
+
+    await waitFor(() => expect(h.calls.grouped).toBeGreaterThan(before))
   })
 })

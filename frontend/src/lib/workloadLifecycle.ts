@@ -75,6 +75,16 @@ export type StageState =
 export type StageActionId =
   /** Launch the workload (Provision, before anything is cleared to run). */
   | 'deploy'
+  /**
+   * Flip an instance's desired state bootstrapped -> active in NetBox, so
+   * the automation lane may deploy it. A PROVISION-time action: it is what
+   * moves a workload from "members exist, no active intent" to an active
+   * intent, which is precisely the backend's provision -> configure
+   * transition. It sat on Finalise & Review before GATE-S1, outside this
+   * model entirely, where it could fire during another stage's job and even
+   * while Finalise itself was not-applicable.
+   */
+  | 'clear-for-deployment'
   /** Re-point a flow at a different source (Configure, once running). */
   | 'switch-source'
   /** Tear the workload down (Finalise & Review, once running). */
@@ -145,8 +155,9 @@ export function stageActions(
   if (busy(input) || input.lifecycle === 'unknown') return []
   switch (id) {
     case 'provision':
-      // Nothing is cleared to run yet: deploying is the real next action.
-      return input.lifecycle === 'provision' ? ['deploy'] : []
+      // Nothing is cleared to run yet: deploying, and clearing an instance
+      // for deployment, are the real next actions.
+      return input.lifecycle === 'provision' ? ['deploy', 'clear-for-deployment'] : []
     case 'configure':
       return running(input) ? ['switch-source'] : []
     case 'finalise':

@@ -203,7 +203,11 @@ function InstanceSwitchControl({
         )}
       </div>
 
-      {!arming && !isObservedFresh && (
+      {/* Shown while armed too, not just before: if the observation goes
+          stale under the operator mid-form, Confirm goes dead — and a dead
+          Confirm with no stated reason is the honesty gap, not the block
+          itself (Art. 1). */}
+      {!isObservedFresh && (
         <p className="mt-1 text-[11px] text-amber-200/60">{OBSERVED_SOURCE_UNKNOWN_MESSAGE}</p>
       )}
       {!arming && isObservedFresh && !allowed && !result && (

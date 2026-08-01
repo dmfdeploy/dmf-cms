@@ -9,8 +9,9 @@ import {
 import { useActivityStore } from '../../../store/activity'
 import ReasonConfirm from '../../../components/ReasonConfirm'
 import { isValidWorkloadSlug } from '../../../lib/workloadSlug'
-import type { CatalogEntry, MediaWorkload } from '../../../api/types'
+import type { CatalogEntry, MediaWorkload , ClearForDeploymentResult} from '../../../api/types'
 import type { StageActionId, StageState } from '../../../lib/workloadLifecycle'
+import ClearForDeployment from '../ClearForDeployment'
 import StageCard from './StageCard'
 import { JobStatusLine, OperationStatusLine } from './JobProgress'
 
@@ -54,15 +55,29 @@ export default function ProvisionStage({
 
   const [track, setTrack] = useState<Record<string, EntryTrack>>({})
 
+  // GATE-S1-RV P1: clear is a write like any other, so its pending state
+  // joins the SAME channel. Keyed per instance because sibling clears must
+  // suppress each other too, not just themselves.
+  const [clearPending, setClearPending] = useState<Record<string, boolean>>({})
   const busy =
     deployMutation.isPending ||
-    Object.values(track).some((t) => t.jobId !== null || t.opId !== null)
+    Object.values(track).some((t) => t.jobId !== null || t.opId !== null) ||
+    Object.values(clearPending).some(Boolean)
   useEffect(() => onBusyChange(busy), [busy, onBusyChange])
 
   const functionKeys = workload.functions.map((f) => f.function_key)
   const entries = (catalogData?.entries ?? []).filter((e) => functionKeys.includes(e.key))
 
   const allowed = actions.includes('deploy')
+  // GATE-S1 P1: clear-for-deployment is a PROVISION-time action and now flows
+  // through the rail like every other write. It used to render on Finalise
+  // outside the model entirely — firing during another stage's job, and even
+  // while Finalise itself was not-applicable.
+  const mayClear = actions.includes('clear-for-deployment')
+  const [lastClearResult, setLastClearResult] = useState<ClearForDeploymentResult | null>(null)
+  const needsClearing = [...workload.instances]
+    .filter((i) => !i.reconcile_pending && i.requested_state === 'bootstrapped')
+    .sort((a, b) => a.instance.localeCompare(b.instance))
 
   const handleDeploy = async (entry: CatalogEntry, reason: string, workloadSlug: string) => {
     try {
@@ -119,7 +134,10 @@ export default function ProvisionStage({
               key={entry.key}
               entry={entry}
               workloadSlug={workload.slug}
-              allowed={allowed}
+              // Rail-wide: ANY write in flight on this stage — a deploy, a
+              // clear, a sibling's clear — withdraws every other write,
+              // not just the one that owns its own job track.
+              allowed={allowed && !busy}
               track={track[entry.key] ?? EMPTY_TRACK}
               isDeploying={deployMutation.isPending && deployMutation.variables?.key === entry.key}
               deployError={deployMutation.variables?.key === entry.key ? deployMutation.error : null}
@@ -129,6 +147,35 @@ export default function ProvisionStage({
               onJobComplete={() => handleJobComplete(entry.key)}
             />
           ))}
+        </div>
+      )}
+      {mayClear && !busy && needsClearing.length > 0 && (
+        <div className="mt-4 border-t border-white/5 pt-3">
+          <h3 className="text-xs uppercase tracking-wide text-muted">Desired state</h3>
+          <div className="mt-2 space-y-2">
+            {needsClearing.map((inst) => (
+              <div key={inst.instance} className="flex items-center justify-between gap-3">
+                <span className="font-mono text-xs text-muted">{inst.instance}</span>
+                <ClearForDeployment
+                  instance={inst.instance}
+                  onCleared={(result) => setLastClearResult(result)}
+                  onPendingChange={(pending) =>
+                    setClearPending((prev) =>
+                      prev[inst.instance] === pending
+                        ? prev
+                        : { ...prev, [inst.instance]: pending },
+                    )
+                  }
+                />
+              </div>
+            ))}
+          </div>
+          {lastClearResult && (
+            <p className="mt-2 text-xs text-green-300">
+              {lastClearResult.instance}: requested state is now {lastClearResult.requested_state} (was{' '}
+              {lastClearResult.previous_state}).
+            </p>
+          )}
         </div>
       )}
     </StageCard>

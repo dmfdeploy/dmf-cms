@@ -13,14 +13,18 @@ import {
  * Media Workloads (ADR-0037 + ADR-0046) — S1 IA cut (umbrella #285).
  *
  * One square control-surface TILE per workload, opening the workload detail
- * page. The per-instance grid/table/live-modal/clear-for-deployment UI that
- * used to live here has moved onto WorkloadDetail's lifecycle rail.
+ * page. The per-instance grid, the live modal and the clear-for-deployment
+ * control MOVED onto WorkloadDetail's lifecycle rail. The Grid|Table toggle
+ * and its table view were REMOVED outright — not moved, and not reachable
+ * anywhere; say removed, because "moved" would send a reader looking.
  *
  * The tile keeps a LIVE PREVIEW. That is not decoration: the preview is what
  * makes this a media-native console rather than an inventory list, and the
- * simplification is not allowed to cost it. It also keeps the preview's
- * polling bounds intact (codex P2/P3) — visible-tab only, capped number of
- * concurrently-churning tiles, reduced-motion honoured, fixed aspect box —
+ * simplification is not allowed to cost it. Its polling bounds come from
+ * LivePreviewBox, which is the SINGLE implementation shared by this tile,
+ * the Operate stage and the live modal alike (GATE-S1 P2b — the modal used
+ * to run its own unbounded timer): visible-tab only, capped number of
+ * concurrently-churning tiles, reduced-motion honoured, fixed aspect box,
  * because a backgrounded console must never hammer the sidecars.
  *
  * What stays, unchanged, is the grouped-inventory HONESTY: not-configured,
@@ -89,7 +93,7 @@ export default function MediaWorkloads() {
 
       {!isLoading && error != null && (
         <div className="panel mt-6 border border-amber-500/20 bg-amber-500/10 px-4 py-3 text-sm text-amber-200">
-          Media Workloads could not be loaded: {String(error)}
+          Media Workloads could not be loaded right now. Retrying automatically.
         </div>
       )}
 

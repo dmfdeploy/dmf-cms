@@ -189,7 +189,10 @@ describe('AVAILABLE IFF ACTION-BEARING', () => {
   })
 
   it('names the console write seams the rail actually exposes', () => {
-    expect(stageActions('provision', { lifecycle: 'provision' })).toEqual(['deploy'])
+    // GATE-S1 P1: clear-for-deployment is a PROVISION-time action and now
+    // flows through the model, instead of rendering on Finalise outside it.
+    expect(stageActions('provision', { lifecycle: 'provision' }))
+      .toEqual(['deploy', 'clear-for-deployment'])
     expect(stageActions('configure', { lifecycle: 'operate' })).toEqual(['switch-source'])
     expect(stageActions('finalise', { lifecycle: 'operate' })).toEqual(['tear-down'])
     // Deploy is gone the moment there is something to operate — you cannot

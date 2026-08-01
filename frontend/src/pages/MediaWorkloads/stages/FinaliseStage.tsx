@@ -8,8 +8,7 @@ import {
 } from '../../../api/hooks'
 import { useActivityStore } from '../../../store/activity'
 import ReasonConfirm from '../../../components/ReasonConfirm'
-import ClearForDeployment from '../ClearForDeployment'
-import type { CatalogEntry, ClearForDeploymentResult, MediaWorkload, SwitchSourceResult } from '../../../api/types'
+import type { CatalogEntry, MediaWorkload, SwitchSourceResult } from '../../../api/types'
 import type { StageActionId, StageState } from '../../../lib/workloadLifecycle'
 import StageCard from './StageCard'
 import { JobStatusLine, OperationStatusLine } from './JobProgress'
@@ -22,11 +21,12 @@ import { JobStatusLine, OperationStatusLine } from './JobProgress'
  * already, by the backend, as SwitchSourceResult.outcome/outcome_message —
  * dmf-runbooks 0.4.4 contract). No generated stats report — that's S4.
  *
- * ClearForDeployment (unmodified, imported from the sibling file) is "the
- * related NetBox desired-state control" the spec names alongside teardown:
- * a different write seam (flips NetBox intent, not an AWX job) that
- * belongs in the same neighbourhood because both stages here govern this
- * workload's desired-state record, not its running processes.
+ * Clear-for-deployment used to render here, outside the rail's action model
+ * entirely — which meant it could fire during another stage's in-flight job,
+ * and even while Finalise itself was not-applicable (GATE-S1 P1). It is a
+ * PROVISION-time action: it moves a workload from "members exist, no active
+ * intent" to an active intent. It now lives on Provision and flows through
+ * stageActions() like every other write.
  */
 interface EntryTrack {
   jobId: number | null
@@ -56,7 +56,6 @@ export default function FinaliseStage({
 
   const [track, setTrack] = useState<Record<string, EntryTrack>>({})
   const [lastJob, setLastJob] = useState<{ entryKey: string; jobId: number; status: string } | null>(null)
-  const [lastClearResult, setLastClearResult] = useState<ClearForDeploymentResult | null>(null)
 
   // Read at call time inside the stable callback below (see
   // statusCallbackFor), never captured at render time — track changes
@@ -101,10 +100,6 @@ export default function FinaliseStage({
     [setLastJobIfChanged],
   )
 
-  const onCleared = (result: ClearForDeploymentResult) => {
-    setLastClearResult(result)
-    void queryClient.invalidateQueries({ queryKey: ['media-workloads-grouped'] })
-  }
 
   const busy =
     teardownMutation.isPending ||
@@ -182,37 +177,6 @@ export default function FinaliseStage({
           )}
         </div>
 
-        {/* The related NetBox desired-state control (ClearForDeployment).
-            Deliberately independent of the rail's `state`/`allowed` gate
-            above: it is a different write seam the lifecycle module doesn't
-            model at all (a raw NetBox intent flip, not an AWX job, and not
-            one of the three StageActionIds), and it is MOST needed exactly
-            when Finalise's own action is not-applicable — before anything
-            has run. Renders only for instances that actually need it
-            (bootstrapped, not reconciling), never a dead control for the
-            common case where nothing needs clearing. */}
-        {workload.instances.some((i) => !i.reconcile_pending && i.requested_state === 'bootstrapped') && (
-          <div className="border-t border-white/5 pt-3">
-            <h3 className="text-xs uppercase tracking-wide text-muted">Desired state</h3>
-            <div className="mt-2 space-y-2">
-              {[...workload.instances]
-                .filter((i) => !i.reconcile_pending && i.requested_state === 'bootstrapped')
-                .sort((a, b) => a.instance.localeCompare(b.instance))
-                .map((inst) => (
-                  <div key={inst.instance} className="flex items-center justify-between gap-3">
-                    <span className="font-mono text-xs text-muted">{inst.instance}</span>
-                    <ClearForDeployment instance={inst.instance} onCleared={onCleared} />
-                  </div>
-                ))}
-            </div>
-            {lastClearResult && (
-              <p className="mt-2 text-xs text-green-300">
-                {lastClearResult.instance}: requested state is now {lastClearResult.requested_state} (was{' '}
-                {lastClearResult.previous_state}).
-              </p>
-            )}
-          </div>
-        )}
 
         <div className="border-t border-white/5 pt-3">
           <h3 className="text-xs uppercase tracking-wide text-muted">Review</h3>
