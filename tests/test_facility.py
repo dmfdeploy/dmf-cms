@@ -1,0 +1,552 @@
+"""Facility Detail — read/derive logic + endpoint fail-soft contract (S1, #285).
+
+Two layers, mirroring test_capacity.py (pure) + test_workspace_health.py
+(endpoint):
+
+* Pure derive-function tests exercise ``dmf_cms.facility`` directly, with
+  ``prometheus.query``/``netbox.list_sites``/``netbox._request`` mocked via
+  monkeypatch — no network.
+* Endpoint tests hit the three ``/api/facility/*`` routes through
+  ``TestClient`` and assert the fail-soft contract: unconfigured,
+  unreachable, and malformed-series states are all 200-with-reason, never a
+  raw 500.
+"""
+
+from __future__ import annotations
+
+from fastapi.testclient import TestClient
+
+from dmf_cms import facility
+from dmf_cms import netbox as netbox_module
+from dmf_cms import prometheus as prometheus_module
+from dmf_cms.main import create_app
+from dmf_cms.settings import NetboxSettings, PrometheusSettings, Settings
+
+MI = 1024**2
+GI = 1024**3
+
+
+def _row(value, **labels):
+    return {"metric": labels, "value": [0, str(value)]}
+
+
+def _exact_dispatcher(expr_to_rows):
+    """Same discipline as test_capacity.py's dispatcher: an EXACT expr match
+    only, so a wrong/missing PromQL string fails loudly instead of silently
+    matching the wrong fixture."""
+
+    def fake_query(*, url, expr):
+        if expr not in expr_to_rows:
+            raise AssertionError(f"unexpected PromQL expr in test: {expr!r}")
+        return expr_to_rows[expr]
+
+    return fake_query
+
+
+def _supply_routes(node="n1"):
+    """The exact PromQL expr strings capacity.read_node_supply sends, wired
+    to a minimal single-pod fixture — reused so facility's capacity section
+    can be exercised end to end without re-deriving capacity.py's own
+    contract (per the WO instruction: read capacity.py, reuse it)."""
+    return {
+        'kube_node_status_allocatable{resource="cpu",unit="core"}': [_row("2", node=node)],
+        'kube_node_status_allocatable{resource="memory",unit="byte"}': [_row(4 * GI, node=node)],
+        f'kube_pod_info{{node="{node}"}}': [_row(1, namespace="netbox", pod="netbox-0")],
+        'kube_pod_status_phase{phase=~"Running|Pending"} == 1': [
+            _row(1, namespace="netbox", pod="netbox-0")
+        ],
+        f'sum by (namespace,pod) (kube_pod_container_resource_requests{{node="{node}",resource="cpu"}})': [
+            _row("0.5", namespace="netbox", pod="netbox-0")
+        ],
+        f'sum by (namespace,pod) (kube_pod_container_resource_requests{{node="{node}",resource="memory"}})': [
+            _row(512 * MI, namespace="netbox", pod="netbox-0")
+        ],
+        f'kube_pod_init_container_resource_requests{{node="{node}",resource="cpu"}}': [],
+        f'kube_pod_init_container_resource_requests{{node="{node}",resource="memory"}}': [],
+        "kube_pod_overhead_cpu_cores": [],
+        "kube_pod_overhead_memory_bytes": [],
+    }
+
+
+# ---------------------------------------------------------------------------
+# Nodes
+# ---------------------------------------------------------------------------
+
+
+def test_read_nodes_joins_arch_by_nodename(monkeypatch):
+    monkeypatch.setattr(
+        prometheus_module,
+        "query",
+        _exact_dispatcher(
+            {
+                "kube_node_info": [
+                    _row(1, node="n1", kubelet_version="v1.29.0"),
+                    _row(1, node="n2", kubelet_version="v1.29.0"),
+                ],
+                "node_uname_info": [_row(1, nodename="n1", machine="aarch64")],
+            }
+        ),
+    )
+    nodes, reason = facility.read_nodes("http://prom.test")
+    assert reason == ""
+    by_name = {n.name: n for n in nodes}
+    assert by_name["n1"].kubelet_version == "v1.29.0"
+    assert by_name["n1"].arch == "aarch64"
+    # n2 has no matching node_uname_info row — a per-node degrade, not a
+    # whole-read failure (node-exporter can legitimately be unscraped on
+    # one node while KSM is fine cluster-wide).
+    assert by_name["n2"].arch is None
+
+
+def test_read_nodes_empty_kube_node_info_is_unreadable(monkeypatch):
+    monkeypatch.setattr(
+        prometheus_module, "query", _exact_dispatcher({"kube_node_info": [], "node_uname_info": []})
+    )
+    nodes, reason = facility.read_nodes("http://prom.test")
+    assert nodes == []
+    assert reason == "nodes-unreadable"
+
+
+def test_read_nodes_malformed_row_is_unreadable_not_500(monkeypatch):
+    # Missing the required kubelet_version label — a malformed row must
+    # collapse the WHOLE read, never silently drop just that node.
+    monkeypatch.setattr(
+        prometheus_module,
+        "query",
+        _exact_dispatcher({"kube_node_info": [_row(1, node="n1")], "node_uname_info": []}),
+    )
+    nodes, reason = facility.read_nodes("http://prom.test")
+    assert nodes == []
+    assert reason == "nodes-unreadable"
+
+
+def test_read_nodes_transport_error_is_unreadable(monkeypatch):
+    def boom(*, url, expr):
+        raise prometheus_module.PrometheusAPIError(500, "boom")
+
+    monkeypatch.setattr(prometheus_module, "query", boom)
+    nodes, reason = facility.read_nodes("http://prom.test")
+    assert nodes == []
+    assert reason == "nodes-unreadable"
+
+
+def test_enrich_instance_class_reads_netbox_custom_field(monkeypatch):
+    nodes = [facility.NodeFact(name="n1", kubelet_version="v1.29.0", arch="aarch64", instance_class=None)]
+
+    def fake_request(api_url, api_token, path, ssl_context=None):
+        return {"results": [{"name": "n1", "custom_fields": {"dmf_instance_type": "CAX21"}}]}
+
+    monkeypatch.setattr(netbox_module, "_request", fake_request)
+    enriched, reason = facility.enrich_instance_class(
+        nodes, netbox_api_url="http://nb.test", netbox_api_token="tok", netbox_ssl_verify=False
+    )
+    assert reason == ""
+    assert enriched[0].instance_class == "CAX21"
+
+
+def test_enrich_instance_class_absent_field_is_honest_none_not_unreadable(monkeypatch):
+    # The field genuinely isn't recorded today (see facility.py's module
+    # docstring) — this must read as "we asked, nothing there", NOT as a
+    # read failure. reason == "" is the signal the UI uses to distinguish
+    # the two.
+    nodes = [facility.NodeFact(name="n1", kubelet_version="v1.29.0", arch="aarch64", instance_class=None)]
+
+    def fake_request(api_url, api_token, path, ssl_context=None):
+        return {"results": [{"name": "n1", "custom_fields": {}}]}
+
+    monkeypatch.setattr(netbox_module, "_request", fake_request)
+    enriched, reason = facility.enrich_instance_class(
+        nodes, netbox_api_url="http://nb.test", netbox_api_token="tok", netbox_ssl_verify=False
+    )
+    assert reason == ""
+    assert enriched[0].instance_class is None
+
+
+def test_enrich_instance_class_transport_error_is_unreadable(monkeypatch):
+    nodes = [facility.NodeFact(name="n1", kubelet_version="v1.29.0", arch="aarch64", instance_class=None)]
+
+    def boom(*a, **k):
+        raise netbox_module.NetboxAPIError(500, "boom")
+
+    monkeypatch.setattr(netbox_module, "_request", boom)
+    enriched, reason = facility.enrich_instance_class(
+        nodes, netbox_api_url="http://nb.test", netbox_api_token="tok", netbox_ssl_verify=False
+    )
+    assert reason == "netbox-unreadable"
+    # The input list comes back untouched, never fabricated.
+    assert enriched[0].instance_class is None
+
+
+# ---------------------------------------------------------------------------
+# Platform services + ingress URLs
+# ---------------------------------------------------------------------------
+
+_APPS = [("netbox", "NetBox"), ("awx", "AWX"), ("librenms", "LibreNMS")]
+
+
+def test_read_platform_services_matches_by_host_prefix_and_resolves_images(monkeypatch):
+    monkeypatch.setattr(
+        prometheus_module,
+        "query",
+        _exact_dispatcher(
+            {
+                "kube_ingress_path": [
+                    _row(1, namespace="netbox", ingress="netbox", host="netbox.dmf.lab.example", path="/"),
+                    _row(1, namespace="awx", ingress="awx", host="awx.dmf.lab.example", path="/"),
+                ],
+                "kube_ingress_tls": [_row(1, namespace="netbox", ingress="netbox", tls_host="netbox.dmf.lab.example")],
+                "kube_pod_container_info": [
+                    _row(1, namespace="netbox", pod="netbox-0", container="netbox", image_spec="netboxcommunity/netbox:v4.1.0", image="sha256:abc"),
+                    _row(1, namespace="awx", pod="awx-web-0", container="awx-web", image="quay.io/ansible/awx:24.6.1"),
+                ],
+            }
+        ),
+    )
+    services, reason = facility.read_platform_services("http://prom.test", _APPS)
+    assert reason == ""
+    by_key = {s.key: s for s in services}
+
+    # netbox: TLS -> https, image_spec preferred over image.
+    assert by_key["netbox"].url == "https://netbox.dmf.lab.example/"
+    assert by_key["netbox"].images == ("netboxcommunity/netbox:v4.1.0",)
+
+    # awx: no TLS row -> http, falls back to `image` (no image_spec label).
+    assert by_key["awx"].url == "http://awx.dmf.lab.example/"
+    assert by_key["awx"].images == ("quay.io/ansible/awx:24.6.1",)
+
+    # librenms: no matching ingress in the cluster (e.g. disabled in this
+    # env) — a legitimate "not found", not dropped, not fabricated.
+    assert by_key["librenms"].url is None
+    assert by_key["librenms"].namespace is None
+    assert by_key["librenms"].images == ()
+
+
+def test_read_platform_services_empty_ingress_is_unreadable(monkeypatch):
+    monkeypatch.setattr(
+        prometheus_module,
+        "query",
+        _exact_dispatcher({"kube_ingress_path": [], "kube_ingress_tls": [], "kube_pod_container_info": []}),
+    )
+    services, reason = facility.read_platform_services("http://prom.test", _APPS)
+    assert reason == "platform-services-unreadable"
+    # Every requested app still gets a row — degraded, never dropped.
+    assert [s.key for s in services] == ["netbox", "awx", "librenms"]
+    assert all(s.url is None and s.images == () for s in services)
+
+
+def test_read_platform_services_malformed_row_is_unreadable_not_500(monkeypatch):
+    # An ingress_path row missing the required `host` label.
+    monkeypatch.setattr(
+        prometheus_module,
+        "query",
+        _exact_dispatcher(
+            {
+                "kube_ingress_path": [_row(1, namespace="netbox", ingress="netbox", path="/")],
+                "kube_ingress_tls": [],
+                "kube_pod_container_info": [_row(1, namespace="netbox", image="x")],
+            }
+        ),
+    )
+    services, reason = facility.read_platform_services("http://prom.test", _APPS)
+    assert reason == "platform-services-unreadable"
+
+
+# ---------------------------------------------------------------------------
+# Storage
+# ---------------------------------------------------------------------------
+
+
+def test_read_storage_joins_bytes_and_excludes_k8s_system_namespaces(monkeypatch):
+    monkeypatch.setattr(
+        prometheus_module,
+        "query",
+        _exact_dispatcher(
+            {
+                "kube_persistentvolumeclaim_info": [
+                    _row(1, namespace="netbox", persistentvolumeclaim="netbox-data", storageclass="local-path"),
+                    _row(1, namespace="netbox", persistentvolumeclaim="netbox-media", storageclass="local-path"),
+                    _row(1, namespace="kube-system", persistentvolumeclaim="some-internal-pvc", storageclass="local-path"),
+                ],
+                "kube_persistentvolumeclaim_resource_requests_storage_bytes": [
+                    _row(10 * GI, namespace="netbox", persistentvolumeclaim="netbox-data"),
+                ],
+            }
+        ),
+    )
+    volumes, reason = facility.read_storage("http://prom.test")
+    assert reason == ""
+    assert [v.name for v in volumes] == ["netbox-data", "netbox-media"]
+    assert volumes[0].requested_bytes == 10 * GI
+    # No matching request-bytes row for netbox-media — None, never a
+    # fabricated 0.
+    assert volumes[1].requested_bytes is None
+
+
+def test_read_storage_empty_info_is_unreadable(monkeypatch):
+    monkeypatch.setattr(
+        prometheus_module,
+        "query",
+        _exact_dispatcher(
+            {"kube_persistentvolumeclaim_info": [], "kube_persistentvolumeclaim_resource_requests_storage_bytes": []}
+        ),
+    )
+    volumes, reason = facility.read_storage("http://prom.test")
+    assert volumes == []
+    assert reason == "storage-unreadable"
+
+
+# ---------------------------------------------------------------------------
+# Site identity
+# ---------------------------------------------------------------------------
+
+
+def test_read_site_identity_not_configured():
+    site, reason = facility.read_site_identity(
+        netbox_configured=False, netbox_api_url="", netbox_api_token="", netbox_ssl_verify=False
+    )
+    assert reason == "netbox-not-configured"
+    assert site == {"slug": None, "name": None}
+
+
+def test_read_site_identity_single_site(monkeypatch):
+    monkeypatch.setattr(netbox_module, "list_sites", lambda **k: [{"name": "DMF Lab", "slug": "dmf-lab"}])
+    site, reason = facility.read_site_identity(
+        netbox_configured=True, netbox_api_url="http://nb.test", netbox_api_token="tok", netbox_ssl_verify=False
+    )
+    assert reason == ""
+    assert site == {"slug": "dmf-lab", "name": "DMF Lab"}
+
+
+def test_read_site_identity_ambiguous_when_not_exactly_one(monkeypatch):
+    monkeypatch.setattr(netbox_module, "list_sites", lambda **k: [])
+    site, reason = facility.read_site_identity(
+        netbox_configured=True, netbox_api_url="http://nb.test", netbox_api_token="tok", netbox_ssl_verify=False
+    )
+    assert reason == "site-ambiguous"
+    assert site == {"slug": None, "name": None}
+
+
+def test_read_site_identity_transport_error_is_unreadable(monkeypatch):
+    def boom(**k):
+        raise netbox_module.NetboxAPIError(500, "boom")
+
+    monkeypatch.setattr(netbox_module, "list_sites", boom)
+    site, reason = facility.read_site_identity(
+        netbox_configured=True, netbox_api_url="http://nb.test", netbox_api_token="tok", netbox_ssl_verify=False
+    )
+    assert reason == "netbox-unreadable"
+
+
+# ---------------------------------------------------------------------------
+# build_detail_payload — the orchestrator
+# ---------------------------------------------------------------------------
+
+
+def test_build_detail_payload_neither_configured():
+    payload = facility.build_detail_payload(
+        prometheus_configured=False,
+        prometheus_url="",
+        netbox_configured=False,
+        netbox_api_url="",
+        netbox_api_token="",
+        netbox_ssl_verify=False,
+        apps=_APPS,
+    )
+    assert payload["prometheus_configured"] is False
+    assert payload["netbox_configured"] is False
+    assert payload["site"]["reason"] == "netbox-not-configured"
+    assert payload["nodes"]["reason"] == "prometheus-not-configured"
+    assert payload["nodes"]["items"] == []
+    assert payload["platform_services"]["reason"] == "prometheus-not-configured"
+    assert payload["storage"]["reason"] == "prometheus-not-configured"
+    assert payload["capacity"]["reason"] == "prometheus-not-configured"
+    assert payload["capacity"]["allocatable_cpu_m"] is None
+    assert payload["capacity"]["requests_committed_cpu_m"] is None
+
+
+def test_build_detail_payload_full_success(monkeypatch):
+    routes = {
+        "kube_node_info": [_row(1, node="n1", kubelet_version="v1.29.0")],
+        "node_uname_info": [_row(1, nodename="n1", machine="aarch64")],
+        "kube_ingress_path": [_row(1, namespace="netbox", ingress="netbox", host="netbox.dmf.lab.example", path="/")],
+        "kube_ingress_tls": [],
+        "kube_pod_container_info": [
+            _row(1, namespace="netbox", pod="netbox-0", container="netbox", image="netboxcommunity/netbox:v4.1.0"),
+        ],
+        "kube_persistentvolumeclaim_info": [
+            _row(1, namespace="netbox", persistentvolumeclaim="netbox-data", storageclass="local-path"),
+        ],
+        "kube_persistentvolumeclaim_resource_requests_storage_bytes": [
+            _row(5 * GI, namespace="netbox", persistentvolumeclaim="netbox-data"),
+        ],
+        **_supply_routes(node="n1"),
+    }
+    monkeypatch.setattr(prometheus_module, "query", _exact_dispatcher(routes))
+    monkeypatch.setattr(netbox_module, "list_sites", lambda **k: [{"name": "DMF Lab", "slug": "dmf-lab"}])
+    monkeypatch.setattr(
+        netbox_module,
+        "_request",
+        lambda *a, **k: {"results": [{"name": "n1", "custom_fields": {"dmf_instance_type": "CAX21"}}]},
+    )
+
+    payload = facility.build_detail_payload(
+        prometheus_configured=True,
+        prometheus_url="http://prom.test",
+        netbox_configured=True,
+        netbox_api_url="http://nb.test",
+        netbox_api_token="tok",
+        netbox_ssl_verify=False,
+        apps=[("netbox", "NetBox")],
+    )
+
+    assert payload["site"] == {"slug": "dmf-lab", "name": "DMF Lab", "reason": ""}
+    assert payload["nodes"]["reason"] == ""
+    assert payload["nodes"]["instance_class_reason"] == ""
+    assert payload["nodes"]["items"] == [
+        {"name": "n1", "kubelet_version": "v1.29.0", "arch": "aarch64", "instance_class": "CAX21"}
+    ]
+    assert payload["platform_services"]["reason"] == ""
+    assert payload["platform_services"]["items"] == [
+        {
+            "key": "netbox",
+            "display_name": "NetBox",
+            "namespace": "netbox",
+            "url": "http://netbox.dmf.lab.example/",
+            "images": ["netboxcommunity/netbox:v4.1.0"],
+        }
+    ]
+    assert payload["storage"]["reason"] == ""
+    assert payload["storage"]["items"] == [
+        {"namespace": "netbox", "name": "netbox-data", "storageclass": "local-path", "requested_bytes": 5 * GI}
+    ]
+    # The scheduler-truth labels, verbatim — never "used"/"free".
+    cap = payload["capacity"]
+    assert cap["reason"] == ""
+    assert cap["allocatable_cpu_m"] == 2000
+    assert cap["allocatable_mem_b"] == 4 * GI
+    assert cap["requests_committed_cpu_m"] == 500
+    assert cap["requests_committed_mem_b"] == 512 * MI
+
+
+# ---------------------------------------------------------------------------
+# Endpoints — fail-soft contract, never a raw 500
+# ---------------------------------------------------------------------------
+
+
+def _client(netbox=None, prometheus=None) -> TestClient:
+    settings = Settings(
+        runtime_mode="local",
+        dev_login_enabled=True,
+        dev_groups=("dmf-console-viewer",),
+        netbox=netbox or NetboxSettings(),
+        prometheus=prometheus or PrometheusSettings(),
+    )
+    client = TestClient(create_app(settings=settings))
+    client.get("/auth/login", follow_redirects=False)
+    return client
+
+
+def test_summary_anonymous_is_401():
+    client = TestClient(create_app(settings=Settings(runtime_mode="local", dev_login_enabled=True)))
+    assert client.get("/api/facility/summary").status_code == 401
+
+
+def test_summary_unconfigured_is_200_with_reason():
+    resp = _client().get("/api/facility/summary")
+    assert resp.status_code == 200
+    body = resp.json()
+    assert body["reason"] == "netbox-not-configured"
+    assert body["sites"] == []
+
+
+def test_summary_unreachable_is_200_never_500(monkeypatch):
+    def boom(**k):
+        raise netbox_module.NetboxAPIError(500, "connection refused")
+
+    monkeypatch.setattr(netbox_module, "list_sites", boom)
+    resp = _client(netbox=NetboxSettings(api_url="http://nb.test", api_token="tok")).get("/api/facility/summary")
+    assert resp.status_code == 200
+    body = resp.json()
+    assert body["reason"] == "netbox-unreachable"
+    assert "connection refused" not in resp.text
+
+
+def test_summary_success_includes_slug_for_the_detail_link(monkeypatch):
+    monkeypatch.setattr(netbox_module, "list_sites", lambda **k: [{"name": "DMF Lab", "slug": "dmf-lab"}])
+    monkeypatch.setattr(netbox_module, "list_devices", lambda **k: [])
+    resp = _client(netbox=NetboxSettings(api_url="http://nb.test", api_token="tok")).get("/api/facility/summary")
+    body = resp.json()
+    assert body["reason"] == ""
+    assert body["sites"] == [{"name": "DMF Lab", "slug": "dmf-lab", "device_count": 0}]
+
+
+def test_devices_unconfigured_is_200_with_reason():
+    resp = _client().get("/api/facility/devices")
+    assert resp.status_code == 200
+    assert resp.json() == {"reason": "netbox-not-configured", "devices": []}
+
+
+def test_devices_unreachable_is_200_never_500(monkeypatch):
+    def boom(**k):
+        raise netbox_module.NetboxAPIError(500, "boom")
+
+    monkeypatch.setattr(netbox_module, "list_devices", boom)
+    resp = _client(netbox=NetboxSettings(api_url="http://nb.test", api_token="tok")).get("/api/facility/devices")
+    assert resp.status_code == 200
+    assert resp.json()["reason"] == "netbox-unreachable"
+
+
+def test_detail_anonymous_is_401():
+    client = TestClient(create_app(settings=Settings(runtime_mode="local", dev_login_enabled=True)))
+    assert client.get("/api/facility/dmf-lab/detail").status_code == 401
+
+
+def test_detail_neither_configured_is_200_with_reasons_and_echoes_site():
+    resp = _client().get("/api/facility/dmf-lab/detail")
+    assert resp.status_code == 200
+    body = resp.json()
+    assert body["requested_site"] == "dmf-lab"
+    assert body["prometheus_configured"] is False
+    assert body["netbox_configured"] is False
+    assert body["nodes"]["reason"] == "prometheus-not-configured"
+    assert body["capacity"]["reason"] == "prometheus-not-configured"
+
+
+def test_detail_malformed_series_is_200_never_500(monkeypatch):
+    # kube_node_info rows missing the required `node` label.
+    monkeypatch.setattr(
+        prometheus_module,
+        "query",
+        _exact_dispatcher(
+            {
+                "kube_node_info": [{"metric": {"kubelet_version": "v1.29.0"}, "value": [0, "1"]}],
+                "node_uname_info": [],
+                "kube_ingress_path": [],
+                "kube_ingress_tls": [],
+                "kube_pod_container_info": [],
+                "kube_persistentvolumeclaim_info": [],
+                "kube_persistentvolumeclaim_resource_requests_storage_bytes": [],
+                **_supply_routes(node="n1"),
+            }
+        ),
+    )
+    resp = _client(prometheus=PrometheusSettings(url="http://prom.test")).get("/api/facility/dmf-lab/detail")
+    assert resp.status_code == 200
+    body = resp.json()
+    assert body["nodes"]["reason"] == "nodes-unreadable"
+    assert body["nodes"]["items"] == []
+
+
+def test_detail_transport_unreachable_is_200_never_500(monkeypatch):
+    def boom(*, url, expr):
+        raise prometheus_module.PrometheusAPIError(503, "unreachable")
+
+    monkeypatch.setattr(prometheus_module, "query", boom)
+    resp = _client(prometheus=PrometheusSettings(url="http://prom.test")).get("/api/facility/dmf-lab/detail")
+    assert resp.status_code == 200
+    body = resp.json()
+    assert body["nodes"]["reason"] == "nodes-unreadable"
+    assert body["platform_services"]["reason"] == "platform-services-unreadable"
+    assert body["storage"]["reason"] == "storage-unreadable"
+    assert body["capacity"]["reason"] == "budget-unavailable"
+    assert "unreachable" not in resp.text  # no raw exception text leaks (Art. 8)
