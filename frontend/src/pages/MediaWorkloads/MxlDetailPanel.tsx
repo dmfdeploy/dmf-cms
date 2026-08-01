@@ -31,6 +31,21 @@ export default function MxlDetailPanel() {
     return () => clearInterval(id)
   }, [active])
 
+  // Paused is its own state, and it must be checked BEFORE the
+  // configured/unreachable branches. With the query disabled there is no
+  // payload, and reading "no data" as "not configured" told the operator
+  // something false about their environment (GATE-S1-RV2 P2). If we hold a
+  // cached frame we keep showing it, honestly labelled; if we never had one,
+  // we say we are paused — not that the feature is missing.
+  if (!active && !data) {
+    return (
+      <p className="text-sm text-muted">
+        Live view is paused — this tab is in the background, or reduced motion
+        is enabled. It resumes automatically.
+      </p>
+    )
+  }
+
   if (isLoading) {
     return <div className="p-4 text-sm text-muted">Loading live view…</div>
   }

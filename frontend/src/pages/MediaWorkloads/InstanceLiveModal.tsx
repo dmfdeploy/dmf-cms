@@ -37,25 +37,9 @@ function Stat({ label, value }: { label: string; value: string }) {
 }
 
 /**
- * The coarse `reconnect` switch (umbrella #201 WP5, spec §6/§7): presents
- * the topology's OTHER sources as targets, requires a reason (C5, mirrors
- * ClearForDeployment's own graduated-friction pattern via the shared
- * ReasonConfirm), and surfaces the actuator's outcome honestly —
- * "Switching…" IS the live "reconnecting" status (the actuator's own
- * contract is synchronous-await, not a separate poll), and
- * failed_rollback_required is shown as a failure requiring operator
- * retry/rollback, never masked as success.
- *
- * Renders nothing (not an error state) when the instance carries no
- * topology at all — the common case for every non-viewer instance.
- *
- * umbrella #320/#321 (runtime truth): `active_source` now reflects a live
- * sidecar observation, not a static catalog value — so the switch control
- * itself must fail closed. It only ever offers a target when the topology's
- * `provenance`/`observed_at` prove the current active source was actually
- * seen, recently. Anything else (unreachable/unconfigured sidecar, no flow
- * match, or a reading that's gone stale) disables the control rather than
- * falling back to a possibly-wrong catalog default.
+ * The modal body: the live frame plus this instance's flow stats. One
+ * observation drives both (see LivePreviewFrame) rather than the frame
+ * opening a second query of its own.
  */
 function LiveBody({ instance }: { instance: MediaWorkloadInstance }) {
   // ONE bounds implementation, shared with the tiles (GATE-S1 P2b). The modal

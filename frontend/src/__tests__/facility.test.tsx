@@ -278,3 +278,21 @@ describe('Facility Detail page states', () => {
 
 
 })
+
+// GATE-S1-RV2 P2: a degradation reason nothing renders is a reason that does
+// not exist. Both halves asserted, so the banner cannot become unconditional.
+describe('partial NetBox data is stated, not swallowed', () => {
+  it('warns beside the facility tile when rows were unreadable', async () => {
+    stubFetch({ '/api/facility/summary': summary({ reason: 'netbox-rows-unparseable' }) })
+    renderWithQuery(<MemoryRouter><Facility /></MemoryRouter>)
+    expect(await screen.findByText(/Some NetBox records could not be read/)).toBeTruthy()
+    expect(screen.getByText('DMF Lab')).toBeTruthy()
+  })
+
+  it('says nothing of the sort when every row parsed', async () => {
+    stubFetch({ '/api/facility/summary': summary() })
+    renderWithQuery(<MemoryRouter><Facility /></MemoryRouter>)
+    await screen.findByText('DMF Lab')
+    expect(screen.queryByText(/could not be read/)).toBeNull()
+  })
+})

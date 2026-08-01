@@ -70,8 +70,8 @@ export default function OperateStage({
         //
         // The tiles carry NO action: the rail authorises actions per stage
         // and Operate carries none, so WorkloadTile has no write control of
-        // its own to offer. Clear-for-deployment lives on Finalise & Review,
-        // the stage the rail actually authorises it at.
+        // its own to offer. Clear-for-deployment lives on PROVISION, the
+        // stage the rail authorises it at.
         <div className="grid grid-cols-1 gap-4 md:grid-cols-2 xl:grid-cols-3">
           {instances.map((inst) => (
             <WorkloadTile
