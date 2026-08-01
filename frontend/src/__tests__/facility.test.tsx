@@ -273,7 +273,10 @@ describe('Facility Detail page states', () => {
   // umbrella #339 item 1. The page shipped saying "not found in this cluster"
   // for services whose PVCs it listed as present two sections below, because
   // presence was inferred from an ingress several of them deliberately do not
-  // have. Version now comes from the containers; the URL is access only.
+  // have. The DETECTION fix is in facility.py, and its discriminating test is
+  // test_read_platform_services_ingressless_service_is_still_detected — this
+  // one guards the rendered end of that contract: given the payload the fixed
+  // backend now produces, the operator sees a version and an honest dash.
   it('a service running without an ingress shows its version and a dashed access, never "not found"', async () => {
     renderDetail('dmf-lab', {
       '/api/facility/dmf-lab/detail': detailPayload({
