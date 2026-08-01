@@ -14,15 +14,17 @@ plan):
   node by its ``nodename`` label. An optional enrichment: a node missing
   from this join shows ``arch: null``, it never fails the whole node list
   (unlike a missing ``kube_node_info`` label, which is a malformed row).
-* Node instance class    — NetBox, never Prometheus (no default KSM series
-  carries a cloud flavour like "CAX21"). Best-effort: matches a
-  ``virtualization.virtual-machines`` record by name and reads
-  ``custom_fields.dmf_instance_type``. dmf-infra's born-inventory role does
-  not stamp this field today (verified against
-  k3s-lab-bootstrap/roles/common/dmf-born-inventory as of this write), so on
-  every current env this legitimately reads back ``None`` for every node —
-  that is an honest "not recorded in NetBox" state, not a read failure, and
-  is reported as such (never fabricated, never silently dropped).
+* Node instance class    — DELIBERATELY ABSENT (S1 decision, umbrella #285).
+  No default kube-state-metrics series carries a cloud flavour like
+  "CAX21", and NetBox does not hold one either: dmf-infra's born-inventory
+  role registers each node as a virtual-machine with NO custom_fields at
+  all (verified against k3s-lab-bootstrap/roles/common/dmf-born-inventory),
+  and the only custom fields it writes anywhere are on the SITE object
+  (dmf_env_id, dmf_env_label, dmf_provider, dmf_architecture). Rather than
+  render a field that can only ever read back empty, this page states the
+  node facts it can actually source. Stamping an instance-type field in
+  dmf-infra would make it sourceable; that is an infra change, not a
+  console one.
 * Platform services + as-deployed versions, and real ingress URLs — ONE
   combined read, see ``read_platform_services``. Both facts are keyed off
   the console's own ``AppContract`` (``config/app-contracts.yaml``) — the
@@ -91,7 +93,6 @@ class NodeFact:
     name: str
     kubelet_version: str
     arch: str | None
-    instance_class: str | None
 
 
 def _read_nodes(prom_url: str) -> list[NodeFact]:
@@ -126,7 +127,6 @@ def _read_nodes(prom_url: str) -> list[NodeFact]:
                 name=name,
                 kubelet_version=kubelet_version,
                 arch=arch_by_node.get(name),
-                instance_class=None,
             )
         )
     nodes.sort(key=lambda n: n.name)
@@ -141,59 +141,6 @@ def read_nodes(prom_url: str) -> tuple[list[NodeFact], str]:
         return _read_nodes(prom_url), ""
     except Exception:
         return [], "nodes-unreadable"
-
-
-def enrich_instance_class(
-    nodes: list[NodeFact],
-    *,
-    netbox_api_url: str,
-    netbox_api_token: str,
-    netbox_ssl_verify: bool,
-) -> tuple[list[NodeFact], str]:
-    """Best-effort NetBox enrichment of each node's ``instance_class``.
-
-    Matches by NetBox VM name == Prometheus node name (the k3s-lab-bootstrap
-    born-inventory role registers each node as a
-    ``virtualization.virtual-machine`` named identically to the k8s Node
-    object). ``reason == ""`` means the read itself succeeded — individual
-    nodes may still carry ``instance_class: None`` when NetBox has no
-    matching VM, or the VM has no ``dmf_instance_type`` custom field
-    recorded (the common case today, see the module docstring). Only a
-    failed READ (transport error, malformed envelope) produces a non-empty
-    reason, so the UI can tell "we asked and there's nothing" apart from
-    "we couldn't ask".
-    """
-    try:
-        ctx = netbox._ssl_context(netbox_ssl_verify)
-        result = netbox._request(
-            netbox_api_url,
-            netbox_api_token,
-            "/api/virtualization/virtual-machines/?limit=200",
-            ssl_context=ctx,
-        )
-        results = result.get("results")
-        if not isinstance(results, list):
-            raise ValueError("malformed virtual-machines envelope")
-    except Exception:
-        return nodes, "netbox-unreadable"
-
-    by_name: dict[str, dict] = {}
-    for vm in results:
-        if isinstance(vm, dict) and isinstance(vm.get("name"), str):
-            by_name[vm["name"]] = vm
-
-    enriched: list[NodeFact] = []
-    for node in nodes:
-        instance_class = None
-        vm = by_name.get(node.name)
-        if isinstance(vm, dict):
-            cf = vm.get("custom_fields")
-            if isinstance(cf, dict):
-                value = cf.get("dmf_instance_type")
-                if isinstance(value, str) and value.strip():
-                    instance_class = value.strip()
-        enriched.append(replace(node, instance_class=instance_class))
-    return enriched, ""
 
 
 # ---------------------------------------------------------------------------
@@ -435,7 +382,7 @@ def build_detail_payload(
     )
 
     if not prometheus_configured:
-        nodes_payload = {"reason": "prometheus-not-configured", "instance_class_reason": "", "items": []}
+        nodes_payload = {"reason": "prometheus-not-configured", "items": []}
         platform_services_payload = {"reason": "prometheus-not-configured", "items": []}
         storage_payload = {"reason": "prometheus-not-configured", "items": []}
         capacity_payload = {
@@ -449,27 +396,13 @@ def build_detail_payload(
         }
     else:
         nodes, nodes_reason = read_nodes(prometheus_url)
-        if nodes_reason == "" and nodes:
-            if netbox_configured:
-                nodes, instance_class_reason = enrich_instance_class(
-                    nodes,
-                    netbox_api_url=netbox_api_url,
-                    netbox_api_token=netbox_api_token,
-                    netbox_ssl_verify=netbox_ssl_verify,
-                )
-            else:
-                instance_class_reason = "netbox-not-configured"
-        else:
-            instance_class_reason = ""
         nodes_payload = {
             "reason": nodes_reason,
-            "instance_class_reason": instance_class_reason,
             "items": [
                 {
                     "name": n.name,
                     "kubelet_version": n.kubelet_version,
                     "arch": n.arch,
-                    "instance_class": n.instance_class,
                 }
                 for n in nodes
             ],

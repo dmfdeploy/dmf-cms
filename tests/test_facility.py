@@ -130,53 +130,6 @@ def test_read_nodes_transport_error_is_unreadable(monkeypatch):
     assert reason == "nodes-unreadable"
 
 
-def test_enrich_instance_class_reads_netbox_custom_field(monkeypatch):
-    nodes = [facility.NodeFact(name="n1", kubelet_version="v1.29.0", arch="aarch64", instance_class=None)]
-
-    def fake_request(api_url, api_token, path, ssl_context=None):
-        return {"results": [{"name": "n1", "custom_fields": {"dmf_instance_type": "CAX21"}}]}
-
-    monkeypatch.setattr(netbox_module, "_request", fake_request)
-    enriched, reason = facility.enrich_instance_class(
-        nodes, netbox_api_url="http://nb.test", netbox_api_token="tok", netbox_ssl_verify=False
-    )
-    assert reason == ""
-    assert enriched[0].instance_class == "CAX21"
-
-
-def test_enrich_instance_class_absent_field_is_honest_none_not_unreadable(monkeypatch):
-    # The field genuinely isn't recorded today (see facility.py's module
-    # docstring) — this must read as "we asked, nothing there", NOT as a
-    # read failure. reason == "" is the signal the UI uses to distinguish
-    # the two.
-    nodes = [facility.NodeFact(name="n1", kubelet_version="v1.29.0", arch="aarch64", instance_class=None)]
-
-    def fake_request(api_url, api_token, path, ssl_context=None):
-        return {"results": [{"name": "n1", "custom_fields": {}}]}
-
-    monkeypatch.setattr(netbox_module, "_request", fake_request)
-    enriched, reason = facility.enrich_instance_class(
-        nodes, netbox_api_url="http://nb.test", netbox_api_token="tok", netbox_ssl_verify=False
-    )
-    assert reason == ""
-    assert enriched[0].instance_class is None
-
-
-def test_enrich_instance_class_transport_error_is_unreadable(monkeypatch):
-    nodes = [facility.NodeFact(name="n1", kubelet_version="v1.29.0", arch="aarch64", instance_class=None)]
-
-    def boom(*a, **k):
-        raise netbox_module.NetboxAPIError(500, "boom")
-
-    monkeypatch.setattr(netbox_module, "_request", boom)
-    enriched, reason = facility.enrich_instance_class(
-        nodes, netbox_api_url="http://nb.test", netbox_api_token="tok", netbox_ssl_verify=False
-    )
-    assert reason == "netbox-unreadable"
-    # The input list comes back untouched, never fabricated.
-    assert enriched[0].instance_class is None
-
-
 # ---------------------------------------------------------------------------
 # Platform services + ingress URLs
 # ---------------------------------------------------------------------------
@@ -401,9 +354,8 @@ def test_build_detail_payload_full_success(monkeypatch):
 
     assert payload["site"] == {"slug": "dmf-lab", "name": "DMF Lab", "reason": ""}
     assert payload["nodes"]["reason"] == ""
-    assert payload["nodes"]["instance_class_reason"] == ""
     assert payload["nodes"]["items"] == [
-        {"name": "n1", "kubelet_version": "v1.29.0", "arch": "aarch64", "instance_class": "CAX21"}
+        {"name": "n1", "kubelet_version": "v1.29.0", "arch": "aarch64"}
     ]
     assert payload["platform_services"]["reason"] == ""
     assert payload["platform_services"]["items"] == [

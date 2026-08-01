@@ -118,7 +118,7 @@ function detailPayload(overrides: Partial<FacilityDetailResponse> = {}): Facilit
     prometheus_configured: true,
     netbox_configured: true,
     site: { slug: 'dmf-lab', name: 'DMF Lab', reason: '' },
-    nodes: { reason: '', instance_class_reason: '', items: [] },
+    nodes: { reason: '', items: [] },
     platform_services: { reason: '', items: [] },
     storage: { reason: '', items: [] },
     capacity: {
@@ -193,7 +193,7 @@ describe('Facility Detail page states', () => {
         prometheus_configured: false,
         netbox_configured: false,
         site: { slug: null, name: null, reason: 'netbox-not-configured' },
-        nodes: { reason: 'prometheus-not-configured', instance_class_reason: '', items: [] },
+        nodes: { reason: 'prometheus-not-configured', items: [] },
         platform_services: { reason: 'prometheus-not-configured', items: [] },
         storage: { reason: 'prometheus-not-configured', items: [] },
         capacity: {
@@ -219,7 +219,7 @@ describe('Facility Detail page states', () => {
   it('a malformed/unreadable section renders its own honest banner, never a raw error or a fabricated value', async () => {
     renderDetail('dmf-lab', {
       '/api/facility/dmf-lab/detail': detailPayload({
-        nodes: { reason: 'nodes-unreadable', instance_class_reason: '', items: [] },
+        nodes: { reason: 'nodes-unreadable', items: [] },
         capacity: {
           reason: 'budget-unavailable',
           node_name: null,
@@ -276,31 +276,5 @@ describe('Facility Detail page states', () => {
     expect(screen.getByText('netboxcommunity/netbox:v4.1.0')).toBeTruthy()
   })
 
-  it('a node instance_class read failure renders distinctly from a confirmed absence', async () => {
-    renderDetail('dmf-lab', {
-      '/api/facility/dmf-lab/detail': detailPayload({
-        nodes: {
-          reason: '',
-          instance_class_reason: 'netbox-unreadable',
-          items: [{ name: 'n1', kubelet_version: 'v1.29.0', arch: 'aarch64', instance_class: null }],
-        },
-      }),
-    })
-    expect(await screen.findByText('n1')).toBeTruthy()
-    expect(screen.getByText(/NetBox is unreachable right now/)).toBeTruthy()
-    expect(screen.queryByText('not recorded in NetBox')).toBeNull()
-  })
 
-  it('a confirmed-absent instance_class (netbox reachable, field just not there) reads as "not recorded", not an error', async () => {
-    renderDetail('dmf-lab', {
-      '/api/facility/dmf-lab/detail': detailPayload({
-        nodes: {
-          reason: '',
-          instance_class_reason: '',
-          items: [{ name: 'n1', kubelet_version: 'v1.29.0', arch: 'aarch64', instance_class: null }],
-        },
-      }),
-    })
-    expect(await screen.findByText('not recorded in NetBox')).toBeTruthy()
-  })
 })
