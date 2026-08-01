@@ -74,7 +74,10 @@ interface FetchOpts {
 }
 
 function mkFetch(opts: FetchOpts = {}) {
-  const catalog = opts.catalog ?? [catalogEntry()]
+  // Mutable for the same reason `workloads` is: a template's lifecycle can
+  // change under the operator mid-draft, and that transition is a case the
+  // guard has to survive rather than a hypothetical.
+  let catalog = opts.catalog ?? [catalogEntry()]
   // Mutable so a test can simulate the launcher stamping the tag partway
   // through the journey, which is the real sequence.
   let workloads: MediaWorkload[] = opts.workloads ?? []
@@ -129,6 +132,9 @@ function mkFetch(opts: FetchOpts = {}) {
     setWorkloads: (next: MediaWorkload[]) => {
       workloads = next
     },
+    setCatalog: (next: CatalogEntry[]) => {
+      catalog = next
+    },
     setJobStatus: (id: number, next: { status: string; is_done: boolean }) => {
       jobStatus[id] = next
     },
@@ -154,6 +160,9 @@ function renderCreate() {
       </MemoryRouter>
     </QueryClientProvider>,
   )
+  // Returned so a test can force a catalog re-read mid-flow; every other
+  // caller ignores it.
+  return queryClient
 }
 
 function stepSection(label: string): HTMLElement {
@@ -373,6 +382,164 @@ describe('Provision: the deploy POST', () => {
     // removed and would have kept passing if the page HAD navigated.
     expect(screen.queryByText('Deploy accepted.')).toBeNull()
     expect(screen.getByRole('heading', { name: 'Create media workload' })).toBeTruthy()
+  })
+})
+
+// ---------------------------------------------------------------------------
+// An already-deployed template cannot be provisioned again (operator review,
+// PR #66)
+//
+// ProvisionStage.tsx has always suppressed its deploy for an entry whose
+// catalog lifecycle is `active` — one template provisions one NetBox service,
+// so a second deploy is a duplicate against the same target. This page reused
+// that page's deploy seam and did NOT carry the guard across: the picker
+// offered "Use this template" and the Provision step offered "Provision now"
+// for an entry already tagged active. Nothing here existed before, which is
+// how it shipped.
+//
+// The pair that matters is the suppression AND the boundary below it: a guard
+// that never offers anything would satisfy every suppression assertion, so
+// the non-active lifecycles are driven table-style to pin `=== 'active'`
+// rather than some broader refusal.
+// ---------------------------------------------------------------------------
+
+const ACTIVE = { key: 'mxl-viewer', lifecycle: 'active' as const }
+
+describe('a template already deployed on this facility', () => {
+  it('is marked in the picker instead of being offered', async () => {
+    mkFetch({ catalog: [catalogEntry(ACTIVE)] })
+    renderCreate()
+    const design = stepSection('Design')
+
+    expect(await within(design).findByText('Already deployed')).toBeTruthy()
+    // Not offered, and not offered-then-disabled: no dead control at all.
+    expect(within(design).queryByRole('button', { name: 'Use this template' })).toBeNull()
+    expect(within(design).getByText(/can't start a new workload here/)).toBeTruthy()
+  })
+
+  it('cannot be driven to an open Provision step by anything the picker offers', async () => {
+    // The end-to-end consequence, driven the way the defect was reached
+    // rather than restated as a second "no button" assertion: the operator
+    // supplies a name and clicks WHATEVER the picker actually offers. With
+    // the guard there is nothing to click, so Design never completes and the
+    // gate holds Plan (and behind it Provision) shut. Without it, the click
+    // lands, Design completes, and the flow walks straight to the duplicate
+    // deploy — which is why this loops over the offers instead of asserting
+    // their absence.
+    mkFetch({ catalog: [catalogEntry(ACTIVE)] })
+    renderCreate()
+    await screen.findByRole('heading', { name: 'Design' })
+    typeStudioName('Studio A')
+
+    const design = stepSection('Design')
+    for (const offer of within(design).queryAllByRole('button', { name: 'Use this template' })) {
+      fireEvent.click(offer)
+    }
+
+    // hasName && hasTemplate are both synchronous, so Plan would have
+    // unlocked by now if the click had been allowed to land.
+    expect(within(stepSection('Plan')).getByText(/This step opens once Design is complete/)).toBeTruthy()
+    expect(within(stepSection('Provision')).queryByRole('button')).toBeNull()
+  })
+
+  it('withdraws the Provision action if the template goes active after it was chosen', async () => {
+    // THE REACHABLE PATH the picker guard alone does not close. The operator
+    // selects a bootstrapped template, someone else deploys it, the catalog
+    // re-reads — and the draft is now sitting on Provision with a live
+    // button aimed at a duplicate deploy.
+    const h = mkFetch({ catalog: [catalogEntry({ key: 'mxl-viewer', lifecycle: 'bootstrapped' })] })
+    const queryClient = renderCreate()
+    await screen.findByRole('heading', { name: 'Design' })
+    const provision = await reachProvision()
+    // Precondition: it really was offered a moment ago, so what follows is a
+    // withdrawal and not a test that never had anything to withdraw.
+    expect(within(provision).getByRole('button', { name: '▶ Provision now' })).toBeTruthy()
+
+    h.setCatalog([catalogEntry(ACTIVE)])
+    await queryClient.invalidateQueries({ queryKey: ['catalog'] })
+
+    await waitFor(() =>
+      expect(within(stepSection('Provision')).queryByRole('button', { name: '▶ Provision now' })).toBeNull(),
+    )
+    expect(within(stepSection('Provision')).getByText(/nothing here to launch/)).toBeTruthy()
+  })
+
+  it('withdraws an ALREADY-ARMED confirm, with a filled-in reason, and fires no deploy', async () => {
+    // The narrower half of the same race, driven to the last moment before
+    // the POST: the confirm panel is open and the reason is typed when the
+    // lifecycle flips. Suppressing only the arm button would leave "Confirm
+    // provision" standing — one click from the deploy this whole guard
+    // exists to refuse. The deploy count is asserted at the seam rather than
+    // at the pixels, because that is the assertion that would have caught
+    // the defect in the first place.
+    const h = mkFetch({ catalog: [catalogEntry({ key: 'mxl-viewer', lifecycle: 'bootstrapped' })] })
+    const queryClient = renderCreate()
+    await screen.findByRole('heading', { name: 'Design' })
+    const provision = await reachProvision()
+    fireEvent.click(within(provision).getByRole('button', { name: '▶ Provision now' }))
+    fireEvent.change(
+      within(provision).getByPlaceholderText('Reason (required, recorded in the audit trail)'),
+      { target: { value: 'demo launch' } },
+    )
+    // Armed and satisfied: the confirm is live and would fire if clicked.
+    expect(
+      (within(provision).getByRole('button', { name: 'Confirm provision' }) as HTMLButtonElement).disabled,
+    ).toBe(false)
+
+    h.setCatalog([catalogEntry(ACTIVE)])
+    await queryClient.invalidateQueries({ queryKey: ['catalog'] })
+
+    await waitFor(() =>
+      expect(within(stepSection('Provision')).queryByRole('button', { name: 'Confirm provision' })).toBeNull(),
+    )
+    expect(h.deploy).toHaveLength(0)
+    expect(screen.queryByText('Deploy accepted.')).toBeNull()
+  })
+
+  // ---- the boundary: ONLY `active` is refused ---------------------------
+
+  // Every other lifecycle the catalog can report must still be offered.
+  // Without this, narrowing the guard to "never offer a template" — or to
+  // `lifecycle !== 'bootstrapped'` — would pass every test above.
+  for (const lifecycle of ['bootstrapped', 'unknown', 'error'] as const) {
+    it(`still offers a "${lifecycle}" template, in the picker and at Provision`, async () => {
+      mkFetch({ catalog: [catalogEntry({ key: 'mxl-viewer', lifecycle })] })
+      renderCreate()
+      await screen.findByRole('heading', { name: 'Design' })
+
+      expect(within(stepSection('Design')).queryByText('Already deployed')).toBeNull()
+      const provision = await reachProvision()
+      expect(within(provision).getByRole('button', { name: '▶ Provision now' })).toBeTruthy()
+      expect(within(provision).queryByText(/nothing here to launch/)).toBeNull()
+    })
+  }
+
+  it('offers the deployable templates alongside the ones it refuses', async () => {
+    // A mixed catalog is the realistic shape, and the one where a guard
+    // written as "if any entry is active, offer nothing" would show itself.
+    mkFetch({
+      catalog: [
+        catalogEntry({ key: 'mxl-viewer', display_name: 'MXL Viewer', lifecycle: 'active' }),
+        catalogEntry({ key: 'mxl-src', display_name: 'MXL Source', lifecycle: 'bootstrapped' }),
+      ],
+    })
+    renderCreate()
+    const design = stepSection('Design')
+
+    expect(await within(design).findByText('Already deployed')).toBeTruthy()
+    // Exactly one entry is still selectable — the one that isn't deployed.
+    const offers = within(design).getAllByRole('button', { name: 'Use this template' })
+    expect(offers).toHaveLength(1)
+    fireEvent.click(offers[0])
+
+    // And it was the DEPLOYABLE one that became selectable — asserted on the
+    // row itself, since the chosen template's name also lands in the Design
+    // step's summary line and a document-wide lookup would match either.
+    const chosen = within(design).getByText('Selected').closest('li') as HTMLElement
+    expect(chosen.textContent).toMatch(/MXL Source/)
+    expect(chosen.textContent).not.toMatch(/MXL Viewer/)
+    const refused = within(design).getByText('Already deployed').closest('li') as HTMLElement
+    expect(refused.textContent).toMatch(/MXL Viewer/)
   })
 })
 
