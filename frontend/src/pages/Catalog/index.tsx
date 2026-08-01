@@ -130,7 +130,12 @@ export default function Catalog() {
     return (
       <div className="flex-1 overflow-y-auto p-6">
         <div className="panel text-center py-12">
-          <p className="text-red-400">Failed to load catalog: {String(error)}</p>
+          {/* Art. 8: no stringified exception on an operator surface. This
+              page is hidden from the sidebar but still reachable by URL, so
+              "hidden" is not an exemption (GATE-S1-RV). */}
+          <p className="text-red-400">
+            The catalog could not be loaded right now. Retrying automatically.
+          </p>
         </div>
       </div>
     )
