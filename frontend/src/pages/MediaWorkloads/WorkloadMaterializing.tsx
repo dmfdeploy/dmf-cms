@@ -38,22 +38,32 @@ import { JobStatusLine, OperationStatusLine } from './stages/JobProgress'
  * not say that it does. The launcher writes the tagged NetBox record PART-WAY
  * through the run (dmf-runbooks roles/mxl provision stage), and the fault
  * boundary sits AFTER that first mutation — so a job that fails later has
- * already created the record. What happens to that record next is a
- * two-path story, and the console owns the usual path: the run guard's own
- * rescue only MARKS the snapshot failed_rollback_required (it rolls nothing
- * back itself), but dmf-cms watches for that transition and AUTO-DISPATCHES
- * the rollback — main.py's _maybe_auto_trigger_rollback, gated by
- * settings.l3.auto_rollback, which defaults to True. So on the default path a
- * record left by a failed launch is cleaned up without anyone asking.
+ * already created the record. What happens to that record next is the
+ * console's job, and it ATTEMPTS cleanup rather than guaranteeing it: the run
+ * guard's own rescue only MARKS the snapshot failed_rollback_required (it
+ * rolls nothing back itself), and dmf-cms watches for that transition and
+ * auto-DISPATCHES a rollback — main.py's _maybe_auto_trigger_rollback, gated
+ * by settings.l3.auto_rollback, default True.
  *
- * An explicit rollback remains the fallback for the cases auto-dispatch
- * declines rather than guesses: the failed op has no known run_id
- * ("identity-unknown"), auto_rollback is switched off ("disabled"), or a
- * rollback for that run is already in flight ("already-in-progress").
+ * Dispatching is not cleaning up, and the distinction is load-bearing here.
+ * A dispatched rollback reaches RUN_COMPLETE only on a successful job AND the
+ * exact rollback_complete marker; every other combination fails closed to
+ * ROLLBACK_INCOMPLETE — a failed rollback job, or a successful-but-silent one
+ * whose marker never arrived. So the default path attempts cleanup, and may
+ * leave the record standing anyway.
  *
- * Either way this page cannot see which happened, which is exactly why the
- * rendered copy below stays neutral about WHO runs the rollback and only
- * says the record stands until one is run.
+ * Two cases fall outside that default, and only ONE of them needs a human:
+ *   - identity-unknown (the failed op carries no run_id) and disabled
+ *     (auto_rollback off): no dispatch happens, so an explicit rollback is
+ *     the fallback;
+ *   - already-in-progress: a rollback for that run is already running, so the
+ *     console reattaches to it and returns. Nothing further is required —
+ *     grouping this with the two above would invent operator work that does
+ *     not exist.
+ *
+ * This page can see none of that, which is exactly why the rendered copy
+ * below stays neutral about who runs the rollback and whether it succeeds,
+ * and only says the record stands until one is run.
  *
  * So the failure copy states an uncertainty rather than resolving it, and the
  * page stays live underneath: if the inventory does report the workload, the
