@@ -85,6 +85,25 @@ describe('Facilities list (S1, #285)', () => {
     expect(screen.queryByText(/^Status:/)).toBeNull()
   })
 
+  // umbrella #339 item 4: the single facility rendered as a wide row-card
+  // while Media Workloads rendered square control-surface tiles, so the two
+  // single-entry pages the S1 cut created did not look like one console. The
+  // skin pass hangs on this structure, so the structure is what is pinned.
+  it('renders the facility as a square control-surface tile, not a wide row-card', async () => {
+    stubFetch({ '/api/facility/summary': summary() })
+    renderWithQuery(
+      <MemoryRouter>
+        <Facility />
+      </MemoryRouter>,
+    )
+    const link = await screen.findByRole('link', { name: /DMF Lab/ })
+    const className = link.getAttribute('class') ?? ''
+    expect(className).toContain('aspect-square')
+    // The row-card affordances are gone, not merely restyled.
+    expect(className).not.toContain('items-center justify-between')
+    expect(className).not.toContain('panel')
+  })
+
   it('renders an honest not-configured state, no dead link', async () => {
     stubFetch({ '/api/facility/summary': summary({ reason: 'netbox-not-configured', sites: [] }) })
     renderWithQuery(
@@ -117,7 +136,7 @@ function detailPayload(overrides: Partial<FacilityDetailResponse> = {}): Facilit
     requested_site: 'dmf-lab',
     prometheus_configured: true,
     netbox_configured: true,
-    site: { slug: 'dmf-lab', name: 'DMF Lab', reason: '' },
+    site: { slug: 'dmf-lab', name: 'DMF Lab', architecture: null, reason: '' },
     nodes: { reason: '', items: [] },
     platform_services: { reason: '', items: [] },
     storage: { reason: '', items: [] },
@@ -192,7 +211,7 @@ describe('Facility Detail page states', () => {
       '/api/facility/dmf-lab/detail': detailPayload({
         prometheus_configured: false,
         netbox_configured: false,
-        site: { slug: null, name: null, reason: 'netbox-not-configured' },
+        site: { slug: null, name: null, architecture: null, reason: 'netbox-not-configured' },
         nodes: { reason: 'prometheus-not-configured', items: [] },
         platform_services: { reason: 'prometheus-not-configured', items: [] },
         storage: { reason: 'prometheus-not-configured', items: [] },
@@ -251,17 +270,55 @@ describe('Facility Detail page states', () => {
     expect(screen.getByText('512 MiB')).toBeTruthy()
   })
 
-  it('an app absent from the cluster ingress renders as honestly not found, not dropped', async () => {
+  // umbrella #339 item 1. The page shipped saying "not found in this cluster"
+  // for services whose PVCs it listed as present two sections below, because
+  // presence was inferred from an ingress several of them deliberately do not
+  // have. Version now comes from the containers; the URL is access only.
+  it('a service running without an ingress shows its version and a dashed access, never "not found"', async () => {
     renderDetail('dmf-lab', {
       '/api/facility/dmf-lab/detail': detailPayload({
         platform_services: {
           reason: '',
           items: [
-            { key: 'librenms', display_name: 'LibreNMS', namespace: null, url: null, images: [] },
+            {
+              key: 'awx',
+              display_name: 'AWX',
+              namespace: 'awx',
+              image_contains: 'awx',
+              url: null,
+              images: ['quay.io/ansible/awx:24.6.1'],
+            },
+          ],
+        },
+      }),
+    })
+    expect(await screen.findByText('AWX')).toBeTruthy()
+    expect(screen.getByText('quay.io/ansible/awx:24.6.1')).toBeTruthy()
+    expect(screen.getByText('—')).toBeTruthy()
+    expect(screen.queryByRole('link', { name: 'Open →' })).toBeNull()
+    // The overclaim itself, pinned: this copy must not come back.
+    expect(screen.queryByText(/not found in this cluster/)).toBeNull()
+  })
+
+  it('a searched-but-unmatched service states what was checked, not that it is absent', async () => {
+    renderDetail('dmf-lab', {
+      '/api/facility/dmf-lab/detail': detailPayload({
+        platform_services: {
+          reason: '',
+          items: [
+            {
+              key: 'librenms',
+              display_name: 'LibreNMS',
+              namespace: 'librenms',
+              image_contains: 'librenms',
+              url: null,
+              images: [],
+            },
             {
               key: 'netbox',
               display_name: 'NetBox',
               namespace: 'netbox',
+              image_contains: 'netbox',
               url: 'https://netbox.dmf.lab.example/',
               images: ['netboxcommunity/netbox:v4.1.0'],
             },
@@ -270,13 +327,61 @@ describe('Facility Detail page states', () => {
       }),
     })
     expect(await screen.findByText('LibreNMS')).toBeTruthy()
-    expect(screen.getByText('not found in this cluster')).toBeTruthy()
+    // A statement about the check, which an operator can falsify — not a
+    // claim about the cluster, which they cannot.
+    expect(screen.getByText('no matching pods in cluster metrics')).toBeTruthy()
+    expect(screen.queryByText(/not found in this cluster/)).toBeNull()
     const link = screen.getByRole('link', { name: 'Open →' })
     expect(link.getAttribute('href')).toBe('https://netbox.dmf.lab.example/')
     expect(screen.getByText('netboxcommunity/netbox:v4.1.0')).toBeTruthy()
   })
 
+  it('a service with no declared cluster location reads as unchecked, distinct from unmatched', async () => {
+    renderDetail('dmf-lab', {
+      '/api/facility/dmf-lab/detail': detailPayload({
+        platform_services: {
+          reason: '',
+          items: [
+            {
+              key: 'mystery',
+              display_name: 'Mystery',
+              namespace: null,
+              image_contains: null,
+              url: null,
+              images: [],
+            },
+          ],
+        },
+      }),
+    })
+    expect(await screen.findByText('Mystery')).toBeTruthy()
+    expect(screen.getByText('no cluster location declared for this service')).toBeTruthy()
+    // "We didn't look" must not read as "we looked and found nothing".
+    expect(screen.queryByText('no matching pods in cluster metrics')).toBeNull()
+  })
 
+  // umbrella #339 item 2 — the fallback chain, at the pixel.
+  it('renders the node arch and names NetBox when that is where it came from', async () => {
+    renderDetail('dmf-lab', {
+      '/api/facility/dmf-lab/detail': detailPayload({
+        nodes: {
+          reason: '',
+          items: [
+            { name: 'n1', kubelet_version: 'v1.29.0', arch: 'aarch64', arch_source: 'node' },
+            { name: 'n2', kubelet_version: 'v1.29.0', arch: 'arm64', arch_source: 'netbox' },
+            { name: 'n3', kubelet_version: 'v1.29.0', arch: null, arch_source: null },
+          ],
+        },
+      }),
+    })
+    expect(await screen.findByText('aarch64')).toBeTruthy()
+    expect(screen.getByText('arm64')).toBeTruthy()
+    // Provenance shown only for the declared value — a measured arch must not
+    // be dressed up as a NetBox fact, and vice versa.
+    expect(screen.getAllByText('(from NetBox)')).toHaveLength(1)
+    // The designed cannot-be-read state survives as the final fallback.
+    expect(screen.getByText('cannot be read')).toBeTruthy()
+  })
 })
 
 // GATE-S1-RV2 P2: a degradation reason nothing renders is a reason that does

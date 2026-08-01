@@ -1,5 +1,5 @@
 import { Link } from 'react-router-dom'
-import { Building2, ArrowRight } from 'lucide-react'
+import { Building2 } from 'lucide-react'
 import { useFacilitySummary } from '@/api/hooks'
 
 // Facilities (S1, #285): a single-facility console has exactly one entry
@@ -118,23 +118,29 @@ function FacilityEntry({ data }: { data: ReturnType<typeof useFacilitySummary>['
           Some NetBox records could not be read — this facility may be incomplete.
         </p>
       )}
-    <Link
-      to={`/facilities/${encodeURIComponent(site.slug)}`}
-      className="panel p-6 flex items-center justify-between hover:bg-panel/30 transition group"
-    >
-      <div className="flex items-center gap-4">
-        <div className="p-3 rounded-lg bg-blue-500/10">
-          <Building2 className="w-6 h-6 text-blue-400" />
-        </div>
-        <div>
-          <h2 className="text-lg font-semibold">{site.name}</h2>
-          <p className="text-xs text-muted mt-1">
-            {site.device_count} device{site.device_count === 1 ? '' : 's'} in NetBox
-          </p>
-        </div>
+      {/* Same square control-surface tile structure Media Workloads uses
+          (pages/MediaWorkloads/index.tsx), in the same responsive grid, so
+          the streamdeck skin pass hangs one treatment on both single-entry
+          pages instead of two. Structure only: the provider mark is a skin
+          concern AND a data-driven one (envs rotate providers), so the
+          generic building glyph stands in rather than a hardcoded logo. */}
+      <div className="mt-4 grid grid-cols-1 gap-4 sm:grid-cols-2 xl:grid-cols-3">
+        <Link
+          to={`/facilities/${encodeURIComponent(site.slug)}`}
+          className="card group flex aspect-square flex-col gap-3 overflow-hidden rounded-xl transition hover:border-accent/40 hover:bg-white/5"
+          aria-label={`Open ${site.name} facility detail`}
+        >
+          <div className="flex aspect-video w-full items-center justify-center rounded-md border border-white/10 bg-black/40">
+            <Building2 className="h-8 w-8 text-blue-400" />
+          </div>
+          <div className="flex min-w-0 flex-1 flex-col gap-2">
+            <h2 className="truncate text-base font-semibold">{site.name}</h2>
+            <p className="mt-auto truncate text-xs text-muted">
+              {site.device_count} device{site.device_count === 1 ? '' : 's'} in NetBox
+            </p>
+          </div>
+        </Link>
       </div>
-      <ArrowRight className="w-5 h-5 text-muted group-hover:text-accent transition" />
-    </Link>
     </>
   )
 }

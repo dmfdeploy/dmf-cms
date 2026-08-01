@@ -8,8 +8,9 @@ import type { FacilityDetailResponse } from '@/api/types'
 // module docstring for the full fact -> source-series map. This page
 // replaces the Workspace "Infrastructure Services" table (dead
 // example-domain links, config/app-contracts.yaml's static deep_links) with
-// the real cluster ingress objects, and the old Facility page's meaningless
-// "Status: NetBox connected" card with actual scheduler-truth capacity.
+// the containers actually running in the cluster, and the old Facility
+// page's meaningless "Status: NetBox connected" card with actual
+// scheduler-truth capacity.
 //
 // Every section renders its OWN `reason` (facility.py's fail-soft
 // contract) — a Prometheus outage degrades nodes/platform_services/
@@ -18,6 +19,13 @@ import type { FacilityDetailResponse } from '@/api/types'
 // shown at all — nothing can source it; see facility.py.) No disabled controls, no
 // "loading" spinner standing in for "we cannot read this" (Constitution
 // Art. 1).
+//
+// Two cells here say what the console CHECKED rather than what is true of
+// the cluster (umbrella #339): a service with no matching pods, and a node
+// architecture that came from NetBox rather than from the node. Both shipped
+// as flat claims — "not found in this cluster", a bare arch string — and both
+// were wrong in the direction that costs trust, so neither may quietly lose
+// its qualifier again.
 
 // ---------------------------------------------------------------------------
 // Page-level classifier — pure over the react-query result shape, same
@@ -191,7 +199,21 @@ function NodesPanel({ data }: { data: FacilityDetailResponse }) {
                 <tr key={n.name}>
                   <td className="font-medium text-text">{n.name}</td>
                   <td className="font-mono text-xs">{n.kubelet_version}</td>
-                  <td className="font-mono text-xs">{n.arch ?? <span className="text-muted">cannot be read</span>}</td>
+                  <td className="font-mono text-xs">
+                    {n.arch ? (
+                      <>
+                        {n.arch}
+                        {/* Provenance, not decoration: the NetBox value is
+                            what the facility was declared to be, not what
+                            this node reported about itself. */}
+                        {n.arch_source === 'netbox' && (
+                          <span className="ml-1 font-sans text-muted">(from NetBox)</span>
+                        )}
+                      </>
+                    ) : (
+                      <span className="text-muted">cannot be read</span>
+                    )}
+                  </td>
                 </tr>
               ))}
             </tbody>
@@ -209,7 +231,9 @@ function PlatformServicesPanel({ data }: { data: FacilityDetailResponse }) {
       <div className="px-6 py-4 border-b border-panel">
         <h2 className="text-lg font-semibold">Platform services</h2>
         <p className="text-xs text-muted mt-1">
-          As-deployed versions and live URLs, read from the cluster's own ingress objects.
+          As-deployed versions read from the containers running in the cluster; access links
+          from its ingress objects. A service can be running without an ingress — no link is
+          not the same as not there.
         </p>
       </div>
       {services.reason !== '' ? (
@@ -228,13 +252,22 @@ function PlatformServicesPanel({ data }: { data: FacilityDetailResponse }) {
               {services.items.map((s) => (
                 <tr key={s.key}>
                   <td className="font-medium text-text">{s.display_name}</td>
+                  {/* The empty states say what was CHECKED, never that the
+                      service is absent (umbrella #339 item 1): this read is
+                      only as good as the namespace/token the contract
+                      declares, and the page shipped claiming cluster-wide
+                      absence off a check that never looked at containers. */}
                   <td className="font-mono text-xs">
                     {s.images.length > 0 ? (
                       s.images.join(', ')
                     ) : s.namespace ? (
-                      <span className="text-muted">no running containers</span>
+                      <span className="font-sans text-muted">
+                        no matching pods in cluster metrics
+                      </span>
                     ) : (
-                      <span className="text-muted">not found in this cluster</span>
+                      <span className="font-sans text-muted">
+                        no cluster location declared for this service
+                      </span>
                     )}
                   </td>
                   <td>
