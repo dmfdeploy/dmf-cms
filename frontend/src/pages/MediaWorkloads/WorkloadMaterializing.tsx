@@ -38,11 +38,22 @@ import { JobStatusLine, OperationStatusLine } from './stages/JobProgress'
  * not say that it does. The launcher writes the tagged NetBox record PART-WAY
  * through the run (dmf-runbooks roles/mxl provision stage), and the fault
  * boundary sits AFTER that first mutation — so a job that fails later has
- * already created the record. Worse for any "nothing happened" reading: the
- * run guard's rescue only MARKS the snapshot failed_rollback_required and
- * points at playbooks/rollback-run.yml; it does not roll anything back. A
- * record left behind by a failed launch therefore persists until someone runs
- * that rollback explicitly.
+ * already created the record. What happens to that record next is a
+ * two-path story, and the console owns the usual path: the run guard's own
+ * rescue only MARKS the snapshot failed_rollback_required (it rolls nothing
+ * back itself), but dmf-cms watches for that transition and AUTO-DISPATCHES
+ * the rollback — main.py's _maybe_auto_trigger_rollback, gated by
+ * settings.l3.auto_rollback, which defaults to True. So on the default path a
+ * record left by a failed launch is cleaned up without anyone asking.
+ *
+ * An explicit rollback remains the fallback for the cases auto-dispatch
+ * declines rather than guesses: the failed op has no known run_id
+ * ("identity-unknown"), auto_rollback is switched off ("disabled"), or a
+ * rollback for that run is already in flight ("already-in-progress").
+ *
+ * Either way this page cannot see which happened, which is exactly why the
+ * rendered copy below stays neutral about WHO runs the rollback and only
+ * says the record stands until one is run.
  *
  * So the failure copy states an uncertainty rather than resolving it, and the
  * page stays live underneath: if the inventory does report the workload, the
@@ -89,7 +100,15 @@ export function readLaunchState(state: unknown): WorkloadLaunchState | null {
   return null
 }
 
-/** Terminal AWX job states that mean the workload is not coming. */
+/**
+ * Terminal AWX job states meaning the LAUNCH JOB did not succeed.
+ *
+ * Deliberately not "the workload is not coming": the launcher writes the
+ * tagged record part-way through the run, so a job that fails after that
+ * point has already created it and the workload can still appear. This set
+ * classifies the JOB's outcome, and nothing more — the parent decides what
+ * exists, from the inventory.
+ */
 const FAILED_JOB_STATES = new Set(['failed', 'error', 'canceled'])
 
 export default function WorkloadMaterializing({
