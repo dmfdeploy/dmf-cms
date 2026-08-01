@@ -100,6 +100,7 @@ from dataclasses import dataclass, replace
 from . import capacity
 from . import netbox
 from . import prometheus
+from .contracts import ImageRepository
 
 # Kubernetes' own bookkeeping namespaces are never "the DMF platform" under
 # any reading of that phrase — excluded from storage listings so the page
@@ -222,34 +223,50 @@ def _image_repository(ref: str) -> str:
     return "/".join(p for p in parts if p)
 
 
-def _repository_matches(ref: str, declared: tuple[str, ...]) -> bool:
-    """Whether a container image reference is one of ``declared``.
+def _repository_matches(ref: str, declared: tuple[ImageRepository, ...]) -> bool:
+    """Whether a container image reference is one of ``declared``. The
+    registry host is ignored either way; the two modes differ in how much of
+    the remaining path has to agree.
 
-    Compares the IMAGE NAME — the final path segment of the repository —
-    for exact equality, registry host ignored.
+    Both modes compare on SEGMENT BOUNDARIES rather than by substring, which
+    is the whole point: substring matching reported ``ansible/awx-operator``
+    as AWX and every ``grafana/loki`` and ``grafana/promtail`` pod as
+    Grafana, misattributing other software's version to a service on a page
+    whose entire job is to be checkable.
 
-    Exact-segment rather than substring is the whole point: substring
-    matching reported ``ansible/awx-operator`` as AWX and every
-    ``grafana/loki`` and ``grafana/promtail`` pod as Grafana, which is
-    misattributing other software's version to a service on a page whose
-    entire job is to be checkable.
-
-    The final segment rather than the full declared path is because
-    dmf-infra playbook 630 does not preserve source repository paths when it
-    mirrors into the cluster's Zot: it maps ``awx-ee`` to
+    ``basename`` (the default) compares only the final segment — the image
+    name. dmf-infra playbook 630 does not preserve source repository paths
+    when it mirrors into the cluster's Zot: it maps ``awx-ee`` to
     ``<zot>/dmf/awx-ee`` and ``docker.io/library/python`` to
-    ``<zot>/dmf/library/python``, replacing the source namespace outright.
-    Matching the full path would silently stop recognising any image the day
-    it was mirrored. (Today's platform services are pulled from their
-    upstream registries — the containerd config in dmf-infra's k3s role is
-    per-host transport for Zot, not a pull-through mirror — so this
-    tolerance is defensive rather than currently exercised.) Within a search
-    already scoped to one namespace, the image name is the discriminating
-    part; the full path is declared in the contract because that is what a
-    human checks against upstream.
+    ``<zot>/dmf/library/python``, replacing the source namespace outright, so
+    a full-path rule would silently stop recognising an image the day it was
+    mirrored. (Today's platform services are pulled from their upstream
+    registries — the containerd config in dmf-infra's k3s role is per-host
+    transport for Zot, not a pull-through mirror — so that tolerance is
+    defensive rather than currently exercised.) It carries one standing
+    assumption: that no OTHER vendor's image sharing this basename lands in
+    the same namespace.
+
+    ``exact`` compares the whole path, for a service whose image name cannot
+    carry that assumption. Authentik is the case: ``goauthentik/server``
+    reduces to ``server``, which is not project-distinctive, and the fact
+    that nothing else named ``server`` runs in its namespace today is
+    contingent state, not a property. It buys strictness by giving up the
+    mirror tolerance above for that entry alone — the honest trade while
+    platform-service mirroring is not exercised, and a deliberate one:
+    a mirrored ``<zot>/dmf/server`` would stop being recognised, which
+    degrades to the falsifiable "no matching pods" statement rather than to
+    a wrong version string.
     """
-    name = _image_repository(ref).rsplit("/", 1)[-1]
-    return any(name == d.rstrip("/").rsplit("/", 1)[-1] for d in declared)
+    repository = _image_repository(ref)
+    for entry in declared:
+        path = entry.path.strip("/")
+        if entry.match == "exact":
+            if repository == path:
+                return True
+        elif repository.rsplit("/", 1)[-1] == path.rsplit("/", 1)[-1]:
+            return True
+    return False
 
 
 @dataclass(frozen=True)
@@ -262,7 +279,7 @@ class PlatformServiceSpec:
     key: str
     display_name: str
     namespace: str | None
-    image_repositories: tuple[str, ...] = ()
+    image_repositories: tuple[ImageRepository, ...] = ()
 
 
 @dataclass(frozen=True)
@@ -272,7 +289,7 @@ class PlatformServiceFact:
     # The namespace that WAS searched, so the page can say what it checked.
     # None => nothing was checked, because nothing was declared.
     namespace: str | None
-    image_repositories: tuple[str, ...]
+    image_repositories: tuple[ImageRepository, ...]
     url: str | None  # ingress URL when the cluster has one; access, not existence
     # Empty => no container matched. More than one is ordinary, not an
     # anomaly: AWX alone ships a web image and an execution-environment
@@ -599,7 +616,9 @@ def build_detail_payload(
                     "key": s.key,
                     "display_name": s.display_name,
                     "namespace": s.namespace,
-                    "image_repositories": list(s.image_repositories),
+                    # Paths only: the match mode is how this module compares,
+                    # not part of what the page reports it looked for.
+                    "image_repositories": [r.path for r in s.image_repositories],
                     "url": s.url,
                     "images": list(s.images),
                 }

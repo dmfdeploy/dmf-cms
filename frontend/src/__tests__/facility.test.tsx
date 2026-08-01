@@ -321,9 +321,9 @@ describe('Facility Detail page states', () => {
               key: 'netbox',
               display_name: 'NetBox',
               namespace: 'netbox',
-              image_repositories: ['netboxcommunity/netbox'],
+              image_repositories: ['netbox-community/netbox'],
               url: 'https://netbox.dmf.lab.example/',
-              images: ['netboxcommunity/netbox:v4.1.0'],
+              images: ['ghcr.io/netbox-community/netbox:v4.1.0'],
             },
           ],
         },
@@ -336,7 +336,7 @@ describe('Facility Detail page states', () => {
     expect(screen.queryByText(/not found in this cluster/)).toBeNull()
     const link = screen.getByRole('link', { name: 'Open →' })
     expect(link.getAttribute('href')).toBe('https://netbox.dmf.lab.example/')
-    expect(screen.getByText('netboxcommunity/netbox:v4.1.0')).toBeTruthy()
+    expect(screen.getByText('ghcr.io/netbox-community/netbox:v4.1.0')).toBeTruthy()
   })
 
   it('a service with no declared cluster location reads as unchecked, distinct from unmatched', async () => {

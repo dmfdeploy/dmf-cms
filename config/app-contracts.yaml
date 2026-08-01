@@ -11,19 +11,43 @@ catalog_source: config/app-contracts.yaml
 #                           grafana_namespace, librenms_namespace, netbox_namespace,
 #                           zot_namespace). These are config-verified.
 #   image_repositories  <- the repository path of the service's OWN image(s).
-#                          The matcher compares the final path segment (the
-#                          image name) after stripping the registry host — see
-#                          facility.py's _repository_matches for why only that
-#                          segment, and what the zot mirror does to the rest.
-#                          Full paths are declared anyway because the path is
-#                          what a human checks against upstream.
+#                          Declared as full paths because the path is what a
+#                          human checks against upstream — so each one must be
+#                          TRUE as written, not merely sufficient to match.
+#                          An entry may be a bare path (compared on the image
+#                          NAME, the final segment) or a mapping with
+#                          `match: exact` (compared on the whole path). See
+#                          facility.py's _repository_matches for the trade:
+#                          name matching survives dmf-infra playbook 630
+#                          replacing a source namespace when it mirrors into
+#                          the cluster's Zot; exact matching does not, and is
+#                          used only where the image name cannot stand alone.
 #
-# UNPROVEN-LIVE: only the registry entry is pinned in dmf-infra config
-# (`zot_image: ghcr.io/project-zot/zot-linux-arm64:v2.1.2`). The other six come
-# from their charts' own image defaults, which dmf-infra does not override, so
-# nothing here confirms them and this arc took no live probes. A wrong entry
-# degrades its row to "no matching pods in cluster metrics" — a falsifiable
-# statement about the check, never a claim that the service is absent.
+# PROVENANCE of the declared paths — what actually confirms each one:
+#   Statically confirmed
+#     registry  — pinned in dmf-infra itself
+#                 (`zot_image: ghcr.io/project-zot/zot-linux-arm64:v2.1.2`).
+#     netbox    — netbox-community/netbox-chart 7.3.0, the chart dmf-infra
+#                 deploys and names in its own resource comments.
+#     forgejo   — the forgejo chart at the version dmf-infra pins
+#                 (`forgejo_chart_version: "16.0.2"`).
+#     awx       — consistent with the awx-operator defaults; the operator, not
+#                 a values file, chooses the application image.
+#   UNPROVEN-LIVE — chart defaults dmf-infra does not override, so nothing in
+#   config confirms them and this arc took no live probes:
+#     authentik, grafana, librenms.
+#
+# RESIDUAL ASSUMPTION for every entry that keeps NAME matching: that no OTHER
+# vendor's image sharing that basename runs in the same namespace. The names
+# carrying it are awx, forgejo, grafana, librenms, netbox and the two zot
+# variants — all project-distinctive. Authentik's is not (`goauthentik/server`
+# reduces to `server`), so it alone declares `match: exact`; nothing else
+# named `server` runs there today, but that is contingent state rather than a
+# property, and the strict rule is the fail-closed choice.
+#
+# A wrong entry, either mode, degrades its row to "no matching pods in cluster
+# metrics" — a falsifiable statement about the check, never a claim that the
+# service is absent.
 #
 # An entry with no `cluster:` block is never claimed absent either — the page
 # says it has no declared cluster location instead, because "we didn't look"
@@ -37,8 +61,16 @@ apps:
     summary: Identity provider and OIDC source.
     cluster:
       namespace: authentik
+      # The only `match: exact` entry. `goauthentik/server` reduces to the
+      # basename `server`, which is not project-distinctive, so the standing
+      # same-basename/different-vendor assumption the other entries carry does
+      # not hold here. Cost, accepted deliberately: an image mirrored to
+      # <zot>/dmf/server would stop being recognised, degrading to the
+      # falsifiable "no matching pods" statement rather than to a wrong
+      # version string beside another vendor's container.
       image_repositories:
-        - goauthentik/server
+        - path: goauthentik/server
+          match: exact
   - key: awx
     display_name: AWX
     lane: public
@@ -101,7 +133,7 @@ apps:
       # netbox values template) and postgres into this namespace.
       namespace: netbox
       image_repositories:
-        - netboxcommunity/netbox
+        - netbox-community/netbox
   - key: registry
     display_name: Registry
     lane: private

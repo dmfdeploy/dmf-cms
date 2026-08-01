@@ -25,20 +25,90 @@ def test_shipped_contract_declares_where_every_service_runs():
     actually declare all 7. The namespace values mirror dmf-infra's role
     defaults; see the YAML's own comment."""
     contract = load_app_contract(Path("config/app-contracts.yaml"))
-    declared = {a.key: (a.cluster_namespace, a.cluster_image_repositories) for a in contract.apps}
+    declared = {
+        a.key: (a.cluster_namespace, tuple((r.path, r.match) for r in a.cluster_image_repositories))
+        for a in contract.apps
+    }
     assert declared == {
-        "auth": ("authentik", ("goauthentik/server",)),
+        # The one exact-match entry: `goauthentik/server` reduces to the
+        # basename `server`, which cannot carry the same-basename assumption
+        # the others do (GATE-A2 P1).
+        "auth": ("authentik", (("goauthentik/server", "exact"),)),
         # Deliberately NOT ansible/awx-operator or ansible/awx-ee, which share
         # the namespace and are not AWX's own version (GATE-A P1).
-        "awx": ("awx", ("ansible/awx",)),
-        "forgejo": ("forgejo", ("forgejo/forgejo",)),
+        "awx": ("awx", (("ansible/awx", "basename"),)),
+        "forgejo": ("forgejo", (("forgejo/forgejo", "basename"),)),
         # `monitoring` is shared with prometheus, loki, promtail and promsd.
-        "grafana": ("monitoring", ("grafana/grafana",)),
-        "librenms": ("librenms", ("librenms/librenms",)),
-        "netbox": ("netbox", ("netboxcommunity/netbox",)),
+        "grafana": ("monitoring", (("grafana/grafana", "basename"),)),
+        "librenms": ("librenms", (("librenms/librenms", "basename"),)),
+        # netbox-community, not netboxcommunity: both would MATCH identically
+        # under basename, so this is not about detection. The contract says a
+        # declared path is what a human checks upstream, which obliges the
+        # path to be true as written (GATE-A2 P2).
+        "netbox": ("netbox", (("netbox-community/netbox", "basename"),)),
         # dmf-infra pins the arch in the image name and does not template it.
-        "registry": ("zot", ("project-zot/zot-linux-arm64", "project-zot/zot-linux-amd64")),
+        "registry": (
+            "zot",
+            (
+                ("project-zot/zot-linux-arm64", "basename"),
+                ("project-zot/zot-linux-amd64", "basename"),
+            ),
+        ),
     }
+
+
+def test_unknown_image_match_mode_is_rejected_never_defaulted(tmp_path):
+    """A typo in the strict mode must not silently become the loose one —
+    that is the failure direction that widens what a service claims as its
+    own."""
+    path = tmp_path / "contract.yaml"
+    path.write_text(
+        yaml.safe_dump(
+            {
+                "apps": [
+                    {
+                        "key": "auth",
+                        "display_name": "Authentik",
+                        "lane": "public",
+                        "summary": "Identity provider.",
+                        "cluster": {
+                            "namespace": "authentik",
+                            "image_repositories": [
+                                {"path": "goauthentik/server", "match": "fuzzy"}
+                            ],
+                        },
+                    }
+                ]
+            }
+        ),
+        encoding="utf-8",
+    )
+    with pytest.raises(ValueError, match="unknown image match mode"):
+        load_app_contract(path)
+
+
+def test_bare_string_repository_still_means_basename(tmp_path):
+    """The common form stays a plain string; only the entry that needs
+    strictness pays the extra syntax."""
+    path = tmp_path / "contract.yaml"
+    path.write_text(
+        yaml.safe_dump(
+            {
+                "apps": [
+                    {
+                        "key": "awx",
+                        "display_name": "AWX",
+                        "lane": "public",
+                        "summary": "Workflow execution.",
+                        "cluster": {"namespace": "awx", "image_repositories": ["ansible/awx"]},
+                    }
+                ]
+            }
+        ),
+        encoding="utf-8",
+    )
+    entry = load_app_contract(path).apps[0].cluster_image_repositories[0]
+    assert (entry.path, entry.match) == ("ansible/awx", "basename")
 
 
 def test_cluster_block_without_a_namespace_is_rejected(tmp_path):

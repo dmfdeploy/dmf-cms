@@ -12,6 +12,21 @@ class AppLink:
     url: str
 
 
+# How a declared repository is compared against a running container's image.
+# ``basename`` (the default) compares only the final path segment, which
+# survives dmf-infra playbook 630 replacing a source namespace when it mirrors
+# into the cluster's Zot. ``exact`` compares the whole path, for a service
+# whose image name is not distinctive enough to stand alone — see
+# ``facility._repository_matches`` for the trade this makes.
+REPOSITORY_MATCH_MODES = frozenset({"basename", "exact"})
+
+
+@dataclass(frozen=True)
+class ImageRepository:
+    path: str
+    match: str = "basename"
+
+
 @dataclass(frozen=True)
 class AppContractEntry:
     key: str
@@ -24,7 +39,7 @@ class AppContractEntry:
     # console cannot look for is reported as unchecked, never as absent (see
     # the YAML's own comment for where the values come from).
     cluster_namespace: str | None = None
-    cluster_image_repositories: tuple[str, ...] = ()
+    cluster_image_repositories: tuple[ImageRepository, ...] = ()
 
 
 @dataclass(frozen=True)
@@ -50,7 +65,33 @@ def _load_mapping(path: Path) -> dict[str, Any]:
     return data
 
 
-def _parse_cluster(key: str, data: Any) -> tuple[str | None, tuple[str, ...]]:
+def _parse_repository(key: str, raw: Any) -> ImageRepository:
+    """One ``image_repositories`` entry: a bare path string (basename match,
+    the common case) or a mapping declaring ``path`` and an explicit
+    ``match``.
+
+    An unrecognised ``match`` is rejected rather than defaulted. Silently
+    falling back to basename would turn a typo in the strict mode into the
+    loose one — the failure direction that widens what a service claims as
+    its own.
+    """
+    if isinstance(raw, dict):
+        path = str(raw.get("path", "")).strip()
+        mode = str(raw.get("match", "basename")).strip()
+    else:
+        path = str(raw).strip()
+        mode = "basename"
+    if not path:
+        raise ValueError(f"cluster for {key} has a blank image_repositories entry")
+    if mode not in REPOSITORY_MATCH_MODES:
+        raise ValueError(
+            f"cluster for {key} declares unknown image match mode {mode!r} "
+            f"(expected one of {sorted(REPOSITORY_MATCH_MODES)})"
+        )
+    return ImageRepository(path=path, match=mode)
+
+
+def _parse_cluster(key: str, data: Any) -> tuple[str | None, tuple[ImageRepository, ...]]:
     """Parse an app entry's optional ``cluster:`` block into
     ``(namespace, image_repositories)``.
 
@@ -71,10 +112,7 @@ def _parse_cluster(key: str, data: Any) -> tuple[str | None, tuple[str, ...]]:
     raw_repos = data.get("image_repositories")
     if not isinstance(raw_repos, list) or not raw_repos:
         raise ValueError(f"cluster for {key} requires a non-empty image_repositories list")
-    repositories = tuple(str(r).strip() for r in raw_repos)
-    if not all(repositories):
-        raise ValueError(f"cluster for {key} has a blank image_repositories entry")
-    return namespace, repositories
+    return namespace, tuple(_parse_repository(key, r) for r in raw_repos)
 
 
 def _parse_links(data: Any) -> list[AppLink]:
