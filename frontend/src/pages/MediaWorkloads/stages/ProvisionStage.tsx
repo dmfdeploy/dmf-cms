@@ -5,11 +5,12 @@ import {
   useCatalog,
   useCurrentUser,
   useDeployCatalog,
+  useClearForDeployment,
 } from '../../../api/hooks'
 import { useActivityStore } from '../../../store/activity'
 import ReasonConfirm from '../../../components/ReasonConfirm'
 import { isValidWorkloadSlug } from '../../../lib/workloadSlug'
-import type { CatalogEntry, MediaWorkload , ClearForDeploymentResult} from '../../../api/types'
+import type { CatalogEntry, ClearForDeploymentResult, MediaWorkload } from '../../../api/types'
 import type { StageActionId, StageState } from '../../../lib/workloadLifecycle'
 import ClearForDeployment from '../ClearForDeployment'
 import StageCard from './StageCard'
@@ -55,14 +56,29 @@ export default function ProvisionStage({
 
   const [track, setTrack] = useState<Record<string, EntryTrack>>({})
 
-  // GATE-S1-RV P1: clear is a write like any other, so its pending state
-  // joins the SAME channel. Keyed per instance because sibling clears must
-  // suppress each other too, not just themselves.
-  const [clearPending, setClearPending] = useState<Record<string, boolean>>({})
+  // GATE-S1-RV2 P1: the STAGE owns the clear mutation. It used to live in
+  // ClearForDeployment, inside the subtree this stage hides while busy — so
+  // firing a clear unmounted its own mutation owner, the pending flag could
+  // never fall, and the rail stuck busy forever. Ownership must sit above
+  // the gate it raises.
+  const clearMutation = useClearForDeployment()
+  const [lastClearResult, setLastClearResult] = useState<ClearForDeploymentResult | null>(null)
+  const onClearConfirm = (instance: string, reason: string) =>
+    clearMutation.mutate(
+      { instance, reason },
+      {
+        onSuccess: (result) => {
+          // C5: the console-local record also lands in Activity -> History.
+          useActivityStore.getState().recordClear(result)
+          setLastClearResult(result)
+        },
+      },
+    )
+
   const busy =
     deployMutation.isPending ||
     Object.values(track).some((t) => t.jobId !== null || t.opId !== null) ||
-    Object.values(clearPending).some(Boolean)
+    clearMutation.isPending
   useEffect(() => onBusyChange(busy), [busy, onBusyChange])
 
   const functionKeys = workload.functions.map((f) => f.function_key)
@@ -74,7 +90,6 @@ export default function ProvisionStage({
   // outside the model entirely — firing during another stage's job, and even
   // while Finalise itself was not-applicable.
   const mayClear = actions.includes('clear-for-deployment')
-  const [lastClearResult, setLastClearResult] = useState<ClearForDeploymentResult | null>(null)
   const needsClearing = [...workload.instances]
     .filter((i) => !i.reconcile_pending && i.requested_state === 'bootstrapped')
     .sort((a, b) => a.instance.localeCompare(b.instance))
@@ -158,14 +173,9 @@ export default function ProvisionStage({
                 <span className="font-mono text-xs text-muted">{inst.instance}</span>
                 <ClearForDeployment
                   instance={inst.instance}
-                  onCleared={(result) => setLastClearResult(result)}
-                  onPendingChange={(pending) =>
-                    setClearPending((prev) =>
-                      prev[inst.instance] === pending
-                        ? prev
-                        : { ...prev, [inst.instance]: pending },
-                    )
-                  }
+                  onConfirm={onClearConfirm}
+                  pending={clearMutation.isPending}
+                  failed={clearMutation.isError}
                 />
               </div>
             ))}

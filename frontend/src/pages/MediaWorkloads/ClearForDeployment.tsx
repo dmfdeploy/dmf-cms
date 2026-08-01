@@ -1,57 +1,40 @@
-import { useEffect, useState } from 'react'
-import { useClearForDeployment } from '../../api/hooks'
-import { useActivityStore } from '../../store/activity'
-import type { ClearForDeploymentResult } from '../../api/types'
+import { useState } from 'react'
 
 /**
  * The ONE consequential Media Workloads write (ADR-0037), as a self-contained
  * control so every caller shares one audit path (hard gate 3 + C5): click
  * arms a per-instance confirm with a MANDATORY reason; nothing fires on the
- * first click. On success the console-local Activity record is written
- * (correlated by request_id), the grouped inventory is invalidated by the
- * mutation hook so the now-stale action stops being offered, and the result
- * bubbles up for the confirmation banner.
+ * first click. On success — in the STAGE, which owns the mutation — the
+ * console-local Activity record is written (correlated by request_id), and
+ * the mutation hook invalidates the grouped inventory so the now-stale
+ * action stops being offered.
  *
- * Its pending state is reported UP via onPendingChange so this write joins
- * the same rail-wide busy channel as deploy, switch and teardown.
+ * It does NOT own the mutation. The stage does. This control lives inside a
+ * subtree the stage hides while any write is in flight, so owning the
+ * mutation here meant unmounting the owner mid-request: the pending flag
+ * that raised `busy` could never be lowered, and the rail stuck busy forever
+ * after one clear (GATE-S1-RV2 P1). Ownership belongs above the gate; this
+ * component just collects a reason and calls back.
  */
 export default function ClearForDeployment({
   instance,
-  onCleared,
-  onPendingChange,
+  onConfirm,
+  pending = false,
+  failed = false,
 }: {
   instance: string
-  onCleared?: (result: ClearForDeploymentResult) => void
-  /**
-   * Reports this write's in-flight state up to the stage, so it joins the
-   * SAME rail-wide busy channel as deploy/switch/teardown. Without it a
-   * clear POST left Deploy and sibling clears reachable mid-write — the
-   * suppression was rail-wide in name only.
-   */
-  onPendingChange?: (pending: boolean) => void
+  /** The stage owns the mutation; this reports the operator's intent. */
+  onConfirm: (instance: string, reason: string) => void
+  pending?: boolean
+  failed?: boolean
 }) {
   const [confirming, setConfirming] = useState(false)
   const [reason, setReason] = useState('')
-  const clearMutation = useClearForDeployment()
-
-  useEffect(
-    () => onPendingChange?.(clearMutation.isPending),
-    [clearMutation.isPending, onPendingChange],
-  )
 
   const submit = () => {
-    clearMutation.mutate(
-      { instance, reason: reason.trim() },
-      {
-        onSuccess: (result) => {
-          // C5: the console-local record also lands in Activity → History.
-          useActivityStore.getState().recordClear(result)
-          setConfirming(false)
-          setReason('')
-          onCleared?.(result)
-        },
-      },
-    )
+    onConfirm(instance, reason.trim())
+    setConfirming(false)
+    setReason('')
   }
 
   if (!confirming) {
@@ -59,7 +42,6 @@ export default function ClearForDeployment({
       <button
         className="btn btn-secondary btn-sm"
         onClick={() => {
-          clearMutation.reset()
           setConfirming(true)
         }}
       >
@@ -83,7 +65,7 @@ export default function ClearForDeployment({
         onChange={(e) => setReason(e.target.value)}
         rows={2}
       />
-      {clearMutation.isError && (
+      {failed && (
         <p className="mt-1 text-xs text-red-300">
           The desired state was not recorded — nothing changed. Check your access, then retry.
         </p>
@@ -91,17 +73,16 @@ export default function ClearForDeployment({
       <div className="mt-2 flex gap-2">
         <button
           className="btn btn-primary btn-sm"
-          disabled={!reason.trim() || clearMutation.isPending}
+          disabled={!reason.trim() || pending}
           onClick={submit}
         >
-          {clearMutation.isPending ? 'Recording…' : 'Confirm'}
+          {pending ? 'Recording…' : 'Confirm'}
         </button>
         <button
           className="btn btn-secondary btn-sm"
           onClick={() => {
             setConfirming(false)
             setReason('')
-            clearMutation.reset()
           }}
         >
           Cancel

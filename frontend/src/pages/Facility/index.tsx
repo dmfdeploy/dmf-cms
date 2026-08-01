@@ -61,7 +61,24 @@ function FacilityEntry({ data }: { data: ReturnType<typeof useFacilitySummary>['
     )
   }
 
+  // Partial data is neither "fine" nor "unreachable": rows were dropped, so
+  // the tile below is real but incomplete. Saying so beside it is the whole
+  // point of the backend setting the reason (GATE-S1-RV2 P2) — a token no
+  // surface renders is a token that does not exist.
+  const partial = reason === 'netbox-rows-unparseable'
+
   const site = data?.sites?.[0] ?? null
+
+  if (!site && partial) {
+    return (
+      <div className="panel py-6 px-6 border-warn/40">
+        <p className="text-sm text-warn">
+          NetBox returned records this console could not read, and none of them
+          resolved to a facility. What is shown may be incomplete.
+        </p>
+      </div>
+    )
+  }
 
   if (!site) {
     return (
@@ -86,6 +103,12 @@ function FacilityEntry({ data }: { data: ReturnType<typeof useFacilitySummary>['
   }
 
   return (
+    <>
+      {partial && (
+        <p className="mb-2 text-xs text-warn">
+          Some NetBox records could not be read — this facility may be incomplete.
+        </p>
+      )}
     <Link
       to={`/facilities/${encodeURIComponent(site.slug)}`}
       className="panel p-6 flex items-center justify-between hover:bg-panel/30 transition group"
@@ -103,5 +126,6 @@ function FacilityEntry({ data }: { data: ReturnType<typeof useFacilitySummary>['
       </div>
       <ArrowRight className="w-5 h-5 text-muted group-hover:text-accent transition" />
     </Link>
+    </>
   )
 }

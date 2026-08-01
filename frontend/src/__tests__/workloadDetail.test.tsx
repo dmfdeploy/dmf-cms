@@ -136,12 +136,12 @@ interface FetchOpts {
 }
 
 function mkFetch(opts: FetchOpts = {}) {
-  const wl = opts.workload ?? workload()
+  let wl = opts.workload ?? workload()
   const groupedResponse: MediaWorkloadsGroupedResponse = {
     configured: true,
     degraded: false,
     scope: [],
-    workloads: [wl],
+    get workloads() { return [wl] },
     invalid_instances: [],
   }
   const catalog = opts.catalog ?? [catalogEntry()]
@@ -243,7 +243,7 @@ function mkFetch(opts: FetchOpts = {}) {
     return json({})
   })
   vi.stubGlobal('fetch', fetchMock)
-  return { ...calls, calls, fetchMock, releaseSwitch: () => releaseSwitch?.() }
+  return { ...calls, calls, fetchMock, releaseSwitch: () => releaseSwitch?.(), setWorkload: (next: MediaWorkload) => { wl = next } }
 }
 
 function renderDetail(slug = 'studio-a') {
@@ -721,7 +721,16 @@ describe('a clear in flight owns the rail like any other write', () => {
     )
     expect(within(stageSection('Provision')).queryByRole('button', { name: /Deploy/ })).toBeNull()
 
+    // ...and comes BACK when it completes. This half is the discriminator:
+    // suppression that never lifts is not suppression, it is a dead rail.
+    // The control used to OWN the mutation from inside this hidden subtree,
+    // so firing it unmounted its own owner and the pending flag could never
+    // fall (GATE-S1-RV2 P1).
     releaseClear(null)
+    await waitFor(() =>
+      expect(within(stageSection('Provision')).queryByRole('button', { name: /Deploy/ }))
+        .not.toBeNull(),
+    )
   })
 })
 
@@ -744,6 +753,22 @@ describe('a successful clear closes its own loop', () => {
     fireEvent.change(within(provision).getByRole('textbox'), { target: { value: 'go' } })
     fireEvent.click(within(provision).getByRole('button', { name: 'Confirm' }))
 
+    // The fixture TRANSITIONS, as the real backend would: the instance is now
+    // cleared, so the next read no longer reports it as bootstrapped.
+    h.setWorkload(
+      workload({
+        lifecycle: 'configure',
+        instances: [instance({ requested_state: 'active', observed_state: 'running' })],
+      }),
+    )
+
     await waitFor(() => expect(h.calls.grouped).toBeGreaterThan(before))
+    // The DISAPPEARANCE is the claim: asserting only that a refetch happened
+    // would pass even if the control ignored the new inventory.
+    await waitFor(() =>
+      expect(
+        within(stageSection('Provision')).queryByRole('button', { name: 'Clear for deployment' }),
+      ).toBeNull(),
+    )
   })
 })

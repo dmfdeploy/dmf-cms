@@ -5,7 +5,7 @@ import {
   requestedBadge,
   REQUESTED_TITLE,
 } from './stateBadges'
-import LivePreviewBox, { useLivePreview } from './LivePreviewBox'
+import { LivePreviewFrame, useLivePreview } from './LivePreviewBox'
 
 /**
  * A single Media Function instance as a media-native tile (WP-C).
@@ -37,11 +37,12 @@ export default function WorkloadTile({
   motionAllowed,
   onOpen,
 }: WorkloadTileProps) {
-  const { isMxl, caption, showRefresh, liveDot, refresh } = useLivePreview({
-    instance,
-    active,
-    motionAllowed,
-  })
+  // ONE observation, used for the frame AND the caption/refresh below. The
+  // tile used to call useLivePreview here and then render LivePreviewBox,
+  // which observed the same instance a second time — two queries and two
+  // tick effects for one tile (GATE-S1-RV2 P2).
+  const preview = useLivePreview({ instance, active, motionAllowed })
+  const { isMxl, caption, showRefresh, liveDot, refresh } = preview
 
   const openable = isMxl // live modal, or the split-node aggregate fallback
   const open = () => openable && onOpen(instance)
@@ -67,11 +68,10 @@ export default function WorkloadTile({
             : undefined
         }
       >
-        <LivePreviewBox
+        <LivePreviewFrame
           instance={instance}
           displayName={displayName}
-          active={active}
-          motionAllowed={motionAllowed}
+          preview={preview}
         />
 
         <div className="flex items-start justify-between gap-2">
