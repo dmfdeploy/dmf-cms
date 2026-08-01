@@ -1,4 +1,3 @@
-import { Link } from 'react-router-dom'
 import { useChangesJobs } from '../../api/hooks'
 import { describeJob, jobOutcome } from '../../lib/labels'
 import { classifyChanges, changesEmptyCopy } from '../../lib/changesState'
@@ -17,6 +16,11 @@ const statusColor: Record<string, string> = {
 // Pinned "what just changed" widget (IA §4.1, #174 WP2): a read of the
 // same server-side history the Activity → History lane shows, so the
 // Workspace answers the third North-Star question without a hunt.
+//
+// No "Open Activity → History" link (umbrella #339 item 3). The S1 cut took
+// Activity out of the nav; a header link is that page advertising itself
+// again, which is the inconsistency, not the fix. The route stays registered
+// and URL-reachable — only the advertisement is gone.
 export default function RecentChanges() {
   const jobs = useChangesJobs()
   // Shared classifier — the Activity → History jobs lane reads the same
@@ -26,11 +30,8 @@ export default function RecentChanges() {
 
   return (
     <div className="panel mb-6">
-      <div className="px-6 py-4 border-b border-panel flex items-center justify-between">
+      <div className="px-6 py-4 border-b border-panel">
         <h2 className="text-lg font-semibold">Recent changes</h2>
-        <Link to="/activity/history" className="text-xs text-accent-blue hover:underline">
-          Open Activity → History
-        </Link>
       </div>
       <div className="divide-y divide-panel">
         {state.phase === 'loading' ? (
