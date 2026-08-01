@@ -139,4 +139,14 @@ describe('RecentChanges widget states', () => {
     renderWidget({ status: 500 })
     expect(await screen.findByText(/Recent changes could not be loaded/)).toBeTruthy()
   })
+
+  // umbrella #339 item 3: the S1 cut took Activity out of the nav, and this
+  // header kept advertising it. The route stays URL-reachable — the link is
+  // what goes, so assert on the link, not on the route.
+  it('the header advertises no route into the nav-hidden Activity page', async () => {
+    renderWidget({ jobs: [], reason: '' })
+    expect(await screen.findByText('Recent changes')).toBeTruthy()
+    expect(screen.queryByText(/Open Activity/)).toBeNull()
+    expect(screen.queryByRole('link', { name: /Activity/ })).toBeNull()
+  })
 })
