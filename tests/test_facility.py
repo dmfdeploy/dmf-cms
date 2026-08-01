@@ -19,7 +19,7 @@ from pathlib import Path
 from fastapi.testclient import TestClient
 
 from dmf_cms import facility
-from dmf_cms.contracts import load_app_contract
+from dmf_cms.contracts import ImageRepository, load_app_contract
 from dmf_cms import netbox as netbox_module
 from dmf_cms import prometheus as prometheus_module
 from dmf_cms.main import create_app
@@ -181,14 +181,21 @@ def test_read_nodes_transport_error_is_unreadable(monkeypatch):
 # Platform services + ingress URLs
 # ---------------------------------------------------------------------------
 
+def _repo(path, match="basename"):
+    return ImageRepository(path=path, match=match)
+
+
 def _spec(key, display_name, namespace=None, repositories=()):
+    """``repositories`` accepts bare paths (basename match, the common case)
+    or ready-made ImageRepository entries."""
+    entries = tuple(r if isinstance(r, ImageRepository) else _repo(r) for r in repositories)
     return facility.PlatformServiceSpec(
-        key=key, display_name=display_name, namespace=namespace, image_repositories=tuple(repositories)
+        key=key, display_name=display_name, namespace=namespace, image_repositories=entries
     )
 
 
 _APPS = [
-    _spec("netbox", "NetBox", namespace="netbox", repositories=("netboxcommunity/netbox",)),
+    _spec("netbox", "NetBox", namespace="netbox", repositories=("netbox-community/netbox",)),
     _spec("awx", "AWX", namespace="awx", repositories=("ansible/awx",)),
     _spec("librenms", "LibreNMS", namespace="librenms", repositories=("librenms/librenms",)),
 ]
@@ -206,7 +213,7 @@ def test_read_platform_services_matches_by_host_prefix_and_resolves_images(monke
                 ],
                 "kube_ingress_tls": [_row(1, namespace="netbox", ingress="netbox", tls_host="netbox.dmf.lab.example")],
                 "kube_pod_container_info": [
-                    _row(1, namespace="netbox", pod="netbox-0", container="netbox", image_spec="netboxcommunity/netbox:v4.1.0", image="sha256:abc"),
+                    _row(1, namespace="netbox", pod="netbox-0", container="netbox", image_spec="ghcr.io/netbox-community/netbox:v4.1.0", image="sha256:abc"),
                     _row(1, namespace="awx", pod="awx-web-0", container="awx-web", image="quay.io/ansible/awx:24.6.1"),
                 ],
             }
@@ -218,7 +225,7 @@ def test_read_platform_services_matches_by_host_prefix_and_resolves_images(monke
 
     # netbox: TLS -> https, image_spec preferred over image.
     assert by_key["netbox"].url == "https://netbox.dmf.lab.example/"
-    assert by_key["netbox"].images == ("netboxcommunity/netbox:v4.1.0",)
+    assert by_key["netbox"].images == ("ghcr.io/netbox-community/netbox:v4.1.0",)
 
     # awx: no TLS row -> http, falls back to `image` (no image_spec label).
     assert by_key["awx"].url == "http://awx.dmf.lab.example/"
@@ -249,7 +256,7 @@ def test_read_platform_services_ingressless_service_is_still_detected(monkeypatc
                 "kube_ingress_tls": [],
                 "kube_pod_container_info": [
                     _row(1, namespace="awx", pod="awx-web-0", container="awx-web", image="quay.io/ansible/awx:24.6.1"),
-                    _row(1, namespace="netbox", pod="netbox-0", image="netboxcommunity/netbox:v4.1.0"),
+                    _row(1, namespace="netbox", pod="netbox-0", image="ghcr.io/netbox-community/netbox:v4.1.0"),
                 ],
             }
         ),
@@ -275,7 +282,7 @@ def test_read_platform_services_ingressless_cluster_still_reads_versions(monkeyp
                 "kube_ingress_path": [],
                 "kube_ingress_tls": [],
                 "kube_pod_container_info": [
-                    _row(1, namespace="netbox", pod="netbox-0", image="netboxcommunity/netbox:v4.1.0"),
+                    _row(1, namespace="netbox", pod="netbox-0", image="ghcr.io/netbox-community/netbox:v4.1.0"),
                 ],
             }
         ),
@@ -283,7 +290,7 @@ def test_read_platform_services_ingressless_cluster_still_reads_versions(monkeyp
     services, reason = facility.read_platform_services("http://prom.test", _APPS)
     assert reason == ""
     by_key = {s.key: s for s in services}
-    assert by_key["netbox"].images == ("netboxcommunity/netbox:v4.1.0",)
+    assert by_key["netbox"].images == ("ghcr.io/netbox-community/netbox:v4.1.0",)
     assert by_key["netbox"].url is None
 
 
@@ -300,7 +307,7 @@ def test_read_platform_services_narrows_to_the_services_own_image(monkeypatch):
                 "kube_ingress_path": [],
                 "kube_ingress_tls": [],
                 "kube_pod_container_info": [
-                    _row(1, namespace="netbox", pod="netbox-0", image="netboxcommunity/netbox:v4.1.0"),
+                    _row(1, namespace="netbox", pod="netbox-0", image="ghcr.io/netbox-community/netbox:v4.1.0"),
                     _row(1, namespace="netbox", pod="netbox-valkey-0", image="docker.io/bitnami/valkey:7.2"),
                     _row(1, namespace="netbox", pod="netbox-pg-0", image="docker.io/library/postgres:16"),
                 ],
@@ -309,7 +316,7 @@ def test_read_platform_services_narrows_to_the_services_own_image(monkeypatch):
     )
     services, reason = facility.read_platform_services("http://prom.test", _APPS)
     assert reason == ""
-    assert {s.key: s for s in services}["netbox"].images == ("netboxcommunity/netbox:v4.1.0",)
+    assert {s.key: s for s in services}["netbox"].images == ("ghcr.io/netbox-community/netbox:v4.1.0",)
 
 
 # ---------------------------------------------------------------------------
@@ -332,7 +339,7 @@ def test_image_repository_parses_registries_ports_tags_and_digests():
 
 
 def test_repository_match_rejects_the_operator_that_shares_awx_prefix():
-    declared = ("ansible/awx",)
+    declared = (_repo("ansible/awx"),)
     assert facility._repository_matches("quay.io/ansible/awx:24.6.1", declared)
     # The two cases a substring test got wrong.
     assert not facility._repository_matches("quay.io/ansible/awx-operator:2.19.1", declared)
@@ -340,7 +347,7 @@ def test_repository_match_rejects_the_operator_that_shares_awx_prefix():
 
 
 def test_repository_match_rejects_grafanas_namespace_neighbours():
-    declared = ("grafana/grafana",)
+    declared = (_repo("grafana/grafana"),)
     assert facility._repository_matches("docker.io/grafana/grafana:11.0.0", declared)
     assert not facility._repository_matches("docker.io/grafana/loki:3.0.0", declared)
     assert not facility._repository_matches("docker.io/grafana/promtail:3.0.0", declared)
@@ -350,7 +357,7 @@ def test_repository_match_is_registry_agnostic():
     """dmf-infra playbook 630 mirrors images into the cluster's Zot under a
     rewritten path (awx-ee -> <zot>/dmf/awx-ee), so the registry host and the
     leading path segments cannot be part of the identity."""
-    declared = ("ansible/awx-ee",)
+    declared = (_repo("ansible/awx-ee"),)
     for ref in (
         "quay.io/ansible/awx-ee:24.6.1",
         "zot.zot.svc.cluster.local:5000/dmf/awx-ee:24.6.1",
@@ -362,10 +369,75 @@ def test_repository_match_is_registry_agnostic():
 def test_repository_match_accepts_any_declared_variant():
     """dmf-infra bakes the arch into the registry image name and does not
     template it, so both variants are declared and either must match."""
-    declared = ("project-zot/zot-linux-arm64", "project-zot/zot-linux-amd64")
+    declared = (_repo("project-zot/zot-linux-arm64"), _repo("project-zot/zot-linux-amd64"))
     assert facility._repository_matches("ghcr.io/project-zot/zot-linux-arm64:v2.1.2", declared)
     assert facility._repository_matches("ghcr.io/project-zot/zot-linux-amd64:v2.1.2", declared)
     assert not facility._repository_matches("ghcr.io/project-zot/zli-linux-arm64:v2.1.2", declared)
+
+
+def test_exact_match_rejects_a_same_basename_image_from_another_vendor():
+    """GATE-A2 P1, the whole reason `exact` exists. `goauthentik/server`
+    reduces to the basename `server`, which is not project-distinctive, so
+    Authentik alone opts out of basename matching."""
+    declared = (_repo("goauthentik/server", match="exact"),)
+    assert facility._repository_matches("ghcr.io/goauthentik/server:2024.10", declared)
+    # Another vendor's `server` in the same namespace is NOT Authentik.
+    assert not facility._repository_matches("docker.io/someoneelse/server:1.0", declared)
+    assert not facility._repository_matches("registry.example.com/acme/server@sha256:abc", declared)
+
+
+def test_exact_match_is_still_registry_agnostic():
+    """`exact` means the PATH, not the whole reference: the registry host is
+    dropped in both modes, so a service pulled from a different registry with
+    its path intact still matches."""
+    declared = (_repo("goauthentik/server", match="exact"),)
+    for ref in (
+        "ghcr.io/goauthentik/server:2024.10",
+        "zot.zot.svc.cluster.local:5000/goauthentik/server:2024.10",
+        "registry.dmf.example.com/goauthentik/server@sha256:abc",
+    ):
+        assert facility._repository_matches(ref, declared), ref
+
+
+def test_exact_match_gives_up_the_630_mirror_tolerance_deliberately():
+    """The cost of `exact`, pinned so it is a decision on the record rather
+    than a surprise later: playbook 630 replaces the source namespace when it
+    mirrors, and an exact entry stops recognising the image at that point.
+    That degrades to the falsifiable "no matching pods" statement, which is
+    why it is the acceptable trade for a non-distinctive basename — but it IS
+    a trade, and basename entries do not pay it."""
+    exact = (_repo("goauthentik/server", match="exact"),)
+    assert not facility._repository_matches("zot.zot.svc.cluster.local:5000/dmf/server:2024.10", exact)
+    # The same mirroring against a basename entry is still recognised.
+    basename = (_repo("ansible/awx-ee"),)
+    assert facility._repository_matches("zot.zot.svc.cluster.local:5000/dmf/awx-ee:24.6.1", basename)
+
+
+def test_read_platform_services_authentik_ignores_a_foreign_server_container(monkeypatch):
+    """GATE-A2 P1 end to end: a basename-`server` container sharing the
+    authentik namespace must not be reported as Authentik's version."""
+    auth = _spec(
+        "auth", "Authentik", namespace="authentik",
+        repositories=(_repo("goauthentik/server", match="exact"),),
+    )
+    monkeypatch.setattr(
+        prometheus_module,
+        "query",
+        _exact_dispatcher(
+            {
+                "kube_ingress_path": [],
+                "kube_ingress_tls": [],
+                "kube_pod_container_info": [
+                    _row(1, namespace="authentik", pod="other-0", image="docker.io/someoneelse/server:1.0"),
+                    _row(1, namespace="authentik", pod="pg-0", image="docker.io/bitnami/postgresql:16"),
+                ],
+            }
+        ),
+    )
+    services, reason = facility.read_platform_services("http://prom.test", [auth])
+    assert reason == ""
+    assert services[0].images == ()
+    assert services[0].namespace == "authentik"  # searched, so the copy stays falsifiable
 
 
 def test_read_platform_services_awx_operator_alone_is_not_awx_present(monkeypatch):
@@ -478,7 +550,7 @@ def test_read_platform_services_undeclared_service_is_unchecked_not_absent(monke
             {
                 "kube_ingress_path": [],
                 "kube_ingress_tls": [],
-                "kube_pod_container_info": [_row(1, namespace="netbox", pod="netbox-0", image="netboxcommunity/netbox:v4.1.0")],
+                "kube_pod_container_info": [_row(1, namespace="netbox", pod="netbox-0", image="ghcr.io/netbox-community/netbox:v4.1.0")],
             }
         ),
     )
@@ -732,7 +804,7 @@ def test_build_detail_payload_full_success(monkeypatch):
         "kube_ingress_path": [_row(1, namespace="netbox", ingress="netbox", host="netbox.dmf.lab.example", path="/")],
         "kube_ingress_tls": [],
         "kube_pod_container_info": [
-            _row(1, namespace="netbox", pod="netbox-0", container="netbox", image="netboxcommunity/netbox:v4.1.0"),
+            _row(1, namespace="netbox", pod="netbox-0", container="netbox", image="ghcr.io/netbox-community/netbox:v4.1.0"),
         ],
         "kube_persistentvolumeclaim_info": [
             _row(1, namespace="netbox", persistentvolumeclaim="netbox-data", storageclass="local-path"),
@@ -757,7 +829,7 @@ def test_build_detail_payload_full_success(monkeypatch):
         netbox_api_url="http://nb.test",
         netbox_api_token="tok",
         netbox_ssl_verify=False,
-        apps=[_spec("netbox", "NetBox", namespace="netbox", repositories=("netboxcommunity/netbox",))],
+        apps=[_spec("netbox", "NetBox", namespace="netbox", repositories=("netbox-community/netbox",))],
     )
 
     assert payload["site"] == {
@@ -776,9 +848,9 @@ def test_build_detail_payload_full_success(monkeypatch):
             "key": "netbox",
             "display_name": "NetBox",
             "namespace": "netbox",
-            "image_repositories": ["netboxcommunity/netbox"],
+            "image_repositories": ["netbox-community/netbox"],
             "url": "http://netbox.dmf.lab.example/",
-            "images": ["netboxcommunity/netbox:v4.1.0"],
+            "images": ["ghcr.io/netbox-community/netbox:v4.1.0"],
         }
     ]
     assert payload["storage"]["reason"] == ""
