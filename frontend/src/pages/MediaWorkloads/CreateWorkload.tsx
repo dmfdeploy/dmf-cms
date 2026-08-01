@@ -347,6 +347,13 @@ function TemplatePicker({
     <ul className="space-y-3">
       {entries.map((entry) => {
         const selected = entry.key === selectedKey
+        // The catalog's own lifecycle, the same field ProvisionStage.tsx
+        // reads to decide whether a deploy may be offered at all. `active`
+        // is catalog.py's aggregate over this template's NetBox service(s):
+        // every one of them tagged lifecycle:active. The template is
+        // deployed, and a second deploy would re-run it against those same
+        // services rather than stand up a separate one.
+        const deployed = entry.lifecycle === 'active'
         return (
           <li key={entry.key} className="border-t border-white/5 pt-3 first:border-t-0 first:pt-0">
             <div className="flex flex-wrap items-start justify-between gap-2">
@@ -354,11 +361,14 @@ function TemplatePicker({
                 <span className="font-medium text-text">{entry.display_name}</span>
                 {entry.summary && <p className="mt-1 text-xs text-muted">{entry.summary}</p>}
               </div>
-              {/* A real, always-actionable control: every rendered entry is
-                  selectable, so this is never a dead button standing in for
-                  a capability that doesn't exist. */}
+              {/* Never a disabled button — ProvisionStage.tsx's own rule,
+                  carried here with the guard it belongs to. An entry is
+                  either selectable or it is not offered, and the reason is
+                  prose below rather than a greyed-out control. */}
               {selected ? (
                 <span className="badge shrink-0 bg-accent/20 text-xs text-accent">Selected</span>
+              ) : deployed ? (
+                <span className="badge shrink-0 bg-white/5 text-xs text-muted">Already deployed</span>
               ) : (
                 <button
                   type="button"
@@ -369,6 +379,16 @@ function TemplatePicker({
                 </button>
               )}
             </div>
+            {deployed && (
+              // Rendered for a SELECTED active entry too, not just an
+              // unselected one: a template can go active between the
+              // operator choosing it and reaching Provision, and in that
+              // case the "Selected" badge above is the only other thing on
+              // the row — it would otherwise read as ready to go.
+              <p className="mt-1 text-xs text-muted">
+                Already deployed on this facility, so it can&apos;t start a new workload here.
+              </p>
+            )}
             {(entry.ebu_layer || entry.ebu_vertical || entry.ebu_media_function_type || entry.ebu_lifecycle_owner) && (
               <details className="mt-1 text-xs text-muted">
                 <summary className="cursor-pointer select-none opacity-80 hover:opacity-100">
@@ -478,6 +498,20 @@ function ProvisionSection({
   onConfirm: (reason: string) => void
 }) {
   const templateName = entry?.display_name ?? 'the selected template'
+  // THE GUARD THAT DID NOT TRAVEL WITH THE SEAM (operator review, PR #66).
+  // ProvisionStage.tsx offers its deploy only for a non-active entry; this
+  // page reused that page's deploy seam and left the condition behind, so
+  // the draft flow would arm and fire a second deploy against a template
+  // already tagged lifecycle:active.
+  //
+  // It gates the confirm panel as well as the arm button, because the entry
+  // can go active WHILE that panel is open — useCatalog refetches on window
+  // focus. Suppressing only the affordance would leave a live "Confirm
+  // provision" standing on exactly the state it exists to refuse. The
+  // outcome messages below are deliberately NOT gated: they record what
+  // happened to a request this page already made, and that history does not
+  // stop being true when the lifecycle moves.
+  const deployed = entry?.lifecycle === 'active'
   return (
     <div>
       <h3 className="text-xs uppercase tracking-wide text-muted">Provisioning methods</h3>
@@ -486,18 +520,31 @@ function ProvisionSection({
           <div>
             <div className="font-medium text-text">Provision now</div>
             <p className="text-xs text-muted">
-              Launches {templateName} immediately via the AWX launcher, recorded as workload:
-              {slug}.
+              {deployed
+                ? `${templateName} is already deployed on this facility.`
+                : `Launches ${templateName} immediately via the AWX launcher, recorded as workload:${slug}.`}
             </p>
           </div>
-          {!arming && !pending && (
+          {!deployed && !arming && !pending && (
             <button type="button" className="btn btn-primary btn-sm shrink-0" onClick={onArm}>
               ▶ Provision now
             </button>
           )}
         </div>
 
-        {arming && (
+        {deployed && (
+          // Same designed state ProvisionStage renders as "Already
+          // deployed.", said at the length this page's step needs: there it
+          // is one template of several on a running workload, here it is the
+          // operator's whole draft with nowhere to go — so this names what
+          // to do instead rather than only stating the fact.
+          <p className="mt-2 text-xs text-muted">
+            There is nothing here to launch. Open it from Media Workloads, or go back to
+            Design and choose a template that isn&apos;t deployed yet.
+          </p>
+        )}
+
+        {!deployed && arming && (
           <div className="mt-2">
             <ReasonConfirm
               title="Provision this workload now?"
