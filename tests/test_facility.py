@@ -14,9 +14,12 @@ Two layers, mirroring test_capacity.py (pure) + test_workspace_health.py
 
 from __future__ import annotations
 
+from pathlib import Path
+
 from fastapi.testclient import TestClient
 
 from dmf_cms import facility
+from dmf_cms.contracts import load_app_contract
 from dmf_cms import netbox as netbox_module
 from dmf_cms import prometheus as prometheus_module
 from dmf_cms.main import create_app
@@ -178,16 +181,16 @@ def test_read_nodes_transport_error_is_unreadable(monkeypatch):
 # Platform services + ingress URLs
 # ---------------------------------------------------------------------------
 
-def _spec(key, display_name, namespace=None, image_contains=None):
+def _spec(key, display_name, namespace=None, repositories=()):
     return facility.PlatformServiceSpec(
-        key=key, display_name=display_name, namespace=namespace, image_contains=image_contains
+        key=key, display_name=display_name, namespace=namespace, image_repositories=tuple(repositories)
     )
 
 
 _APPS = [
-    _spec("netbox", "NetBox", namespace="netbox", image_contains="netbox"),
-    _spec("awx", "AWX", namespace="awx", image_contains="awx"),
-    _spec("librenms", "LibreNMS", namespace="librenms", image_contains="librenms"),
+    _spec("netbox", "NetBox", namespace="netbox", repositories=("netboxcommunity/netbox",)),
+    _spec("awx", "AWX", namespace="awx", repositories=("ansible/awx",)),
+    _spec("librenms", "LibreNMS", namespace="librenms", repositories=("librenms/librenms",)),
 ]
 
 
@@ -309,6 +312,161 @@ def test_read_platform_services_narrows_to_the_services_own_image(monkeypatch):
     assert {s.key: s for s in services}["netbox"].images == ("netboxcommunity/netbox:v4.1.0",)
 
 
+# ---------------------------------------------------------------------------
+# Image-reference matching. GATE-A P1: the first cut compared a substring,
+# which claims `ansible/awx-operator` as AWX and every `grafana/loki` pod as
+# Grafana — other software's version rendered as this service's, on the page
+# whose whole job is to be checkable.
+# ---------------------------------------------------------------------------
+
+
+def test_image_repository_parses_registries_ports_tags_and_digests():
+    assert facility._image_repository("quay.io/ansible/awx:24.6.1") == "ansible/awx"
+    assert facility._image_repository("quay.io/ansible/awx-ee@sha256:abc") == "ansible/awx-ee"
+    # A registry with a port must not be mistaken for a path segment.
+    assert (
+        facility._image_repository("zot.zot.svc.cluster.local:5000/dmf/awx-ee:v1") == "dmf/awx-ee"
+    )
+    assert facility._image_repository("nginx:1.27-alpine") == "nginx"
+    assert facility._image_repository("localhost:5000/dmf-cms:0.18.0") == "dmf-cms"
+
+
+def test_repository_match_rejects_the_operator_that_shares_awx_prefix():
+    declared = ("ansible/awx",)
+    assert facility._repository_matches("quay.io/ansible/awx:24.6.1", declared)
+    # The two cases a substring test got wrong.
+    assert not facility._repository_matches("quay.io/ansible/awx-operator:2.19.1", declared)
+    assert not facility._repository_matches("quay.io/ansible/awx-ee@sha256:abc", declared)
+
+
+def test_repository_match_rejects_grafanas_namespace_neighbours():
+    declared = ("grafana/grafana",)
+    assert facility._repository_matches("docker.io/grafana/grafana:11.0.0", declared)
+    assert not facility._repository_matches("docker.io/grafana/loki:3.0.0", declared)
+    assert not facility._repository_matches("docker.io/grafana/promtail:3.0.0", declared)
+
+
+def test_repository_match_is_registry_agnostic():
+    """dmf-infra playbook 630 mirrors images into the cluster's Zot under a
+    rewritten path (awx-ee -> <zot>/dmf/awx-ee), so the registry host and the
+    leading path segments cannot be part of the identity."""
+    declared = ("ansible/awx-ee",)
+    for ref in (
+        "quay.io/ansible/awx-ee:24.6.1",
+        "zot.zot.svc.cluster.local:5000/dmf/awx-ee:24.6.1",
+        "registry.dmf.example.com/dmf/awx-ee@sha256:abc",
+    ):
+        assert facility._repository_matches(ref, declared), ref
+
+
+def test_repository_match_accepts_any_declared_variant():
+    """dmf-infra bakes the arch into the registry image name and does not
+    template it, so both variants are declared and either must match."""
+    declared = ("project-zot/zot-linux-arm64", "project-zot/zot-linux-amd64")
+    assert facility._repository_matches("ghcr.io/project-zot/zot-linux-arm64:v2.1.2", declared)
+    assert facility._repository_matches("ghcr.io/project-zot/zot-linux-amd64:v2.1.2", declared)
+    assert not facility._repository_matches("ghcr.io/project-zot/zli-linux-arm64:v2.1.2", declared)
+
+
+def test_read_platform_services_awx_operator_alone_is_not_awx_present(monkeypatch):
+    """GATE-A P1 collision fixture. A namespace holding only the operator and
+    the execution environment has no AWX application container in it, so the
+    row must degrade to the falsifiable checked-statement — not report the
+    operator's version as AWX's."""
+    monkeypatch.setattr(
+        prometheus_module,
+        "query",
+        _exact_dispatcher(
+            {
+                "kube_ingress_path": [],
+                "kube_ingress_tls": [],
+                "kube_pod_container_info": [
+                    _row(1, namespace="awx", pod="awx-operator-0", image="quay.io/ansible/awx-operator:2.19.1"),
+                    _row(1, namespace="awx", pod="job-1-xyz", image="quay.io/ansible/awx-ee@sha256:abc"),
+                ],
+            }
+        ),
+    )
+    services, reason = facility.read_platform_services("http://prom.test", _APPS)
+    assert reason == ""
+    awx = {s.key: s for s in services}["awx"]
+    assert awx.images == ()
+    assert awx.namespace == "awx"  # searched, so the page says what it checked
+
+
+def test_read_platform_services_loki_and_promtail_are_not_grafana(monkeypatch):
+    """GATE-A P1 collision fixture. `monitoring` is shared by six components;
+    a Grafana row must not be versioned off its neighbours."""
+    grafana = _spec("grafana", "Grafana", namespace="monitoring", repositories=("grafana/grafana",))
+    monkeypatch.setattr(
+        prometheus_module,
+        "query",
+        _exact_dispatcher(
+            {
+                "kube_ingress_path": [],
+                "kube_ingress_tls": [],
+                "kube_pod_container_info": [
+                    _row(1, namespace="monitoring", pod="loki-0", image="docker.io/grafana/loki:3.0.0"),
+                    _row(1, namespace="monitoring", pod="promtail-a", image="docker.io/grafana/promtail:3.0.0"),
+                    _row(1, namespace="monitoring", pod="prometheus-0", image="quay.io/prometheus/prometheus:v2.53.0"),
+                ],
+            }
+        ),
+    )
+    services, reason = facility.read_platform_services("http://prom.test", [grafana])
+    assert reason == ""
+    assert services[0].images == ()
+    assert services[0].namespace == "monitoring"
+
+
+def test_read_platform_services_sidecar_proxy_is_not_the_services_version(monkeypatch):
+    """dmf-infra runs librenms_proxy_image (nginx) beside LibreNMS."""
+    monkeypatch.setattr(
+        prometheus_module,
+        "query",
+        _exact_dispatcher(
+            {
+                "kube_ingress_path": [],
+                "kube_ingress_tls": [],
+                "kube_pod_container_info": [
+                    _row(1, namespace="librenms", pod="librenms-0", image="docker.io/librenms/librenms:25.12.0"),
+                    _row(1, namespace="librenms", pod="librenms-proxy-0", image="nginx:1.27-alpine"),
+                ],
+            }
+        ),
+    )
+    services, reason = facility.read_platform_services("http://prom.test", _APPS)
+    assert reason == ""
+    assert {s.key: s for s in services}["librenms"].images == ("docker.io/librenms/librenms:25.12.0",)
+
+
+def test_read_platform_services_namespace_without_repositories_reads_as_unchecked(monkeypatch):
+    """A namespace with nothing to look for is not a search. Reporting the
+    namespace would have the page say "no matching pods in cluster metrics"
+    about a check that never ran — the same overclaim in a smaller box. The
+    contract loader rejects this pairing; this pins the derive layer so the
+    invariant does not depend on the config path being the only caller."""
+    monkeypatch.setattr(
+        prometheus_module,
+        "query",
+        _exact_dispatcher(
+            {
+                "kube_ingress_path": [],
+                "kube_ingress_tls": [],
+                "kube_pod_container_info": [
+                    _row(1, namespace="authentik", pod="server-0", image="ghcr.io/goauthentik/server:2024.10"),
+                ],
+            }
+        ),
+    )
+    services, reason = facility.read_platform_services(
+        "http://prom.test", [_spec("auth", "Authentik", namespace="authentik")]
+    )
+    assert reason == ""
+    assert services[0].namespace is None
+    assert services[0].images == ()
+
+
 def test_read_platform_services_undeclared_service_is_unchecked_not_absent(monkeypatch):
     """An entry with no `cluster:` block was never looked for. The row carries
     namespace=None so the page can say that, instead of reporting the same
@@ -328,6 +486,55 @@ def test_read_platform_services_undeclared_service_is_unchecked_not_absent(monke
     assert reason == ""
     assert services[0].namespace is None
     assert services[0].images == ()
+
+
+def test_every_shipped_service_degrades_to_a_falsifiable_checked_statement(monkeypatch):
+    """GATE-A P1: the degradation guarantee, as a PROPERTY over the real
+    shipped contract rather than a claim about three hand-picked services —
+    so it keeps holding as services are added.
+
+    For EVERY declared service, against a cluster whose containers match none
+    of them: the row survives, its images are empty, and its namespace is
+    non-None. That last field is what the page keys the copy off, so a
+    non-None namespace is exactly the guarantee that the operator is told
+    "no matching pods in cluster metrics" — a statement about the check they
+    can go and falsify — and never "not found in this cluster", which is a
+    claim about the cluster they cannot."""
+    contract = load_app_contract(Path("config/app-contracts.yaml"))
+    specs = [
+        facility.PlatformServiceSpec(
+            key=a.key,
+            display_name=a.display_name,
+            namespace=a.cluster_namespace,
+            image_repositories=a.cluster_image_repositories,
+        )
+        for a in contract.apps
+    ]
+    declared = [s for s in specs if s.namespace is not None]
+    assert len(declared) == len(specs), "every shipped service must declare where it runs"
+
+    monkeypatch.setattr(
+        prometheus_module,
+        "query",
+        _exact_dispatcher(
+            {
+                "kube_ingress_path": [],
+                "kube_ingress_tls": [],
+                # Deliberately in the declared namespaces, so the search runs
+                # and finds nothing — not a cluster that is simply elsewhere.
+                "kube_pod_container_info": [
+                    _row(1, namespace=s.namespace, pod=f"{s.key}-decoy", image="docker.io/library/busybox:1.36")
+                    for s in specs
+                ],
+            }
+        ),
+    )
+    services, reason = facility.read_platform_services("http://prom.test", specs)
+    assert reason == ""
+    assert [s.key for s in services] == [s.key for s in specs]
+    for svc in services:
+        assert svc.images == (), f"{svc.key} matched a container it should not have"
+        assert svc.namespace is not None, f"{svc.key} would render as unchecked, not as searched"
 
 
 def test_read_platform_services_empty_containers_is_unreadable(monkeypatch):
@@ -550,7 +757,7 @@ def test_build_detail_payload_full_success(monkeypatch):
         netbox_api_url="http://nb.test",
         netbox_api_token="tok",
         netbox_ssl_verify=False,
-        apps=[_spec("netbox", "NetBox", namespace="netbox", image_contains="netbox")],
+        apps=[_spec("netbox", "NetBox", namespace="netbox", repositories=("netboxcommunity/netbox",))],
     )
 
     assert payload["site"] == {
@@ -569,7 +776,7 @@ def test_build_detail_payload_full_success(monkeypatch):
             "key": "netbox",
             "display_name": "NetBox",
             "namespace": "netbox",
-            "image_contains": "netbox",
+            "image_repositories": ["netboxcommunity/netbox"],
             "url": "http://netbox.dmf.lab.example/",
             "images": ["netboxcommunity/netbox:v4.1.0"],
         }

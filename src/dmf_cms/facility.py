@@ -45,9 +45,11 @@ plan):
   independent is the whole point (umbrella #339 item 1). PRESENCE AND
   VERSION come from ``kube_pod_container_info``, looked up in one namespace
   (see the next paragraph for which) and narrowed to that service's own
-  image by the ``image_contains`` token its ``cluster:`` block declares —
-  without that narrowing a service's Version column would list its
-  neighbours' images as its own. ACCESS comes from
+  image by the repositories its ``cluster:`` block declares — without that
+  narrowing a service's Version column would list its neighbours' images as
+  its own, and with a naive substring test it would claim
+  ``ansible/awx-operator`` as AWX and every ``grafana/loki`` pod as Grafana
+  (see ``_repository_matches``). ACCESS comes from
   ``kube_ingress_path`` via the ``<key>.`` host-prefix convention the
   placeholder domains themselves encode. The page shipped with presence
   inferred from the ingress alone, so every service that deliberately has no
@@ -198,17 +200,69 @@ def read_nodes(prom_url: str, site_architecture: str | None = None) -> tuple[lis
 # ---------------------------------------------------------------------------
 
 
+def _image_repository(ref: str) -> str:
+    """The repository path of a container image reference, with the registry
+    host and the tag/digest stripped.
+
+    ``quay.io/ansible/awx:24.6.1``            -> ``ansible/awx``
+    ``quay.io/ansible/awx-ee@sha256:ab...``   -> ``ansible/awx-ee``
+    ``zot.zot.svc.cluster.local:5000/dmf/awx-ee:v1`` -> ``dmf/awx-ee``
+    ``nginx:1.27-alpine``                     -> ``nginx``
+
+    First-segment-is-a-registry uses the standard rule (contains ``.`` or
+    ``:``, or is ``localhost``), which is what keeps a registry with a port
+    from being mistaken for a path segment.
+    """
+    path = ref.split("@", 1)[0]
+    parts = path.split("/")
+    if len(parts) > 1 and ("." in parts[0] or ":" in parts[0] or parts[0] == "localhost"):
+        parts = parts[1:]
+    # Only the final segment can carry a tag, the registry host having gone.
+    parts[-1] = parts[-1].split(":", 1)[0]
+    return "/".join(p for p in parts if p)
+
+
+def _repository_matches(ref: str, declared: tuple[str, ...]) -> bool:
+    """Whether a container image reference is one of ``declared``.
+
+    Compares the IMAGE NAME — the final path segment of the repository —
+    for exact equality, registry host ignored.
+
+    Exact-segment rather than substring is the whole point: substring
+    matching reported ``ansible/awx-operator`` as AWX and every
+    ``grafana/loki`` and ``grafana/promtail`` pod as Grafana, which is
+    misattributing other software's version to a service on a page whose
+    entire job is to be checkable.
+
+    The final segment rather than the full declared path is because
+    dmf-infra playbook 630 does not preserve source repository paths when it
+    mirrors into the cluster's Zot: it maps ``awx-ee`` to
+    ``<zot>/dmf/awx-ee`` and ``docker.io/library/python`` to
+    ``<zot>/dmf/library/python``, replacing the source namespace outright.
+    Matching the full path would silently stop recognising any image the day
+    it was mirrored. (Today's platform services are pulled from their
+    upstream registries — the containerd config in dmf-infra's k3s role is
+    per-host transport for Zot, not a pull-through mirror — so this
+    tolerance is defensive rather than currently exercised.) Within a search
+    already scoped to one namespace, the image name is the discriminating
+    part; the full path is declared in the contract because that is what a
+    human checks against upstream.
+    """
+    name = _image_repository(ref).rsplit("/", 1)[-1]
+    return any(name == d.rstrip("/").rsplit("/", 1)[-1] for d in declared)
+
+
 @dataclass(frozen=True)
 class PlatformServiceSpec:
     """One expected service, as the console's own contract declares it.
-    ``namespace``/``image_contains`` are the ``cluster:`` block; both None
-    means the contract declares no cluster location, so presence is never
-    checked and never claimed either way."""
+    ``namespace``/``image_repositories`` are the ``cluster:`` block; a None
+    namespace means the contract declares no cluster location, so presence is
+    never checked and never claimed either way."""
 
     key: str
     display_name: str
     namespace: str | None
-    image_contains: str | None
+    image_repositories: tuple[str, ...] = ()
 
 
 @dataclass(frozen=True)
@@ -218,7 +272,7 @@ class PlatformServiceFact:
     # The namespace that WAS searched, so the page can say what it checked.
     # None => nothing was checked, because nothing was declared.
     namespace: str | None
-    image_contains: str | None
+    image_repositories: tuple[str, ...]
     url: str | None  # ingress URL when the cluster has one; access, not existence
     # Empty => no container matched. More than one is ordinary, not an
     # anomaly: AWX alone ships a web image and an execution-environment
@@ -289,20 +343,31 @@ def _read_platform_services(
         # A matched ingress pins the namespace better than the contract can
         # (it is read from the cluster, so it cannot drift), and it stops the
         # page ever pairing a live URL with "nothing is running here".
-        namespace = match["namespace"] if match is not None else spec.namespace
+        declared_namespace = match["namespace"] if match is not None else spec.namespace
+        # A search needs BOTH a namespace and something to look for. A spec
+        # carrying one without the other was not searched, and reporting its
+        # namespace would have the page say "no matching pods" about a check
+        # that never ran — the same overclaim in a smaller box. The contract
+        # loader already rejects that pairing; this keeps the invariant true
+        # of the derive layer itself rather than only of the config path.
+        searched = declared_namespace is not None and bool(spec.image_repositories)
+        namespace = declared_namespace if searched else None
         images: tuple[str, ...] = ()
-        if namespace is not None:
-            candidates = images_by_namespace.get(namespace, set())
-            if spec.image_contains:
-                candidates = {i for i in candidates if spec.image_contains in i}
-            images = tuple(sorted(candidates))
+        if searched:
+            images = tuple(
+                sorted(
+                    i
+                    for i in images_by_namespace.get(declared_namespace, set())
+                    if _repository_matches(i, spec.image_repositories)
+                )
+            )
 
         out.append(
             PlatformServiceFact(
                 key=spec.key,
                 display_name=spec.display_name,
                 namespace=namespace,
-                image_contains=spec.image_contains,
+                image_repositories=spec.image_repositories,
                 url=url,
                 images=images,
             )
@@ -331,7 +396,7 @@ def read_platform_services(
                 key=spec.key,
                 display_name=spec.display_name,
                 namespace=spec.namespace,
-                image_contains=spec.image_contains,
+                image_repositories=spec.image_repositories,
                 url=None,
                 images=(),
             )
@@ -534,7 +599,7 @@ def build_detail_payload(
                     "key": s.key,
                     "display_name": s.display_name,
                     "namespace": s.namespace,
-                    "image_contains": s.image_contains,
+                    "image_repositories": list(s.image_repositories),
                     "url": s.url,
                     "images": list(s.images),
                 }

@@ -3619,7 +3619,7 @@ def create_app(settings: Settings | None = None, contract: AppContract | None = 
                     key=a.key,
                     display_name=a.display_name,
                     namespace=a.cluster_namespace,
-                    image_contains=a.cluster_image_contains,
+                    image_repositories=a.cluster_image_repositories,
                 )
                 for a in contract.apps
             ],
