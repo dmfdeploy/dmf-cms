@@ -11,8 +11,9 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { act, cleanup, render, screen, fireEvent, within } from '@testing-library/react'
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query'
-import { MemoryRouter } from 'react-router-dom'
+import { MemoryRouter, Route, Routes } from 'react-router-dom'
 import MediaWorkloads from '../pages/MediaWorkloads'
+import WorkloadDetail from '../pages/MediaWorkloads/WorkloadDetail'
 import {
   LIVE_TILE_CAP,
   MODAL_STATUS_POLL_MS,
@@ -189,7 +190,27 @@ function mkFetch(opts: HarnessOpts) {
   return { statusCalls, clearCalls, switchCalls, counters, fetchMock }
 }
 
+// S1 (umbrella #285): these behaviours did not change, their HOME did. The
+// per-instance tile grid, the live modal and the switch/clear controls moved
+// off the Media Workloads list page and onto the workload detail page's
+// lifecycle rail, so the tests follow them there rather than being deleted —
+// the polling bounds and focus management below are exactly the kind of
+// reviewed behaviour a relocation quietly loses if nothing keeps watching.
 function renderPage() {
+  const queryClient = new QueryClient({ defaultOptions: { queries: { retry: false } } })
+  render(
+    <QueryClientProvider client={queryClient}>
+      <MemoryRouter initialEntries={['/media-workloads/test']}>
+        <Routes>
+          <Route path="/media-workloads/:slug" element={<WorkloadDetail />} />
+        </Routes>
+      </MemoryRouter>
+    </QueryClientProvider>,
+  )
+}
+
+/** The list page itself, for the entry-tile behaviours that stayed here. */
+function renderListPage() {
   const queryClient = new QueryClient({ defaultOptions: { queries: { retry: false } } })
   render(
     <QueryClientProvider client={queryClient}>
@@ -251,22 +272,12 @@ describe('grid: deterministic order + display-name join', () => {
   })
 })
 
-describe('Grid|Table toggle', () => {
-  it('defaults to grid, persists table to localStorage, and the table has no live thumbnails', async () => {
-    mkFetch({})
-    renderPage()
-
-    await screen.findByText('MXL Video Test View')
-    // Grid by default: a thumbnail image exists (once status resolves).
-    expect(await screen.findByAltText(/Live preview of/)).toBeTruthy()
-
-    fireEvent.click(screen.getByRole('button', { name: 'Table' }))
-    expect(window.localStorage.getItem('dmf-console-mw-view')).toBe('table')
-    // Table view: a real <table> and NO tile thumbnails.
-    expect(screen.getByRole('table')).toBeTruthy()
-    expect(screen.queryByAltText(/Live preview of/)).toBeNull()
-  })
-})
+// The Grid|Table toggle and its localStorage persistence were REMOVED by the
+// S1 IA cut (umbrella #285), not relocated: the workload detail page shows one
+// surface, and a view switcher on it would be a preference with nothing to
+// prefer. Its coverage is deliberately deleted rather than repointed — keeping
+// a passing test for a control that no longer exists would be worse than the
+// gap. Restoring the toggle means restoring these assertions.
 
 describe('polling bounds (codex P2/P3)', () => {
   it('does not poll status or render a live thumbnail when the tab is hidden', async () => {
@@ -372,19 +383,26 @@ describe('polling bounds (codex P2/P3)', () => {
     expect(h.statusCalls['mxl-b'] ?? 0).toBe(bBefore)
   })
 
-  it('table view never hits the legacy aggregate; its Live view opens the same modal', async () => {
-    window.localStorage.setItem('dmf-console-mw-view', 'table') // start in table
+  // The table view is gone (see the Grid|Table note above), but the claim that
+  // mattered in this test outlives it: the retired legacy AGGREGATE endpoint
+  // must never be hit, on any surface. That was the R1 P1 fix, and a
+  // relocation is exactly when a component quietly reaches for the old
+  // endpoint again.
+  it('never hits the retired legacy aggregate, on the rail or in the modal', async () => {
     vi.useFakeTimers()
     const h = mkFetch({})
     renderPage()
+    await settle()
     await settle(STATUS_POLL_MS * 3)
 
-    // No inline live panel: neither the aggregate endpoint nor per-instance polling runs.
     expect(h.counters.aggregateStatus).toBe(0)
-    expect(h.statusCalls['mxl-a'] ?? 0).toBe(0)
+    expect(h.counters.aggregatePreview).toBe(0)
 
-    // The table Live view opens the SAME per-instance modal, not the aggregate panel.
-    fireEvent.click(screen.getByRole('button', { name: 'Live view' }))
+    // Opening the per-instance modal drives per-instance polling — never the
+    // aggregate panel. getBy + settle, never findBy: findBy* waits on REAL
+    // timers, which never advance under fake timers and would hang here.
+    const tile = screen.getAllByText('MXL Video Test View')[0].closest('[role="button"]')!
+    fireEvent.click(tile)
     await settle(STATUS_POLL_MS)
     expect(screen.getByRole('dialog')).toBeTruthy()
     expect(h.counters.aggregateStatus).toBe(0)
@@ -820,6 +838,7 @@ describe('grouped endpoint + degraded rendering (P3)', () => {
     expect(flatCalls).toHaveLength(0)
   })
 
+  // A LIST-page behaviour: it stayed on Media Workloads, so it renders there.
   it('renders valid workloads alongside invalid instances (degraded does not blank page)', async () => {
     // Override the mock to include an invalid instance + a valid workload
     vi.stubGlobal('fetch', vi.fn(async (input: RequestInfo | URL) => {
@@ -854,7 +873,7 @@ describe('grouped endpoint + degraded rendering (P3)', () => {
       }
       return json({})
     }))
-    renderPage()
+    renderListPage()
 
     // Valid workload still renders (NOT hidden behind degraded banner)
     expect(await screen.findByText('videotest')).toBeTruthy()
