@@ -12,8 +12,10 @@ import RecentChanges from './RecentChanges'
 // service URLs) moves to facility detail, where it is read from the cluster
 // ingress objects instead of an example-domain placeholder.
 //
-// AdminPanels.tsx is deliberately left in the tree and is now unreferenced:
-// the cut is this one import, so it is one line to reverse. (The Admin page
+// AdminPanels.tsx is deliberately left in the tree and is now unreferenced.
+// Reversing it is small but NOT one line: it needs the import back, plus the
+// useCurrentUser hook, the role derivation, and the gated JSX — four edits,
+// all in this file. (The Admin page
 // has its OWN Integration Status block — it does not render AdminPanels, so
 // nothing over there changes.) Its unit test still passes against the
 // component directly.

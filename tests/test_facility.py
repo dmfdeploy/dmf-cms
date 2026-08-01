@@ -502,3 +502,70 @@ def test_detail_transport_unreachable_is_200_never_500(monkeypatch):
     assert body["storage"]["reason"] == "storage-unreadable"
     assert body["capacity"]["reason"] == "budget-unavailable"
     assert "unreachable" not in resp.text  # no raw exception text leaks (Art. 8)
+
+
+# ---------------------------------------------------------------------------
+# GATE-S1 P2a: malformed / nullable rows. Codex reproduced a live 500 from a
+# VALID NetBox read whose device row carried site=None — the read succeeded,
+# the SHAPING blew up outside the guard. These pin the repro directly: the
+# transport-error tests above never covered it, because nothing was wrong
+# with the transport.
+# ---------------------------------------------------------------------------
+
+
+def test_summary_valid_site_plus_null_site_device_is_200_with_reason(monkeypatch):
+    monkeypatch.setattr(netbox_module, "list_sites", lambda **k: [{"name": "DMF Lab", "slug": "dmf-lab"}])
+    monkeypatch.setattr(netbox_module, "list_devices", lambda **k: [{"name": "orphan", "site": None}])
+    resp = _client(netbox=NetboxSettings(api_url="http://nb.test", api_token="tok")).get("/api/facility/summary")
+    assert resp.status_code == 200, resp.text
+    body = resp.json()
+    # The valid site still renders; the orphan device simply does not count
+    # against it. A null field must never take the page down.
+    assert body["sites"] == [{"name": "DMF Lab", "slug": "dmf-lab", "device_count": 0}]
+    assert body["device_count"] == 1
+
+
+def test_devices_null_site_role_and_type_is_200_never_500(monkeypatch):
+    monkeypatch.setattr(
+        netbox_module,
+        "list_devices",
+        lambda **k: [{"id": 1, "name": "orphan", "site": None, "role": None, "device_type": None,
+                      "status": None, "primary_ip": None}],
+    )
+    resp = _client(netbox=NetboxSettings(api_url="http://nb.test", api_token="tok")).get("/api/facility/devices")
+    assert resp.status_code == 200, resp.text
+    body = resp.json()
+    assert body["reason"] == ""
+    assert body["devices"] == [
+        {"id": 1, "name": "orphan", "type": None, "site": None, "status": None, "ip": None, "role": None}
+    ]
+
+
+def test_summary_non_dict_rows_do_not_500(monkeypatch):
+    monkeypatch.setattr(netbox_module, "list_sites", lambda **k: [{"name": "DMF Lab", "slug": "dmf-lab"}, "junk"])
+    monkeypatch.setattr(netbox_module, "list_devices", lambda **k: [{"site": {"name": "DMF Lab"}}, "junk"])
+    resp = _client(netbox=NetboxSettings(api_url="http://nb.test", api_token="tok")).get("/api/facility/summary")
+    assert resp.status_code == 200, resp.text
+    body = resp.json()
+    assert body["sites"] == [{"name": "DMF Lab", "slug": "dmf-lab", "device_count": 1}]
+    # Skipping a row must SAY so — silence would claim a completeness the
+    # payload does not have (GATE-S1-RV P2).
+    assert body["reason"] == "netbox-rows-unparseable"
+
+
+def test_devices_unparseable_row_sets_a_reason_not_silence(monkeypatch):
+    monkeypatch.setattr(netbox_module, "list_devices", lambda **k: [{"id": 1, "name": "ok"}, "junk"])
+    resp = _client(netbox=NetboxSettings(api_url="http://nb.test", api_token="tok")).get("/api/facility/devices")
+    assert resp.status_code == 200, resp.text
+    body = resp.json()
+    assert len(body["devices"]) == 1
+    assert body["reason"] == "netbox-rows-unparseable"
+
+
+def test_clean_rows_carry_no_degradation_reason(monkeypatch):
+    """The discriminator: the reason must appear ONLY when something was
+    actually dropped, or it stops meaning anything."""
+    monkeypatch.setattr(netbox_module, "list_sites", lambda **k: [{"name": "DMF Lab", "slug": "dmf-lab"}])
+    monkeypatch.setattr(netbox_module, "list_devices", lambda **k: [{"site": {"name": "DMF Lab"}}])
+    resp = _client(netbox=NetboxSettings(api_url="http://nb.test", api_token="tok")).get("/api/facility/summary")
+    assert resp.json()["reason"] == ""

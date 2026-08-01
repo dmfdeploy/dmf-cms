@@ -117,7 +117,8 @@ export default function WorkloadTile({
         </div>
       </div>
 
-      {/* Footer: refresh affordance for held frames + the C5 clear control. */}
+      {/* Footer: the refresh affordance for a held frame. No write control
+          lives here — the rail grants actions per stage (GATE-S1 P1). */}
       <div className="flex flex-wrap items-center gap-2">
         {showRefresh && (
           <button className="btn btn-secondary btn-sm" onClick={refresh}>

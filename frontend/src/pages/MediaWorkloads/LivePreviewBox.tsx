@@ -25,6 +25,14 @@ export interface LivePreviewBoxProps {
   displayName: string
   active: boolean
   motionAllowed: boolean
+  /**
+   * Cadence override for the one surface allowed to be lively: the open
+   * modal (codex P2 — the fast rate is bounded to a single view). The
+   * BOUNDS still apply there; only the rate differs. Defaults to the tile
+   * cadence.
+   */
+  statusPollMs?: number
+  previewTickMs?: number
 }
 
 function PlaceholderThumb({ label }: { label: string }) {
@@ -55,6 +63,8 @@ export function useLivePreview({
   instance,
   active,
   motionAllowed,
+  statusPollMs = STATUS_POLL_MS,
+  previewTickMs = PREVIEW_TICK_MS,
 }: Omit<LivePreviewBoxProps, 'displayName'>) {
   const isMxl = instance.function_key?.startsWith('mxl') ?? false
   const liveEligible = isMxl && (instance.live_view ?? false)
@@ -64,15 +74,15 @@ export function useLivePreview({
   const canPoll = liveEligible && active
   const status = useInstanceMxlStatus(instance.instance, {
     enabled: canPoll,
-    refetchInterval: canPoll && motionAllowed ? STATUS_POLL_MS : false,
+    refetchInterval: canPoll && motionAllowed ? statusPollMs : false,
   })
 
   const [tick, setTick] = useState(0)
   useEffect(() => {
     if (!canPoll || !motionAllowed) return
-    const id = setInterval(() => setTick((t) => (t + 1) % 100000), PREVIEW_TICK_MS)
+    const id = setInterval(() => setTick((t) => (t + 1) % 100000), previewTickMs)
     return () => clearInterval(id)
-  }, [canPoll, motionAllowed])
+  }, [canPoll, motionAllowed, previewTickMs])
 
   // A fresh src is a fresh chance for a recovered preview to render.
   const [imgError, setImgError] = useState(false)
@@ -102,6 +112,9 @@ export function useLivePreview({
   }
 
   return {
+    /** The raw status payload, so a caller needing flow stats does not open
+     *  a SECOND query against the same endpoint at a different cadence. */
+    data,
     isMxl,
     liveEligible,
     canPoll,
@@ -120,17 +133,23 @@ export function useLivePreview({
   }
 }
 
-export default function LivePreviewBox({
+/**
+ * The frame alone, driven by an ALREADY-OBSERVED preview state. A caller that
+ * needs the status payload for itself (the modal, for its flow stats) passes
+ * its own observation in rather than mounting a second one: two
+ * useLivePreview calls on one instance means two queries and two tick
+ * effects, which is the duplicate this file exists to prevent.
+ */
+export function LivePreviewFrame({
   instance,
   displayName,
-  active,
-  motionAllowed,
-}: LivePreviewBoxProps) {
-  const { liveEligible, available, showImage, tick, setImgError } = useLivePreview({
-    instance,
-    active,
-    motionAllowed,
-  })
+  preview,
+}: {
+  instance: MediaWorkloadInstance
+  displayName: string
+  preview: ReturnType<typeof useLivePreview>
+}) {
+  const { liveEligible, available, showImage, tick, setImgError } = preview
 
   return (
     <div
@@ -150,5 +169,26 @@ export default function LivePreviewBox({
         />
       )}
     </div>
+  )
+}
+
+/** Observes and renders in one step — the common case (tiles). */
+export default function LivePreviewBox({
+  instance,
+  displayName,
+  active,
+  motionAllowed,
+  statusPollMs,
+  previewTickMs,
+}: LivePreviewBoxProps) {
+  const preview = useLivePreview({
+    instance,
+    active,
+    motionAllowed,
+    statusPollMs,
+    previewTickMs,
+  })
+  return (
+    <LivePreviewFrame instance={instance} displayName={displayName} preview={preview} />
   )
 }

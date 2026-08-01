@@ -9,7 +9,7 @@
  * tile (reason required + Activity record).
  */
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
-import { act, cleanup, render, screen, fireEvent, within } from '@testing-library/react'
+import { act, cleanup, render, screen, fireEvent } from '@testing-library/react'
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query'
 import { MemoryRouter, Route, Routes } from 'react-router-dom'
 import MediaWorkloads from '../pages/MediaWorkloads'
@@ -96,6 +96,10 @@ interface HarnessOpts {
   // `{}` response), matching every non-viewer instance today.
   topology?: Record<string, unknown>
   switchResult?: Record<string, unknown>
+  /** The backend's derived workload lifecycle (ADR-0046 §3). Defaults to
+   *  'operate'; a fixture with bootstrapped instances must say 'provision',
+   *  because that is what the backend would actually derive for them. */
+  lifecycle?: 'provision' | 'configure' | 'operate' | 'unknown'
 }
 
 function mkFetch(opts: HarnessOpts) {
@@ -111,7 +115,7 @@ function mkFetch(opts: HarnessOpts) {
       {
         slug: 'test',
         name: 'test',
-        lifecycle: 'operate',
+        lifecycle: opts.lifecycle ?? 'operate',
         health: 'ok',
         instances,
         functions: [],
@@ -383,12 +387,11 @@ describe('polling bounds (codex P2/P3)', () => {
     expect(h.statusCalls['mxl-b'] ?? 0).toBe(bBefore)
   })
 
-  // The table view is gone (see the Grid|Table note above), but the claim that
-  // mattered in this test outlives it: the retired legacy AGGREGATE endpoint
-  // must never be hit, on any surface. That was the R1 P1 fix, and a
-  // relocation is exactly when a component quietly reaches for the old
-  // endpoint again.
-  it('never hits the retired legacy aggregate, on the rail or in the modal', async () => {
+  // GATE-S1-RV: the old wording here ("never hit, on any surface") was FALSE
+  // — the live_view=false fallback still mounts MxlDetailPanel, which is the
+  // aggregate's one legitimate remaining caller. The honest claim is narrower
+  // and still worth pinning: the LIVE path never reaches for it.
+  it('never hits the retired legacy aggregate on the live path', async () => {
     vi.useFakeTimers()
     const h = mkFetch({})
     renderPage()
@@ -433,11 +436,11 @@ describe('live modal', () => {
     const tile = (await screen.findByText('MXL Video Test View')).closest('[role="button"]')!
     fireEvent.click(tile)
 
-    const dialog = await screen.findByRole('dialog')
+    await screen.findByRole('dialog')
     // 200ms cache-busted preview present inside the modal.
-    expect(within(dialog).getByAltText(/Live preview of mxl-a/)).toBeTruthy()
+    expect(screen.getByAltText(/Live preview of mxl-a/)).toBeTruthy()
     // Node stat is the NetBox placement, labelled as such.
-    expect(within(dialog).getByText('Node (NetBox)')).toBeTruthy()
+    expect(screen.getByText('Node (NetBox)')).toBeTruthy()
 
     fireEvent.keyDown(document, { key: 'Escape' })
     expect(screen.queryByRole('dialog')).toBeNull()
@@ -472,9 +475,12 @@ describe('live modal', () => {
   })
 })
 
-describe('clear-for-deployment from a tile (C5)', () => {
+describe('clear-for-deployment on the Provision stage (C5)', () => {
   it('arms a reason, does not POST until confirmed, then records to Activity', async () => {
     const { clearCalls } = mkFetch({
+      // Bootstrapped members with no active intent IS the backend's
+      // 'provision' derivation — and the stage that now grants the clear.
+      lifecycle: 'provision',
       instances: [inst({ instance: 'mxl-a', requested_state: 'bootstrapped', reconcile_pending: false })],
       clearResult: {
         instance: 'mxl-a',
@@ -539,28 +545,28 @@ function topologyMxlA(overrides: Record<string, unknown> = {}) {
   }
 }
 
-describe('switch source from the live modal (umbrella #201 WP5)', () => {
+// GATE-S1 P1: the switch control used to live in the live modal, which the
+// Operate stage mounts — so switching existed outside Configure and outside
+// the rail's busy suppression entirely. The control is now Configure's alone
+// and renders inline on the stage, so these tests drive it there. Same
+// behaviours, same fail-closed contract; only the host surface changed.
+describe('switch source on the Configure stage (umbrella #201 WP5)', () => {
   it('renders no switch control when the instance carries no topology', async () => {
     mkFetch({})
     renderPage()
-    const tile = (await screen.findByText('MXL Video Test View')).closest('[role="button"]')!
-    fireEvent.click(tile)
-    const dialog = await screen.findByRole('dialog')
-    await screen.findByText('Node (NetBox)') // modal body has settled
-    expect(within(dialog).queryByRole('button', { name: 'Switch source' })).toBeNull()
+    await screen.findAllByText('Configure') // rail pill + stage card
+    expect(screen.queryByRole('button', { name: 'Switch source' })).toBeNull()
   })
 
   it('lists the topology\'s OTHER sources only, and shows the current one before arming', async () => {
     mkFetch({ topology: topologyMxlA() })
     renderPage()
-    const tile = (await screen.findByText('MXL Video Test View')).closest('[role="button"]')!
-    fireEvent.click(tile)
-    const dialog = await screen.findByRole('dialog')
+    await screen.findAllByText('Configure') // rail pill + stage card
 
-    expect(await within(dialog).findByText('source-a')).toBeTruthy() // current active source shown
+    expect(await screen.findByText('source-a')).toBeTruthy() // current active source shown
 
-    fireEvent.click(within(dialog).getByRole('button', { name: 'Switch source' }))
-    const select = within(dialog).getByRole('combobox') as HTMLSelectElement
+    fireEvent.click(screen.getByRole('button', { name: 'Switch source' }))
+    const select = screen.getByRole('combobox') as HTMLSelectElement
     const optionValues = Array.from(select.options).map((o) => o.value)
     expect(optionValues).toContain('source-b')
     expect(optionValues).not.toContain('source-a') // the active source is never a switch target
@@ -578,20 +584,18 @@ describe('switch source from the live modal (umbrella #201 WP5)', () => {
       }),
     })
     renderPage()
-    const tile = (await screen.findByText('MXL Video Test View')).closest('[role="button"]')!
-    fireEvent.click(tile)
-    const dialog = await screen.findByRole('dialog')
+    await screen.findAllByText('Configure') // rail pill + stage card
 
-    expect(await within(dialog).findByText('source-b')).toBeTruthy() // the OBSERVED source, shown
+    expect(await screen.findByText('source-b')).toBeTruthy() // the OBSERVED source, shown
 
-    fireEvent.click(within(dialog).getByRole('button', { name: 'Switch source' }))
-    const select = within(dialog).getByRole('combobox') as HTMLSelectElement
+    fireEvent.click(screen.getByRole('button', { name: 'Switch source' }))
+    const select = screen.getByRole('combobox') as HTMLSelectElement
     const optionValues = Array.from(select.options).map((o) => o.value)
     expect(optionValues).toContain('source-a')
     expect(optionValues).not.toContain('source-b') // never offer the already-active source
   })
 
-  it('fails closed (disabled, no offered sources) when the observation is unknown', async () => {
+  it('fails closed (control ABSENT, no offered sources) when the observation is unknown', async () => {
     mkFetch({
       topology: topologyMxlA({
         active_source: null,
@@ -600,23 +604,20 @@ describe('switch source from the live modal (umbrella #201 WP5)', () => {
       }),
     })
     renderPage()
-    const tile = (await screen.findByText('MXL Video Test View')).closest('[role="button"]')!
-    fireEvent.click(tile)
-    const dialog = await screen.findByRole('dialog')
+    await screen.findAllByText('Configure') // rail pill + stage card
 
-    const button = (await within(dialog).findByRole('button', {
-      name: 'Switch source',
-    })) as HTMLButtonElement
-    expect(button.disabled).toBe(true)
+    // GATE-S1 P2c: fail-closed is now ABSENCE, not a disabled button. A
+    // greyed control still advertises an affordance the console will refuse,
+    // which is the dead control the rail exists to avoid.
+    // Await the honest line: it appears once the topology read resolves.
     expect(
-      within(dialog).getByText(/Live source is unknown or stale — refresh to retry before switching\./),
+      await screen.findByText(/Live source is unknown or stale — refresh to retry before switching\./),
     ).toBeTruthy()
-    // Disabled: clicking it must not arm the dropdown/offer any source.
-    fireEvent.click(button)
-    expect(within(dialog).queryByRole('combobox')).toBeNull()
+    expect(screen.queryByRole('button', { name: 'Switch source' })).toBeNull()
+    expect(screen.queryByRole('combobox')).toBeNull()
   })
 
-  it('fails closed (disabled, no offered sources) when the observation has gone stale', async () => {
+  it('fails closed (control ABSENT, no offered sources) when the observation has gone stale', async () => {
     mkFetch({
       topology: topologyMxlA({
         active_source: 'source-a',
@@ -625,19 +626,17 @@ describe('switch source from the live modal (umbrella #201 WP5)', () => {
       }),
     })
     renderPage()
-    const tile = (await screen.findByText('MXL Video Test View')).closest('[role="button"]')!
-    fireEvent.click(tile)
-    const dialog = await screen.findByRole('dialog')
+    await screen.findAllByText('Configure') // rail pill + stage card
 
-    const button = (await within(dialog).findByRole('button', {
-      name: 'Switch source',
-    })) as HTMLButtonElement
-    expect(button.disabled).toBe(true)
+    // GATE-S1 P2c: fail-closed is now ABSENCE, not a disabled button. A
+    // greyed control still advertises an affordance the console will refuse,
+    // which is the dead control the rail exists to avoid.
+    // Await the honest line: it appears once the topology read resolves.
     expect(
-      within(dialog).getByText(/Live source is unknown or stale — refresh to retry before switching\./),
+      await screen.findByText(/Live source is unknown or stale — refresh to retry before switching\./),
     ).toBeTruthy()
-    fireEvent.click(button)
-    expect(within(dialog).queryByRole('combobox')).toBeNull()
+    expect(screen.queryByRole('button', { name: 'Switch source' })).toBeNull()
+    expect(screen.queryByRole('combobox')).toBeNull()
   })
 
   it('requires both a target source and a reason before Confirm switch is enabled, then POSTs and records to Activity', async () => {
@@ -660,14 +659,12 @@ describe('switch source from the live modal (umbrella #201 WP5)', () => {
       },
     })
     renderPage()
-    const tile = (await screen.findByText('MXL Video Test View')).closest('[role="button"]')!
-    fireEvent.click(tile)
-    const dialog = await screen.findByRole('dialog')
+    await screen.findAllByText('Configure') // rail pill + stage card
 
-    fireEvent.click(await within(dialog).findByRole('button', { name: 'Switch source' }))
-    const confirm = within(dialog).getByRole('button', { name: 'Confirm switch' }) as HTMLButtonElement
-    const select = within(dialog).getByRole('combobox') as HTMLSelectElement
-    const textbox = within(dialog).getByRole('textbox')
+    fireEvent.click(await screen.findByRole('button', { name: 'Switch source' }))
+    const confirm = screen.getByRole('button', { name: 'Confirm switch' }) as HTMLButtonElement
+    const select = screen.getByRole('combobox') as HTMLSelectElement
+    const textbox = screen.getByRole('textbox')
 
     // Neither target nor reason set — disabled.
     expect(confirm.disabled).toBe(true)
@@ -681,7 +678,7 @@ describe('switch source from the live modal (umbrella #201 WP5)', () => {
 
     fireEvent.click(confirm)
 
-    await within(dialog).findByText(/Active source: source-b/)
+    await screen.findByText(/Active source: source-b/)
     expect(switchCalls).toHaveLength(1)
     expect(JSON.parse(switchCalls[0].init?.body as string)).toEqual({
       source_instance: 'source-b',
@@ -713,19 +710,17 @@ describe('switch source from the live modal (umbrella #201 WP5)', () => {
       },
     })
     renderPage()
-    const tile = (await screen.findByText('MXL Video Test View')).closest('[role="button"]')!
-    fireEvent.click(tile)
-    const dialog = await screen.findByRole('dialog')
+    await screen.findAllByText('Configure') // rail pill + stage card
 
-    fireEvent.click(await within(dialog).findByRole('button', { name: 'Switch source' }))
-    fireEvent.change(within(dialog).getByRole('textbox'), { target: { value: 'go' } })
-    fireEvent.change(within(dialog).getByRole('combobox'), { target: { value: 'source-b' } })
-    fireEvent.click(within(dialog).getByRole('button', { name: 'Confirm switch' }))
+    fireEvent.click(await screen.findByRole('button', { name: 'Switch source' }))
+    fireEvent.change(screen.getByRole('textbox'), { target: { value: 'go' } })
+    fireEvent.change(screen.getByRole('combobox'), { target: { value: 'source-b' } })
+    fireEvent.click(screen.getByRole('button', { name: 'Confirm switch' }))
 
-    await within(dialog).findByText(/Switch failed/)
-    expect(within(dialog).getByText(/switch-job-failed/)).toBeTruthy()
-    expect(within(dialog).getByText(/operator retry\/rollback required/)).toBeTruthy()
-    expect(within(dialog).queryByText(/Active source: source-b/)).toBeNull()
+    await screen.findByText(/Switch failed/)
+    expect(screen.getByText(/switch-job-failed/)).toBeTruthy()
+    expect(screen.getByText(/operator retry\/rollback required/)).toBeTruthy()
+    expect(screen.queryByText(/Active source: source-b/)).toBeNull()
   })
 
   // umbrella #320/#321 gate follow-up (bug 2): outcome/outcome_message are
@@ -755,24 +750,24 @@ describe('switch source from the live modal (umbrella #201 WP5)', () => {
       },
     })
     renderPage()
-    const tile = (await screen.findByText('MXL Video Test View')).closest('[role="button"]')!
-    fireEvent.click(tile)
-    const dialog = await screen.findByRole('dialog')
+    await screen.findAllByText('Configure') // rail pill + stage card
 
-    fireEvent.click(await within(dialog).findByRole('button', { name: 'Switch source' }))
-    fireEvent.change(within(dialog).getByRole('textbox'), { target: { value: 'go' } })
-    fireEvent.change(within(dialog).getByRole('combobox'), { target: { value: 'source-b' } })
-    fireEvent.click(within(dialog).getByRole('button', { name: 'Confirm switch' }))
+    fireEvent.click(await screen.findByRole('button', { name: 'Switch source' }))
+    fireEvent.change(screen.getByRole('textbox'), { target: { value: 'go' } })
+    fireEvent.change(screen.getByRole('combobox'), { target: { value: 'source-b' } })
+    fireEvent.click(screen.getByRole('button', { name: 'Confirm switch' }))
 
-    await within(dialog).findByText(
+    // Appears twice by design: Configure's immediate result and Finalise &
+    // Review's outcome marker are the same truth shown at both stages.
+    await screen.findAllByText(
       'Switch did not complete; the previous source was restored. Safe to retry.',
     )
     // The coarse fallback text must NOT also render alongside the canned message.
-    expect(within(dialog).queryByText(/Switch failed \(switch-job-failed\)/)).toBeNull()
+    expect(screen.queryByText(/Switch failed \(switch-job-failed\)/)).toBeNull()
     // Expert detail (request_id + raw outcome code) stays available, just out
     // of the primary line — never a raw-stdout debug view.
-    expect(within(dialog).getByText(/req-switch-3/)).toBeTruthy()
-    expect(within(dialog).getByText(/switch_failed_previous_source_restored/)).toBeTruthy()
+    expect(screen.getAllByText(/req-switch-3/).length).toBeGreaterThan(0)
+    expect(screen.getAllByText(/switch_failed_previous_source_restored/).length).toBeGreaterThan(0)
   })
 
   // umbrella #320/#321 gate follow-up (bug 1, TOCTOU): isObservedFresh is
@@ -788,16 +783,13 @@ describe('switch source from the live modal (umbrella #201 WP5)', () => {
     renderPage()
     await settle() // let the grouped/catalog fetch resolve so the tile renders
 
-    const tile = screen.getByText('MXL Video Test View').closest('[role="button"]')!
-    fireEvent.click(tile)
-    await settle(0) // let the modal's topology fetch resolve
+    await settle(0) // let the Configure stage's topology fetch resolve
 
-    const dialog = screen.getByRole('dialog')
-    fireEvent.click(within(dialog).getByRole('button', { name: 'Switch source' }))
+    fireEvent.click(screen.getByRole('button', { name: 'Switch source' }))
 
-    const confirm = within(dialog).getByRole('button', { name: 'Confirm switch' }) as HTMLButtonElement
-    const select = within(dialog).getByRole('combobox') as HTMLSelectElement
-    const textbox = within(dialog).getByRole('textbox')
+    const confirm = screen.getByRole('button', { name: 'Confirm switch' }) as HTMLButtonElement
+    const select = screen.getByRole('combobox') as HTMLSelectElement
+    const textbox = screen.getByRole('textbox')
 
     fireEvent.change(textbox, { target: { value: 'operator requested' } })
     fireEvent.change(select, { target: { value: 'source-b' } })
@@ -810,7 +802,7 @@ describe('switch source from the live modal (umbrella #201 WP5)', () => {
 
     expect(confirm.disabled).toBe(true) // caught reactively, not just at submit time
     expect(
-      within(dialog).getByText(/Live source is unknown or stale — refresh to retry before switching\./),
+      screen.getByText(/Live source is unknown or stale — refresh to retry before switching\./),
     ).toBeTruthy()
 
     // Confirm is now a genuinely disabled native button — clicking it must
@@ -881,5 +873,26 @@ describe('grouped endpoint + degraded rendering (P3)', () => {
     expect(screen.getByText('Invalid workload assignments')).toBeTruthy()
     expect(screen.getByText(/bad-svc/)).toBeTruthy()
     expect(screen.getByText(/alpha, beta/)).toBeTruthy()
+  })
+})
+
+
+describe('bounds are universal, including the fallback panel (GATE-S1-RV)', () => {
+  it('does not poll the legacy aggregate while the tab is hidden', async () => {
+    // The live_view=false fallback was the last unbounded 200ms poller. It
+    // now takes the same hidden-tab pause as every other preview surface.
+    Object.defineProperty(document, 'visibilityState', { value: 'hidden', configurable: true })
+    vi.useFakeTimers()
+    const h = mkFetch({ instances: [inst({ instance: 'mxl-a', live_view: false })] })
+    renderPage()
+    await settle()
+    await settle(STATUS_POLL_MS * 3)
+
+    const tile = screen.getAllByText('MXL Video Test View')[0].closest('[role="button"]')!
+    fireEvent.click(tile)
+    await settle(1000)
+
+    expect(h.counters.aggregateStatus).toBe(0)
+    Object.defineProperty(document, 'visibilityState', { value: 'visible', configurable: true })
   })
 })

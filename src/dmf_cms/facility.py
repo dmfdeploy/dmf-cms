@@ -98,9 +98,13 @@ class NodeFact:
 def _read_nodes(prom_url: str) -> list[NodeFact]:
     info_rows = prometheus.query(url=prom_url, expr="kube_node_info")
     if not info_rows:
-        # A live cluster always has at least one node reporting via KSM
-        # (capacity.py's own reasoning for kube_pod_info) — empty means
-        # KSM itself is unscraped, not a genuinely nodeless cluster.
+        # Empty is treated as "KSM unscraped", not "nodeless cluster".
+        # That inference rests on kube-state-metrics running with its
+        # DEFAULT collectors, which is how dmf-infra's Prometheus values
+        # configure it — a config-derived expectation, not a universal
+        # fact about Kubernetes. If a deployment restricts KSM collectors,
+        # this degrades to the honest unreadable reason, which is the
+        # correct outcome anyway.
         raise RuntimeError("empty kube_node_info")
 
     # node_uname_info is an OPTIONAL enrichment join (arch), not a liveness
@@ -161,9 +165,11 @@ class PlatformServiceFact:
 def _read_platform_services(prom_url: str, apps: list[tuple[str, str]]) -> list[PlatformServiceFact]:
     path_rows = prometheus.query(url=prom_url, expr="kube_ingress_path")
     if not path_rows:
-        # Every real DMF env exposes multiple ingresses (netbox, awx,
-        # forgejo, the console itself, ...) — empty means the series isn't
-        # being scraped/emitted, not a genuinely ingress-free cluster.
+        # Empty is treated as "the series isn't scraped/emitted" rather
+        # than "ingress-free cluster", because every DMF env we configure
+        # exposes several ingresses. Again config-derived (KSM default
+        # collectors per dmf-infra's values), NOT a live-verified fact:
+        # nothing here has been probed against a running cluster.
         raise RuntimeError("empty kube_ingress_path")
     tls_rows = prometheus.query(url=prom_url, expr="kube_ingress_tls") or []
     container_rows = prometheus.query(url=prom_url, expr="kube_pod_container_info")

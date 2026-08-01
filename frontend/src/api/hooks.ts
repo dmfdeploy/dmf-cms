@@ -318,12 +318,18 @@ export function useCatalogJobStatus(key: string, jobId: number | null) {
   })
 }
 
-// MXL Flows — poll fast so the grain head-index counter visibly ticks.
-export function useMxlStatus() {
+// MXL Flows aggregate — the live_view=false fallback panel. Polls fast so the
+// grain head-index counter visibly ticks, but BOUNDED like every other
+// preview surface (GATE-S1-RV P2): the caller passes `active`, which is false
+// on a hidden tab or under reduced motion, and the query simply stops. An
+// unbounded 200ms poll was the last path that ignored the rules.
+export function useMxlStatus(opts?: { active?: boolean }) {
+  const active = opts?.active ?? true
   return useQuery({
     queryKey: ['mxl-status'],
     queryFn: () => apiCall<MxlStatusResponse>('/api/mxl/status'),
-    refetchInterval: 200,
+    enabled: active,
+    refetchInterval: active ? 200 : false,
   })
 }
 
@@ -371,7 +377,7 @@ export function useInstanceMxlStatus(
 // spec's own endpoint list; see api_media_workloads_topology's own
 // docstring in main.py). A 404 (receiver-not-found/receiver-not-topology)
 // is the common, expected case for any instance without a topology — never
-// retried, and the caller (SwitchSourceControl) treats `isError` as "no
+// retried, and the caller (the Configure stage's switch control) treats `isError` as "no
 // switch control here", not a fetch failure to surface.
 export function useInstanceTopology(instance: string, opts?: { enabled?: boolean }) {
   return useQuery({
@@ -416,7 +422,16 @@ export function useSwitchSource() {
 // state in NetBox; convergence belongs to the automation lane. reason is
 // mandatory (C5 quartet).
 export function useClearForDeployment() {
+  const queryClient = useQueryClient()
   return useMutation({
+    // Close the loop at the point of action (Art. 2): a successful clear
+    // changes the inventory that decides whether the control should still
+    // be offered. Without this the stale, already-taken action stays
+    // clickable until the next 15s poll.
+    onSuccess: () => {
+      void queryClient.invalidateQueries({ queryKey: ['media-workloads-grouped'] })
+      void queryClient.invalidateQueries({ queryKey: ['media-workloads'] })
+    },
     mutationFn: ({ instance, reason }: { instance: string; reason: string }) =>
       apiCall<ClearForDeploymentResult>(
         `/api/media-workloads/${encodeURIComponent(instance)}/clear`,

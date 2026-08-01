@@ -67,7 +67,7 @@ export default function WorkloadDetail() {
     return (
       <div className="flex-1 overflow-y-auto p-6">
         <div className="panel border border-amber-500/20 bg-amber-500/10 px-4 py-3 text-sm text-amber-200">
-          This workload could not be loaded: {String(error)}
+          This workload could not be loaded right now. Retrying automatically.
         </div>
       </div>
     )

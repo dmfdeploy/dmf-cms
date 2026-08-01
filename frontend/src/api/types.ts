@@ -194,19 +194,27 @@ export interface MonitoringMetrics {
 // Facility (Physical Infrastructure)
 // ------------------------------------------------------------------
 
+// Every one of these is nullable in NetBox and the endpoint passes the null
+// straight through (GATE-S1-RV P2: the type used to promise non-null and the
+// endpoint disagreed — which is how `.get("name")` on a null `site` became a
+// live 500).
 export interface NetBoxDevice {
-  id: number
-  name: string
-  type: string
-  site: string
-  status: string
+  id: number | null
+  name: string | null
+  type: string | null
+  site: string | null
+  status: string | null
   ip: string | null
   role: string | null
 }
 
 // S1 (#285): fail-soft — every facility response carries `reason` (""
 // means live data; a non-empty token names why a section is degraded).
-// Never a raw 500 (Constitution Arts. 1+8).
+// Reads AND row shaping both sit inside the endpoint's guard, so an
+// unreachable source or a malformed/nullable row degrades to a reason
+// rather than a 500 (Constitution Arts. 1+8) — including
+// `netbox-rows-unparseable`, set when rows were dropped so the payload
+// never implies a completeness it doesn't have. Auth failures are still 401.
 export interface FacilitySummary {
   reason: string
   site_count: number

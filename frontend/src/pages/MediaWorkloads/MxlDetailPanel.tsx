@@ -1,5 +1,6 @@
 import { useEffect, useState } from 'react'
 import { useMxlStatus } from '../../api/hooks'
+import { useDocumentVisible, usePrefersReducedMotion } from './liveView'
 
 /**
  * MXL live view — the per-instance detail panel that replaces the standalone
@@ -9,16 +10,26 @@ import { useMxlStatus } from '../../api/hooks'
  * stays graceful — unconfigured/unreachable render as explicit states.
  * Mounted only while a row is expanded, so the fast poll (kept from the
  * original page so the grain counter visibly ticks) costs nothing otherwise.
+ *
+ * The SAME bounds as every other preview surface apply here (GATE-S1-RV P2):
+ * a hidden tab pauses both the query and the cache-bust tick, and
+ * prefers-reduced-motion stops the churn. This path used to honour neither,
+ * which made "bounds are universal" false for exactly the fallback nobody
+ * looks at.
  */
 export default function MxlDetailPanel() {
-  const { data, isLoading } = useMxlStatus()
+  const visible = useDocumentVisible()
+  const reducedMotion = usePrefersReducedMotion()
+  const active = visible && !reducedMotion
+  const { data, isLoading } = useMxlStatus({ active })
 
   // Cache-bust the preview ~5/s so the clock overlay visibly ticks.
   const [tick, setTick] = useState(0)
   useEffect(() => {
+    if (!active) return
     const id = setInterval(() => setTick((t) => (t + 1) % 100000), 200)
     return () => clearInterval(id)
-  }, [])
+  }, [active])
 
   if (isLoading) {
     return <div className="p-4 text-sm text-muted">Loading live view…</div>

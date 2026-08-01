@@ -95,7 +95,12 @@ export default function ReasonConfirm({
         </div>
       )}
       {error != null && error !== false && (
-        <p className="mt-1 text-xs text-red-300">{String(error)}</p>
+        <p className="mt-1 text-xs text-red-300">
+          {/* Art. 8: the operator gets what happened and what is safe to do
+              next, not a stringified exception. Fixed here so all three
+              stages inherit it rather than each growing its own copy. */}
+          That didn&apos;t go through — nothing was changed. Check your access, then retry.
+        </p>
       )}
       <div className="mt-2 flex gap-2">
         <button
