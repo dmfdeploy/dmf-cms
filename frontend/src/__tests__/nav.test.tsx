@@ -221,3 +221,32 @@ describe('sidebar rails + role-gated secondaries (IA §3/§7)', () => {
     }
   })
 })
+
+// umbrella #286 (operator icon direction, 2026-08-01). Glyphs are asserted by
+// their drawn geometry because that is the whole change — a label-only check
+// would pass against the icons these replace.
+describe('rail glyphs', () => {
+  function glyphFor(label: string) {
+    const link = screen.getByRole('link', { name: label })
+    const svg = link.querySelector('svg')
+    if (!svg) throw new Error(`no glyph rendered for ${label}`)
+    return svg
+  }
+
+  it('Workspace is a 2x2 grid, not the 9-cell one', async () => {
+    renderSidebar(identity({ role: 'viewer' }))
+    await screen.findByText('Workspace')
+    const cells = glyphFor('Workspace').querySelectorAll('rect')
+    expect(cells).toHaveLength(4)
+  })
+
+  it('Media Workloads carries a media-production glyph, not the clipboard', async () => {
+    renderSidebar(identity({ role: 'engineer' }))
+    await screen.findByText('Media Workloads')
+    const svg = glyphFor('Media Workloads')
+    // MonitorSpeaker: a display body plus the speaker cone. The clipboard it
+    // replaces was a single path with neither.
+    expect(svg.querySelector('rect')).toBeTruthy()
+    expect(svg.querySelector('circle')).toBeTruthy()
+  })
+})
