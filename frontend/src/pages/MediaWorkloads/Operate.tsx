@@ -23,12 +23,17 @@ import { LIVE_TILE_CAP, useDocumentVisible, usePrefersReducedMotion } from './li
  * currently sits.
  *
  * WHY IT CARRIES NO ACTION OF ITS OWN. The EBU coverage matrix marks
- * live Operate-time control as not-implemented, and that is accurate: the
- * only write this console has anywhere near a running flow is Configure's
- * switch-source, which is a configure-time re-point performed by an
- * automation job. A control here that looked like it re-routed media live
- * would misstate what actually happens — so the one affordance below is a
- * navigation to the real seam, never a mutation of its own.
+ * live Operate-time control as not-implemented, and that is accurate — but
+ * the reason is about the KIND of write, not the count. The console has two
+ * writes reachable while a workload runs: Configure's switch-source and
+ * Finalise & Review's teardown (Finalise is open throughout Operate, because
+ * a running workload can always be torn down). Neither is live flow control:
+ * the switch is a configure-time re-point performed by an automation job, and
+ * a teardown ends the workload rather than steering it. What is missing is
+ * any seam that steers media WHILE it runs, and that is what this stage would
+ * need to carry an action of its own. A control here that looked like it
+ * re-routed media live would misstate what actually happens — so the one
+ * affordance below is a navigation to the real seam, never a mutation.
  *
  * Reuses exactly what the retired Operate STAGE panel reused —
  * WorkloadTile, InstanceLiveModal, and the liveView.ts polling bounds — for

@@ -61,11 +61,18 @@ export function readLaunchState(state: unknown): WorkloadLaunchState | null {
   if (typeof launch !== 'object' || launch === null) return null
   const { entryKey, operationId, jobId } = launch as Record<string, unknown>
   if (typeof entryKey !== 'string' || entryKey === '') return null
-  return {
-    entryKey,
-    operationId: typeof operationId === 'string' ? operationId : undefined,
-    jobId: typeof jobId === 'number' ? jobId : undefined,
-  }
+  const op = typeof operationId === 'string' && operationId !== '' ? operationId : undefined
+  const job = typeof jobId === 'number' ? jobId : undefined
+  // A LAUNCH WITH NOTHING TO POLL IS MALFORMED, NOT A PARTIAL LAUNCH.
+  // Dropping wrong-typed ids and keeping the entry key used to yield a launch
+  // that could never resolve: the destination would render "Deploy accepted"
+  // with no job to follow, forever, for a workload that may not be coming —
+  // a permanent unpollable ghost, and a worse lie than the not-found it
+  // replaced, because it asserts a launch instead of admitting an absence.
+  // Without a pollable reference there is no launch to speak of, so the page
+  // falls through to the ordinary not-found.
+  if (op === undefined && job === undefined) return null
+  return { entryKey, operationId: op, jobId: job }
 }
 
 /** Terminal AWX job states that mean the workload is not coming. */
@@ -140,15 +147,18 @@ export default function WorkloadMaterializing({
             <p className="text-muted">
               This workload appears here once the launcher records it against the
               identity <span className="font-mono">workload:{slug}</span> in the
-              facility source of truth. That happens after the job below finishes,
-              not when the deploy was accepted — so an empty inventory right now is
-              expected, not a missing workload.
+              facility source of truth. The launcher does that PART-WAY through the
+              job below — not when the deploy was accepted, and not only once the job
+              ends — so it can show up here while the job is still running, and an
+              empty inventory in the meantime is expected rather than a missing
+              workload.
             </p>
             {jobSucceeded && (
               <p className="text-muted">
-                The job has finished. Waiting for the record to appear in the
-                inventory — this page will become the workload&apos;s flow as soon as
-                it does.
+                The job has finished but the record still is not readable here. That is
+                past the point where the launcher writes it, so this is a lag or a
+                failed write rather than the ordinary wait — check the Media Workloads
+                list if it does not resolve shortly.
               </p>
             )}
           </div>
@@ -173,10 +183,13 @@ export default function WorkloadMaterializing({
               onStatusChange={handleStatusChange}
             />
           ) : (
-            <div className="text-xs text-muted">
-              No job reference came back with the deploy, so its progress cannot be
-              followed here.
-            </div>
+            // Unreachable by construction: readLaunchState refuses a launch
+            // with neither reference, so one of the two branches above always
+            // renders. Kept as a typed exhaustiveness fallback rather than
+            // prose, because standing copy for a state that cannot occur reads
+            // as a designed state and would quietly become one if the
+            // narrowing ever loosened.
+            null
           )}
         </div>
       </div>
