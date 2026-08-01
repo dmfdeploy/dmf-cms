@@ -388,6 +388,18 @@ export function useInstanceMxlStatus(
 // Both callers — the Design stage's composition line and the Configure
 // stage's switch control — already render nothing on absent data, so the
 // fail-closed switch contract is unchanged: no topology, no switch offered.
+//
+// KNOWN LIMIT, so nobody re-opens #339 item 5 expecting this to have gone:
+// the browser still prints its own "Failed to load resource: 404" line in
+// the Network panel. That line comes from the browser, not from this code,
+// and cannot be suppressed while the request is made at all. What changed
+// here is that the APPLICATION stops treating the reply as a fault — no
+// error state, no retry, no error-path render. Removing the line entirely
+// means not issuing requests that will 404, which needs the console to know
+// in advance which instances carry a topology; CatalogEntry does not expose
+// `topology_ref`, so only the receiver-not-found subset is predictable and
+// not receiver-not-topology, which is most of them. Exposing that field is
+// the remedy and is deliberately out of this arc's scope.
 export function useInstanceTopology(instance: string, opts?: { enabled?: boolean }) {
   return useQuery({
     queryKey: ['media-workloads-topology', instance],
