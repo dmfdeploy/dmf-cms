@@ -73,7 +73,8 @@ export type StageState =
  * write seams, named — the rail invents no new verb.
  */
 export type StageActionId =
-  /** Launch the workload (Provision, before anything is cleared to run). */
+  /** Launch the workload via its catalog template (Provision, while the
+   *  workload has not been cleared to run yet). */
   | 'deploy'
   /**
    * Flip an instance's desired state bootstrapped -> active in NetBox, so
@@ -102,7 +103,12 @@ export type WorkloadLifecycle = 'provision' | 'configure' | 'operate' | 'unknown
 export interface WorkloadLifecycleInput {
   /** Backend-derived position. Never re-derived here. */
   lifecycle: WorkloadLifecycle
-  /** A launch/deploy job is running for this workload. */
+  /**
+   * A PROVISION-stage write is in flight: a catalog deploy, or a
+   * clear-for-deployment. Both are Provision's writes, and the rail
+   * suppresses on stage busy-ness rather than per-mutation, so they share
+   * one flag.
+   */
   launching?: boolean
   /** A source re-point (switch) job is running. */
   switching?: boolean
@@ -211,7 +217,7 @@ function stageHasContent(id: StageId, input: WorkloadLifecycleInput): boolean {
  * close every loop at the point of action):
  *   1. teardown running → Finalise & Review
  *   2. switch running   → Configure
- *   3. launch running   → Provision
+ *   3. a Provision write running (deploy or clear) → Provision
  *   4. otherwise        → the backend's derived lifecycle, mapped 1:1
  *                         (provision / configure / operate), or null on
  *                         'unknown' — no guessing on top of a non-answer.
