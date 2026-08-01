@@ -613,7 +613,10 @@ describe('Design: read-only template + composition', () => {
   // umbrella #339 item 5: this is the state that produced the 404s — the
   // function key is gone from the catalog, so its instance has no topology.
   // The drift warning was always right; only the fetch treated the answer as
-  // a failure. The warning must survive the fetch becoming uneventful.
+  // a failure. Deliberately a PRESERVATION guard, not a discriminator — it
+  // passes against the old hook too, and it should, because "keeps rendering
+  // exactly as it does" is the requirement. The behaviour that changed is
+  // pinned in instanceTopology.test.tsx, on the hook.
   it('keeps the catalog-drift warning when the instance has no topology to fetch', async () => {
     mkFetch({
       workload: viewerWorkload(),
