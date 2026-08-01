@@ -472,14 +472,40 @@ describe('the destination never denies a just-launched workload', () => {
   }, 15000)
 })
 
-describe('a failed launch job surfaces, and stops promising a workload', () => {
-  it('says the job did not succeed instead of waiting forever', async () => {
-    mkFetch({ workloads: [], jobStatus: { 900: { status: 'failed', is_done: true } } })
+describe('a launch job that does not succeed surfaces, and stops promising a workload', () => {
+  // Table-driven over EVERY terminal state, because a set membership test
+  // that only ever exercises one member pins nothing about the others: with
+  // only 'failed' driven, narrowing the set to failed-only survived the whole
+  // suite. Each of these must independently produce the failure surface.
+  for (const status of ['failed', 'error', 'canceled'] as const) {
+    it(`treats a "${status}" job as terminal, not as still-in-progress`, async () => {
+      mkFetch({ workloads: [], jobStatus: { 900: { status, is_done: true } } })
+      await armAndConfirm()
+
+      expect(await screen.findByText(/did not succeed/, {}, { timeout: 4000 })).toBeTruthy()
+      // The specific state is named, not flattened to a generic failure.
+      expect(screen.getByText(new RegExp(`finished as "${status}"`))).toBeTruthy()
+      // And it stops claiming something is coming.
+      expect(screen.queryByText(/appears here once the launcher records it/)).toBeNull()
+    })
+  }
+
+  it('does NOT treat a still-running job as terminal', async () => {
+    // The other side of the boundary: without this, a set containing every
+    // string would also pass the cases above.
+    mkFetch({ workloads: [], jobStatus: { 900: { status: 'running', is_done: false } } })
     await armAndConfirm()
 
-    expect(await screen.findByText(/did not succeed/, {}, { timeout: 4000 })).toBeTruthy()
-    // And it stops claiming something is coming.
-    expect(screen.queryByText(/appears here once the launcher records it/)).toBeNull()
+    await screen.findByText('Deploy accepted.')
+    expect(screen.queryByText(/did not succeed/)).toBeNull()
+  })
+
+  it('does NOT treat a successful job as a failure', async () => {
+    mkFetch({ workloads: [], jobStatus: { 900: { status: 'successful', is_done: true } } })
+    await armAndConfirm()
+
+    await screen.findByText('Deploy accepted.')
+    expect(screen.queryByText(/did not succeed/)).toBeNull()
   })
 })
 
@@ -546,8 +572,50 @@ describe('readLaunchState narrows untrusted router state', () => {
     expect(readLaunchState({ launch: 'mxl-viewer' })).toBeNull()
   })
 
-  it('drops job/operation fields of the wrong type rather than passing them through', () => {
-    const parsed = readLaunchState({ launch: { entryKey: 'k', jobId: '900', operationId: 42 } })
-    expect(parsed).toEqual({ entryKey: 'k', operationId: undefined, jobId: undefined })
+  it('rejects a launch left with nothing to poll after wrong-typed ids are dropped', () => {
+    // This used to assert the OPPOSITE — that an entryKey-only object was an
+    // acceptable launch. It is not: the destination would render "Deploy
+    // accepted" with no job to follow, permanently, for a workload that may
+    // never arrive. A launch with no pollable reference is malformed, and the
+    // page must fall through to the ordinary not-found.
+    expect(readLaunchState({ launch: { entryKey: 'k', jobId: '900', operationId: 42 } })).toBeNull()
+    expect(readLaunchState({ launch: { entryKey: 'k' } })).toBeNull()
+    expect(readLaunchState({ launch: { entryKey: 'k', operationId: '' } })).toBeNull()
+  })
+
+  it('keeps a launch that retains at least one usable reference', () => {
+    // The narrowing must reject only what is unusable — a good job id beside
+    // a junk operation id is still pollable and must survive.
+    expect(readLaunchState({ launch: { entryKey: 'k', jobId: 900, operationId: 42 } })).toEqual({
+      entryKey: 'k',
+      operationId: undefined,
+      jobId: 900,
+    })
+    expect(readLaunchState({ launch: { entryKey: 'k', jobId: '900', operationId: 'op-1' } })).toEqual({
+      entryKey: 'k',
+      operationId: 'op-1',
+      jobId: undefined,
+    })
+  })
+
+  it('never lands the destination on an unpollable "Deploy accepted" ghost', () => {
+    // The end-to-end consequence of the rule above, asserted at the page.
+    mkFetch({ workloads: [] })
+    const queryClient = new QueryClient({ defaultOptions: { queries: { retry: false } } })
+    render(
+      <QueryClientProvider client={queryClient}>
+        <MemoryRouter
+          initialEntries={[
+            { pathname: '/media-workloads/studio-a', state: { launch: { entryKey: 'mxl-viewer' } } },
+          ]}
+        >
+          <Routes>
+            <Route path="/media-workloads/:slug" element={<WorkloadDetail />} />
+          </Routes>
+        </MemoryRouter>
+      </QueryClientProvider>,
+    )
+    expect(screen.queryByText('Deploy accepted.')).toBeNull()
+    return waitFor(() => expect(screen.getByText('Workload not found')).toBeTruthy())
   })
 })
