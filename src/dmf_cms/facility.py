@@ -220,7 +220,11 @@ class PlatformServiceFact:
     namespace: str | None
     image_contains: str | None
     url: str | None  # ingress URL when the cluster has one; access, not existence
-    images: tuple[str, ...]  # empty => no container matched; >1 => rollout in progress
+    # Empty => no container matched. More than one is ordinary, not an
+    # anomaly: AWX alone ships a web image and an execution-environment
+    # image, and a rollout shows two tags of the same one. The page lists
+    # what it found rather than picking a winner.
+    images: tuple[str, ...]
 
 
 def _read_platform_services(
