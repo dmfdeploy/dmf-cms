@@ -391,8 +391,10 @@ export function useInstanceTopology(instance: string, opts?: { enabled?: boolean
   })
 }
 
-// umbrella #201 WP5, spec §6/§7 — the coarse reconnect switch. Synchronous-
-// await contract: the mutation resolves to the TERMINAL command (active or
+// umbrella #201 WP5, spec §6/§7 — the coarse reconnect switch, consumed by
+// the Configure stage's switch control (it lived in the live modal until
+// GATE-S1; that modal is read-only now). Synchronous-await contract: the
+// mutation resolves to the TERMINAL command (active or
 // failed_rollback_required) directly, never a separate pending/reconnecting
 // state to poll — `isPending` on this mutation IS the live "reconnecting"
 // signal the console shows.

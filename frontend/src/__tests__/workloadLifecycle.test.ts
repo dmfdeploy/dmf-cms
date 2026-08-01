@@ -21,11 +21,27 @@ import {
 
 const LIFECYCLES: WorkloadLifecycle[] = ['provision', 'configure', 'operate', 'unknown']
 
-/** Every reachable observation: 4 lifecycles x the 3 job flags, exhaustively. */
+/**
+ * Every reachable observation: 4 lifecycles x 3 job flags x the member-state
+ * fact, exhaustively — 64 combinations.
+ *
+ * hasBootstrappedMembers belongs in here because it is part of the input
+ * type: leaving it out meant the invariant loop below never exercised the
+ * clear affordance at all, while the comment claimed exhaustiveness. The
+ * claim is fixed by making it TRUE rather than by narrowing the wording.
+ */
 const ALL_INPUTS: WorkloadLifecycleInput[] = LIFECYCLES.flatMap((lifecycle) =>
   [false, true].flatMap((launching) =>
     [false, true].flatMap((switching) =>
-      [false, true].map((tearingDown) => ({ lifecycle, launching, switching, tearingDown })),
+      [false, true].flatMap((tearingDown) =>
+        [false, true].map((hasBootstrappedMembers) => ({
+          lifecycle,
+          launching,
+          switching,
+          tearingDown,
+          hasBootstrappedMembers,
+        })),
+      ),
     ),
   ),
 )
