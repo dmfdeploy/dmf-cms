@@ -231,7 +231,7 @@ export default function LifecycleStrip({
         })}
       </ol>
 
-      {/* GATE-D1 P1.1: Control/Operate is NOT a sixth <li> in the
+      {/* GATE-D1 P1.2: Control/Operate is NOT a sixth <li> in the
           orchestration <ol> above — an ordinal list item there would make it
           read as a sixth step of the SAME sequence, exactly the claim spec B
           and the operator's 2026-08-02 ruling rule out. It is a sibling
