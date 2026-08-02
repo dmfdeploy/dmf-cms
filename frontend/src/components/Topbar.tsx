@@ -114,7 +114,17 @@ export default function Topbar() {
         <div className="w-10 h-10 flex items-center justify-center shrink-0">
           <img src={logoSvg} alt="dmfdeploy" className="w-full h-full object-contain" />
         </div>
-        <span className="font-bold tracking-tight text-text">dmfdeploy</span>
+        <span className="font-bold tracking-tight text-text" aria-label="dmfdeploy">
+          dmf
+          <span aria-hidden="true">
+            <span style={{ color: '#FFFF00' }}>d</span>
+            <span style={{ color: '#00FFFF' }}>e</span>
+            <span style={{ color: '#00FF00' }}>p</span>
+            <span style={{ color: '#FF00FF' }}>l</span>
+            <span style={{ color: '#FF0000' }}>o</span>
+            <span style={{ color: '#0000FF' }}>y</span>
+          </span>
+        </span>
       </div>
 
       {/* Breadcrumb — the page-identity surface now that per-page heroes are
