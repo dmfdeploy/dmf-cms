@@ -102,12 +102,15 @@ interface FetchOpts {
   catalog?: CatalogEntry[]
   /** Keyed by instance id. Absent => the endpoint 404s (no topology). */
   topology?: Record<string, unknown>
+  /** Keyed by instance id: after this many successful topology reads for that instance, subsequent reads 500 — models a refetch that fails after an initial success, with react-query retaining the stale payload (mirrors planCapacity.test.tsx's facilityDetailFailAfter). */
+  topologyFailAfter?: Record<string, number>
 }
 
 function mkFetch(opts: FetchOpts = {}) {
   const wl = opts.workload === undefined ? workload() : opts.workload
   const catalog = opts.catalog ?? [catalogEntry()]
   const calls: Array<{ url: string; init?: RequestInit }> = []
+  const topologyCalls: Record<string, number> = {}
 
   const fetchMock = vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
     const url = (typeof input === 'string' ? input : (input as Request).url).toString()
@@ -129,6 +132,11 @@ function mkFetch(opts: FetchOpts = {}) {
     const topoMatch = url.match(/\/api\/media-workloads\/([^/]+)\/topology$/)
     if (topoMatch) {
       const name = decodeURIComponent(topoMatch[1])
+      topologyCalls[name] = (topologyCalls[name] ?? 0) + 1
+      const failAfter = opts.topologyFailAfter?.[name]
+      if (failAfter != null && topologyCalls[name] > failAfter) {
+        return json({ error: 'boom' }, 500)
+      }
       const body = opts.topology?.[name]
       // No fixture for this instance: the real endpoint 404s for a receiver
       // with no topology (the common case — most instances are producers).
@@ -156,6 +164,9 @@ function renderOperate(slug = 'studio-a') {
       </MemoryRouter>
     </QueryClientProvider>,
   )
+  // Returned so a test can force a genuine react-query refetch mid-flow
+  // (createWorkload.test.tsx's same precedent); every other caller ignores it.
+  return queryClient
 }
 
 // Scope to a labelled <section>, same technique workloadDetail.test.tsx uses
@@ -275,6 +286,41 @@ describe('active source', () => {
     const activeSection = active.closest('section') as HTMLElement
     expect(within(activeSection).getByText('source-a')).toBeTruthy()
     expect(within(activeSection).getByText('source-b (ball)')).toBeTruthy()
+  })
+
+  it('withdraws the stale row when a refetch fails after an earlier success', async () => {
+    // The defect the operator caught on PR #66 (fix round 2, 2026-08-02):
+    // InstanceActiveSource derived `has` from topology.data alone, so once
+    // the first read succeeded, a later refetch failure left react-query's
+    // retained previous payload looking exactly like a fresh, current one —
+    // this route kept presenting a stale active source as current instead
+    // of withdrawing a row it could no longer vouch for.
+    const wl = workload({
+      instances: [instance({ instance: 'viewer-1', function_key: 'viewer' })],
+      functions: [{ function_key: 'viewer', count: 1, running: 1, reconcile_pending: 0 }],
+    })
+    mkFetch({
+      workload: wl,
+      catalog: [catalogEntry({ key: 'viewer', display_name: 'MXL Viewer' })],
+      topology: { 'viewer-1': freshTopology() },
+      topologyFailAfter: { 'viewer-1': 1 },
+    })
+    const queryClient = renderOperate()
+    await screen.findByRole('heading', { name: 'studio-a' })
+
+    const active = await screen.findByRole('heading', { name: 'Active source' })
+    const activeSection = active.closest('section') as HTMLElement
+    expect(within(activeSection).getByText('source-a')).toBeTruthy()
+
+    // A genuine react-query refetch, not a hand-forced rerender: the same
+    // path an invalidation-driven or window-focus refetch takes. The hook
+    // has no refetchInterval (hooks.ts), so this is the mechanism the app
+    // itself would use to notice the topology changed underneath it.
+    await queryClient.invalidateQueries({ queryKey: ['media-workloads-topology', 'viewer-1'] })
+
+    await waitFor(() => expect(screen.queryByRole('heading', { name: 'Active source' })).toBeNull())
+    expect(screen.queryByText('source-a')).toBeNull()
+    expect(screen.queryByText('source-b (ball)')).toBeNull()
   })
 
   it('renders nothing for this section when no instance has a topology', async () => {

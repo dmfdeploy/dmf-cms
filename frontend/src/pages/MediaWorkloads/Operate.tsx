@@ -282,14 +282,17 @@ function InstanceActiveSource({
   onResolved: (instance: string, has: boolean) => void
 }) {
   const topology = useInstanceTopology(instance)
-  const has = Boolean(topology.data && Array.isArray(topology.data.sources))
+  const has = !topology.isError && Boolean(topology.data && Array.isArray(topology.data.sources))
   useEffect(() => onResolved(instance, has), [instance, has, onResolved])
 
   // An instance without a topology renders nothing — not an empty card, not
   // an error: most instances are producers, not receivers, and "no topology"
   // is their normal resting fact, established already by ConfigureStage's
   // switch control (the same null-if-absent contract, reused rather than
-  // reinvented here).
+  // reinvented here). An errored read is unknown, not absence: a failed
+  // refetch can retain the prior successful data while isError flips true,
+  // so the row withdraws on error too — the newest read is the one it speaks
+  // for.
   if (!has || !topology.data) return null
   const { sources, active_source: activeSource } = topology.data
 
