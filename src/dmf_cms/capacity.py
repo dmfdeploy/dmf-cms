@@ -209,6 +209,34 @@ def read_entry_demand(entry_provision: dict | None) -> tuple[tuple[int, int] | N
     return (cpu_m, mem_b), None
 
 
+def read_topology_source_profile_demand(
+    topology_params: dict | None,
+) -> tuple[tuple[int, int] | None, str | None]:
+    """Read a topology instance's shared per-source demand profile.
+
+    umbrella #201 WP5 / #347: every ``sources[]`` release shares ONE demand
+    profile, authored once as ``topology_params.source_profile`` (dmf-media
+    catalog/topology-params.j1.yaml) rather than a per-source catalog entry.
+    ``source_profile`` has the identical nested shape as a catalog entry's
+    own ``provision`` block (``resources.requests.cpu``/``memory``), so this
+    defers entirely to ``read_entry_demand``'s catalog-strict parsing and
+    fail-closed refusal semantics — same grammar, same zero-quantity
+    refusal, same "never guess" posture. Reasons are prefixed
+    ``missing-source-profile``/``invalid-source-profile`` (distinct from the
+    caller's own viewer-profile ``missing-budget``/``invalid-budget``) so a
+    409 detail always says which side of the aggregate failed.
+    """
+    if not isinstance(topology_params, dict):
+        return None, "missing-source-profile"
+    source_profile = topology_params.get("source_profile")
+    if not isinstance(source_profile, dict):
+        return None, "missing-source-profile"
+    demand, reason = read_entry_demand(source_profile)
+    if demand is None:
+        return None, f"invalid-source-profile: {reason}"
+    return demand, None
+
+
 def topology_source_count(topology_params: dict | None) -> int:
     """§8 capacity honesty (umbrella #201 WP5, `DMF v0.2b Multi-Source
     Switch Spec 2026-07-15.md` §8): the demand-side multiplier for a

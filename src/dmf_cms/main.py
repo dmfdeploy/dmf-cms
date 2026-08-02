@@ -483,18 +483,28 @@ async def _l3_preflight(
 
     demand, demand_reason = capacity.read_entry_demand(entry.provision)
     if demand is not None and entry.topology_ref:
-        # umbrella #201 WP5, spec §8: a topology-carrying entry demands N
-        # copies of its declared per-source profile (N = len(sources[])) —
-        # supply/envelope math stays untouched, only this demand tuple
-        # scales. A malformed/unreadable topology instance degrades to the
-        # UNMULTIPLIED demand here — no duplicate validation/refusal;
-        # _resolve_topology_seam (which runs right after this gate passes)
-        # is the sole authority on topology validity and refuses before any
-        # AWX dispatch either way, so under-counting here costs nothing.
+        # umbrella #201 WP5 / #347, spec §8: a topology-carrying entry's real
+        # demand is its OWN declared (viewer) profile PLUS N copies of the
+        # topology's shared source_profile (N = len(sources[])) — the viewer
+        # and its topology-launched sources are independent pods with
+        # independent (and different) profiles, so scaling the viewer's own
+        # figure by N would be wrong in both directions at once. A missing
+        # or malformed source_profile REFUSES here rather than degrading to
+        # the viewer-only figure (the pre-#347 behavior): under-counting a
+        # topology launch's real demand is exactly the false-FIT this gate
+        # exists to prevent, and _resolve_topology_seam's own separate
+        # validity check (right after this gate) does not compensate for a
+        # capacity number this gate already certified too low.
         topology_params, _terr = load_topology_instance(CATALOG_DIR, entry.topology_ref)
         multiplier = capacity.topology_source_count(topology_params)
-        if multiplier > 1:
-            demand = (demand[0] * multiplier, demand[1] * multiplier)
+        source_demand, source_reason = capacity.read_topology_source_profile_demand(topology_params)
+        if source_demand is None:
+            demand, demand_reason = None, source_reason
+        else:
+            demand = (
+                demand[0] + source_demand[0] * multiplier,
+                demand[1] + source_demand[1] * multiplier,
+            )
 
     if override:
         result = None
@@ -534,7 +544,12 @@ async def _l3_preflight(
         }, None
 
     if demand is None:
-        kind = "invalid-budget" if demand_reason.startswith("invalid-budget") else demand_reason
+        if demand_reason.startswith("invalid-budget"):
+            kind = "invalid-budget"
+        elif demand_reason.startswith("invalid-source-profile"):
+            kind = "invalid-source-profile"
+        else:
+            kind = demand_reason
         _audit_awx_write(
             request, user, action="deploy", target=key, request_id=request_id, reason=reason,
             outcome="capacity-denied", capacity=_capacity_audit_summary(refusal_kind=demand_reason),
