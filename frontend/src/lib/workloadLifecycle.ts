@@ -4,11 +4,14 @@
 // Stage names are VERBATIM from docs/architecture/DMF EBU Mapping
 // (2026-04-25) §"6-stage Media Workload lifecycle":
 //   Design → Plan → Provision → Configure → Operate → Finalise & Review
-// Six stages, Operate included. Do not silently drop one: the rail is the
-// pedagogy — it is how an outsider learns the model — so a missing stage
-// teaches a wrong model. Operate is a lifecycle STAGE, not a vertical; the
-// four verticals are Orchestration, Control, Monitoring and Security, and
-// none of them belongs on this rail.
+// All six names stay present: the rail is the pedagogy — it is how an
+// outsider learns the model — so a missing name teaches a wrong model.
+// Operate sits in the Control vertical (operator ruling 2026-08-02 on the
+// EBU Facility Orchestration Model), not the orchestration flow; it stays
+// in STAGES because the lifecycle axis crosses the verticals and the
+// backend's ADR-0046 derivation can place a workload there. The
+// presentation split — five flow steps, the strip's five-plus-Control
+// grouping — is downstream (workloadFlow.ts, LifecycleStrip.tsx).
 //
 // Pure over the console's existing truth, in the same idiom as
 // lib/workspaceHealth.ts and lib/changesState.ts: no new backend, no
