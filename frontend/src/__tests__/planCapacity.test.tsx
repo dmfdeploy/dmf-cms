@@ -14,7 +14,7 @@
  * not to a stage the operator reads before anything is even armed.
  */
 import { afterEach, describe, expect, it, vi } from 'vitest'
-import { cleanup, render, screen, waitFor } from '@testing-library/react'
+import { act, cleanup, render, screen, waitFor } from '@testing-library/react'
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query'
 import { MemoryRouter } from 'react-router-dom'
 import PlanStage from '../pages/MediaWorkloads/stages/PlanStage'
@@ -98,11 +98,14 @@ interface FetchOpts {
   facilitySites?: Array<{ name: string; slug: string | null; device_count: number }>
   facilityDetail?: FacilityDetailResponse
   facilityDetailStatus?: number
+  /** After this many successful facility-detail reads, subsequent reads fail with facilityDetailStatus (default 500) — models a refetch that fails after an initial success, with react-query retaining the stale payload. */
+  facilityDetailFailAfter?: number
 }
 
 function mkFetch(opts: FetchOpts = {}) {
   const catalog = opts.catalog ?? []
   const sites = opts.facilitySites ?? [{ name: 'dmf-lab', slug: 'dmf-lab', device_count: 3 }]
+  let facilityDetailCalls = 0
   const fetchMock = vi.fn(async (input: RequestInfo | URL) => {
     const url = (typeof input === 'string' ? input : (input as Request).url).toString()
     if (url.endsWith('/api/catalog')) {
@@ -113,6 +116,10 @@ function mkFetch(opts: FetchOpts = {}) {
       return json({ reason: '', site_count: sites.length, device_count: 0, sites })
     }
     if (url.match(/\/api\/facility\/[^/]+\/detail$/)) {
+      facilityDetailCalls += 1
+      if (opts.facilityDetailFailAfter != null && facilityDetailCalls > opts.facilityDetailFailAfter) {
+        return json({ error: 'nope' }, opts.facilityDetailStatus ?? 500)
+      }
       if (opts.facilityDetailStatus) return json({ error: 'nope' }, opts.facilityDetailStatus)
       return json(opts.facilityDetail ?? facilityDetailResponse())
     }
@@ -120,6 +127,16 @@ function mkFetch(opts: FetchOpts = {}) {
   })
   vi.stubGlobal('fetch', fetchMock)
   return fetchMock
+}
+
+// Advance fake timers inside act() so react-query's async fetch chain resolves
+// and React flushes the resulting re-render before we assert — same idiom as
+// mediaWorkloadsGrid.test.tsx's settle(). getBy/queryBy only after this, never
+// findBy/waitFor: those wait on REAL timers, which never advance here.
+async function settle(ms = 60) {
+  await act(async () => {
+    await vi.advanceTimersByTimeAsync(ms)
+  })
 }
 
 function renderPlan(wl: MediaWorkload = workload()) {
@@ -137,6 +154,7 @@ afterEach(() => {
   cleanup()
   vi.restoreAllMocks()
   vi.unstubAllGlobals()
+  vi.useRealTimers()
 })
 
 // ---- the two numbers + committed context -------------------------------
@@ -331,6 +349,34 @@ describe('an unreadable facility capacity', () => {
     })
     renderPlan()
     expect(await screen.findByText(/could not be read/)).toBeTruthy()
+    expect(screen.queryByText(/500/)).toBeNull()
+  })
+
+  it('shows the unreadable state — not the stale numbers — when a refetch fails after an earlier success', async () => {
+    // The defect the operator caught on PR #66 (fix round, 2026-08-01):
+    // summarizeCapacity checked only `!facilityDetail.data`, so once the
+    // first read succeeded, a later refetch failure left react-query's
+    // retained previous payload looking exactly like a fresh, current one —
+    // the stale allocatable/committed numbers kept rendering as if the read
+    // that produced them had just succeeded.
+    vi.useFakeTimers()
+    mkFetch({
+      catalog: [catalogEntry({ provision_demand: { cpu_m: 450, mem_b: 160 * MI } })],
+      facilityDetailFailAfter: 1,
+    })
+    renderPlan()
+    await settle()
+    expect(screen.getByText(/3000m CPU/)).toBeTruthy()
+    expect(screen.getByText(/6\.0 GiB memory/)).toBeTruthy()
+
+    // useFacilityDetail's refetchInterval (hooks.ts) fires the next read at
+    // 60s; this one fails while react-query retains the prior success in
+    // `data` — real react-query behavior, and the whole point of this test.
+    await settle(60_000)
+
+    expect(screen.getByText(/could not be read/)).toBeTruthy()
+    expect(screen.queryByText(/3000m CPU/)).toBeNull()
+    expect(screen.queryByText(/6\.0 GiB memory/)).toBeNull()
     expect(screen.queryByText(/500/)).toBeNull()
   })
 })
