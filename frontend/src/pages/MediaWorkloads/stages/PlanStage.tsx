@@ -264,10 +264,17 @@ function capacityReasonMessage(reason: string): string {
 
 function summarizeCapacity(facilityDetail: {
   isLoading: boolean
+  isError: boolean
   data?: FacilityDetailResponse
 }): CapacitySummary {
   if (facilityDetail.isLoading && !facilityDetail.data) return { kind: 'loading' }
-  if (!facilityDetail.data) return { kind: 'unreadable', message: 'the reading did not succeed' }
+  // A failed refetch can retain the previous successful payload in `data`
+  // (react-query's default keep-old-data-on-error behavior) — checked before
+  // `!data` alone, mirroring summarizeDemand's isError-before-data guard on
+  // the catalog read, so a stale reading never renders as current.
+  if (facilityDetail.isError || !facilityDetail.data) {
+    return { kind: 'unreadable', message: 'the reading did not succeed' }
+  }
   const cap = facilityDetail.data.capacity
   // reason !== '' is facility.py's own fail-soft signal; the two null
   // allocatable checks are a defensive second line (FacilityCapacity's
