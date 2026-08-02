@@ -72,6 +72,40 @@ def test_load_valid_j1_instance(tmp_path: Path):
     assert tp == EXPECTED_J1_TOPOLOGY_PARAMS
 
 
+J1_INSTANCE_WITH_SOURCE_PROFILE = J1_INSTANCE.replace(
+    "topology_params:\n  schema_version: 1\n",
+    "topology_params:\n  schema_version: 1\n"
+    "  source_profile:\n"
+    "    resources:\n"
+    "      requests:\n"
+    "        cpu: 450m\n"
+    "        memory: 160Mi\n",
+)
+
+
+def test_source_profile_survives_load_unchanged(tmp_path: Path):
+    # umbrella #347: source_profile is an additive field this loader's
+    # explicit validation never mentions — load_topology_instance returns
+    # the raw parsed topology_params object as-is (it validates a required
+    # SUBSET, it does not reconstruct/filter the object), so an unknown
+    # field must round-trip byte-for-byte. This is the discriminating proof:
+    # a loader rewritten to build a new dict from only the fields it
+    # validates would silently drop source_profile, and this is the one
+    # test that would catch it.
+    assert "source_profile" not in J1_INSTANCE  # guard: fixtures actually differ
+    _write(tmp_path, "topology-params.j1.yaml", J1_INSTANCE_WITH_SOURCE_PROFILE)
+    tp, err = load_topology_instance(str(tmp_path), "topology-params.j1.yaml")
+    assert err is None, err
+    assert tp["source_profile"] == {
+        "resources": {"requests": {"cpu": "450m", "memory": "160Mi"}}
+    }
+    # Whole-object equality, same discipline as test_load_valid_j1_instance:
+    # everything else must be unchanged too, not just source_profile present.
+    expected = dict(EXPECTED_J1_TOPOLOGY_PARAMS)
+    expected["source_profile"] = {"resources": {"requests": {"cpu": "450m", "memory": "160Mi"}}}
+    assert tp == expected
+
+
 # ── load_topology_instance: fail-closed on every malformed shape ────────
 
 

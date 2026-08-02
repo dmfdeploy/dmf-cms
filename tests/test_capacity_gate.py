@@ -1,7 +1,8 @@
 """L3 console capacity preflight — deploy-handler gate (umbrella #202 WP1).
 
 Integration coverage for the gate wired into ``api_catalog_deploy``
-(``main.py``): refusal shapes (missing-budget, no-fit, budget-unavailable),
+(``main.py``): refusal shapes (missing-budget, no-fit, budget-unavailable,
+missing-source-profile, invalid-source-profile),
 the override path (always proceeds, still audited with the budget numbers),
 strict override coercion (R2-5 — only JSON ``true``/``false``/absent are
 accepted, anything else is a 400), the fit path (envelope threads into the
@@ -513,18 +514,21 @@ def test_threadpool_dispatch_on_override_path(monkeypatch, awx_spy):
 
 
 # ---------------------------------------------------------------------------
-# (g) §8 capacity honesty (umbrella #201 WP5) — a topology-carrying entry's
-# demand scales by len(sources[]); a non-topology entry is untouched.
+# (g) §8 capacity honesty (umbrella #201 WP5 / #347) — a topology-carrying
+# entry's real demand is its OWN declared (viewer) profile PLUS N copies of
+# the topology's shared source_profile (N = len(sources[])) — never the
+# viewer profile alone, and never the viewer profile scaled by N. A missing
+# or malformed source_profile REFUSES rather than degrading to the
+# viewer-only figure. A non-topology entry is untouched.
 # ---------------------------------------------------------------------------
 
 TOPOLOGY_ENTRY = CatalogEntry(
     key="mxl-videotestsrc",
     display_name="MXL video test source",
     summary="MXL video test source",
-    # 1200m alone fits _fit_supply()'s 2250m budget (2500m headroom - 250m EE
-    # reserve); 2 x 1200m = 2400m does not — the observable proof the demand
-    # actually scaled by source count, not a no-op.
-    provision={"resources": {"requests": {"cpu": "1200m", "memory": "320Mi"}}},
+    # The entry's OWN (viewer) profile — small and, alone, comfortably fits
+    # _fit_supply()'s 2250m budget (2500m headroom - 250m EE reserve).
+    provision={"resources": {"requests": {"cpu": "200m", "memory": "64Mi"}}},
     configure={"awx_job_template": "dmf-configure"},
     finalise={"awx_job_template": "dmf-finalise"},
     topology_ref="topology-params.j1.yaml",
@@ -533,6 +537,12 @@ TOPOLOGY_ENTRY = CatalogEntry(
 _TWO_SOURCE_TOPOLOGY_PARAMS = {
     "schema_version": 1,
     "target_facility": "dmf-example-site",
+    # Shared per-source profile: 200m viewer + 2 x 1200m source = 2600m,
+    # over the 2250m budget — the observable proof the aggregate is
+    # viewer + N*source, not viewer alone and not viewer*N (either of
+    # those would land at a different, and in the viewer-alone case
+    # FITTING, total).
+    "source_profile": {"resources": {"requests": {"cpu": "1200m", "memory": "200Mi"}}},
     "sources": [
         {"id": "source-a", "flow_id": "5fbec3b1-1b0f-417d-9059-8b94a47197ed", "pattern": "smpte"},
         {"id": "source-b", "flow_id": "b0ae9cba-a989-4568-ac96-8bd19272c966", "pattern": "ball"},
@@ -541,7 +551,9 @@ _TWO_SOURCE_TOPOLOGY_PARAMS = {
 }
 
 
-def test_topology_entry_demand_doubled_flips_fit_to_no_fit(monkeypatch, awx_spy, caplog):
+def test_topology_entry_demand_is_viewer_plus_n_times_source_flips_fit_to_no_fit(
+    monkeypatch, awx_spy, caplog
+):
     monkeypatch.setattr(main, "load_catalog_entries", _entries(TOPOLOGY_ENTRY))
     monkeypatch.setattr(
         main, "load_topology_instance",
@@ -554,9 +566,71 @@ def test_topology_entry_demand_doubled_flips_fit_to_no_fit(monkeypatch, awx_spy,
     assert resp.status_code == 409, resp.text
     body = resp.json()
     assert body["kind"] == "no-fit"
-    assert body["report"]["run_demand_cpu_m"] == 2400  # 1200 x 2 sources
+    # 200 (viewer) + 2 x 1200 (source_profile) = 2600, NOT 200 (viewer alone,
+    # would fit) and NOT 400 (viewer x 2 sources, the pre-#347 bug's formula).
+    assert body["report"]["run_demand_cpu_m"] == 2600
+    assert body["report"]["run_demand_mem_b"] == 64 * MI + 2 * 200 * MI
     assert awx_spy == []
     assert any("outcome=capacity-denied" in m for m in _audit_lines(caplog))
+
+
+def test_topology_entry_three_sources_scales_aggregate_not_hardcoded(monkeypatch, awx_spy):
+    # N=3 (not 2) must change the aggregate proportionally — catches a
+    # regression that hardcodes the multiplier instead of reading
+    # len(sources[]).
+    three_source_params = dict(_TWO_SOURCE_TOPOLOGY_PARAMS)
+    three_source_params["sources"] = [
+        *_TWO_SOURCE_TOPOLOGY_PARAMS["sources"],
+        {"id": "source-c", "flow_id": "11111111-2222-3333-4444-555555555555", "pattern": "checkers-8"},
+    ]
+    monkeypatch.setattr(main, "load_catalog_entries", _entries(TOPOLOGY_ENTRY))
+    monkeypatch.setattr(
+        main, "load_topology_instance", lambda catalog_dir, ref: (dict(three_source_params), None),
+    )
+    _mock_budget_io(monkeypatch, supply=_fit_supply())
+    client = _client()
+    resp = client.post("/api/catalog/mxl-videotestsrc/deploy", json={"reason": "x"})
+    assert resp.status_code == 409, resp.text
+    # 200 (viewer) + 3 x 1200 (source_profile) = 3800
+    assert resp.json()["report"]["run_demand_cpu_m"] == 3800
+
+
+def test_topology_entry_missing_source_profile_refused_not_viewer_only(monkeypatch, awx_spy, caplog):
+    # Pre-#347 behavior degraded a missing/malformed topology to the
+    # UNMULTIPLIED viewer-only demand (200m, which FITS) — silently
+    # certifying a topology launch's real cost as far lower than it is.
+    # #347 must REFUSE instead.
+    params_without_source_profile = {
+        k: v for k, v in _TWO_SOURCE_TOPOLOGY_PARAMS.items() if k != "source_profile"
+    }
+    monkeypatch.setattr(main, "load_catalog_entries", _entries(TOPOLOGY_ENTRY))
+    monkeypatch.setattr(
+        main, "load_topology_instance",
+        lambda catalog_dir, ref: (dict(params_without_source_profile), None),
+    )
+    _mock_budget_io(monkeypatch, supply=_fit_supply())
+    client = _client()
+    with caplog.at_level(logging.INFO, logger="dmf_cms.main"):
+        resp = client.post("/api/catalog/mxl-videotestsrc/deploy", json={"reason": "x"})
+    assert resp.status_code == 409, resp.text
+    body = resp.json()
+    assert body["kind"] == "missing-source-profile"
+    assert awx_spy == []
+    assert any("outcome=capacity-denied" in m for m in _audit_lines(caplog))
+
+
+def test_topology_entry_malformed_source_profile_refused(monkeypatch, awx_spy):
+    malformed_params = dict(_TWO_SOURCE_TOPOLOGY_PARAMS)
+    malformed_params["source_profile"] = {"resources": {"requests": {"cpu": "not-a-quantity", "memory": "200Mi"}}}
+    monkeypatch.setattr(main, "load_catalog_entries", _entries(TOPOLOGY_ENTRY))
+    monkeypatch.setattr(
+        main, "load_topology_instance", lambda catalog_dir, ref: (dict(malformed_params), None),
+    )
+    _mock_budget_io(monkeypatch, supply=_fit_supply())
+    client = _client()
+    resp = client.post("/api/catalog/mxl-videotestsrc/deploy", json={"reason": "x"})
+    assert resp.status_code == 409, resp.text
+    assert resp.json()["kind"] == "invalid-source-profile"
 
 
 def test_no_topology_entry_demand_unmultiplied_byte_identical(monkeypatch, awx_spy):
