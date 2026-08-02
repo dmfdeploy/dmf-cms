@@ -114,9 +114,10 @@ export default function Topbar() {
         <div className="w-10 h-10 flex items-center justify-center shrink-0">
           <img src={logoSvg} alt="dmfdeploy" className="w-full h-full object-contain" />
         </div>
-        <span className="font-bold tracking-tight text-text" aria-label="dmfdeploy">
-          dmf
+        <span className="font-bold tracking-tight text-text">
+          <span className="sr-only">dmfdeploy</span>
           <span aria-hidden="true">
+            dmf
             <span style={{ color: '#FFFF00' }}>d</span>
             <span style={{ color: '#00FFFF' }}>e</span>
             <span style={{ color: '#00FF00' }}>p</span>
