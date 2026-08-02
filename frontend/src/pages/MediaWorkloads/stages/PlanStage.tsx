@@ -63,7 +63,12 @@ export default function PlanStage({
   state: StageState
 }) {
   const { data, isLoading, isError } = useFacilitySummary()
-  const sites = data?.sites ?? []
+  // A failed refetch can retain the previous successful payload in `data` —
+  // the newest read is the one the stage speaks for (matching summarizeDemand
+  // and summarizeCapacity below), so an errored read empties the list rather
+  // than mounting the Capacity section off a payload this stage can no
+  // longer vouch for.
+  const sites = isError ? [] : (data?.sites ?? [])
   // Passed WHOLE to summarizeDemand rather than pre-flattened to
   // `data?.entries ?? []`: that flattening is precisely what turned a failed
   // catalog read into an empty list, and an empty list into the confident

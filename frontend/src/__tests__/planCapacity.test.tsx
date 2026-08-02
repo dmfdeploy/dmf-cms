@@ -100,12 +100,15 @@ interface FetchOpts {
   facilityDetailStatus?: number
   /** After this many successful facility-detail reads, subsequent reads fail with facilityDetailStatus (default 500) — models a refetch that fails after an initial success, with react-query retaining the stale payload. */
   facilityDetailFailAfter?: number
+  /** Same shape as facilityDetailFailAfter, for /api/facility/summary. */
+  facilitySummaryFailAfter?: number
 }
 
 function mkFetch(opts: FetchOpts = {}) {
   const catalog = opts.catalog ?? []
   const sites = opts.facilitySites ?? [{ name: 'dmf-lab', slug: 'dmf-lab', device_count: 3 }]
   let facilityDetailCalls = 0
+  let facilitySummaryCalls = 0
   const fetchMock = vi.fn(async (input: RequestInfo | URL) => {
     const url = (typeof input === 'string' ? input : (input as Request).url).toString()
     if (url.endsWith('/api/catalog')) {
@@ -113,6 +116,10 @@ function mkFetch(opts: FetchOpts = {}) {
       return json({ entries: catalog })
     }
     if (url.endsWith('/api/facility/summary')) {
+      facilitySummaryCalls += 1
+      if (opts.facilitySummaryFailAfter != null && facilitySummaryCalls > opts.facilitySummaryFailAfter) {
+        return json({ error: 'nope' }, 500)
+      }
       return json({ reason: '', site_count: sites.length, device_count: 0, sites })
     }
     if (url.match(/\/api\/facility\/[^/]+\/detail$/)) {
@@ -378,6 +385,40 @@ describe('an unreadable facility capacity', () => {
     expect(screen.queryByText(/3000m CPU/)).toBeNull()
     expect(screen.queryByText(/6\.0 GiB memory/)).toBeNull()
     expect(screen.queryByText(/500/)).toBeNull()
+  })
+})
+
+// ---- facility-summary refetch failure: the retained site must not keep --
+// ---- mounting Capacity off a payload the stage can no longer vouch for --
+
+describe('a facility summary whose refetch fails after an earlier success', () => {
+  it('reports the facility unreachable and drops Capacity, rather than keeping the stale numbers', async () => {
+    // GATE-B8 (codex, fix round 2): useFacilitySummary's `data` was flattened
+    // to `sites` unconditionally, so a failed refetch that retained the prior
+    // single-site payload still made `singleSite` truthy — mounting the
+    // Capacity section (and calling summarizeCapacity) off a read the stage
+    // had, in the very same render, just told the operator was unreachable.
+    vi.useFakeTimers()
+    mkFetch({
+      catalog: [catalogEntry({ provision_demand: { cpu_m: 450, mem_b: 160 * MI } })],
+      facilitySummaryFailAfter: 1,
+    })
+    renderPlan()
+    await settle()
+    expect(screen.getByText('Capacity')).toBeTruthy()
+    expect(screen.getByText(/3000m CPU/)).toBeTruthy()
+    expect(screen.getByText(/6\.0 GiB memory/)).toBeTruthy()
+
+    // useFacilitySummary's refetchInterval (hooks.ts) fires the next read at
+    // 60s; this one fails while react-query retains the prior single-site
+    // payload in `data` — real react-query behavior, same as the sibling
+    // facility-detail test above.
+    await settle(60_000)
+
+    expect(screen.getByText('Facility inventory is unreachable right now.')).toBeTruthy()
+    expect(screen.queryByText('Capacity')).toBeNull()
+    expect(screen.queryByText(/3000m CPU/)).toBeNull()
+    expect(screen.queryByText(/6\.0 GiB memory/)).toBeNull()
   })
 })
 
