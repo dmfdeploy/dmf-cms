@@ -208,6 +208,13 @@ export default function WorkloadDetail() {
  * workloads. Nothing here needs a "workload changed under me" branch as a
  * result: `workload` is a plain, always-defined prop, not an optional value
  * threaded through a safe fallback.
+ *
+ * The job overlay (which write is in flight) is this component's own local
+ * state, deliberately not persisted: a reload re-derives purely from the
+ * backend, which is correct — a job this tab forgot is still visible as
+ * whatever lifecycle it left the workload in. Keying on workload identity
+ * (above) puts a workload switch through that exact same re-derivation, not
+ * a special case of it.
  */
 function WorkloadWizard({ workload }: { workload: MediaWorkload }) {
   const { hash } = useLocation()
