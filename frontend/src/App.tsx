@@ -80,12 +80,14 @@ export default function App() {
             as a slug. */}
         <Route path="/media-workloads/new" element={<ProtectedRoute><CreateWorkload /></ProtectedRoute>} />
         {/* Arc B (#285): the workload surface is the guided sequential flow —
-            the five orchestration stages, gated, under the six-stage
-            vocabulary strip. Catalog and Activity content relocated here in S1. */}
+            the five orchestration stages, gated, under the regrouped
+            vocabulary strip (five flow stages + Operate under its Control
+            label). Catalog and Activity content relocated here in S1. */}
         <Route path="/media-workloads/:slug" element={<ProtectedRoute><WorkloadDetail /></ProtectedRoute>} />
         {/* Arc B (#285): Operate left the flow page entirely (operator
-            direction 2026-08-01). It is still a lifecycle stage; its surface
-            is monitoring, so it gets its own route rather than a step. */}
+            direction 2026-08-01). It sits in the Control vertical (operator
+            ruling 2026-08-02), not the orchestration flow; its surface is
+            monitoring, so it gets its own route rather than a step. */}
         <Route path="/media-workloads/:slug/operate" element={<ProtectedRoute><WorkloadOperate /></ProtectedRoute>} />
         <Route path="/admin" element={<ProtectedRoute><Admin /></ProtectedRoute>} />
         <Route path="/settings" element={<ProtectedRoute><Settings /></ProtectedRoute>} />

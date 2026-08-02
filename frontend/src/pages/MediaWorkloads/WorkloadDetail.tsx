@@ -42,9 +42,10 @@ import FinaliseStage from './stages/FinaliseStage'
  *    backend's ADR-0046 derivation, consumed 1:1, never re-derived here.
  *
  * 2. OPERATE LEFT THE PAGE. It has no card and no step; its surface is the
- *    monitoring route at /media-workloads/<slug>/operate. It remains a
- *    lifecycle STAGE — LifecycleStrip.tsx is how the six-stage vocabulary
- *    is still taught in full, and its docstring carries that reasoning.
+ *    monitoring route at /media-workloads/<slug>/operate. It sits in the
+ *    Control vertical (operator ruling 2026-08-02) — LifecycleStrip.tsx
+ *    teaches the grouping (five orchestration stages + Control holding
+ *    Operate), and its docstring carries that reasoning.
  *
  * 3. THE CHIP RAIL BECAME A VOCABULARY STRIP PLUS NUMBERED STEPS, because
  *    the rail was doing two jobs at once and blurring both: naming the model
@@ -269,8 +270,8 @@ export default function WorkloadDetail() {
 
       {offFlow && (
         <div className="panel mt-4 border-white/10 px-4 py-3 text-sm text-muted">
-          This workload is operating. Operate is a lifecycle stage, but its surface is
-          monitoring rather than a step to work through, so it lives on its own page —{' '}
+          This workload is operating. Operate sits in the Control vertical, not the
+          orchestration flow — its surface is observational, so it lives on its own page —{' '}
           <Link
             to={`/media-workloads/${encodeURIComponent(workload.slug)}/operate`}
             className="text-accent hover:underline"
