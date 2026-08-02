@@ -11,7 +11,7 @@ import {
   type FlowStepId,
   type FlowStepState,
 } from '../../lib/workloadFlow'
-import type { SwitchSourceResult } from '../../api/types'
+import type { MediaWorkload, SwitchSourceResult } from '../../api/types'
 import FlowStep from './FlowStep'
 import LifecycleStrip from './LifecycleStrip'
 import WorkloadMaterializing, { readLaunchState } from './WorkloadMaterializing'
@@ -119,121 +119,14 @@ function defaultSelection(
 
 export default function WorkloadDetail() {
   const { slug } = useParams<{ slug: string }>()
-  const { hash, state: routerState } = useLocation()
+  const { state: routerState } = useLocation()
   // Present only when the operator arrived straight from Create. It is the
   // ONLY thing that distinguishes "this workload does not exist" from "this
   // workload was launched seconds ago and has not been recorded yet".
   const launch = readLaunchState(routerState)
   const { data, isLoading, error } = useMediaWorkloadsGrouped()
-  const { data: catalogData, isLoading: catalogLoading } = useCatalog()
-
-  const [launching, setLaunching] = useState(false)
-  const [switching, setSwitching] = useState(false)
-  const [tearingDown, setTearingDown] = useState(false)
-  const [lastSwitchResult, setLastSwitchResult] = useState<SwitchSourceResult | null>(null)
-  // The wizard's own presentation state — never derived from FlowStepState.
-  const [selectedStep, setSelectedStep] = useState<FlowStepId | null>(null)
-  // Which step's mutation is in flight — the LABEL only; the busy boolean
-  // itself lives in launching/switching/tearingDown above, and `startJob`
-  // below sets both synchronously in the same click handler that fires the
-  // mutation, not via the child's own onBusyChange effect (which runs a
-  // render later, and — worse — that render can itself be waiting on a
-  // react-query notification that lands in a microtask, later still). A
-  // mutation library's own isPending is not required to be observable in
-  // the same synchronous tick as the call that started it, so this page
-  // cannot depend on it for the zero-window guarantee; only a plain
-  // setState in the SAME event handler can give that guarantee.
-  const [jobOwner, setJobOwner] = useState<FlowStepId | null>(null)
-  const panelRef = useRef<HTMLDivElement>(null)
-  const hashFocusedRef = useRef(false)
-  const emitTopbarMessage = useTopbarMessageStore((s) => s.emit)
-  // Captured during render (not a hook), so the terminal-message effect
-  // below — which fires on a render where `workload` might not have been
-  // re-looked-up yet — still has a name to echo. Only ever written when
-  // workload is genuinely resolved, never with a fallback.
-  const workloadNameRef = useRef<string>('')
 
   const workload = data?.workloads.find((w) => w.slug === slug)
-  if (workload) workloadNameRef.current = workload.name
-  const jobInFlight = launching || switching || tearingDown
-
-  // Computed with a safe fallback so the hooks below can run unconditionally,
-  // in the same order, whether or not `workload` has resolved yet — rules of
-  // hooks forbids gating them behind the early returns further down, which
-  // all depend on `workload`/`data` in ways this page's designed states
-  // require.
-  const input: WorkloadLifecycleInput = {
-    lifecycle: workload?.lifecycle ?? 'unknown',
-    launching,
-    switching,
-    tearingDown,
-    // Member state, not position: clearing one of several siblings moves the
-    // position to configure while the rest still need clearing, so the flow
-    // has to be told what the workload NEEDS as well as where it IS
-    // (GATE-S1-RV3 P1). workloadFlow.ts ranks affordance above position for
-    // exactly this case, which is what keeps the clear path reachable inside
-    // an otherwise-completed Provision step.
-    hasBootstrappedMembers: workload
-      ? workload.instances.some((i) => !i.reconcile_pending && i.requested_state === 'bootstrapped')
-      : false,
-  }
-  const { steps, current, offFlow, undetermined } = classifyWorkloadFlow(input)
-  const badge = lifecycleBadge(input)
-
-  // A fragment aimed at a step selects+focuses that step on arrival. The
-  // Operate page's "request configuration change" link is the one caller.
-  // It only changes the initial selection — a locked step is never selected
-  // by it (defaultSelection's isStepOpenable guard), so a crafted fragment
-  // can never reach a control the gate closed.
-  const requestedStep = hash.replace(/^#/, '')
-
-  const activeStep =
-    selectedStep !== null && isStepOpenable(steps[selectedStep])
-      ? selectedStep
-      : defaultSelection(steps, current, offFlow, requestedStep)
-
-  // React's sanctioned "derived state" pattern: persist the computed
-  // fallback into state so a later query refresh that keeps the operator's
-  // step openable does NOT re-run this priority order — spec A is explicit
-  // that only ceasing to be openable re-triggers it.
-  //
-  // Gated on `workload` because `steps`/`current` above are computed from a
-  // SAFE FALLBACK ('unknown' lifecycle) while the query is still loading —
-  // committing that fallback's activeStep ('design', since current is null
-  // pre-load) into state would poison the real selection the instant the
-  // workload actually resolves: 'design' reads as `complete` under almost
-  // any real position, so isStepOpenable would call it still-openable and
-  // the wizard would open on Design forever instead of the true position.
-  useEffect(() => {
-    if (workload && activeStep !== selectedStep) setSelectedStep(activeStep)
-  }, [activeStep, selectedStep, workload])
-
-  // The job owner is cleared once the job settles (any of the three busy
-  // flags falls) — the START is synchronous (via startJob below); the END
-  // is not time-critical the same way, so an effect on jobInFlight is fine.
-  // Also echoes the terminal moment to the topbar's supplemental message
-  // surface (GATE-D1 P2.4) — a courtesy notice only; the real outcome stays
-  // at the stage that ran the job (Constitution Art. 2), so this fires
-  // regardless of whether the mutation actually succeeded.
-  useEffect(() => {
-    if (!jobInFlight && jobOwner) {
-      emitTopbarMessage(`${STEP_LABEL[jobOwner]} job for ${workloadNameRef.current} completed`)
-      setJobOwner(null)
-    }
-  }, [jobInFlight, jobOwner, emitTopbarMessage])
-
-  useEffect(() => {
-    if (
-      workload &&
-      !hashFocusedRef.current &&
-      requestedStep &&
-      FLOW_STEPS.includes(requestedStep as FlowStepId) &&
-      activeStep === requestedStep
-    ) {
-      panelRef.current?.focus()
-      hashFocusedRef.current = true
-    }
-  }, [activeStep, requestedStep, workload])
 
   if (isLoading) {
     return (
@@ -285,6 +178,127 @@ export default function WorkloadDetail() {
       </div>
     )
   }
+
+  // GATE-D1.4 (operator review round 2, PR #70): keyed on the workload's own
+  // identity, not just mounted once. React does NOT remount a component on
+  // a route PARAM change alone — navigating from /media-workloads/A to
+  // /media-workloads/B re-renders the same WorkloadWizard instance with a
+  // new `workload` prop, and every piece of state it owns (selectedStep,
+  // jobOwner, launching/switching/tearingDown, lastSwitchResult, the
+  // hash-focus-consumed ref) would silently carry over from A to B — wrong
+  // selection, and far worse, A's in-flight job lock bleeding onto B's
+  // navigation. `key` forces React to tear the old instance down and mount
+  // a fresh one whenever the workload identity changes, so ALL of that
+  // state re-derives from scratch for the new workload, including the
+  // initial-selection ladder (defaultSelection) — the same class of fix as
+  // "a page reload re-derives purely from the backend" (WorkloadWizard's
+  // own docstring), just triggered by a workload change instead of F5.
+  // Returning to A while its job is still running therefore loses the
+  // local busy overlay exactly the way a reload would — that is the
+  // INTENDED equivalence, not a regression: the backend is what's actually
+  // running the job, and the wizard's local overlay was never anything
+  // more than an optimistic echo of it.
+  return <WorkloadWizard key={workload.slug} workload={workload} />
+}
+
+/**
+ * The wizard itself — every piece of state below is scoped to exactly ONE
+ * workload for the lifetime of this component instance, because the parent
+ * remounts it (via `key={workload.slug}`) whenever the operator switches
+ * workloads. Nothing here needs a "workload changed under me" branch as a
+ * result: `workload` is a plain, always-defined prop, not an optional value
+ * threaded through a safe fallback.
+ */
+function WorkloadWizard({ workload }: { workload: MediaWorkload }) {
+  const { hash } = useLocation()
+  const { data: catalogData, isLoading: catalogLoading } = useCatalog()
+
+  const [launching, setLaunching] = useState(false)
+  const [switching, setSwitching] = useState(false)
+  const [tearingDown, setTearingDown] = useState(false)
+  const [lastSwitchResult, setLastSwitchResult] = useState<SwitchSourceResult | null>(null)
+  // The wizard's own presentation state — never derived from FlowStepState.
+  const [selectedStep, setSelectedStep] = useState<FlowStepId | null>(null)
+  // Which step's mutation is in flight — the LABEL only; the busy boolean
+  // itself lives in launching/switching/tearingDown above, and `startJob`
+  // below sets both synchronously in the same click handler that fires the
+  // mutation, not via the child's own onBusyChange effect (which runs a
+  // render later, and — worse — that render can itself be waiting on a
+  // react-query notification that lands in a microtask, later still). A
+  // mutation library's own isPending is not required to be observable in
+  // the same synchronous tick as the call that started it, so this page
+  // cannot depend on it for the zero-window guarantee; only a plain
+  // setState in the SAME event handler can give that guarantee.
+  const [jobOwner, setJobOwner] = useState<FlowStepId | null>(null)
+  const panelRef = useRef<HTMLDivElement>(null)
+  const hashFocusedRef = useRef(false)
+  const emitTopbarMessage = useTopbarMessageStore((s) => s.emit)
+
+  const jobInFlight = launching || switching || tearingDown
+
+  const input: WorkloadLifecycleInput = {
+    lifecycle: workload.lifecycle,
+    launching,
+    switching,
+    tearingDown,
+    // Member state, not position: clearing one of several siblings moves the
+    // position to configure while the rest still need clearing, so the flow
+    // has to be told what the workload NEEDS as well as where it IS
+    // (GATE-S1-RV3 P1). workloadFlow.ts ranks affordance above position for
+    // exactly this case, which is what keeps the clear path reachable inside
+    // an otherwise-completed Provision step.
+    hasBootstrappedMembers: workload.instances.some(
+      (i) => !i.reconcile_pending && i.requested_state === 'bootstrapped',
+    ),
+  }
+  const { steps, current, offFlow, undetermined } = classifyWorkloadFlow(input)
+  const badge = lifecycleBadge(input)
+
+  // A fragment aimed at a step selects+focuses that step on arrival. The
+  // Operate page's "request configuration change" link is the one caller.
+  // It only changes the initial selection — a locked step is never selected
+  // by it (defaultSelection's isStepOpenable guard), so a crafted fragment
+  // can never reach a control the gate closed.
+  const requestedStep = hash.replace(/^#/, '')
+
+  const activeStep =
+    selectedStep !== null && isStepOpenable(steps[selectedStep])
+      ? selectedStep
+      : defaultSelection(steps, current, offFlow, requestedStep)
+
+  // React's sanctioned "derived state" pattern: persist the computed
+  // fallback into state so a later query refresh that keeps the operator's
+  // step openable does NOT re-run this priority order — spec A is explicit
+  // that only ceasing to be openable re-triggers it.
+  useEffect(() => {
+    if (activeStep !== selectedStep) setSelectedStep(activeStep)
+  }, [activeStep, selectedStep])
+
+  // The job owner is cleared once the job settles (any of the three busy
+  // flags falls) — the START is synchronous (via startJob below); the END
+  // is not time-critical the same way, so an effect on jobInFlight is fine.
+  // Also echoes the terminal moment to the topbar's supplemental message
+  // surface (GATE-D1 P2.4) — a courtesy notice only; the real outcome stays
+  // at the stage that ran the job (Constitution Art. 2), so this fires
+  // regardless of whether the mutation actually succeeded.
+  useEffect(() => {
+    if (!jobInFlight && jobOwner) {
+      emitTopbarMessage(`${STEP_LABEL[jobOwner]} job for ${workload.name} completed`)
+      setJobOwner(null)
+    }
+  }, [jobInFlight, jobOwner, emitTopbarMessage, workload.name])
+
+  useEffect(() => {
+    if (
+      !hashFocusedRef.current &&
+      requestedStep &&
+      FLOW_STEPS.includes(requestedStep as FlowStepId) &&
+      activeStep === requestedStep
+    ) {
+      panelRef.current?.focus()
+      hashFocusedRef.current = true
+    }
+  }, [activeStep, requestedStep])
 
   const activeIndex = FLOW_STEPS.indexOf(activeStep)
   const prevStep = activeIndex > 0 ? FLOW_STEPS[activeIndex - 1] : null
