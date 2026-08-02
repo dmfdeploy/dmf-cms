@@ -157,11 +157,10 @@ export default function WorkloadMaterializing({
 
   return (
     <div className="flex-1 overflow-y-auto p-6">
-      <div className="hero">
-        <p className="kicker">Media Workloads</p>
-        <h1 className="capitalize">{slug}</h1>
-        <p>{failed ? 'Launch failed' : 'Provisioning'}</p>
-      </div>
+      {/* Not page chrome — an outcome heading (spec C's sanctioned survivor):
+          the one fact this whole component exists to state honestly, before
+          the workload's own identity even exists to put in a breadcrumb. */}
+      <h1 className="text-lg font-semibold text-text">{failed ? 'Launch failed' : 'Provisioning'}</h1>
 
       <div
         className={`panel mt-6 border px-4 py-4 ${

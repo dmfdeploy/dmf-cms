@@ -42,11 +42,18 @@ export default function ProvisionStage({
   state,
   actions,
   onBusyChange,
+  onJobStart,
 }: {
   workload: MediaWorkload
   state: StageState
   actions: StageActionId[]
   onBusyChange: (busy: boolean) => void
+  /**
+   * Called synchronously in the same event that fires a deploy or clear
+   * mutation — see ConfigureStage's identical note (umbrella #347 WO-D1
+   * spec A).
+   */
+  onJobStart: () => void
 }) {
   const { data: catalogData, isLoading: catalogLoading } = useCatalog()
   const { data: user } = useCurrentUser()
@@ -63,7 +70,8 @@ export default function ProvisionStage({
   // the gate it raises.
   const clearMutation = useClearForDeployment()
   const [lastClearResult, setLastClearResult] = useState<ClearForDeploymentResult | null>(null)
-  const onClearConfirm = (instance: string, reason: string) =>
+  const onClearConfirm = (instance: string, reason: string) => {
+    onJobStart()
     clearMutation.mutate(
       { instance, reason },
       {
@@ -74,14 +82,22 @@ export default function ProvisionStage({
         },
       },
     )
+  }
 
+  const functionKeys = workload.functions.map((f) => f.function_key)
+  // #344: aggregated through the workload's CURRENT function keys, not
+  // Object.values(track) — a function that leaves the workload takes its
+  // entry out of this iteration, so a stale in-flight flag under a departed
+  // key can never wedge `busy` true forever (ProvisionStage.tsx:78-82
+  // pre-fix). No pruning effect needed: a departed key's track value is
+  // simply never read again.
+  const activeTrack = (t: EntryTrack | undefined) => t != null && (t.jobId !== null || t.opId !== null)
   const busy =
     deployMutation.isPending ||
-    Object.values(track).some((t) => t.jobId !== null || t.opId !== null) ||
+    functionKeys.some((key) => activeTrack(track[key])) ||
     clearMutation.isPending
   useEffect(() => onBusyChange(busy), [busy, onBusyChange])
 
-  const functionKeys = workload.functions.map((f) => f.function_key)
   const entries = (catalogData?.entries ?? []).filter((e) => functionKeys.includes(e.key))
 
   const allowed = actions.includes('deploy')
@@ -95,6 +111,7 @@ export default function ProvisionStage({
     .sort((a, b) => a.instance.localeCompare(b.instance))
 
   const handleDeploy = async (entry: CatalogEntry, reason: string, workloadSlug: string) => {
+    onJobStart()
     try {
       const result = await deployMutation.mutateAsync({ key: entry.key, reason, workload: workloadSlug || undefined })
       recordAwxWrite({

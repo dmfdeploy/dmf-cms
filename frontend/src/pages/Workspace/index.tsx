@@ -26,11 +26,6 @@ import RecentChanges from './RecentChanges'
 export default function Workspace() {
   return (
     <div className="flex-1 overflow-y-auto p-6">
-      <div className="hero">
-        <p className="kicker">Facility Operations</p>
-        <h1>Workspace</h1>
-        <p>Facility health, recent changes, and what needs attention.</p>
-      </div>
       <HealthCore />
       <RecentChanges />
     </div>

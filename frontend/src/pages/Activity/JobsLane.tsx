@@ -14,8 +14,9 @@ interface PendingOperation {
 }
 
 // Jobs lane — "what is running / launchable" (IA §5). The former
-// /workflows page body; the Activity shell owns the hero and scroll
-// container. Launch outcomes stay anchored on the card (hard gate 2).
+// /workflows page body; the Activity shell owns the scroll container (the
+// per-page hero it used to also own was retired — umbrella #347 WO-D1 spec
+// C). Launch outcomes stay anchored on the card (hard gate 2).
 export default function JobsLane() {
   const { data: user } = useCurrentUser()
   const { data: workflowsData, isLoading } = useWorkflows()

@@ -31,14 +31,6 @@ export default function Activity() {
 
   return (
     <div className="flex-1 overflow-y-auto p-6">
-      <div className="hero">
-        <div className="hero-copy">
-          <p className="kicker">Operations</p>
-          <h1>Activity</h1>
-          <p>What is running or launchable, and what just changed.</p>
-        </div>
-      </div>
-
       <div className="flex items-center gap-2 mb-6">
         {canUseJobs && (
           <NavLink to="/activity/jobs" className={tabClass}>

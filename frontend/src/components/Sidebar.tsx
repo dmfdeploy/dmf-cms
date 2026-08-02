@@ -110,7 +110,7 @@ const icons: Record<string, React.ReactNode> = {
   ),
 }
 
-function renderItem(item: NavItem, pathname: string, expanded: boolean) {
+function renderItem(item: NavItem, pathname: string) {
   const isActive =
     item.path === '/'
       ? pathname === '/'
@@ -119,19 +119,23 @@ function renderItem(item: NavItem, pathname: string, expanded: boolean) {
     <Link
       key={item.label}
       to={item.path}
-      className={`flex items-center rounded-lg transition-colors ${
-        isActive
-          ? 'bg-accent/20 text-accent'
-          : 'text-muted hover:text-text hover:bg-panel/50'
-      } ${expanded ? 'px-3 py-2.5 gap-3' : 'w-10 h-10 justify-center mx-auto'}`}
+      aria-label={item.label}
+      className={`group relative flex h-10 w-10 mx-auto items-center justify-center rounded-lg outline-offset-2 transition-colors focus-visible:outline focus-visible:outline-2 focus-visible:outline-accent ${
+        isActive ? 'bg-accent/20 text-accent' : 'text-muted hover:text-text hover:bg-panel/50'
+      }`}
     >
-      <svg className="w-5 h-5 shrink-0" viewBox="0 0 24 24" fill="none">
+      <svg className="w-5 h-5 shrink-0" viewBox="0 0 24 24" fill="none" aria-hidden="true">
         {icons[item.icon]}
       </svg>
+      {/* Tooltip/label — shown on hover AND keyboard focus, never a
+          reflow: it's an absolutely-positioned overlay, not a sibling that
+          pushes layout (umbrella #347 WO-D1 spec C: "no expand/reflow on
+          either"). Always in the DOM (not display:none) so it participates
+          in the link's accessible name/text content like any label would;
+          opacity is what gates visibility. */}
       <span
-        className={`text-sm font-medium truncate transition-opacity duration-200 ${
-          expanded ? 'opacity-100' : 'opacity-0 w-0'
-        }`}
+        role="tooltip"
+        className="pointer-events-none absolute left-full z-30 ml-2 whitespace-nowrap rounded bg-panel px-2 py-1 text-xs text-text opacity-0 shadow-lg transition-opacity duration-150 group-hover:opacity-100 group-focus-visible:opacity-100"
       >
         {item.label}
       </span>
@@ -140,12 +144,14 @@ function renderItem(item: NavItem, pathname: string, expanded: boolean) {
 }
 
 export default function Sidebar() {
-  // Expanded with labels, and it STAYS expanded (umbrella #285 global item).
-  // It used to start collapsed to icons and expand on hover, which made the
-  // rail unreadable in a screen recording and made every navigation a
-  // hover-then-read. Labels are the teaching surface for someone meeting the
-  // IA for the first time, so they are not a hover-gated detail.
-  const expanded = true
+  // Permanently icon-only (umbrella #347 WO-D1 spec C, operator direction
+  // 2026-08-02) — no expand/collapse state left at all. It used to stay
+  // expanded with visible labels (umbrella #285: hover-then-read was
+  // unreadable in a screen recording); this round goes the other way on the
+  // same complaint, because the topbar breadcrumb now carries page identity
+  // and the rail's job narrows to navigation alone. Labels survive as a
+  // hover/focus tooltip per item, not gone — just no longer competing with
+  // the breadcrumb for the same job.
   const location = useLocation()
   const { data: user } = useCurrentUser()
 
@@ -162,17 +168,12 @@ export default function Sidebar() {
   const secondaries = navItems.filter((item) => item.section === 'secondary')
 
   return (
-    <aside
-      className={`flex flex-col bg-sidebar border-r border-border shrink-0 transition-all duration-200 overflow-hidden ${
-        expanded ? 'w-56' : 'w-16'
-      }`}
-    >
-      <nav className="flex flex-col py-4 px-2 gap-1 flex-1">
-        {rails.map((item) => renderItem(item, location.pathname, expanded))}
+    <aside className="flex w-16 shrink-0 flex-col overflow-hidden border-r border-border bg-sidebar">
+      <nav className="flex flex-1 flex-col gap-1 py-4 px-2">
+        {rails.map((item) => renderItem(item, location.pathname))}
         {secondaries.length > 0 && <div className="border-t border-border my-2 mx-2" />}
-        {secondaries.map((item) => renderItem(item, location.pathname, expanded))}
+        {secondaries.map((item) => renderItem(item, location.pathname))}
       </nav>
-
     </aside>
   )
 }

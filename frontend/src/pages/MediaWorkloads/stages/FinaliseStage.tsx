@@ -41,12 +41,18 @@ export default function FinaliseStage({
   actions,
   onBusyChange,
   lastSwitchResult,
+  onJobStart,
 }: {
   workload: MediaWorkload
   state: StageState
   actions: StageActionId[]
   onBusyChange: (busy: boolean) => void
   lastSwitchResult: SwitchSourceResult | null
+  /**
+   * Called synchronously in the same event that fires the teardown mutation
+   * — see ConfigureStage's identical note (umbrella #347 WO-D1 spec A).
+   */
+  onJobStart: () => void
 }) {
   const { data: catalogData, isLoading: catalogLoading } = useCatalog()
   const { data: user } = useCurrentUser()
@@ -101,17 +107,21 @@ export default function FinaliseStage({
   )
 
 
-  const busy =
-    teardownMutation.isPending ||
-    Object.values(track).some((t) => t.jobId !== null || t.opId !== null)
+  const functionKeys = workload.functions.map((f) => f.function_key)
+  // #344: aggregated through the workload's CURRENT function keys, not
+  // Object.values(track) — see ProvisionStage's identical note
+  // (FinaliseStage.tsx:104-107 pre-fix). No pruning effect: a departed key's
+  // track value is simply never read again.
+  const activeTrack = (t: EntryTrack | undefined) => t != null && (t.jobId !== null || t.opId !== null)
+  const busy = teardownMutation.isPending || functionKeys.some((key) => activeTrack(track[key]))
   useEffect(() => onBusyChange(busy), [busy, onBusyChange])
 
-  const functionKeys = workload.functions.map((f) => f.function_key)
   const entries = (catalogData?.entries ?? []).filter((e) => functionKeys.includes(e.key))
 
   const allowed = actions.includes('tear-down')
 
   const handleTeardown = async (entry: CatalogEntry, reason: string) => {
+    onJobStart()
     try {
       const result = await teardownMutation.mutateAsync({ key: entry.key, reason })
       recordAwxWrite({

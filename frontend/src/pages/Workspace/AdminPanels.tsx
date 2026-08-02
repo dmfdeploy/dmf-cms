@@ -2,7 +2,8 @@ import { useAppContract, useCurrentUser, useAdminHealth } from '../../api/hooks'
 
 // Admin default panels on the Workspace home (IA §4.1 role-varied content;
 // moved from the retired pages/overview/AdminOverview.tsx, #174 WP4). The
-// Workspace page owns the hero and the scroll container.
+// Workspace page owns the scroll container (the per-page hero it used to
+// also own was retired — umbrella #347 WO-D1 spec C).
 //
 // Users and Workflows are NOT Workspace widgets (IA 2026-06-23 §4.1/§5/§7):
 // Users lives on the admin secondary rail (pages/Admin.tsx), Workflows on the

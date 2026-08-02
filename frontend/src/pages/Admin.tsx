@@ -98,14 +98,6 @@ export default function Admin() {
 
   return (
     <div className="flex-1 overflow-y-auto p-6">
-      <div className="hero">
-        <div className="hero-copy">
-          <p className="kicker">Platform</p>
-          <h1>Admin</h1>
-          <p>User management and integration health status.</p>
-        </div>
-      </div>
-
       {/* Integration Health */}
       <div className="panel mb-6">
         <div className="px-6 py-4 border-b border-panel">

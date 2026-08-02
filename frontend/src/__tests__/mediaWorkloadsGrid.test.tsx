@@ -241,17 +241,17 @@ function renderOperatePage(slug = 'test') {
 }
 
 /**
- * ARC B: the flow folds — only the step the workload is AT is pinned open.
- * A test reaching into another step opens it the way an operator would, by
- * clicking the same Review control. It cannot open a locked step, which is
- * what keeps these assertions honest about what the gate permits.
+ * The wizard mounts exactly one step at a time (umbrella #347 WO-D1) — a
+ * test reaching into a step that isn't already selected navigates there the
+ * way an operator would, by clicking its rail chip. A locked step has no
+ * chip to click, which is what keeps these assertions honest about what the
+ * gate permits.
  */
 function openStep(label: string): HTMLElement {
+  const strip = screen.getByRole('navigation', { name: 'Media workload lifecycle' })
+  fireEvent.click(within(strip).getByRole('button', { name: label }))
   const heading = screen.getByRole('heading', { name: label, level: 2 })
-  const section = heading.closest('section') as HTMLElement
-  const review = within(section).queryByRole('button', { name: 'Review' })
-  if (review) fireEvent.click(review)
-  return heading.closest('section') as HTMLElement
+  return heading.closest('[data-step-state]') as HTMLElement
 }
 
 /** The list page itself, for the entry-tile behaviours that stayed here. */
@@ -595,7 +595,7 @@ describe('switch source on the Configure stage (umbrella #201 WP5)', () => {
   it('renders no switch control when the instance carries no topology', async () => {
     mkFetch({})
     renderPage()
-    await screen.findAllByText('Configure') // strip chip + step header
+    await screen.findByRole('navigation', { name: 'Media workload lifecycle' })
     openStep('Configure')
     expect(screen.queryByRole('button', { name: 'Switch source' })).toBeNull()
   })
@@ -603,7 +603,7 @@ describe('switch source on the Configure stage (umbrella #201 WP5)', () => {
   it('lists the topology\'s OTHER sources only, and shows the current one before arming', async () => {
     mkFetch({ topology: topologyMxlA() })
     renderPage()
-    await screen.findAllByText('Configure') // strip chip + step header
+    await screen.findByRole('navigation', { name: 'Media workload lifecycle' })
     openStep('Configure')
 
     expect(await screen.findByText('source-a')).toBeTruthy() // current active source shown
@@ -627,7 +627,7 @@ describe('switch source on the Configure stage (umbrella #201 WP5)', () => {
       }),
     })
     renderPage()
-    await screen.findAllByText('Configure') // strip chip + step header
+    await screen.findByRole('navigation', { name: 'Media workload lifecycle' })
     openStep('Configure')
 
     expect(await screen.findByText('source-b')).toBeTruthy() // the OBSERVED source, shown
@@ -648,7 +648,7 @@ describe('switch source on the Configure stage (umbrella #201 WP5)', () => {
       }),
     })
     renderPage()
-    await screen.findAllByText('Configure') // strip chip + step header
+    await screen.findByRole('navigation', { name: 'Media workload lifecycle' })
     openStep('Configure')
 
     // GATE-S1 P2c: fail-closed is now ABSENCE, not a disabled button. A
@@ -671,7 +671,7 @@ describe('switch source on the Configure stage (umbrella #201 WP5)', () => {
       }),
     })
     renderPage()
-    await screen.findAllByText('Configure') // strip chip + step header
+    await screen.findByRole('navigation', { name: 'Media workload lifecycle' })
     openStep('Configure')
 
     // GATE-S1 P2c: fail-closed is now ABSENCE, not a disabled button. A
@@ -705,7 +705,7 @@ describe('switch source on the Configure stage (umbrella #201 WP5)', () => {
       },
     })
     renderPage()
-    await screen.findAllByText('Configure') // strip chip + step header
+    await screen.findByRole('navigation', { name: 'Media workload lifecycle' })
     openStep('Configure')
 
     fireEvent.click(await screen.findByRole('button', { name: 'Switch source' }))
@@ -757,7 +757,7 @@ describe('switch source on the Configure stage (umbrella #201 WP5)', () => {
       },
     })
     renderPage()
-    await screen.findAllByText('Configure') // strip chip + step header
+    await screen.findByRole('navigation', { name: 'Media workload lifecycle' })
     openStep('Configure')
 
     fireEvent.click(await screen.findByRole('button', { name: 'Switch source' }))
@@ -798,7 +798,7 @@ describe('switch source on the Configure stage (umbrella #201 WP5)', () => {
       },
     })
     renderPage()
-    await screen.findAllByText('Configure') // strip chip + step header
+    await screen.findByRole('navigation', { name: 'Media workload lifecycle' })
     openStep('Configure')
 
     fireEvent.click(await screen.findByRole('button', { name: 'Switch source' }))
@@ -834,10 +834,11 @@ describe('switch source on the Configure stage (umbrella #201 WP5)', () => {
 
     await settle(0) // let the Configure stage's topology fetch resolve
 
-    // Arc B: no step is pinned at lifecycle=operate, so Configure is folded
-    // until opened — the same click the operator makes.
+    // At lifecycle=operate the wizard's default selection is Finalise &
+    // Review (offFlow), not Configure — navigate there via its rail chip,
+    // the same click the operator makes.
     openStep('Configure')
-    await settle(0) // flush the disclosure re-render under fake timers
+    await settle(0) // flush the selection re-render under fake timers
     fireEvent.click(screen.getByRole('button', { name: 'Switch source' }))
 
     const confirm = screen.getByRole('button', { name: 'Confirm switch' }) as HTMLButtonElement
@@ -869,10 +870,12 @@ describe('grouped endpoint + degraded rendering (P3)', () => {
   it('requests /api/media-workloads/grouped (not the flat endpoint)', async () => {
     const { fetchMock } = mkFetch({})
     renderPage()
-    // Anchored on the flow page's own heading rather than a tile display
-    // name: the tiles moved to the Operate route in Arc B, and this test is
-    // about which inventory endpoint the page reads, not about tiles.
-    await screen.findByRole('heading', { name: 'test', level: 1 })
+    // Anchored on the flow page's own rail rather than a tile display name:
+    // the tiles moved to the Operate route in Arc B, and this test is about
+    // which inventory endpoint the page reads, not about tiles. The
+    // per-page hero heading this used to wait on is retired (umbrella #347
+    // WO-D1 spec C) — the rail is the equivalent "the page has loaded" signal.
+    await screen.findByRole('navigation', { name: 'Media workload lifecycle' })
 
     const urls = fetchMock.mock.calls.map(
       (c: [RequestInfo | URL, RequestInit?]) =>

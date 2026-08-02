@@ -19,14 +19,6 @@ export default function Monitoring() {
 
   return (
     <div className="flex-1 overflow-y-auto p-6">
-      <div className="hero">
-        <div className="hero-copy">
-          <p className="kicker">Observability</p>
-          <h1>Monitoring</h1>
-          <p>Real-time metrics and alerts from Prometheus.</p>
-        </div>
-      </div>
-
       {/* Metrics Cards */}
       <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-4 mb-6">
         {metricCards.map((card: typeof metricCards[0]) => {

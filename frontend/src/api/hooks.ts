@@ -344,12 +344,13 @@ export function useMediaWorkloads() {
 }
 
 // ADR-0046: workload-first grouped inventory. Additive — the flat hook stays.
-export function useMediaWorkloadsGrouped() {
+export function useMediaWorkloadsGrouped(opts?: { enabled?: boolean }) {
   return useQuery({
     queryKey: ['media-workloads-grouped'],
     queryFn: () =>
       apiCall<MediaWorkloadsGroupedResponse>('/api/media-workloads/grouped'),
     refetchInterval: 15000,
+    enabled: opts?.enabled ?? true,
   })
 }
 

@@ -184,23 +184,6 @@
     @apply bg-accent/20 text-accent;
   }
 
-  /* ---- Hero / page header ---- */
-  .hero {
-    @apply mb-8;
-  }
-
-  .hero .kicker {
-    @apply text-xs text-muted uppercase tracking-widest mb-1;
-  }
-
-  .hero h1 {
-    @apply text-2xl font-semibold text-text;
-  }
-
-  .hero p {
-    @apply text-muted text-sm mt-1;
-  }
-
   /* ---- Session / user ---- */
   .session-user {
     @apply text-sm font-medium text-text;
