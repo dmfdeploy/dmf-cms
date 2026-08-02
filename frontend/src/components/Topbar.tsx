@@ -1,6 +1,7 @@
 import { useState } from 'react'
 import { Link, useLocation } from 'react-router-dom'
 import { useAuthStore } from '../store/auth'
+import { useTopbarMessageStore } from '../store/topbarMessage'
 import { useSetViewAs, useClearViewAs, useFacilityDetail, useMediaWorkloadsGrouped } from '../api/hooks'
 import NotificationBell from './NotificationBell'
 import logoSvg from '../assets/dmfdeploy-icon-white.svg'
@@ -99,6 +100,7 @@ export default function Topbar() {
   const clearViewAs = useClearViewAs()
   const { pathname } = useLocation()
   const crumbs = useBreadcrumbTrail(pathname)
+  const transientMessage = useTopbarMessageStore((s) => s.message)
 
   if (!user) return null
 
@@ -144,11 +146,18 @@ export default function Topbar() {
         </ol>
       </nav>
 
-      {/* Supplemental transient-message surface (spec C): NOT where job
-          success/failure lives — that stays anchored at the acting stage
-          (Constitution Art. 2). This is a single shared announcer for
-          incidental topbar-level messages other than that. */}
-      <div aria-live="polite" role="status" className="sr-only" />
+      {/* Supplemental transient-message surface (GATE-D1 P2.4): NOT where
+          job success/failure lives — that stays anchored at the acting
+          stage (Constitution Art. 2). This is a single shared announcer
+          for brief echoes of job lifecycle moments (started / terminal),
+          producers push via store/topbarMessage.ts; it self-expires. */}
+      <div
+        aria-live="polite"
+        role="status"
+        className="min-w-0 shrink truncate px-2 text-xs text-muted"
+      >
+        {transientMessage?.text ?? ''}
+      </div>
 
       {/* Right side: view-as chip, notifications, avatar */}
       <div className="flex items-center gap-5">

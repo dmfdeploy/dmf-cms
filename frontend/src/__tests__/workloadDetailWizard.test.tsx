@@ -256,3 +256,14 @@ describe('mount -> pending -> membership change -> unwedge (Acceptance Criterion
     h.releaseSwitch()
   })
 })
+
+// GATE-D1 P1.1's dedicated synchronous-lock proof lives in
+// workloadDetailJobLock.test.tsx, not here: a version of this test built on
+// the REAL ConfigureStage (fireEvent.click, then assert with no
+// await/waitFor at all) turned out not to discriminate — RTL's act()
+// wrapping flushes the child's onBusyChange effect cascade synchronously
+// enough, in this harness, that the busy flag was already true whether or
+// not startJob set it itself. The isolated file replaces the stage with a
+// fake that never calls onBusyChange at all, so only WorkloadDetail's own
+// startJob can possibly set the flag — proven red before the fix, green
+// after.

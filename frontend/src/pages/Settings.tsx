@@ -53,14 +53,6 @@ export default function Settings() {
   return (
     <div className="flex-1 overflow-y-auto p-6">
       <div className="max-w-3xl">
-        {/* Hero */}
-        <div className="flex items-center justify-between mb-8">
-          <div>
-            <h1 className="text-2xl font-semibold text-text">User Settings</h1>
-            <p className="text-muted text-sm mt-1">Manage your account and security preferences</p>
-          </div>
-        </div>
-
         {/* Profile */}
         <div className="bg-panel border border-border rounded-lg mb-6">
           <div className="p-4 border-b border-border">

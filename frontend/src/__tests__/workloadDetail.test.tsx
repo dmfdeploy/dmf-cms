@@ -812,6 +812,52 @@ describe('an unknown slug', () => {
   })
 })
 
+// ---- a crafted #configure hash can never reach a locked Configure ------
+
+describe('a #configure deep link when Configure is locked (GATE-D1 P2.6)', () => {
+  it('leaves the initial-ladder selection unchanged, announces the lock reason, and mounts no Configure control', async () => {
+    // lifecycle=provision with no bootstrapped members: Configure is
+    // locked (nothing has been deployed yet, so there is no source to
+    // select) — Operate.tsx's "request configuration change" link is the
+    // one real caller of this hash, and this proves a stale/crafted one
+    // aimed at a locked step cannot reach it.
+    mkFetch({ workload: workload({ lifecycle: 'provision' }) })
+    const queryClient = new QueryClient({ defaultOptions: { queries: { retry: false } } })
+    render(
+      <QueryClientProvider client={queryClient}>
+        <MemoryRouter initialEntries={['/media-workloads/studio-a#configure']}>
+          <Routes>
+            <Route path="/media-workloads/:slug" element={<WorkloadDetail />} />
+          </Routes>
+        </MemoryRouter>
+      </QueryClientProvider>,
+    )
+    await screen.findByRole('navigation', { name: 'Media workload lifecycle' })
+
+    // Selection falls through to the SAME ladder as with no hash at all:
+    // Configure is not openable, so `current` ('provision', non-null) wins
+    // — the mounted panel is Provision, never Configure.
+    expect(screen.getByRole('heading', { name: 'Provision', level: 2 })).toBeTruthy()
+    expect(screen.queryByRole('heading', { name: 'Configure', level: 2 })).toBeNull()
+
+    // The lock reason is announced (role=status, aria-live=polite) rather
+    // than silently doing nothing.
+    const announcement = screen.getByRole('status')
+    expect(announcement.textContent).toContain('Configure')
+    expect(announcement.textContent).toContain('there is no source to select')
+
+    // No Configure content is reachable anywhere on the page — not folded,
+    // not hidden, simply never mounted.
+    expect(screen.queryByRole('button', { name: 'Switch source' })).toBeNull()
+    expect(screen.queryByText(/Switch active source/)).toBeNull()
+
+    // The rail itself offers no way in either: Configure is a static,
+    // non-interactive item with its own stated reason.
+    const rail = screen.getByRole('navigation', { name: 'Media workload lifecycle' })
+    expect(within(rail).queryByRole('button', { name: 'Configure' })).toBeNull()
+  })
+})
+
 // ---- the list page: single entry, links to detail ----------------------
 
 describe('the Media Workloads list — single entry per workload', () => {

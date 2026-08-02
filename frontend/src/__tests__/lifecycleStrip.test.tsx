@@ -136,6 +136,35 @@ describe('a job in flight overrides every non-locked chip\'s text to "Waiting", 
   })
 })
 
+describe('the Current-position and Selected text markers survive the busy non-interactive rendering (GATE-D1 acceptance note 8)', () => {
+  it('keeps both markers when a job in flight demotes every chip from <button> to inert <div>', () => {
+    const steps: Record<FlowStepId, FlowStepState> = {
+      design: 'complete',
+      plan: 'complete',
+      provision: 'current',
+      configure: 'open',
+      finalise: 'open',
+    }
+    // Selected (Design) and position (Provision) are deliberately DIFFERENT
+    // chips here, so both markers have to survive independently.
+    renderRail({
+      steps,
+      activeStep: 'design',
+      current: 'provision',
+      jobOwnerLabel: 'Provision',
+      jobInFlight: true,
+    })
+
+    const design = chip('Design')
+    expect(within(design).queryByRole('button')).toBeNull() // demoted to inert
+    expect(within(design.parentElement as HTMLElement).getByText('Selected')).toBeTruthy()
+
+    const provision = chip('Provision')
+    expect(within(provision).queryByRole('button')).toBeNull()
+    expect(within(provision.parentElement as HTMLElement).getByText('Current position')).toBeTruthy()
+  })
+})
+
 describe('backend position and wizard selection are each their own text+icon marker', () => {
   it('current position gets its own "Current position" text+icon, independent of selection', () => {
     const steps: Record<FlowStepId, FlowStepState> = {
@@ -172,5 +201,28 @@ describe('backend position and wizard selection are each their own text+icon mar
 
     const operate = screen.getByRole('link', { name: 'Operate' })
     expect(within(operate.parentElement as HTMLElement).getByText('Current position')).toBeTruthy()
+  })
+})
+
+describe('Control/Operate is structurally NOT a sixth item of the orchestration list (GATE-D1 P1.2)', () => {
+  it('renders exactly five <li> in the orchestration <ol>, and Operate outside it entirely', () => {
+    const steps: Record<FlowStepId, FlowStepState> = {
+      design: 'complete',
+      plan: 'complete',
+      provision: 'open',
+      configure: 'open',
+      finalise: 'open',
+    }
+    renderRail({ steps, activeStep: 'provision', current: 'provision' })
+
+    const list = screen.getByRole('list')
+    expect(list.tagName).toBe('OL')
+    expect(list.querySelectorAll(':scope > li')).toHaveLength(5)
+
+    const operate = screen.getByRole('link', { name: 'Operate' })
+    // Not a descendant of the ordered list at all — a sibling group, not a
+    // sixth ordinal item wearing a divider.
+    expect(list.contains(operate)).toBe(false)
+    expect(operate.closest('[role="group"]')?.getAttribute('aria-label')).toBe('Control')
   })
 })

@@ -146,7 +146,7 @@ export default function LifecycleStrip({
     : ''
 
   return (
-    <nav aria-label="Media workload lifecycle" className="mt-6">
+    <nav aria-label="Media workload lifecycle" className="mt-6 flex flex-wrap items-start gap-x-3 gap-y-3">
       <ol className="flex flex-wrap items-start gap-x-3 gap-y-3">
         {FLOW_STEPS.map((id) => {
           const state = steps[id]
@@ -207,6 +207,17 @@ export default function LifecycleStrip({
                   Current position
                 </span>
               )}
+              {/* GATE-D1 acceptance note 8: rendered unconditionally, not just
+                  inside the interactive branch — aria-pressed lives only on
+                  the <button> variant (a plain <div> has no toggle
+                  semantics to hang it on), so without this TEXT marker the
+                  selected step's own indication would silently vanish the
+                  moment a job in flight demotes every chip to inert
+                  <div>s. Current-position's marker already had this
+                  property; selection needed the same one. */}
+              {isSelected && (
+                <span className="text-[10px] text-muted">Selected</span>
+              )}
               {locked && (
                 <span className="max-w-[9rem] text-center text-[10px] text-muted">
                   {lockedReasons[id]}
@@ -218,39 +229,50 @@ export default function LifecycleStrip({
             </li>
           )
         })}
-
-        <li className="flex flex-col items-center gap-1 border-l border-white/10 pl-3">
-          <span className="text-[10px] uppercase tracking-wide text-muted">Control</span>
-          {!jobInFlight ? (
-            <Link
-              to={`/media-workloads/${encodeURIComponent(slug)}/operate`}
-              className={`rounded-lg px-3 py-2 text-xs font-semibold ${CONTROL_FILL} ${
-                offFlow ? 'ring-2 ring-white ring-offset-2 ring-offset-bg' : ''
-              }`}
-              aria-current={offFlow ? 'step' : undefined}
-              title="Operate sits in the Control vertical — open its surface"
-            >
-              Operate
-            </Link>
-          ) : (
-            <div
-              className={`rounded-lg px-3 py-2 text-xs font-semibold ${CONTROL_FILL}`}
-              title="Operate sits in the Control vertical — open its surface"
-            >
-              Operate
-            </div>
-          )}
-          {offFlow && (
-            <span className="flex items-center gap-1 text-[10px] text-muted">
-              <PositionGlyph />
-              Current position
-            </span>
-          )}
-          {jobInFlight && (
-            <span className="max-w-[9rem] text-center text-[10px] text-muted">{jobReason}</span>
-          )}
-        </li>
       </ol>
+
+      {/* GATE-D1 P1.1: Control/Operate is NOT a sixth <li> in the
+          orchestration <ol> above — an ordinal list item there would make it
+          read as a sixth step of the SAME sequence, exactly the claim spec B
+          and the operator's 2026-08-02 ruling rule out. It is a sibling
+          labelled group instead, visually adjacent (the divider is now on
+          this group, not inside the list) but structurally outside the
+          ordered list entirely. */}
+      <div
+        role="group"
+        aria-label="Control"
+        className="flex flex-col items-center gap-1 border-l border-white/10 pl-3"
+      >
+        <span className="text-[10px] uppercase tracking-wide text-muted">Control</span>
+        {!jobInFlight ? (
+          <Link
+            to={`/media-workloads/${encodeURIComponent(slug)}/operate`}
+            className={`rounded-lg px-3 py-2 text-xs font-semibold ${CONTROL_FILL} ${
+              offFlow ? 'ring-2 ring-white ring-offset-2 ring-offset-bg' : ''
+            }`}
+            aria-current={offFlow ? 'step' : undefined}
+            title="Operate sits in the Control vertical — open its surface"
+          >
+            Operate
+          </Link>
+        ) : (
+          <div
+            className={`rounded-lg px-3 py-2 text-xs font-semibold ${CONTROL_FILL}`}
+            title="Operate sits in the Control vertical — open its surface"
+          >
+            Operate
+          </div>
+        )}
+        {offFlow && (
+          <span className="flex items-center gap-1 text-[10px] text-muted">
+            <PositionGlyph />
+            Current position
+          </span>
+        )}
+        {jobInFlight && (
+          <span className="max-w-[9rem] text-center text-[10px] text-muted">{jobReason}</span>
+        )}
+      </div>
     </nav>
   )
 }
