@@ -359,6 +359,31 @@ describe('the flow is five steps under a six-stage vocabulary', () => {
     expect(operate.getAttribute('href')).toBe('/media-workloads/studio-a/operate')
   })
 
+  it('regroups the strip into five orchestration chips plus a Control group holding Operate', async () => {
+    // Per the operator's 2026-08-02 ruling: Operate is not a sixth step of
+    // the orchestration flow, it sits in the Control vertical. The strip
+    // must render that as a visible group split, not just a flat six.
+    mkFetch({ workload: workload({ lifecycle: 'provision' }) })
+    renderDetail()
+    await screen.findByRole('heading', { name: 'studio-a' })
+
+    const strip = screen.getByRole('navigation', { name: 'Media workload lifecycle' })
+    expect(within(strip).getByText('Control'), 'Control group label missing').toBeTruthy()
+
+    const chipTexts = within(strip)
+      .getAllByText(/^(Design|Plan|Provision|Configure|Finalise & Review|Control|Operate)$/)
+      .map((el) => el.textContent)
+    expect(chipTexts).toEqual([
+      'Design',
+      'Plan',
+      'Provision',
+      'Configure',
+      'Finalise & Review',
+      'Control',
+      'Operate',
+    ])
+  })
+
   it('marks the workload as operating and points at monitoring rather than losing it', async () => {
     // `current` is null at Operate exactly as it is on an undetermined
     // position, so the page must distinguish the two. This is the
