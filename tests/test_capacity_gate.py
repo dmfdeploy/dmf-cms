@@ -633,6 +633,47 @@ def test_topology_entry_malformed_source_profile_refused(monkeypatch, awx_spy):
     assert resp.json()["kind"] == "invalid-source-profile"
 
 
+def test_topology_entry_missing_topology_file_is_422_topology_invalid_not_409(
+    monkeypatch, awx_spy, tmp_path, caplog
+):
+    # Operator review, umbrella #347 Arc 2 PR #71: a topology-LOAD failure
+    # (as opposed to a validly-loaded topology with a missing/malformed
+    # source_profile) is a topology-shape problem, not a capacity problem —
+    # it must surface as _resolve_topology_seam's own 422 topology-invalid,
+    # never get laundered into this gate's 409 missing-source-profile. Real
+    # load_topology_instance (not mocked) against an empty tmp_path catalog
+    # dir, so the referenced topology-params.j1.yaml genuinely does not
+    # exist — exercises the actual missing-file failure, not a stand-in.
+    monkeypatch.setattr(main, "load_catalog_entries", _entries(TOPOLOGY_ENTRY))
+    monkeypatch.setattr(main, "CATALOG_DIR", str(tmp_path))
+    _mock_budget_io(monkeypatch, supply=_fit_supply())
+    client = _client()
+    with caplog.at_level(logging.INFO, logger="dmf_cms.main"):
+        resp = client.post("/api/catalog/mxl-videotestsrc/deploy", json={"reason": "x"})
+    assert resp.status_code == 422, resp.text
+    body = resp.json()
+    assert body["error"] == "topology-invalid"
+    assert awx_spy == []
+    assert any("outcome=topology-invalid" in m for m in _audit_lines(caplog))
+
+
+def test_topology_entry_invalid_yaml_is_422_topology_invalid_not_409(monkeypatch, awx_spy, tmp_path, caplog):
+    # Same as above, real load_topology_instance against a genuinely
+    # unparseable YAML file for the referenced topology_ref.
+    (tmp_path / "topology-params.j1.yaml").write_text("{not: valid: yaml: [")
+    monkeypatch.setattr(main, "load_catalog_entries", _entries(TOPOLOGY_ENTRY))
+    monkeypatch.setattr(main, "CATALOG_DIR", str(tmp_path))
+    _mock_budget_io(monkeypatch, supply=_fit_supply())
+    client = _client()
+    with caplog.at_level(logging.INFO, logger="dmf_cms.main"):
+        resp = client.post("/api/catalog/mxl-videotestsrc/deploy", json={"reason": "x"})
+    assert resp.status_code == 422, resp.text
+    body = resp.json()
+    assert body["error"] == "topology-invalid"
+    assert awx_spy == []
+    assert any("outcome=topology-invalid" in m for m in _audit_lines(caplog))
+
+
 def test_no_topology_entry_demand_unmultiplied_byte_identical(monkeypatch, awx_spy):
     # Same 1200m profile, no topology_ref: single (unmultiplied) demand
     # fits, and load_topology_instance must never even be consulted —
