@@ -495,7 +495,25 @@ async def _l3_preflight(
         # exists to prevent, and _resolve_topology_seam's own separate
         # validity check (right after this gate) does not compensate for a
         # capacity number this gate already certified too low.
-        topology_params, _terr = load_topology_instance(CATALOG_DIR, entry.topology_ref)
+        topology_params, terr = load_topology_instance(CATALOG_DIR, entry.topology_ref)
+        if terr is not None:
+            # A topology that fails to LOAD (missing file, invalid YAML, any
+            # other shape failure) is a topology-validity problem, not a
+            # capacity problem — this must never launder into this gate's own
+            # 409 missing-source-profile refusal (operator review on #347
+            # Arc 2 PR #71: silently converting every load failure into
+            # missing-source-profile hid _resolve_topology_seam's real 422
+            # behind a wrong 409). Refuse via the SAME 422 topology-invalid
+            # shape _resolve_topology_seam uses below — one error vocabulary
+            # for "the topology itself is bad", not two.
+            _audit_awx_write(
+                request, user, action="deploy", target=key, request_id=request_id, reason=reason,
+                outcome="topology-invalid",
+            )
+            return None, JSONResponse(
+                {"error": "topology-invalid", "detail": terr, "request_id": request_id},
+                status_code=422,
+            )
         multiplier = capacity.topology_source_count(topology_params)
         source_demand, source_reason = capacity.read_topology_source_profile_demand(topology_params)
         if source_demand is None:
