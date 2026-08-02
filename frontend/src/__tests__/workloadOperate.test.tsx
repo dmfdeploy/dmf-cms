@@ -104,6 +104,8 @@ interface FetchOpts {
   topology?: Record<string, unknown>
   /** Keyed by instance id: after this many successful topology reads for that instance, subsequent reads 500 — models a refetch that fails after an initial success, with react-query retaining the stale payload (mirrors planCapacity.test.tsx's facilityDetailFailAfter). */
   topologyFailAfter?: Record<string, number>
+  /** After this many grouped-inventory reads, subsequent reads return `workload` instead of the base fixture — models an inventory change observed on a later poll/refetch (same after-N-reads shape as topologyFailAfter). */
+  workloadAfter?: { reads: number; workload: MediaWorkload | null }
 }
 
 function mkFetch(opts: FetchOpts = {}) {
@@ -111,6 +113,7 @@ function mkFetch(opts: FetchOpts = {}) {
   const catalog = opts.catalog ?? [catalogEntry()]
   const calls: Array<{ url: string; init?: RequestInit }> = []
   const topologyCalls: Record<string, number> = {}
+  let groupedCalls = 0
 
   const fetchMock = vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
     const url = (typeof input === 'string' ? input : (input as Request).url).toString()
@@ -121,11 +124,14 @@ function mkFetch(opts: FetchOpts = {}) {
     }
     if (url.endsWith('/api/catalog')) return json({ entries: catalog })
     if (url.endsWith('/api/media-workloads/grouped')) {
+      groupedCalls += 1
+      const current =
+        opts.workloadAfter && groupedCalls > opts.workloadAfter.reads ? opts.workloadAfter.workload : wl
       return json({
         configured: opts.configured ?? true,
         degraded: opts.degraded ?? false,
         scope: [],
-        workloads: wl ? [wl] : [],
+        workloads: current ? [current] : [],
         invalid_instances: [],
       })
     }
@@ -321,6 +327,49 @@ describe('active source', () => {
     await waitFor(() => expect(screen.queryByRole('heading', { name: 'Active source' })).toBeNull())
     expect(screen.queryByText('source-a')).toBeNull()
     expect(screen.queryByText('source-b (ball)')).toBeNull()
+  })
+
+  it('unmounts the Active source panel when its only topology-bearing instance leaves the inventory', async () => {
+    // The defect the operator caught on PR #66 (fix round 3, 2026-08-02):
+    // ActiveSourceSection's hasTopology map is never pruned when an instance
+    // leaves `instances` — the wrapper used to read the whole map, so a
+    // departed instance's stale `true` kept outvoting every current row
+    // (all resolved to null), leaving an empty "Active source" panel behind.
+    const wl = workload({
+      instances: [
+        instance({ instance: 'viewer-1', function_key: 'viewer' }),
+        instance({ instance: 'crosspoint-2', function_key: 'crosspoint', netbox_id: 2 }),
+      ],
+      functions: [
+        { function_key: 'viewer', count: 1, running: 1, reconcile_pending: 0 },
+        { function_key: 'crosspoint', count: 1, running: 1, reconcile_pending: 0 },
+      ],
+    })
+    const wlAfter = workload({
+      instances: [instance({ instance: 'crosspoint-2', function_key: 'crosspoint', netbox_id: 2 })],
+      functions: [{ function_key: 'crosspoint', count: 1, running: 1, reconcile_pending: 0 }],
+    })
+    mkFetch({
+      workload: wl,
+      catalog: [catalogEntry(), catalogEntry({ key: 'viewer', display_name: 'MXL Viewer' })],
+      topology: { 'viewer-1': freshTopology() },
+      workloadAfter: { reads: 1, workload: wlAfter },
+    })
+    const queryClient = renderOperate()
+    await screen.findByRole('heading', { name: 'studio-a' })
+
+    await screen.findByRole('heading', { name: 'Active source' })
+    expect(screen.getByText('source-a')).toBeTruthy()
+    expect(within(section('Live view')).getByText('crosspoint-2')).toBeTruthy()
+
+    // A genuine react-query refetch of the grouped inventory — the same
+    // path the 15s poll (useMediaWorkloadsGrouped, hooks.ts:347-353) takes.
+    await queryClient.invalidateQueries({ queryKey: ['media-workloads-grouped'] })
+
+    await waitFor(() => expect(screen.queryByRole('heading', { name: 'Active source' })).toBeNull())
+    expect(screen.queryByText('source-a')).toBeNull()
+    // The remaining instance still renders — the route didn't collapse.
+    expect(within(section('Live view')).getByText('crosspoint-2')).toBeTruthy()
   })
 
   it('renders nothing for this section when no instance has a topology', async () => {

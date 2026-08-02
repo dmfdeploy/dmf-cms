@@ -251,12 +251,16 @@ function ActiveSourceSection({ instances }: { instances: MediaWorkloadInstance[]
   // running its own useInstanceTopology so a topology that resolves later
   // (or a sibling's that never does) can still flip the wrapper on. The
   // rows themselves are the existing null-if-absent contract; what varies
-  // here is only whether they sit inside a labelled panel or bare.
+  // here is only whether they sit inside a labelled panel or bare. The
+  // wrapper below reads hasTopology through this same `instances` list —
+  // an instance that leaves the inventory takes its vote with it, because
+  // nothing prunes hasTopology on unmount and a departed instance's last
+  // report is not evidence for a panel that describes the current fleet.
   const rows = instances.map((inst) => (
     <InstanceActiveSource key={inst.instance} instance={inst.instance} onResolved={reportTopology} />
   ))
 
-  if (!Object.values(hasTopology).some(Boolean)) {
+  if (!instances.some((inst) => hasTopology[inst.instance])) {
     // Nothing resolved yet (most workloads have no receiver at all): no
     // panel, no heading, no empty box — Art. 9 rules out designed chrome
     // around an absence as firmly as it rules out an undesigned blank.
