@@ -34,12 +34,20 @@ export default function ConfigureStage({
   actions,
   onBusyChange,
   onSwitchResult,
+  onJobStart,
 }: {
   workload: MediaWorkload
   state: StageState
   actions: StageActionId[]
   onBusyChange: (busy: boolean) => void
   onSwitchResult: (result: SwitchSourceResult) => void
+  /**
+   * Called synchronously in the same event that fires the switch mutation —
+   * the wizard's job-owner marker must not wait on this stage's own
+   * onBusyChange effect, which is one render behind the click (umbrella
+   * #347 WO-D1 spec A).
+   */
+  onJobStart: () => void
 }) {
   const allowed = actions.includes('switch-source')
   const [pending, setPending] = useState<Set<string>>(new Set())
@@ -78,7 +86,13 @@ export default function ConfigureStage({
     [setInstancePending],
   )
 
-  useEffect(() => onBusyChange(pending.size > 0), [pending, onBusyChange])
+  // #344: derived through the CURRENT instance list, not the pending Set's
+  // own size — a departed instance's pending flag has no fresh child to ever
+  // clear it, and .size counted it forever (ConfigureStage.tsx:45, :81, :127
+  // pre-fix). Filtering through workload.instances makes a departed row's
+  // stale `true` inert without any pruning effect.
+  const busy = workload.instances.some((inst) => pending.has(inst.instance))
+  useEffect(() => onBusyChange(busy), [busy, onBusyChange])
 
   const instances = [...workload.instances].sort((a, b) => a.instance.localeCompare(b.instance))
 
@@ -100,6 +114,7 @@ export default function ConfigureStage({
             allowed={allowed}
             onPendingChange={pendingCallbackFor(inst.instance)}
             onResult={onSwitchResult}
+            onJobStart={onJobStart}
           />
         ))}
       </div>
@@ -112,11 +127,13 @@ function InstanceSwitchControl({
   allowed,
   onPendingChange,
   onResult,
+  onJobStart,
 }: {
   instance: string
   allowed: boolean
   onPendingChange: (pending: boolean) => void
   onResult: (result: SwitchSourceResult) => void
+  onJobStart: () => void
 }) {
   const topology = useInstanceTopology(instance)
   const switchMutation = useSwitchSource()
@@ -158,6 +175,7 @@ function InstanceSwitchControl({
       !!observed_at &&
       Date.now() - new Date(observed_at).getTime() < OBSERVED_SOURCE_STALE_MS
     if (!stillFresh) return
+    onJobStart()
     switchMutation.mutate(
       { instance, sourceInstance: target, reason },
       {

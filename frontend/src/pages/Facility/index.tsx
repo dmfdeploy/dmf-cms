@@ -17,14 +17,6 @@ export default function Facility() {
 
   return (
     <div className="flex-1 overflow-y-auto p-6">
-      <div className="hero">
-        <div className="hero-copy">
-          <p className="kicker">Infrastructure</p>
-          <h1>Facility</h1>
-          <p>The physical facility this console operates.</p>
-        </div>
-      </div>
-
       {loading && (
         <div className="panel text-center py-8">
           <p className="text-muted text-sm">Loading facility inventory…</p>

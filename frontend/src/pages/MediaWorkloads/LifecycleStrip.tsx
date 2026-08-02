@@ -1,83 +1,254 @@
 import { Link } from 'react-router-dom'
-import { STAGES, type StageId } from '../../lib/workloadLifecycle'
+import { FLOW_STEPS, type FlowStepId, type FlowStepState } from '../../lib/workloadFlow'
 
 /**
- * The compact vocabulary strip: five Facility Orchestration stages, plus
- * Operate set apart under a Control label.
+ * The wizard rail (umbrella #347 WO-D1, operator direction 2026-08-02:
+ * "the EBU-colored rail as the prominent navigation spine"). Replaces the
+ * S1/Arc-B vocabulary strip's role: instead of a read-only chip row plus a
+ * separate numbered-step list below it, the five orchestration chips ARE the
+ * wizard's step selector — clicking one selects it, exactly one is mounted
+ * below (FlowStep.tsx).
  *
  * Per the operator's 2026-08-02 ruling on the EBU Facility Orchestration
- * Model graphic: Operate is NOT a sixth stage of the orchestration flow — it
- * falls under the Control vertical, a sibling column alongside Monitor and
- * Security, with the Media Workload Lifecycle axis crossing all of them.
- * This strip mirrors that grouping rather than flattening it: the five
- * orchestration stages (Design → Plan → Provision → Configure → Finalise &
- * Review) chain left to right, then a visual divider sets Operate apart
- * under its own "Control" group label. All six lifecycle names stay present
- * and verbatim — the console's outsider-pedagogy goal (umbrella #200) still
- * requires an EBU-literate viewer to count six — but the grouping now
- * matches the graphic instead of contradicting it.
+ * Model graphic, Operate is still not a sixth step of the orchestration
+ * flow — it sits in the Control vertical, set apart under its own group
+ * label and rendered as a real route link, never a wizard step.
  *
- * STAGES (lib/workloadLifecycle.ts) is untouched: its order still drives
- * classification elsewhere, so this component derives its own two groups
- * from it rather than reordering the source of truth.
+ * COLOUR IS STAGE IDENTITY, NEVER STATE. Each of the five chips carries a
+ * fixed EBU-mapping colour regardless of open/complete/locked/current — the
+ * hard gate is "never colour alone" (Constitution Art. 11), not "no colour
+ * ever": state is carried by the icon + text label + (for locked) a dashed
+ * border, layered on top of the constant identity fill.
  *
- * The Workspace-verticals direction — surfacing Control/Monitor/Security as
- * first-class workspace areas rather than strip annotations — is recorded as
- * umbrella issue dmfdeploy/dmfdeploy#345 (v0.2); this strip is the interim
- * presentation until that lands.
- *
- * It renders NO state of its own. The highlight comes from the same
- * classification driving the steps below, so the strip and the flow cannot
- * disagree about where the workload is.
+ * SELECTION AND POSITION ARE TWO DIFFERENT FACTS, deliberately never
+ * conflated onto one signal. `aria-pressed` + a focus-style outline mark
+ * which chip is SELECTED (mounted below); a separate "Current position" text
+ * + icon mark which chip is the backend-derived POSITION — the wizard can
+ * have the operator reviewing Design while the workload's position is
+ * Configure, and the rail has to say both without one overloading the
+ * other.
  */
+
+const STEP_LABEL: Record<FlowStepId, string> = {
+  design: 'Design',
+  plan: 'Plan',
+  provision: 'Provision',
+  configure: 'Configure',
+  finalise: 'Finalise & Review',
+}
+
+/** EBU-mapping identity colour per stage — constant across every state. */
+const STAGE_FILL: Record<FlowStepId, string> = {
+  design: 'bg-[#007A33] text-white',
+  plan: 'bg-[#7AC142] text-[#0F1720]',
+  provision: 'bg-[#9B9400] text-[#0F1720]',
+  configure: 'bg-[#F68B1F] text-[#0F1720]',
+  finalise: 'bg-[#92278F] text-white',
+}
+
+/** The Control vertical's own identity colour (EBU coral), for Operate. */
+const CONTROL_FILL = 'bg-[#F0523D] text-[#0F1720]'
+
+const STATE_TEXT: Record<FlowStepState, string> = {
+  current: 'Now',
+  open: 'Ready',
+  complete: 'Done',
+  record: 'Record',
+  locked: 'Locked',
+}
+
+function StateGlyph({ state }: { state: FlowStepState }) {
+  switch (state) {
+    case 'complete':
+      return (
+        <path
+          d="M20 6 9 17l-5-5"
+          stroke="currentColor"
+          strokeWidth="2.5"
+          fill="none"
+          strokeLinecap="round"
+          strokeLinejoin="round"
+        />
+      )
+    case 'locked':
+      return (
+        <path
+          d="M6 10V7a6 6 0 1112 0v3M5 10h14v10H5V10z"
+          stroke="currentColor"
+          strokeWidth="2"
+          fill="none"
+          strokeLinecap="round"
+          strokeLinejoin="round"
+        />
+      )
+    case 'record':
+      return (
+        <path
+          d="M4 6h16M4 12h16M4 18h10"
+          stroke="currentColor"
+          strokeWidth="2"
+          fill="none"
+          strokeLinecap="round"
+        />
+      )
+    case 'current':
+      return (
+        <path
+          d="M12 2l2.4 7.2H22l-6 4.6 2.4 7.2L12 16.4l-6.4 4.6L8 13.8l-6-4.6h7.6z"
+          fill="currentColor"
+        />
+      )
+    case 'open':
+    default:
+      return <circle cx="12" cy="12" r="6" fill="currentColor" />
+  }
+}
+
+/** The same "current position" glyph used inline, for the caption beneath. */
+function PositionGlyph() {
+  return (
+    <svg className="h-3 w-3 shrink-0" viewBox="0 0 24 24" fill="none" aria-hidden="true">
+      <path
+        d="M12 2l2.4 7.2H22l-6 4.6 2.4 7.2L12 16.4l-6.4 4.6L8 13.8l-6-4.6h7.6z"
+        fill="currentColor"
+      />
+    </svg>
+  )
+}
+
 export default function LifecycleStrip({
-  active,
+  steps,
+  activeStep,
+  current,
+  offFlow,
+  lockedReasons,
+  jobOwnerLabel,
+  jobInFlight,
+  onSelect,
   slug,
 }: {
-  /** The workload's stage, or null when the backend could not place it. */
-  active: StageId | null
+  steps: Record<FlowStepId, FlowStepState>
+  /** The wizard's mounted step — drives the selection outline + aria-pressed. */
+  activeStep: FlowStepId
+  /** The workload's backend-derived position, or null. */
+  current: FlowStepId | null
+  /** The workload's position is Operate — the Control chip carries it instead. */
+  offFlow: boolean
+  lockedReasons: Record<FlowStepId, string>
+  /** Verbatim stage label of the step that owns the in-flight job, if any. */
+  jobOwnerLabel: string | null
+  jobInFlight: boolean
+  onSelect: (step: FlowStepId) => void
   slug: string
 }) {
-  const flow = STAGES.filter((stage) => stage.id !== 'operate')
-  const operate = STAGES.find((stage) => stage.id === 'operate')!
-  const operateActive = operate.id === active
+  const jobReason = jobOwnerLabel
+    ? `A ${jobOwnerLabel} job is in progress — wait for its outcome.`
+    : ''
 
   return (
     <nav aria-label="Media workload lifecycle" className="mt-6">
-      <ol className="flex flex-wrap items-center gap-x-1 gap-y-2">
-        {flow.map((stage, i) => {
-          const isActive = stage.id === active
-          const chipClass = `badge text-xs ${
-            isActive ? 'bg-accent/20 text-accent' : 'bg-white/5 text-muted'
-          }`
-          return (
-            <li key={stage.id} className="flex items-center gap-1">
-              <span className={chipClass} aria-current={isActive ? 'step' : undefined}>
-                {stage.label}
-              </span>
-              {i < flow.length - 1 && (
-                <span className="text-muted/40" aria-hidden="true">
-                  ›
+      <ol className="flex flex-wrap items-start gap-x-3 gap-y-3">
+        {FLOW_STEPS.map((id) => {
+          const state = steps[id]
+          const locked = state === 'locked'
+          const isPosition = id === current
+          const isSelected = id === activeStep
+          const interactive = !jobInFlight && !locked
+
+          const chipClass = [
+            'flex items-center gap-2 rounded-lg border px-3 py-2 transition-shadow',
+            STAGE_FILL[id],
+            locked ? 'border-dashed border-white/40 opacity-60' : 'border-transparent',
+            isSelected ? 'ring-2 ring-white ring-offset-2 ring-offset-bg' : '',
+          ].join(' ')
+
+          const inner = (
+            <>
+              <svg className="h-4 w-4 shrink-0" viewBox="0 0 24 24" fill="none" aria-hidden="true">
+                <StateGlyph state={state} />
+              </svg>
+              <span className="flex flex-col items-start leading-tight">
+                <span className="text-xs font-semibold">{STEP_LABEL[id]}</span>
+                <span className="text-[10px] uppercase tracking-wide opacity-80">
+                  {jobInFlight ? 'Waiting' : STATE_TEXT[state]}
                 </span>
+              </span>
+            </>
+          )
+
+          return (
+            <li key={id} className="flex flex-col items-center gap-1">
+              {interactive ? (
+                <button
+                  type="button"
+                  className={chipClass}
+                  // Explicit accessible name — the visible chip also carries
+                  // a state word (Ready/Done/…) that shouldn't be part of
+                  // what a step selector is called.
+                  aria-label={STEP_LABEL[id]}
+                  aria-pressed={isSelected}
+                  aria-current={isPosition ? 'step' : undefined}
+                  onClick={() => onSelect(id)}
+                >
+                  {inner}
+                </button>
+              ) : (
+                <div
+                  className={chipClass}
+                  aria-label={STEP_LABEL[id]}
+                  aria-current={isPosition ? 'step' : undefined}
+                >
+                  {inner}
+                </div>
+              )}
+              {isPosition && (
+                <span className="flex items-center gap-1 text-[10px] text-muted">
+                  <PositionGlyph />
+                  Current position
+                </span>
+              )}
+              {locked && (
+                <span className="max-w-[9rem] text-center text-[10px] text-muted">
+                  {lockedReasons[id]}
+                </span>
+              )}
+              {jobInFlight && !locked && (
+                <span className="max-w-[9rem] text-center text-[10px] text-muted">{jobReason}</span>
               )}
             </li>
           )
         })}
-        <li className="flex items-center gap-2 border-l border-white/10 pl-2">
+
+        <li className="flex flex-col items-center gap-1 border-l border-white/10 pl-3">
           <span className="text-[10px] uppercase tracking-wide text-muted">Control</span>
-          {/* The one chip that navigates. Operate's content is
-              observational and lives on its own route; the chip is a
-              real link to a real page, so it is not a dead control. */}
-          <Link
-            to={`/media-workloads/${encodeURIComponent(slug)}/operate`}
-            className={`badge text-xs underline decoration-dotted underline-offset-2 hover:text-accent ${
-              operateActive ? 'bg-accent/20 text-accent' : 'bg-white/5 text-muted'
-            }`}
-            aria-current={operateActive ? 'step' : undefined}
-            title="Operate sits in the Control vertical — open its surface"
-          >
-            {operate.label}
-          </Link>
+          {!jobInFlight ? (
+            <Link
+              to={`/media-workloads/${encodeURIComponent(slug)}/operate`}
+              className={`rounded-lg px-3 py-2 text-xs font-semibold ${CONTROL_FILL} ${
+                offFlow ? 'ring-2 ring-white ring-offset-2 ring-offset-bg' : ''
+              }`}
+              aria-current={offFlow ? 'step' : undefined}
+              title="Operate sits in the Control vertical — open its surface"
+            >
+              Operate
+            </Link>
+          ) : (
+            <div
+              className={`rounded-lg px-3 py-2 text-xs font-semibold ${CONTROL_FILL}`}
+              title="Operate sits in the Control vertical — open its surface"
+            >
+              Operate
+            </div>
+          )}
+          {offFlow && (
+            <span className="flex items-center gap-1 text-[10px] text-muted">
+              <PositionGlyph />
+              Current position
+            </span>
+          )}
+          {jobInFlight && (
+            <span className="max-w-[9rem] text-center text-[10px] text-muted">{jobReason}</span>
+          )}
         </li>
       </ol>
     </nav>

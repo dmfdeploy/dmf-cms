@@ -101,10 +101,7 @@ export default function WorkloadOperate() {
   if (!workload) {
     return (
       <div className="flex-1 overflow-y-auto p-6">
-        <div className="hero">
-          <p className="kicker">Media Workloads</p>
-          <h1>Workload not found</h1>
-        </div>
+        <h1 className="text-lg font-semibold text-text">Workload not found</h1>
         <div className="panel mt-4 border border-amber-500/20 bg-amber-500/10 px-4 py-3 text-sm text-amber-200">
           No workload named &quot;{slug}&quot; is in your scope right now.
         </div>
@@ -129,14 +126,10 @@ export default function WorkloadOperate() {
 
   return (
     <div className="flex-1 overflow-y-auto p-6">
-      <div className="hero">
-        <p className="kicker">Media Workloads · Operate</p>
-        <h1 className="capitalize">{workload.name}</h1>
-        <p>
-          The monitoring surface for this workload — observed running state only.
-          Changes are requested at the flow's own steps, not from here.
-        </p>
-      </div>
+      <p className="text-sm text-muted">
+        The monitoring surface for this workload — observed running state only. Changes are
+        requested at the flow&apos;s own steps, not from here.
+      </p>
 
       <Link
         to={`/media-workloads/${workload.slug}`}

@@ -1,16 +1,14 @@
-import { useState, type ReactNode } from 'react'
+import { useEffect, useRef, useState, type ReactNode } from 'react'
 import { Link, useLocation, useParams } from 'react-router-dom'
 import { useCatalog, useMediaWorkloadsGrouped } from '../../api/hooks'
-import {
-  classifyWorkloadLifecycle,
-  stageActions,
-  type WorkloadLifecycleInput,
-} from '../../lib/workloadLifecycle'
+import { stageActions, type WorkloadLifecycleInput } from '../../lib/workloadLifecycle'
 import {
   FLOW_STEPS,
   classifyWorkloadFlow,
+  isStepOpenable,
   lifecycleBadge,
   type FlowStepId,
+  type FlowStepState,
 } from '../../lib/workloadFlow'
 import type { SwitchSourceResult } from '../../api/types'
 import FlowStep from './FlowStep'
@@ -23,49 +21,44 @@ import ConfigureStage from './stages/ConfigureStage'
 import FinaliseStage from './stages/FinaliseStage'
 
 /**
- * Workload detail — the GUIDED SEQUENTIAL FLOW (umbrella #285, operator
- * direction 2026-08-01).
+ * Workload detail — the WIZARD (umbrella #347 WO-D1, operator direction
+ * 2026-08-02: "the workload detail page becomes a wizard — one lifecycle
+ * step visible at a time, Next/Previous, the EBU-colored rail as the
+ * prominent navigation spine").
  *
- * S1 shipped this page as six stage cards stacked open at once under a
- * horizontal chip rail. The operator's verdict was "right direction, wrong
- * presentation": the model was correct, the page was not. This is the
- * rebuilt presentation, and every piece of S1 SUBSTANCE carries forward
- * underneath it unchanged — the state machine, the honesty states, and the
- * relocations that keep hidden nav items from darkening a feedback loop.
+ * Arc B (umbrella #285) rebuilt S1's six-stacked-cards page into a folding
+ * accordion: every step mounted, one pinned open, the rest behind a
+ * per-step Review/Hide toggle. The operator's verdict this round was
+ * narrower than that rebuild — not "wrong model", but "still too much page
+ * at once" — so this arc replaces the PRESENTATION again, once more leaving
+ * every piece of SUBSTANCE underneath it untouched: the state machine, the
+ * honesty states, and the busy-suppression invariants all carry forward
+ * exactly as lib/workloadFlow.ts and lib/workloadLifecycle.ts already
+ * derive them. Nothing here re-derives a lifecycle position or adds a UI
+ * classifier.
  *
- * THREE THINGS CHANGED, and only these:
+ * WHAT CHANGED THIS ROUND:
  *
- * 1. PROGRESSION IS GATED. A step opens when its predecessor completes
- *    ("only then"); completed steps stay reviewable. The gate is
- *    lib/workloadFlow.ts, which derives ordering FROM lib/workloadLifecycle
- *    .ts and so cannot contradict it. Position still comes from the
- *    backend's ADR-0046 derivation, consumed 1:1, never re-derived here.
+ * 1. EXACTLY ONE STEP IS MOUNTED. `selectedStep` is presentation state,
+ *    entirely separate from the flow's derived state — it is never
+ *    inferred from FlowStepState, only ever initialised/refreshed through
+ *    the priority order below and moved by Previous/Next/a rail click.
+ *    FlowStep.tsx no longer folds; it always renders whatever child it is
+ *    given, because selection can never land on a locked step in the first
+ *    place (the same invariant Arc B pinned, now enforced one level up).
  *
- * 2. OPERATE LEFT THE PAGE. It has no card and no step; its surface is the
- *    monitoring route at /media-workloads/<slug>/operate. It sits in the
- *    Control vertical (operator ruling 2026-08-02) — LifecycleStrip.tsx
- *    teaches the grouping (five orchestration stages + Control holding
- *    Operate), and its docstring carries that reasoning.
+ * 2. THE RAIL IS THE SELECTOR. LifecycleStrip.tsx's five orchestration
+ *    chips are now the wizard's navigation, coloured by EBU stage identity
+ *    (never state) with the selected chip carrying its own outline distinct
+ *    from the workload's actual backend-derived position. Operate remains
+ *    outside the flow, in the Control group, as a route link.
  *
- * 3. THE CHIP RAIL BECAME A VOCABULARY STRIP PLUS NUMBERED STEPS, because
- *    the rail was doing two jobs at once and blurring both: naming the model
- *    and indicating progress. The strip names the model; the steps carry the
- *    progress.
- *
- * WHAT THE STAGE PANELS ARE TOLD. Each panel still takes a StageState, but
- * this page no longer passes a per-stage classification down — the flow
- * state above it already decided what is open, and a second state travelling
- * alongside it could disagree. Panels receive 'available' exactly when the
- * flow reports the step `open` (which is itself derived from stageActions),
- * and 'informational' otherwise. A locked step renders no panel at all, so
- * 'not-applicable' has no remaining call site here: the gate expresses that
- * case now, and it expresses it by withholding the content rather than by
- * rendering a stage that explains its own emptiness.
- *
- * The job overlay (which write is in flight) is still this page's own local
- * state, deliberately not persisted: a reload re-derives purely from the
- * backend, which is correct — a job this tab forgot is still visible as
- * whatever lifecycle it left the workload in.
+ * 3. A JOB OWNS ITS PANEL. Firing a mutation synchronously marks its owning
+ *    step (`startJob`, called from the stage's own click handler, not from
+ *    a busy-effect one render later) so Previous/Next/every rail selector/
+ *    the Operate link go inert with a stated reason for exactly as long as
+ *    that job is in flight — never a window where navigation could strand
+ *    the operator away from the job they started.
  */
 
 /** Verbatim EBU stage names. Never abbreviate or re-word these. */
@@ -96,6 +89,30 @@ const LOCKED_REASON: Record<FlowStepId, string> = {
     'Nothing is running for this workload yet, so there is nothing to tear down. This step opens once Provision has deployed it.',
 }
 
+/**
+ * The wizard's default-selection priority order (spec A, "Initial
+ * selection"): an openable hash target first, then the backend position,
+ * then Finalise & Review for an operating workload, then Design. Re-applied
+ * verbatim whenever the current selection stops being openable — there is
+ * no separate "first mount" rule, only this order evaluated fresh.
+ */
+function defaultSelection(
+  steps: Record<FlowStepId, FlowStepState>,
+  current: FlowStepId | null,
+  offFlow: boolean,
+  requestedStep: string,
+): FlowStepId {
+  if (
+    FLOW_STEPS.includes(requestedStep as FlowStepId) &&
+    isStepOpenable(steps[requestedStep as FlowStepId])
+  ) {
+    return requestedStep as FlowStepId
+  }
+  if (current !== null) return current
+  if (offFlow) return 'finalise'
+  return 'design'
+}
+
 export default function WorkloadDetail() {
   const { slug } = useParams<{ slug: string }>()
   const { hash, state: routerState } = useLocation()
@@ -110,8 +127,90 @@ export default function WorkloadDetail() {
   const [switching, setSwitching] = useState(false)
   const [tearingDown, setTearingDown] = useState(false)
   const [lastSwitchResult, setLastSwitchResult] = useState<SwitchSourceResult | null>(null)
+  // The wizard's own presentation state — never derived from FlowStepState.
+  const [selectedStep, setSelectedStep] = useState<FlowStepId | null>(null)
+  // Which step's mutation is in flight, set SYNCHRONOUSLY by that stage's own
+  // click handler (see `startJob` below) — not read off the busy overlay,
+  // which only updates a render later via each stage's own onBusyChange
+  // effect. This is what lets Previous/Next/the rail refuse navigation with
+  // zero window for a race between "job fired" and "job owner recorded".
+  const [jobOwner, setJobOwner] = useState<FlowStepId | null>(null)
+  const panelRef = useRef<HTMLDivElement>(null)
+  const hashFocusedRef = useRef(false)
 
   const workload = data?.workloads.find((w) => w.slug === slug)
+  const jobInFlight = launching || switching || tearingDown
+
+  // Computed with a safe fallback so the hooks below can run unconditionally,
+  // in the same order, whether or not `workload` has resolved yet — rules of
+  // hooks forbids gating them behind the early returns further down, which
+  // all depend on `workload`/`data` in ways this page's designed states
+  // require.
+  const input: WorkloadLifecycleInput = {
+    lifecycle: workload?.lifecycle ?? 'unknown',
+    launching,
+    switching,
+    tearingDown,
+    // Member state, not position: clearing one of several siblings moves the
+    // position to configure while the rest still need clearing, so the flow
+    // has to be told what the workload NEEDS as well as where it IS
+    // (GATE-S1-RV3 P1). workloadFlow.ts ranks affordance above position for
+    // exactly this case, which is what keeps the clear path reachable inside
+    // an otherwise-completed Provision step.
+    hasBootstrappedMembers: workload
+      ? workload.instances.some((i) => !i.reconcile_pending && i.requested_state === 'bootstrapped')
+      : false,
+  }
+  const { steps, current, offFlow, undetermined } = classifyWorkloadFlow(input)
+  const badge = lifecycleBadge(input)
+
+  // A fragment aimed at a step selects+focuses that step on arrival. The
+  // Operate page's "request configuration change" link is the one caller.
+  // It only changes the initial selection — a locked step is never selected
+  // by it (defaultSelection's isStepOpenable guard), so a crafted fragment
+  // can never reach a control the gate closed.
+  const requestedStep = hash.replace(/^#/, '')
+
+  const activeStep =
+    selectedStep !== null && isStepOpenable(steps[selectedStep])
+      ? selectedStep
+      : defaultSelection(steps, current, offFlow, requestedStep)
+
+  // React's sanctioned "derived state" pattern: persist the computed
+  // fallback into state so a later query refresh that keeps the operator's
+  // step openable does NOT re-run this priority order — spec A is explicit
+  // that only ceasing to be openable re-triggers it.
+  //
+  // Gated on `workload` because `steps`/`current` above are computed from a
+  // SAFE FALLBACK ('unknown' lifecycle) while the query is still loading —
+  // committing that fallback's activeStep ('design', since current is null
+  // pre-load) into state would poison the real selection the instant the
+  // workload actually resolves: 'design' reads as `complete` under almost
+  // any real position, so isStepOpenable would call it still-openable and
+  // the wizard would open on Design forever instead of the true position.
+  useEffect(() => {
+    if (workload && activeStep !== selectedStep) setSelectedStep(activeStep)
+  }, [activeStep, selectedStep, workload])
+
+  // The job owner is cleared once the job settles (any of the three busy
+  // flags falls) — the START is synchronous (via startJob below); the END
+  // is not time-critical the same way, so an effect on jobInFlight is fine.
+  useEffect(() => {
+    if (!jobInFlight) setJobOwner(null)
+  }, [jobInFlight])
+
+  useEffect(() => {
+    if (
+      workload &&
+      !hashFocusedRef.current &&
+      requestedStep &&
+      FLOW_STEPS.includes(requestedStep as FlowStepId) &&
+      activeStep === requestedStep
+    ) {
+      panelRef.current?.focus()
+      hashFocusedRef.current = true
+    }
+  }, [activeStep, requestedStep, workload])
 
   if (isLoading) {
     return (
@@ -153,10 +252,7 @@ export default function WorkloadDetail() {
   if (!workload) {
     return (
       <div className="flex-1 overflow-y-auto p-6">
-        <div className="hero">
-          <p className="kicker">Media Workloads</p>
-          <h1>Workload not found</h1>
-        </div>
+        <h1 className="text-lg font-semibold text-text">Workload not found</h1>
         <div className="panel mt-4 border border-amber-500/20 bg-amber-500/10 px-4 py-3 text-sm text-amber-200">
           No workload named &quot;{slug}&quot; is in your scope right now.
         </div>
@@ -167,31 +263,41 @@ export default function WorkloadDetail() {
     )
   }
 
-  const input: WorkloadLifecycleInput = {
-    lifecycle: workload.lifecycle,
-    launching,
-    switching,
-    tearingDown,
-    // Member state, not position: clearing one of several siblings moves the
-    // position to configure while the rest still need clearing, so the flow
-    // has to be told what the workload NEEDS as well as where it IS
-    // (GATE-S1-RV3 P1). workloadFlow.ts ranks affordance above position for
-    // exactly this case, which is what keeps the clear path reachable inside
-    // an otherwise-completed Provision step.
-    hasBootstrappedMembers: workload.instances.some(
-      (i) => !i.reconcile_pending && i.requested_state === 'bootstrapped',
-    ),
-  }
-  const { active } = classifyWorkloadLifecycle(input)
-  const { steps, current, offFlow, undetermined } = classifyWorkloadFlow(input)
-  const badge = lifecycleBadge(input)
+  const activeIndex = FLOW_STEPS.indexOf(activeStep)
+  const prevStep = activeIndex > 0 ? FLOW_STEPS[activeIndex - 1] : null
+  const nextStep = activeIndex < FLOW_STEPS.length - 1 ? FLOW_STEPS[activeIndex + 1] : null
+  const canPrevious = !jobInFlight && prevStep !== null && steps[prevStep] !== 'locked'
+  const canNext = !jobInFlight && nextStep !== null && steps[nextStep] !== 'locked'
 
-  // A fragment aimed at a step folds that step open on arrival. The Operate
-  // page's "request configuration change" link is the one caller, and this
-  // is why that link lands on the work rather than at the top of the page.
-  // It only changes the initial fold — a locked step still renders nothing,
-  // so a crafted fragment can never reach a control the gate closed.
-  const requestedStep = hash.replace(/^#/, '')
+  const jobOwnerLabel = jobOwner ? STEP_LABEL[jobOwner] : null
+  const jobReasonText = jobOwnerLabel
+    ? `A ${jobOwnerLabel} job is in progress — wait for its outcome.`
+    : ''
+  const previousReason = jobInFlight
+    ? jobReasonText
+    : prevStep === null
+      ? 'This is the first step.'
+      : 'This step is locked.'
+  const nextReason = jobInFlight
+    ? jobReasonText
+    : nextStep === null
+      ? 'This is the last step.'
+      : 'This step is locked.'
+
+  const selectStep = (step: FlowStepId) => {
+    if (jobInFlight || steps[step] === 'locked') return
+    setSelectedStep(step)
+  }
+
+  // Called synchronously from a stage's own click handler, in the same event
+  // that fires its mutation — see the file docstring's point 3.
+  const startJob = (step: FlowStepId) => {
+    setJobOwner(step)
+    setSelectedStep(step)
+  }
+
+  const requestedIsLocked =
+    FLOW_STEPS.includes(requestedStep as FlowStepId) && steps[requestedStep as FlowStepId] === 'locked'
 
   const stageBody: Record<FlowStepId, ReactNode> = {
     design: (
@@ -209,6 +315,7 @@ export default function WorkloadDetail() {
         state={steps.provision === 'open' ? 'available' : 'informational'}
         actions={stageActions('provision', input)}
         onBusyChange={setLaunching}
+        onJobStart={() => startJob('provision')}
       />
     ),
     configure: (
@@ -218,6 +325,7 @@ export default function WorkloadDetail() {
         actions={stageActions('configure', input)}
         onBusyChange={setSwitching}
         onSwitchResult={setLastSwitchResult}
+        onJobStart={() => startJob('configure')}
       />
     ),
     finalise: (
@@ -227,32 +335,44 @@ export default function WorkloadDetail() {
         actions={stageActions('finalise', input)}
         onBusyChange={setTearingDown}
         lastSwitchResult={lastSwitchResult}
+        onJobStart={() => startJob('finalise')}
       />
     ),
   }
 
   return (
     <div className="flex-1 overflow-y-auto p-6">
-      <div className="hero">
-        <p className="kicker">Media Workloads</p>
-        <h1 className="capitalize">{workload.name}</h1>
-        <p>
-          <span
-            title={
-              badge.grammar === 'in-flight'
-                ? 'A job is running for this workload right now'
-                : badge.grammar === 'unknown'
-                  ? 'The facility source of truth could not place this workload'
-                  : 'The last lifecycle step this workload completed'
-            }
-          >
-            {badge.label}
-          </span>
+      {/* The lifecycle badge — resting-grammar label + degraded flag — moved
+          here from the retired hero: it is state anchored to the flow
+          surface, not page chrome. The workload's display name lives in the
+          topbar breadcrumb now (Shell). */}
+      <div className="flex flex-wrap items-center justify-between gap-3">
+        <span
+          className="badge text-sm"
+          title={
+            badge.grammar === 'in-flight'
+              ? 'A job is running for this workload right now'
+              : badge.grammar === 'unknown'
+                ? 'The facility source of truth could not place this workload'
+                : 'The last lifecycle step this workload completed'
+          }
+        >
+          {badge.label}
           {workload.health === 'degraded' ? ' · degraded' : ''}
-        </p>
+        </span>
       </div>
 
-      <LifecycleStrip active={active} slug={workload.slug} />
+      <LifecycleStrip
+        steps={steps}
+        activeStep={activeStep}
+        current={current}
+        offFlow={offFlow}
+        lockedReasons={LOCKED_REASON}
+        jobOwnerLabel={jobOwnerLabel}
+        jobInFlight={jobInFlight}
+        onSelect={selectStep}
+        slug={workload.slug}
+      />
 
       {/* Two different reasons no step is current. The page must not blur
           them into one shrug: one is the console failing to read the
@@ -282,34 +402,34 @@ export default function WorkloadDetail() {
         </div>
       )}
 
-      <div className="mt-4 space-y-4">
-        {FLOW_STEPS.map((id, i) => (
-          <FlowStep
-            key={id}
-            anchorId={id}
-            number={i + 1}
-            label={STEP_LABEL[id]}
-            state={steps[id]}
-            // The position step is pinned open. `current` from the flow is
-            // the POSITION — it stays the position even when the step reads
-            // `open` because it also bears an action, which is exactly the
-            // case where keying disclosure off the state string would fold
-            // away the control the operator came for.
-            pinned={id === current}
-            lockedReason={LOCKED_REASON[id]}
-            startExpanded={requestedStep === id}
-            summary={
-              id === current
-                ? 'The workload is here now'
-                : steps[id] === 'open'
-                  ? 'Ready — this step has something you can do'
-                  : undefined
-            }
-          >
-            {stageBody[id]}
-          </FlowStep>
-        ))}
-      </div>
+      {requestedIsLocked && (
+        <div
+          role="status"
+          aria-live="polite"
+          className="panel mt-4 border border-amber-500/20 bg-amber-500/10 px-4 py-3 text-sm text-amber-200"
+        >
+          {STEP_LABEL[requestedStep as FlowStepId]} isn&apos;t open yet:{' '}
+          {LOCKED_REASON[requestedStep as FlowStepId]}
+        </div>
+      )}
+
+      <FlowStep
+        ref={panelRef}
+        anchorId={activeStep}
+        number={activeIndex + 1}
+        label={STEP_LABEL[activeStep]}
+        state={steps[activeStep]}
+        isCurrentPosition={activeStep === current}
+        lockedReason={LOCKED_REASON[activeStep]}
+        canPrevious={canPrevious}
+        canNext={canNext}
+        onPrevious={() => prevStep && selectStep(prevStep)}
+        onNext={() => nextStep && selectStep(nextStep)}
+        previousReason={previousReason}
+        nextReason={nextReason}
+      >
+        {stageBody[activeStep]}
+      </FlowStep>
     </div>
   )
 }

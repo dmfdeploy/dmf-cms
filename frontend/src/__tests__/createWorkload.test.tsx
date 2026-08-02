@@ -396,7 +396,10 @@ describe('Provision: the deploy POST', () => {
     // stub route element, which means it kept passing after the stub was
     // removed and would have kept passing if the page HAD navigated.
     expect(screen.queryByText('Deploy accepted.')).toBeNull()
-    expect(screen.getByRole('heading', { name: 'Create media workload' })).toBeTruthy()
+    // Still on Create, not materializing: the studio-name field is unique to
+    // this page's own form (the retired per-page hero heading it used to
+    // assert against is gone — umbrella #347 WO-D1 spec C).
+    expect(screen.getByLabelText('Studio name')).toBeTruthy()
   })
 })
 

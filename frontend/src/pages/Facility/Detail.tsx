@@ -108,18 +108,8 @@ export default function FacilityDetail() {
   const query = useFacilityDetail(site ?? '')
   const state = classifyFacilityDetail(query)
 
-  const heading = state.data?.site.name || site || 'Facility'
-
   return (
     <div className="flex-1 overflow-y-auto p-6">
-      <div className="hero">
-        <div className="hero-copy">
-          <p className="kicker">Infrastructure</p>
-          <h1>{heading}</h1>
-          <p>Nodes, platform services, storage, and capacity for this facility.</p>
-        </div>
-      </div>
-
       {state.phase === 'loading' && (
         <div className="panel text-center py-8">
           <p className="text-muted text-sm">Loading facility detail…</p>

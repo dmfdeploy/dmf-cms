@@ -1,19 +1,26 @@
 /**
- * The workload detail page + its EBU lifecycle rail (umbrella #285 S1).
+ * The workload detail wizard + its EBU lifecycle rail (umbrella #347 WO-D1,
+ * operator direction 2026-08-02: "one lifecycle step visible at a time,
+ * Next/Previous, the EBU-colored rail as the prominent navigation spine").
  *
  * The single most important thing this file proves is that the deploy /
- * switch / teardown click paths SURVIVED relocation off Catalog and
- * InstanceLiveModal onto Provision / Configure / Finalise & Review: arm →
+ * switch / teardown click paths SURVIVED the restructure from an
+ * all-steps-mounted accordion (Arc B) to a single-step-mounted wizard: arm →
  * nothing fires → reason (and, for switch, a target) required → Confirm →
  * exactly one POST with the expected body → the job/outcome renders.
  *
- * Alongside that: every stage renders at every reachable state, a
- * not-applicable stage is always prose (never a control), no stage ever
- * renders an action lib/workloadLifecycle.ts's stageActions() did not
- * authorise, the null-active (`lifecycle: 'unknown'`) case renders the
+ * Alongside that: every stage renders at every reachable state, a locked
+ * step is always prose with no rail control (never a control anywhere), no
+ * stage ever renders an action lib/workloadLifecycle.ts's stageActions() did
+ * not authorise, the null-active (`lifecycle: 'unknown'`) case renders the
  * honest undetermined rail, and — the cross-stage architectural risk this
- * page's design takes on — a job in flight on ONE stage suppresses the
- * action on every OTHER stage, not just its own.
+ * page's design takes on — a job in flight on ONE stage suppresses
+ * navigation everywhere, not just its own stage's action.
+ *
+ * The wizard-specific navigation contract (Previous/Next/rail selection
+ * gating, job ownership, membership-change-while-pending) has its own
+ * dedicated regression suite in workloadDetailWizard.test.tsx — that file is
+ * this WO's required Acceptance Criterion 1 test.
  */
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import { cleanup, fireEvent, render, screen, waitFor, within } from '@testing-library/react'
@@ -272,28 +279,29 @@ function renderDetail(slug = 'studio-a') {
   )
 }
 
-// Scope assertions to one flow step via its <h2>, not aria landmark
-// inference — robust regardless of how <section aria-label> maps to roles.
-function stageSection(label: string): HTMLElement {
-  const heading = screen.getByRole('heading', { name: label, level: 2 })
-  return heading.closest('section') as HTMLElement
+/** Waits for the wizard to finish loading — the rail only mounts once the
+ *  workload has resolved, replacing the old per-page hero heading wait. */
+async function findRail(): Promise<HTMLElement> {
+  return screen.findByRole('navigation', { name: 'Media workload lifecycle' })
 }
 
-/**
- * ARC B: the flow folds. Only the step the workload is AT is pinned open;
- * every other openable step is collapsed behind a Review control, and a
- * locked step renders no body at all.
- *
- * So a test that reaches into a step it did not navigate to must open it
- * first, exactly as the operator would. This helper is deliberately NOT a
- * bypass — it clicks the same control the operator clicks, and it cannot
- * open a locked step (there is no Review control on one), which is what
- * keeps these tests honest about what the gate actually permits.
- */
-function openStep(label: string): HTMLElement {
-  const section = stageSection(label)
-  const review = within(section).queryByRole('button', { name: 'Review' })
-  if (review) fireEvent.click(review)
+function rail(): HTMLElement {
+  return screen.getByRole('navigation', { name: 'Media workload lifecycle' })
+}
+
+// Scope assertions to the wizard's currently MOUNTED step via its <h2> — the
+// wizard mounts exactly one step at a time, so this only finds the step the
+// operator has actually navigated to (matching what the gate genuinely
+// permits — the same discipline the old accordion's openStep() enforced).
+function stageSection(label: string): HTMLElement {
+  const heading = screen.getByRole('heading', { name: label, level: 2 })
+  return heading.closest('[data-step-state]') as HTMLElement
+}
+
+/** Clicks the rail chip for `label` (must be openable — a locked step has
+ *  no button to click, by design) and returns the newly-mounted section. */
+function selectStep(label: string): HTMLElement {
+  fireEvent.click(within(rail()).getByRole('button', { name: label }))
   return stageSection(label)
 }
 
@@ -308,22 +316,17 @@ afterEach(() => {
 // ---- rail: all six stages, every state -------------------------------
 
 describe('the flow is five steps under a six-stage vocabulary', () => {
-  // ARC B replaces S1's "six stage cards always visible". The MODEL is
-  // unchanged and still has to be taught in full — an EBU-literate viewer
-  // must be able to count six — but the WORKING FLOW covers the five
-  // orchestration stages, because Operate is something you watch rather
-  // than something you work through. Both halves are asserted here, and
-  // together they are the pedagogy guarantee umbrella #200 tests for.
-  it('renders five worked steps for every backend lifecycle value, including unknown', async () => {
+  it('names all five orchestration steps in the rail for every backend lifecycle value, including unknown', async () => {
     for (const lifecycle of ['provision', 'configure', 'operate', 'unknown'] as const) {
       cleanup()
       mkFetch({ workload: workload({ lifecycle }) })
       renderDetail()
-      await screen.findByRole('heading', { name: 'studio-a' })
+      const strip = await findRail()
       for (const label of ['Design', 'Plan', 'Provision', 'Configure', 'Finalise & Review']) {
-        expect(stageSection(label), `${label} @ lifecycle=${lifecycle}`).toBeTruthy()
+        expect(within(strip).getByText(label), `${label} @ lifecycle=${lifecycle}`).toBeTruthy()
       }
-      // Operate has no step, at any lifecycle value.
+      // Operate has no step, at any lifecycle value — it never becomes a
+      // mounted wizard panel.
       expect(
         screen.queryByRole('heading', { name: 'Operate', level: 2 }),
         `Operate must not be a step @ lifecycle=${lifecycle}`,
@@ -334,9 +337,7 @@ describe('the flow is five steps under a six-stage vocabulary', () => {
   it('names all six lifecycle stages in the vocabulary strip, verbatim, Operate included', async () => {
     mkFetch({ workload: workload({ lifecycle: 'provision' }) })
     renderDetail()
-    await screen.findByRole('heading', { name: 'studio-a' })
-
-    const strip = screen.getByRole('navigation', { name: 'Media workload lifecycle' })
+    const strip = await findRail()
     for (const label of [
       'Design',
       'Plan',
@@ -352,9 +353,7 @@ describe('the flow is five steps under a six-stage vocabulary', () => {
   it('makes the Operate chip a link out to the monitoring surface, not a step', async () => {
     mkFetch({ workload: workload({ lifecycle: 'operate' }) })
     renderDetail()
-    await screen.findByRole('heading', { name: 'studio-a' })
-
-    const strip = screen.getByRole('navigation', { name: 'Media workload lifecycle' })
+    const strip = await findRail()
     const operate = within(strip).getByRole('link', { name: 'Operate' })
     expect(operate.getAttribute('href')).toBe('/media-workloads/studio-a/operate')
   })
@@ -365,11 +364,11 @@ describe('the flow is five steps under a six-stage vocabulary', () => {
     // must render that as a visible group split, not just a flat six.
     mkFetch({ workload: workload({ lifecycle: 'provision' }) })
     renderDetail()
-    await screen.findByRole('heading', { name: 'studio-a' })
-
-    const strip = screen.getByRole('navigation', { name: 'Media workload lifecycle' })
+    const strip = await findRail()
     expect(within(strip).getByText('Control'), 'Control group label missing').toBeTruthy()
 
+    // Each label lives in its own span, separate from its state word, so an
+    // exact-text match finds exactly the label chips in rail order.
     const chipTexts = within(strip)
       .getAllByText(/^(Design|Plan|Provision|Configure|Finalise & Review|Control|Operate)$/)
       .map((el) => el.textContent)
@@ -390,7 +389,7 @@ describe('the flow is five steps under a six-stage vocabulary', () => {
     // off-flow half; the undetermined half is asserted below.
     mkFetch({ workload: workload({ lifecycle: 'operate' }) })
     renderDetail()
-    await screen.findByRole('heading', { name: 'studio-a' })
+    await findRail()
 
     const panel = screen.getByText(/This workload is operating/)
     expect(panel).toBeTruthy()
@@ -408,7 +407,7 @@ describe('the honest undetermined flow (backend lifecycle=unknown)', () => {
   it('opens no step and says so honestly, instead of guessing', async () => {
     mkFetch({ workload: workload({ lifecycle: 'unknown' }) })
     renderDetail()
-    await screen.findByRole('heading', { name: 'studio-a' })
+    const strip = await findRail()
 
     expect(screen.getByText(/could not place this workload in its lifecycle/)).toBeTruthy()
     expect(screen.queryByText('Now')).toBeNull()
@@ -416,54 +415,56 @@ describe('the honest undetermined flow (backend lifecycle=unknown)', () => {
     // both report no current step, and the page must not blur them.
     expect(screen.queryByText(/This workload is operating/)).toBeNull()
 
-    // The three runtime steps are locked, rendered as prose with no control
-    // — never a guessed position, never a dead button.
+    // The three runtime steps are locked in the rail: no control at all
+    // (not even a way to select them), and each states its reason.
     for (const label of ['Provision', 'Configure', 'Finalise & Review']) {
-      const section = stageSection(label)
-      expect(within(section).queryByRole('button'), `${label} bears a control`).toBeNull()
+      expect(within(strip).queryByRole('button', { name: label }), `${label} bears a control`).toBeNull()
     }
   })
 
   it('keeps Design and Plan readable, because a choice already made is still a fact', async () => {
-    // Carried over from S1 deliberately. Design and Plan describe CHOICES,
-    // not runtime, so an unreadable position is no reason to hide them —
-    // locking them would withhold truth the console is holding. They read
-    // as `record` rather than `complete`, because "complete" would claim
-    // the workload got past them and that is exactly what is unknown.
+    // Carried over from S1/Arc B deliberately. Design and Plan describe
+    // CHOICES, not runtime, so an unreadable position is no reason to hide
+    // them — locking them would withhold truth the console is holding.
+    // They read as `record` rather than `complete`, because "complete"
+    // would claim the workload got past them and that is exactly what is
+    // unknown.
     mkFetch({ workload: workload({ lifecycle: 'unknown' }) })
     renderDetail()
-    await screen.findByRole('heading', { name: 'studio-a' })
+    await findRail()
 
-    for (const label of ['Design', 'Plan']) {
-      expect(stageSection(label).getAttribute('data-step-state')).toBe('record')
-    }
-    expect(within(openStep('Design')).getByText('MXL Crosspoint')).toBeTruthy()
+    // Design is the wizard's default selection here (no current position,
+    // not off-flow) — mounted with no navigation required.
+    expect(stageSection('Design').getAttribute('data-step-state')).toBe('record')
+    expect(within(stageSection('Design')).getByText('MXL Crosspoint')).toBeTruthy()
+
+    const planSection = selectStep('Plan')
+    expect(planSection.getAttribute('data-step-state')).toBe('record')
   })
 })
 
-describe('locked steps are always prose, never a control', () => {
-  it('lifecycle=provision: Configure and Finalise explain themselves with no button', async () => {
+describe('locked steps are always prose in the rail, never a control', () => {
+  it('lifecycle=provision: Configure and Finalise explain themselves with no rail control', async () => {
     mkFetch({ workload: workload({ lifecycle: 'provision' }) })
     renderDetail()
-    await screen.findByRole('heading', { name: 'studio-a' })
+    const strip = await findRail()
 
-    // S1 asserted this on 'not-applicable' stage cards, which rendered
-    // their own explanatory prose. Arc B gates them instead: the step is
-    // locked and states the reason, and — the stronger property — renders
-    // no body at all, so there is nothing inside to disable.
-    const configureSection = stageSection('Configure')
-    expect(configureSection.getAttribute('data-step-state')).toBe('locked')
-    expect(within(configureSection).getByText(/there is no source to select/)).toBeTruthy()
-    expect(within(configureSection).queryByRole('button')).toBeNull()
+    // Arc B/S1 asserted this on 'not-applicable' stage cards, which rendered
+    // their own explanatory prose. The wizard gates one level up: a locked
+    // step has no rail control at all, and the rail itself states why.
+    expect(within(strip).queryByRole('button', { name: 'Configure' })).toBeNull()
+    expect(within(strip).getByText(/there is no source to select/)).toBeTruthy()
+    expect(within(strip).queryByRole('button', { name: 'Finalise & Review' })).toBeNull()
+    expect(within(strip).getByText(/nothing to tear down/)).toBeTruthy()
 
-    const finaliseSection = stageSection('Finalise & Review')
-    expect(finaliseSection.getAttribute('data-step-state')).toBe('locked')
-    expect(within(finaliseSection).getByText(/nothing to tear down/)).toBeTruthy()
-    expect(within(finaliseSection).queryByRole('button', { name: /Teardown/ })).toBeNull()
-
-    // Only Provision — the one authorised action at this lifecycle — bears
-    // a deploy control, and it is the pinned step so it needs no expanding.
-    expect(within(stageSection('Provision')).getByRole('button', { name: '▶ Deploy' })).toBeTruthy()
+    // Provision is the one authorised action at this lifecycle, and it is
+    // the workload's position — auto-selected, no navigation required. Its
+    // state reads `open`, not `current`: it bears the deploy action, and
+    // affordance outranks position in workloadFlow.ts's own ladder (the
+    // same rule Configure/'switch-source' pins in workloadFlow.test.ts).
+    const provisionSection = stageSection('Provision')
+    expect(provisionSection.getAttribute('data-step-state')).toBe('open')
+    expect(within(provisionSection).getByRole('button', { name: '▶ Deploy' })).toBeTruthy()
   })
 
   it('renders the desired-state clear control on Provision, under the rail, and never on Finalise', async () => {
@@ -478,17 +479,16 @@ describe('locked steps are always prose, never a control', () => {
     })
     mkFetch({ workload: wl })
     renderDetail()
-    await screen.findByRole('heading', { name: 'studio-a' })
+    const strip = await findRail()
 
     expect(
       within(stageSection('Provision')).getByRole('button', { name: 'Clear for deployment' }),
     ).toBeTruthy()
 
-    const finaliseSection = stageSection('Finalise & Review')
-    expect(within(finaliseSection).getByText(/nothing to tear down/)).toBeTruthy()
-    expect(
-      within(finaliseSection).queryByRole('button', { name: 'Clear for deployment' }),
-    ).toBeNull()
+    // Finalise is locked — never mounted, never a control, its own reason
+    // stated in the rail.
+    expect(within(strip).queryByRole('button', { name: 'Finalise & Review' })).toBeNull()
+    expect(within(strip).getByText(/nothing to tear down/)).toBeTruthy()
   })
 
   it('suppresses the clear control while a job is in flight, like every other action', async () => {
@@ -500,7 +500,7 @@ describe('locked steps are always prose, never a control', () => {
     })
     mkFetch({ workload: wl })
     renderDetail()
-    await screen.findByRole('heading', { name: 'studio-a' })
+    await findRail()
 
     // Arm and fire a deploy so a launch job is in flight.
     const provision = stageSection('Provision')
@@ -524,7 +524,7 @@ describe('Provision: deploy click path', () => {
   it('arms, fires nothing until a reason is entered, then POSTs and shows job progress', async () => {
     const { deploy } = mkFetch({ workload: workload({ lifecycle: 'provision' }) })
     renderDetail()
-    await screen.findByRole('heading', { name: 'studio-a' })
+    await findRail()
 
     const provisionSection = stageSection('Provision')
     fireEvent.click(within(provisionSection).getByRole('button', { name: '▶ Deploy' }))
@@ -552,7 +552,7 @@ describe('Provision: deploy click path', () => {
       catalog: [catalogEntry({ lifecycle: 'active' })],
     })
     renderDetail()
-    await screen.findByRole('heading', { name: 'studio-a' })
+    await findRail()
     const provisionSection = stageSection('Provision')
     expect(within(provisionSection).queryByRole('button', { name: '▶ Deploy' })).toBeNull()
     expect(within(provisionSection).getByText('Already deployed.')).toBeTruthy()
@@ -568,9 +568,9 @@ describe('Configure: switch click path', () => {
       topology: { 'viewer-1': freshTopology() },
     })
     renderDetail()
-    await screen.findByRole('heading', { name: 'studio-a' })
+    await findRail()
 
-    const configureSection = openStep('Configure')
+    const configureSection = selectStep('Configure')
     const switchButton = await within(configureSection).findByRole('button', { name: 'Switch source' })
     fireEvent.click(switchButton)
 
@@ -596,7 +596,7 @@ describe('Configure: switch click path', () => {
 
     // The structured outcome is also the Finalise & Review "review" — the
     // same DMF_L3_SWITCH_OUTCOME data, not a re-derived summary.
-    const finaliseSection = openStep('Finalise & Review')
+    const finaliseSection = selectStep('Finalise & Review')
     expect(within(finaliseSection).getByText(/Last switch outcome/)).toBeTruthy()
   })
 
@@ -610,8 +610,8 @@ describe('Configure: switch click path', () => {
       },
     })
     renderDetail()
-    await screen.findByRole('heading', { name: 'studio-a' })
-    const configureSection = openStep('Configure')
+    await findRail()
+    const configureSection = selectStep('Configure')
     await within(configureSection).findByText(/Live source is unknown or stale/)
     expect(within(configureSection).queryByRole('button', { name: 'Switch source' })).toBeNull()
   })
@@ -624,9 +624,12 @@ describe('Finalise & Review: teardown click path', () => {
       catalog: [catalogEntry({ lifecycle: 'active' })],
     })
     renderDetail()
-    await screen.findByRole('heading', { name: 'studio-a' })
+    await findRail()
 
-    const finaliseSection = openStep('Finalise & Review')
+    // lifecycle=operate is off-flow, so Finalise & Review is the wizard's
+    // default selection already — selectStep still works, clicking an
+    // already-selected chip is harmless.
+    const finaliseSection = selectStep('Finalise & Review')
     fireEvent.click(within(finaliseSection).getByRole('button', { name: '⏏ Teardown' }))
 
     expect(teardown).toHaveLength(0)
@@ -649,8 +652,8 @@ describe('Finalise & Review: teardown click path', () => {
       catalog: [catalogEntry({ lifecycle: 'bootstrapped' })],
     })
     renderDetail()
-    await screen.findByRole('heading', { name: 'studio-a' })
-    const finaliseSection = openStep('Finalise & Review')
+    await findRail()
+    const finaliseSection = selectStep('Finalise & Review')
     expect(within(finaliseSection).queryByRole('button', { name: '⏏ Teardown' })).toBeNull()
     expect(within(finaliseSection).getByText('Not currently deployed.')).toBeTruthy()
   })
@@ -658,8 +661,8 @@ describe('Finalise & Review: teardown click path', () => {
 
 // ---- cross-stage suppression: the architectural risk this page takes on
 
-describe('a job in flight suppresses every OTHER stage\'s action, not just its own', () => {
-  it('a pending switch removes Finalise\'s teardown button until it resolves', async () => {
+describe('a job in flight suppresses navigation everywhere, not just its own stage', () => {
+  it('blocks the rail while a switch is pending, then releases it — and Finalise is genuinely live after, not just reachable', async () => {
     const wl = viewerWorkload()
     const { releaseSwitch } = mkFetch({
       workload: wl,
@@ -668,48 +671,48 @@ describe('a job in flight suppresses every OTHER stage\'s action, not just its o
       holdSwitch: true,
     })
     renderDetail()
-    await screen.findByRole('heading', { name: 'studio-a' })
+    await findRail()
 
-    const configureSection = openStep('Configure')
-    // Finalise is opened up front so the teardown control's disappearance
-    // below is a real suppression, not merely a step that stayed folded.
-    openStep('Finalise & Review')
+    const configureSection = selectStep('Configure')
     fireEvent.click(await within(configureSection).findByRole('button', { name: 'Switch source' }))
     fireEvent.change(within(configureSection).getByPlaceholderText(REASON_PLACEHOLDER), {
       target: { value: 'go' },
     })
     fireEvent.change(within(configureSection).getByRole('combobox'), { target: { value: 'source-b' } })
 
-    // Before Confirm: Finalise still offers Teardown (nothing in flight yet).
-    expect(within(stageSection('Finalise & Review')).getByRole('button', { name: '⏏ Teardown' })).toBeTruthy()
+    // Before Confirm: Finalise is still a real, navigable rail step.
+    expect(within(rail()).getByRole('button', { name: 'Finalise & Review' })).toBeTruthy()
 
     fireEvent.click(within(configureSection).getByRole('button', { name: 'Confirm switch' }))
 
-    // The switch is now pending (fetch is held open) — stageActions()
-    // suppresses EVERY stage's action while any job is in flight, so
-    // Finalise's Teardown button must vanish even though it never touched
-    // the switch itself.
+    // The switch is now pending (fetch is held open) — every rail selector
+    // goes inert with the stated reason, not just Configure's own, and the
+    // mounted panel's own Next/Previous do too.
     await waitFor(() => {
-      expect(
-        within(stageSection('Finalise & Review')).queryByRole('button', { name: '⏏ Teardown' }),
-      ).toBeNull()
+      expect(within(rail()).queryByRole('button', { name: 'Finalise & Review' })).toBeNull()
     })
+    // Every rail item states the same reason — not just the acting stage's.
+    expect(within(rail()).getAllByText(/A Configure job is in progress/).length).toBeGreaterThan(0)
+    expect(within(stageSection('Configure')).queryByRole('button', { name: 'Next →' })).toBeNull()
 
     releaseSwitch()
 
-    // Once the switch resolves, the rail is idle again and Teardown returns.
+    // Once the switch resolves, the rail is idle again and Finalise is
+    // reachable — and its OWN Teardown control is live there, which is the
+    // real discriminator: a suppression that silently outlived the job would
+    // still show a navigable-but-dead Finalise.
     await waitFor(() => {
-      expect(
-        within(stageSection('Finalise & Review')).getByRole('button', { name: '⏏ Teardown' }),
-      ).toBeTruthy()
+      expect(within(rail()).getByRole('button', { name: 'Finalise & Review' })).toBeTruthy()
     })
+    const finaliseSection = selectStep('Finalise & Review')
+    expect(within(finaliseSection).getByRole('button', { name: '⏏ Teardown' })).toBeTruthy()
   })
 })
 
 // ---- Design + Plan: informational, never an action ---------------------
 
 describe('Design: read-only template + composition', () => {
-  it('shows the catalog template and the receiver composition, with no control', async () => {
+  it('shows the catalog template and the receiver composition, with no stage-owned control', async () => {
     const wl = viewerWorkload()
     mkFetch({
       workload: wl,
@@ -724,20 +727,22 @@ describe('Design: read-only template + composition', () => {
       topology: { 'viewer-1': freshTopology() },
     })
     renderDetail()
-    await screen.findByRole('heading', { name: 'studio-a' })
+    await findRail()
 
-    const designSection = openStep('Design')
+    const designSection = selectStep('Design')
     expect(within(designSection).getByText('MXL Viewer')).toBeTruthy()
     expect(within(designSection).getByText('Renders a media flow.')).toBeTruthy()
     expect(await within(designSection).findByText(/composed of/)).toBeTruthy()
-    // Design carries no ACTION. The only button in the step is FlowStep's
-    // own disclosure control — chrome, not an affordance the stage offers —
-    // so the assertion names it rather than banning buttons outright, which
-    // would now fail for a reason that has nothing to do with the invariant.
+    // Design carries no ACTION. Any button inside the mounted step is the
+    // wizard's own Previous/Next navigation chrome, never a stage-owned
+    // affordance — named rather than banning buttons outright, which would
+    // now fail for a reason unrelated to the invariant being pinned.
     const designButtons = within(designSection)
       .queryAllByRole('button')
       .map((b) => b.textContent)
-    expect(designButtons).toEqual(['Hide'])
+    expect(designButtons.every((t) => t === '← Previous' || t === 'Next →'), designButtons.join(',')).toBe(
+      true,
+    )
   })
 
   // umbrella #339 item 5: this is the state that produced the 404s — the
@@ -754,13 +759,9 @@ describe('Design: read-only template + composition', () => {
       topologyStatus: { 'viewer-1': 404 },
     })
     renderDetail()
-    await screen.findByRole('heading', { name: 'studio-a' })
+    await findRail()
 
-    // Arc B folds the flow: this fixture is a viewerWorkload (lifecycle
-    // 'operate'), so no step is pinned and Design is collapsed. The
-    // assertion is unchanged — only the step has to be opened first, the
-    // same click the operator makes.
-    const designSection = openStep('Design')
+    const designSection = selectStep('Design')
     expect(
       await within(designSection).findByText(/isn't in the current catalog/),
     ).toBeTruthy()
@@ -775,8 +776,8 @@ describe('Plan: the assigned facility', () => {
   it('links to the single registered facility', async () => {
     mkFetch({ facilitySites: [{ name: 'dmf-lab', slug: 'dmf-lab', device_count: 4 }] })
     renderDetail()
-    await screen.findByRole('heading', { name: 'studio-a' })
-    const planSection = openStep('Plan')
+    await findRail()
+    const planSection = selectStep('Plan')
     const link = await within(planSection).findByRole('link', { name: 'dmf-lab' })
     expect(link.getAttribute('href')).toBe('/facilities/dmf-lab')
   })
@@ -784,8 +785,8 @@ describe('Plan: the assigned facility', () => {
   it('gives an honest non-answer when no facility is registered, never a guess', async () => {
     mkFetch({ facilitySites: [] })
     renderDetail()
-    await screen.findByRole('heading', { name: 'studio-a' })
-    const planSection = openStep('Plan')
+    await findRail()
+    const planSection = selectStep('Plan')
     expect(await within(planSection).findByText(/can't be shown/)).toBeTruthy()
     expect(within(planSection).queryByRole('link')).toBeNull()
   })
@@ -877,7 +878,7 @@ describe('a clear in flight owns the rail like any other write', () => {
       clearDelay: new Promise((r) => { releaseClear = r }),
     })
     renderDetail()
-    await screen.findByRole('heading', { name: 'studio-a' })
+    await findRail()
 
     const provision = stageSection('Provision')
     const clears = within(provision).getAllByRole('button', { name: 'Clear for deployment' })
@@ -918,7 +919,7 @@ describe('a successful clear closes its own loop', () => {
     })
     const h = mkFetch({ workload: wl })
     renderDetail()
-    await screen.findByRole('heading', { name: 'studio-a' })
+    await findRail()
 
     const before = h.calls.grouped
     const provision = stageSection('Provision')
@@ -965,7 +966,7 @@ describe("clearing one sibling never strands the other (GATE-S1-RV3 P1)", () => 
       }),
     })
     renderDetail()
-    await screen.findByRole('heading', { name: 'studio-a' })
+    await findRail()
     expect(
       within(stageSection('Provision')).getAllByRole('button', { name: 'Clear for deployment' }),
     ).toHaveLength(2)
@@ -1006,7 +1007,7 @@ describe('failure and loop-closure are visible and atomic', () => {
       clearStatus: 500,
     })
     renderDetail()
-    await screen.findByRole('heading', { name: 'studio-a' })
+    await findRail()
 
     const provision = stageSection('Provision')
     fireEvent.click(within(provision).getByRole('button', { name: 'Clear for deployment' }))
@@ -1035,7 +1036,7 @@ describe('failure and loop-closure are visible and atomic', () => {
       groupedGate: new Promise((r) => { releaseGrouped = r }),
     })
     renderDetail()
-    await screen.findByRole('heading', { name: 'studio-a' })
+    await findRail()
 
     const provision = stageSection('Provision')
     fireEvent.click(within(provision).getByRole('button', { name: 'Clear for deployment' }))

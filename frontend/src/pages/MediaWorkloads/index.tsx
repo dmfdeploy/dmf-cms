@@ -125,11 +125,7 @@ export default function MediaWorkloads() {
 
   return (
     <div className="flex-1 overflow-y-auto p-6">
-      <div className="hero flex items-start justify-between gap-4">
-        <div>
-          <p className="kicker">Media Workloads</p>
-          <h1>Media Workloads</h1>
-        </div>
+      <div className="flex items-start justify-end gap-4">
         {/* Pulled forward from future scope (umbrella #285 addendum): the
             operator creates a workload by naming a studio and working the
             flow. This is a real route, not a modal — the draft flow itself

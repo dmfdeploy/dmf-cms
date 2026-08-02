@@ -211,7 +211,7 @@ describe('designed states', () => {
     renderOperate()
     expect(screen.getByText('Loading workload…')).toBeTruthy()
     release()
-    await screen.findByRole('heading', { name: 'studio-a' })
+    await screen.findByText(/The monitoring surface for this workload/)
   })
 
   it('states the grouped inventory is unreachable, never a raw error', async () => {
@@ -240,7 +240,7 @@ describe('designed states', () => {
   it('renders the no-instances-yet state instead of an empty live view', async () => {
     mkFetch({ workload: workload({ instances: [], functions: [] }) })
     renderOperate()
-    await screen.findByRole('heading', { name: 'studio-a' })
+    await screen.findByText(/The monitoring surface for this workload/)
     expect(await screen.findByText(/Nothing is running yet for this workload/)).toBeTruthy()
     expect(screen.queryByRole('heading', { name: 'Live view' })).toBeNull()
   })
@@ -252,7 +252,7 @@ describe('the live view', () => {
   it('renders the running workload\'s instance via the shared tile', async () => {
     mkFetch({ workload: workload() })
     renderOperate()
-    await screen.findByRole('heading', { name: 'studio-a' })
+    await screen.findByText(/The monitoring surface for this workload/)
 
     const live = section('Live view')
     expect(within(live).getByText('MXL Crosspoint')).toBeTruthy()
@@ -262,7 +262,7 @@ describe('the live view', () => {
   it('renders the requested/observed pair with the intent-vs-observed distinction intact', async () => {
     mkFetch({ workload: workload() })
     renderOperate()
-    await screen.findByRole('heading', { name: 'studio-a' })
+    await screen.findByText(/The monitoring surface for this workload/)
 
     const live = section('Live view')
     const requested = within(live).getByTitle(REQUESTED_TITLE)
@@ -286,7 +286,7 @@ describe('active source', () => {
       topology: { 'viewer-1': freshTopology() },
     })
     renderOperate()
-    await screen.findByRole('heading', { name: 'studio-a' })
+    await screen.findByText(/The monitoring surface for this workload/)
 
     const active = await screen.findByRole('heading', { name: 'Active source' })
     const activeSection = active.closest('section') as HTMLElement
@@ -312,7 +312,7 @@ describe('active source', () => {
       topologyFailAfter: { 'viewer-1': 1 },
     })
     const queryClient = renderOperate()
-    await screen.findByRole('heading', { name: 'studio-a' })
+    await screen.findByText(/The monitoring surface for this workload/)
 
     const active = await screen.findByRole('heading', { name: 'Active source' })
     const activeSection = active.closest('section') as HTMLElement
@@ -356,7 +356,7 @@ describe('active source', () => {
       workloadAfter: { reads: 1, workload: wlAfter },
     })
     const queryClient = renderOperate()
-    await screen.findByRole('heading', { name: 'studio-a' })
+    await screen.findByText(/The monitoring surface for this workload/)
 
     await screen.findByRole('heading', { name: 'Active source' })
     // The section itself (the aria-label="Active source" panel in
@@ -384,7 +384,7 @@ describe('active source', () => {
     // topology endpoint 404s for it (no `topology` fixture supplied).
     mkFetch({ workload: workload() })
     renderOperate()
-    await screen.findByRole('heading', { name: 'studio-a' })
+    await screen.findByText(/The monitoring surface for this workload/)
 
     // Give the topology query a tick to resolve (it 404s quickly) before
     // asserting its absence, so this isn't just "hasn't rendered yet".
@@ -399,7 +399,7 @@ describe('request configuration change', () => {
   it('is a real navigation link to the flow\'s Configure step, not a button that posts', async () => {
     mkFetch({ workload: workload() })
     renderOperate()
-    await screen.findByRole('heading', { name: 'studio-a' })
+    await screen.findByText(/The monitoring surface for this workload/)
 
     const request = section('Request a configuration change')
     const link = within(request).getByRole('link', { name: /Go to Configure/ })
@@ -411,7 +411,7 @@ describe('request configuration change', () => {
   it('never issues a POST from this affordance', async () => {
     const { calls } = mkFetch({ workload: workload() })
     renderOperate()
-    await screen.findByRole('heading', { name: 'studio-a' })
+    await screen.findByText(/The monitoring surface for this workload/)
     const posts = calls.filter((c) => c.init?.method === 'POST')
     expect(posts).toHaveLength(0)
   })
@@ -419,7 +419,7 @@ describe('request configuration change', () => {
   it('copy guard: never reads as live flow control', async () => {
     mkFetch({ workload: workload() })
     renderOperate()
-    await screen.findByRole('heading', { name: 'studio-a' })
+    await screen.findByText(/The monitoring surface for this workload/)
 
     const request = section('Request a configuration change')
     const text = (request.textContent ?? '').toLowerCase()

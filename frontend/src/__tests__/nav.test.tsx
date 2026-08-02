@@ -70,7 +70,10 @@ afterEach(() => {
 describe('route migration (IA §9)', () => {
   it('serves Workspace at /', async () => {
     renderAt('/')
-    expect(await screen.findByRole('heading', { name: 'Workspace' })).toBeTruthy()
+    // The retired per-page hero heading is gone (umbrella #347 WO-D1 spec
+    // C) — the topbar breadcrumb is the page-identity surface now.
+    const breadcrumb = await screen.findByRole('navigation', { name: 'Breadcrumb' })
+    expect(within(breadcrumb).getByText('Workspace')).toBeTruthy()
     expect(screen.getByTestId('location').textContent).toBe('/')
   })
 

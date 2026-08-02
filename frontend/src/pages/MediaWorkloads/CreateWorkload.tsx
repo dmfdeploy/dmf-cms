@@ -6,7 +6,7 @@ import { classifyDraftFlow, FLOW_STEPS, type DraftProgress, type FlowStepId } fr
 import { isValidWorkloadSlug } from '../../lib/workloadSlug'
 import { APIError } from '../../api/client'
 import ReasonConfirm from '../../components/ReasonConfirm'
-import FlowStep from './FlowStep'
+import DraftFlowStep from './DraftFlowStep'
 
 /**
  * Create Media Workload — the draft leg of the guided sequential flow
@@ -203,11 +203,6 @@ export default function CreateWorkload() {
 
   return (
     <div className="flex-1 overflow-y-auto p-6">
-      <div className="hero">
-        <p className="kicker">Media Workloads</p>
-        <h1>Create media workload</h1>
-      </div>
-
       <div className="panel mt-6 p-4">
         <label htmlFor="studio-name" className="block text-xs uppercase tracking-wide text-muted">
           Studio name
@@ -253,17 +248,18 @@ export default function CreateWorkload() {
 
       <div className="mt-4 space-y-4">
         {FLOW_STEPS.map((id, index) => (
-          <FlowStep
+          <DraftFlowStep
             key={id}
             number={index + 1}
             label={FLOW_STEP_LABELS[id]}
             state={flow.steps[id]}
-            // The draft's position step is pinned open, same contract the
-            // deployed flow uses. classifyDraftFlow never reports a draft
-            // step as `open` (a draft bears no backend affordance), so here
-            // `current` and the position always coincide — the prop is still
-            // passed explicitly rather than left to FlowStep to infer, so
-            // both call sites answer the disclosure question the same way.
+            // The draft's position step is pinned open. classifyDraftFlow
+            // never reports a draft step as `open` (a draft bears no backend
+            // affordance), so here `current` and the position always
+            // coincide — the prop is still passed explicitly rather than
+            // left to DraftFlowStep to infer, matching the same disclosure
+            // rule the deployed workload's own flow used before it became a
+            // wizard (umbrella #347 WO-D1).
             pinned={id === flow.current}
             lockedReason={LOCKED_REASON[id]}
             summary={
@@ -309,10 +305,10 @@ export default function CreateWorkload() {
             )}
             {/* Configure and Finalise & Review never open in a draft — see
                 LOCKED_REASON above — so there is deliberately no content
-                branch for them here. FlowStep does not render children for a
-                locked step at all, so anything written here would be dead
-                code standing in for the (already honest) lockedReason. */}
-          </FlowStep>
+                branch for them here. DraftFlowStep does not render children
+                for a locked step at all, so anything written here would be
+                dead code standing in for the (already honest) lockedReason. */}
+          </DraftFlowStep>
         ))}
       </div>
     </div>

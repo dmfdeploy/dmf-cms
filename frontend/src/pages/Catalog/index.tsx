@@ -145,15 +145,6 @@ export default function Catalog() {
 
   return (
     <div className="flex-1 overflow-y-auto p-6">
-      <div className="hero">
-        <p className="kicker">Service Catalog</p>
-        <h1>Media Functions</h1>
-        <p>
-          Registered catalog entries with deployment status. Deploy and teardown entries via
-          AWX job templates.
-        </p>
-      </div>
-
       {entries.length === 0 ? (
         <div className="panel text-center py-12">
           <p className="text-muted">No catalog entries found. Add YAML manifests to /etc/dmf-cms/catalog/.</p>

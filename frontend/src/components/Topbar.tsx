@@ -1,9 +1,79 @@
 import { useState } from 'react'
-import { Link } from 'react-router-dom'
+import { Link, useLocation } from 'react-router-dom'
 import { useAuthStore } from '../store/auth'
-import { useSetViewAs, useClearViewAs } from '../api/hooks'
+import { useSetViewAs, useClearViewAs, useFacilityDetail, useMediaWorkloadsGrouped } from '../api/hooks'
 import NotificationBell from './NotificationBell'
 import logoSvg from '../assets/dmfdeploy-icon-white.svg'
+
+/**
+ * Static path-segment -> human label, for every route this breadcrumb can
+ * land on that ISN'T a dynamic slug (umbrella #347 WO-D1 spec C: page
+ * identity moved off the retired per-page hero and onto this trail).
+ */
+const STATIC_LABELS: Record<string, string> = {
+  facilities: 'Facilities',
+  activity: 'Activity',
+  catalog: 'Catalog',
+  monitoring: 'Monitoring',
+  'media-workloads': 'Media Workloads',
+  admin: 'Admin',
+  settings: 'Settings',
+}
+
+interface Crumb {
+  label: string
+  href: string
+}
+
+/**
+ * Builds the breadcrumb trail from the URL alone, resolving the two dynamic
+ * segments (a facility site slug, a workload slug) to their human display
+ * name ONLY once that data is actually loaded — otherwise the slug itself is
+ * the explicit, honest fallback (spec C). Both queries are scoped to the
+ * route that actually needs them (`enabled`/empty-site-guard) so this never
+ * turns into background polling on pages that have nothing to do with
+ * either: the whole point of a breadcrumb is to describe where you are, not
+ * to keep fetching once you've left.
+ */
+function useBreadcrumbTrail(pathname: string): Crumb[] {
+  const segments = pathname.split('/').filter(Boolean)
+  const facilitySite = segments[0] === 'facilities' && segments[1] ? segments[1] : ''
+  const workloadSlug =
+    segments[0] === 'media-workloads' && segments[1] && segments[1] !== 'new' ? segments[1] : ''
+
+  const facility = useFacilityDetail(facilitySite)
+  const grouped = useMediaWorkloadsGrouped({ enabled: workloadSlug !== '' })
+  const workload = grouped.data?.workloads.find((w) => w.slug === workloadSlug)
+
+  const crumbs: Crumb[] = [{ label: 'Workspace', href: '/' }]
+  if (segments.length === 0) return crumbs
+
+  if (segments[0] === 'facilities') {
+    crumbs.push({ label: 'Facilities', href: '/facilities' })
+    if (segments[1]) {
+      crumbs.push({ label: facility.data?.site.name || segments[1], href: `/facilities/${segments[1]}` })
+    }
+    return crumbs
+  }
+
+  if (segments[0] === 'media-workloads') {
+    crumbs.push({ label: 'Media Workloads', href: '/media-workloads' })
+    if (segments[1] === 'new') {
+      crumbs.push({ label: 'Create media workload', href: '/media-workloads/new' })
+    } else if (segments[1]) {
+      const slug = segments[1]
+      crumbs.push({ label: workload?.name || slug, href: `/media-workloads/${slug}` })
+      if (segments[2] === 'operate') {
+        crumbs.push({ label: 'Operate', href: `/media-workloads/${slug}/operate` })
+      }
+    }
+    return crumbs
+  }
+
+  const label = STATIC_LABELS[segments[0]] ?? segments[0]
+  crumbs.push({ label, href: `/${segments[0]}` })
+  return crumbs
+}
 
 const roleBadgeStyles: Record<string, string> = {
   viewer: 'bg-blue-900/40 text-blue-300',
@@ -27,6 +97,8 @@ export default function Topbar() {
   const [menuOpen, setMenuOpen] = useState(false)
   const setViewAs = useSetViewAs()
   const clearViewAs = useClearViewAs()
+  const { pathname } = useLocation()
+  const crumbs = useBreadcrumbTrail(pathname)
 
   if (!user) return null
 
@@ -43,8 +115,40 @@ export default function Topbar() {
         <span className="font-bold tracking-tight text-text">dmfdeploy</span>
       </div>
 
-      {/* Center spacer */}
-      <div className="flex-1"></div>
+      {/* Breadcrumb — the page-identity surface now that per-page heroes are
+          retired (umbrella #347 WO-D1 spec C). Human display names when
+          loaded, else the URL slug as an explicit, honest fallback. */}
+      <nav aria-label="Breadcrumb" className="min-w-0 flex-1 px-4">
+        <ol className="flex items-center gap-1.5 truncate text-sm">
+          {crumbs.map((crumb, i) => {
+            const isLast = i === crumbs.length - 1
+            return (
+              <li key={crumb.href} className="flex min-w-0 items-center gap-1.5">
+                {i > 0 && (
+                  <span aria-hidden="true" className="text-muted/40">
+                    /
+                  </span>
+                )}
+                {isLast ? (
+                  <span aria-current="page" className="truncate font-medium text-text">
+                    {crumb.label}
+                  </span>
+                ) : (
+                  <Link to={crumb.href} className="truncate text-muted hover:text-text hover:underline">
+                    {crumb.label}
+                  </Link>
+                )}
+              </li>
+            )
+          })}
+        </ol>
+      </nav>
+
+      {/* Supplemental transient-message surface (spec C): NOT where job
+          success/failure lives — that stays anchored at the acting stage
+          (Constitution Art. 2). This is a single shared announcer for
+          incidental topbar-level messages other than that. */}
+      <div aria-live="polite" role="status" className="sr-only" />
 
       {/* Right side: view-as chip, notifications, avatar */}
       <div className="flex items-center gap-5">

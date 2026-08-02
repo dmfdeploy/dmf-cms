@@ -1,45 +1,55 @@
-import { afterEach, describe, expect, it } from 'vitest'
+import { afterEach, describe, expect, it, vi } from 'vitest'
 import { cleanup, fireEvent, render, screen } from '@testing-library/react'
 import FlowStep from '../pages/MediaWorkloads/FlowStep'
 import type { FlowStepState } from '../lib/workloadFlow'
 
 /**
- * FlowStep's disclosure contract, unit-tested (umbrella #285, GATE-B item 4).
+ * FlowStep's contract as the wizard's single mounted panel (umbrella #347
+ * WO-D1, GATE-B item 4's successor). The S1/Arc-B accordion this component
+ * used to be (pinned/expand/collapse) is gone — the wizard mounts exactly
+ * one step at a time, chosen by WorkloadDetail, and this component's whole
+ * remaining job is: render that step's chrome + body, and render
+ * Previous/Next per whatever WorkloadDetail decided is navigable.
  *
- * WHY THIS FILE EXISTS SEPARATELY FROM THE PAGE TESTS. The page tests
- * asserted "a locked step renders no BUTTON", which is weaker than the
- * invariant actually claimed in FlowStep's docstring — that a locked step
- * renders no BODY AT ALL, so nothing inside it is reachable by a keyboard or
- * a screen reader. A mutant that made a locked step render its children
- * survived the page tests, because the particular stage panels those tests
- * mount happen to contain no button when they carry no action. The gap was
- * real: "no button in this fixture" is a property of the fixture, not of the
- * component.
- *
- * These tests mount FlowStep directly with an unmistakable SENTINEL child,
- * so the assertion is about the subtree's existence rather than about what
- * any particular stage happens to render into it.
+ * WHY THE LOCKED GUARD STILL GETS ITS OWN TESTS. WorkloadDetail's selection
+ * logic never chooses a locked step (isStepOpenable gates it), so this guard
+ * should never fire in practice — but it is defence in depth, the same
+ * property the old accordion pinned: a caller bug must not be able to reach
+ * a control the gate closed. These tests mount FlowStep directly with an
+ * unmistakable SENTINEL child, so the assertion is about the subtree's
+ * existence rather than about what any particular stage happens to render.
  */
 
 const SENTINEL = 'flow-step-body-sentinel'
 
 function renderStep({
   state,
-  pinned,
-  startExpanded,
+  isCurrentPosition = false,
+  canPrevious = false,
+  canNext = false,
+  onPrevious = () => {},
+  onNext = () => {},
 }: {
   state: FlowStepState
-  pinned?: boolean
-  startExpanded?: boolean
+  isCurrentPosition?: boolean
+  canPrevious?: boolean
+  canNext?: boolean
+  onPrevious?: () => void
+  onNext?: () => void
 }) {
   render(
     <FlowStep
       number={3}
       label="Provision"
       state={state}
-      pinned={pinned}
-      startExpanded={startExpanded}
+      isCurrentPosition={isCurrentPosition}
       lockedReason="Locked because the step before it has not finished."
+      canPrevious={canPrevious}
+      canNext={canNext}
+      onPrevious={onPrevious}
+      onNext={onNext}
+      previousReason="This step is locked."
+      nextReason="This step is locked."
     >
       <div data-testid={SENTINEL}>
         <button type="button">Dangerous action</button>
@@ -61,67 +71,47 @@ describe('a locked step renders no body subtree at all', () => {
     // disabled button wearing prose (Art. 8).
     expect(screen.getByText(/Locked because the step before it has not finished/)).toBeTruthy()
   })
+})
 
-  it('offers no control that could expand a locked step', () => {
-    renderStep({ state: 'locked' })
-    // No Review affordance: the gate is not a fold the operator can defeat.
-    expect(screen.queryByRole('button', { name: 'Review' })).toBeNull()
-    expect(screen.queryByRole('button', { name: 'Hide' })).toBeNull()
-  })
-
-  it('stays closed even when a fragment link asks for it to start expanded', () => {
-    // startExpanded is how the Operate page's #configure link lands the
-    // operator on the Configure step. It must never become a way to open a
-    // step the gate closed — a crafted URL is untrusted input.
-    renderStep({ state: 'locked', startExpanded: true })
-    expect(screen.queryByTestId(SENTINEL)).toBeNull()
-  })
-
-  it('stays closed even if a caller wrongly pins a locked step', () => {
-    // Defence in depth: `pinned` governs disclosure, `state` governs
-    // reachability, and reachability wins. A caller bug must not be able to
-    // render the body of a step the classifier locked.
-    renderStep({ state: 'locked', pinned: true })
-    expect(screen.queryByTestId(SENTINEL)).toBeNull()
+describe('an openable step always renders its body — no fold to defeat', () => {
+  it('renders the body for every non-locked state, immediately', () => {
+    for (const state of ['current', 'open', 'complete', 'record'] as const) {
+      cleanup()
+      renderStep({ state })
+      expect(screen.getByTestId(SENTINEL), state).toBeTruthy()
+    }
   })
 })
 
-describe('an openable step renders its body when it should', () => {
-  it('renders the body immediately when pinned', () => {
-    renderStep({ state: 'current', pinned: true })
-    expect(screen.getByTestId(SENTINEL)).toBeTruthy()
-    // Pinned is not collapsible — the thing you are being asked to do must
-    // not be foldable away.
-    expect(screen.queryByRole('button', { name: 'Hide' })).toBeNull()
-    expect(screen.queryByRole('button', { name: 'Review' })).toBeNull()
+describe('backend position is a distinct marker from mere selection', () => {
+  it('shows "the workload is here now" only when isCurrentPosition is true', () => {
+    renderStep({ state: 'open', isCurrentPosition: true })
+    expect(screen.getByText('The workload is here now')).toBeTruthy()
   })
 
-  it('folds a non-pinned openable step but reveals it on Review', () => {
-    renderStep({ state: 'open' })
-    expect(screen.queryByTestId(SENTINEL)).toBeNull()
+  it('says nothing about position when this mounted step is not it', () => {
+    renderStep({ state: 'open', isCurrentPosition: false })
+    expect(screen.queryByText('The workload is here now')).toBeNull()
+  })
+})
 
-    fireEvent.click(screen.getByRole('button', { name: 'Review' }))
-    expect(screen.getByTestId(SENTINEL)).toBeTruthy()
+describe('Previous/Next are navigation-only, never a disabled control', () => {
+  it('renders a real button and fires the callback when enabled', () => {
+    const onPrevious = vi.fn()
+    const onNext = vi.fn()
+    renderStep({ state: 'open', canPrevious: true, canNext: true, onPrevious, onNext })
 
-    fireEvent.click(screen.getByRole('button', { name: 'Hide' }))
-    expect(screen.queryByTestId(SENTINEL)).toBeNull()
+    fireEvent.click(screen.getByRole('button', { name: '← Previous' }))
+    expect(onPrevious).toHaveBeenCalledTimes(1)
+
+    fireEvent.click(screen.getByRole('button', { name: 'Next →' }))
+    expect(onNext).toHaveBeenCalledTimes(1)
   })
 
-  it('keeps a completed step reviewable', () => {
-    // Operator direction: completed stages remain reviewable.
-    renderStep({ state: 'complete' })
-    fireEvent.click(screen.getByRole('button', { name: 'Review' }))
-    expect(screen.getByTestId(SENTINEL)).toBeTruthy()
-  })
-
-  it('keeps a record step reviewable on an unreadable position', () => {
-    renderStep({ state: 'record' })
-    fireEvent.click(screen.getByRole('button', { name: 'Review' }))
-    expect(screen.getByTestId(SENTINEL)).toBeTruthy()
-  })
-
-  it('starts a fragment-targeted step expanded', () => {
-    renderStep({ state: 'open', startExpanded: true })
-    expect(screen.getByTestId(SENTINEL)).toBeTruthy()
+  it('renders inert text naming the reason when disabled, never a disabled button', () => {
+    renderStep({ state: 'open', canPrevious: false, canNext: false })
+    expect(screen.queryByRole('button', { name: '← Previous' })).toBeNull()
+    expect(screen.queryByRole('button', { name: 'Next →' })).toBeNull()
+    expect(screen.getAllByText('This step is locked.')).toHaveLength(2)
   })
 })
