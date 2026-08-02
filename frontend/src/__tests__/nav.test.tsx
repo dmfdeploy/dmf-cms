@@ -253,3 +253,38 @@ describe('rail glyphs', () => {
     expect(svg.querySelector('circle')).toBeTruthy()
   })
 })
+
+describe('the icon-only rail\'s tooltip is not structurally clipped (operator review, PR #70)', () => {
+  // WHAT THIS CAN AND CANNOT PROVE. jsdom does not run layout — it cannot
+  // compute whether the tooltip is visually clipped, because there is no
+  // rendering engine here to clip it with. This is a SMELL-PIN, not a
+  // visual proof: it asserts that no element in the tooltip's own ancestor
+  // chain, up to and including the <aside> that owns the fixed w-16 rail,
+  // carries the `overflow-hidden` Tailwind class. That is a necessary
+  // condition for the tooltip (positioned `absolute left-full`, meant to
+  // escape past the rail's right edge) to be visible on hover/focus — not
+  // a sufficient one. It would have caught exactly the regression the
+  // operator found (frontend/src/components/Sidebar.tsx:171, before the
+  // fix): the <aside> itself carried overflow-hidden while the tooltip
+  // tried to escape past it. The actual proof that labels render on
+  // rendered pixels is the operator's own re-review, not this test.
+  it('carries no overflow-hidden anywhere between the tooltip and the <aside>', async () => {
+    renderSidebar(identity({ role: 'viewer' }))
+    const link = await screen.findByRole('link', { name: 'Workspace' })
+    const tooltip = link.querySelector('[role="tooltip"]')
+    if (!tooltip) throw new Error('no tooltip rendered for Workspace')
+
+    const aside = link.closest('aside')
+    if (!aside) throw new Error('Workspace link is not inside an <aside>')
+
+    let node: HTMLElement | null = tooltip.parentElement as HTMLElement | null
+    while (node) {
+      expect(
+        node.classList.contains('overflow-hidden'),
+        `${node.tagName.toLowerCase()}.${Array.from(node.classList).join('.')} clips the tooltip`,
+      ).toBe(false)
+      if (node === aside) break
+      node = node.parentElement
+    }
+  })
+})
