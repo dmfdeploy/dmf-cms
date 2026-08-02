@@ -392,9 +392,15 @@ describe('the flow is five steps under a six-stage vocabulary', () => {
     renderDetail()
     await screen.findByRole('heading', { name: 'studio-a' })
 
-    expect(screen.getByText(/This workload is operating/)).toBeTruthy()
+    const panel = screen.getByText(/This workload is operating/)
+    expect(panel).toBeTruthy()
     expect(screen.getByRole('link', { name: 'open the monitoring view' })).toBeTruthy()
     expect(screen.queryByText(/could not place this workload/)).toBeNull()
+
+    // Operate is the Control vertical (operator ruling 2026-08-02), not a
+    // lifecycle stage — the panel copy must say so, not the overturned claim.
+    expect(panel.textContent).toContain('Control vertical')
+    expect(panel.textContent).not.toContain('is a lifecycle stage')
   })
 })
 

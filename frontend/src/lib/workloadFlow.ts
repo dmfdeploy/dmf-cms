@@ -11,13 +11,13 @@
 // further question the flow presentation needs: which steps may the
 // operator open right now.
 //
-// THE FLOW IS FIVE STEPS; THE LIFECYCLE IS SIX STAGES. Operate left this
-// page entirely (operator direction) and lives at its own monitoring route.
-// That is a presentation split, not a model change: the canonical mapping
-// doc's six-stage lifecycle is still taught in full by the vocabulary strip
-// the flow page renders above the steps, Operate included and linking out.
-// Do not "fix" the five-step list by adding Operate back — a flow step is a
-// thing the operator WORKS THROUGH, and Operate is a thing they WATCH.
+// THE FLOW IS FIVE STEPS. Operate is not one of them — it sits in the
+// Control vertical (operator ruling 2026-08-02 on the EBU Facility
+// Orchestration Model), and lives at its own monitoring route. The
+// vocabulary strip above the steps teaches the full grouping — five
+// orchestration stages plus Operate under its Control label. Do not "fix"
+// the five-step list by adding Operate back — a flow step is a thing the
+// operator WORKS THROUGH, and Operate is a thing they WATCH.
 //
 // WHY A SEPARATE MODULE. workloadLifecycle.ts answers "where is this
 // workload, and what may be done at each stage". That is still the whole
