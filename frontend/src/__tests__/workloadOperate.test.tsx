@@ -359,6 +359,12 @@ describe('active source', () => {
     await screen.findByRole('heading', { name: 'studio-a' })
 
     await screen.findByRole('heading', { name: 'Active source' })
+    // The section itself (the aria-label="Active source" panel in
+    // Operate.tsx) is a named region — assert on the region, not just its
+    // heading, or a fix that hides/renames the heading while leaving the
+    // section (and its empty panel chrome) mounted would still pass this
+    // test.
+    expect(screen.getByRole('region', { name: 'Active source' })).toBeTruthy()
     expect(screen.getByText('source-a')).toBeTruthy()
     expect(within(section('Live view')).getByText('crosspoint-2')).toBeTruthy()
 
@@ -366,7 +372,8 @@ describe('active source', () => {
     // path the 15s poll (useMediaWorkloadsGrouped, hooks.ts:347-353) takes.
     await queryClient.invalidateQueries({ queryKey: ['media-workloads-grouped'] })
 
-    await waitFor(() => expect(screen.queryByRole('heading', { name: 'Active source' })).toBeNull())
+    await waitFor(() => expect(screen.queryByRole('region', { name: 'Active source' })).toBeNull())
+    expect(screen.queryByRole('heading', { name: 'Active source' })).toBeNull()
     expect(screen.queryByText('source-a')).toBeNull()
     // The remaining instance still renders — the route didn't collapse.
     expect(within(section('Live view')).getByText('crosspoint-2')).toBeTruthy()
