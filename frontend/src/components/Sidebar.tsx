@@ -168,7 +168,16 @@ export default function Sidebar() {
   const secondaries = navItems.filter((item) => item.section === 'secondary')
 
   return (
-    <aside className="flex w-16 shrink-0 flex-col overflow-hidden border-r border-border bg-sidebar">
+    // No overflow-hidden here (operator review, PR #70): it is vestigial
+    // from the retired expanded/collapsed transition (compare b49174a's
+    // `w-56 <-> w-16` animated width, where clipping the label span mid-
+    // transition was the point). Nothing in this permanently-fixed w-16
+    // rail needs clipping any more — the one thing that DID get clipped by
+    // it was each tooltip's own escape past the rail's edge, which is the
+    // rail's only visible label for the icon-only nav. w-16 + shrink-0
+    // alone still holds the fixed-width layout; overflow was never load-
+    // bearing for that.
+    <aside className="flex w-16 shrink-0 flex-col border-r border-border bg-sidebar">
       <nav className="flex flex-1 flex-col gap-1 py-4 px-2">
         {rails.map((item) => renderItem(item, location.pathname))}
         {secondaries.length > 0 && <div className="border-t border-border my-2 mx-2" />}
