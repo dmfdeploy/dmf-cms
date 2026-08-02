@@ -2,6 +2,7 @@ import { useEffect, useRef, useState, type ReactNode } from 'react'
 import { Link, useLocation, useParams } from 'react-router-dom'
 import { useCatalog, useMediaWorkloadsGrouped } from '../../api/hooks'
 import { stageActions, type WorkloadLifecycleInput } from '../../lib/workloadLifecycle'
+import { useTopbarMessageStore } from '../../store/topbarMessage'
 import {
   FLOW_STEPS,
   classifyWorkloadFlow,
@@ -54,11 +55,14 @@ import FinaliseStage from './stages/FinaliseStage'
  *    outside the flow, in the Control group, as a route link.
  *
  * 3. A JOB OWNS ITS PANEL. Firing a mutation synchronously marks its owning
- *    step (`startJob`, called from the stage's own click handler, not from
- *    a busy-effect one render later) so Previous/Next/every rail selector/
- *    the Operate link go inert with a stated reason for exactly as long as
- *    that job is in flight — never a window where navigation could strand
- *    the operator away from the job they started.
+ *    step AND flips the corresponding busy flag (`startJob`, called from the
+ *    stage's own click handler, not from a busy-effect one render later) so
+ *    Previous/Next/every rail selector/the Operate link go inert with a
+ *    stated reason for exactly as long as that job is in flight — never a
+ *    window, not even one render, where navigation could strand the
+ *    operator away from the job they started. The stage's own onBusyChange
+ *    effect still drives the eventual clear back to false once the mutation
+ *    settles; startJob only owns the synchronous true edge.
  */
 
 /** Verbatim EBU stage names. Never abbreviate or re-word these. */
@@ -129,16 +133,28 @@ export default function WorkloadDetail() {
   const [lastSwitchResult, setLastSwitchResult] = useState<SwitchSourceResult | null>(null)
   // The wizard's own presentation state — never derived from FlowStepState.
   const [selectedStep, setSelectedStep] = useState<FlowStepId | null>(null)
-  // Which step's mutation is in flight, set SYNCHRONOUSLY by that stage's own
-  // click handler (see `startJob` below) — not read off the busy overlay,
-  // which only updates a render later via each stage's own onBusyChange
-  // effect. This is what lets Previous/Next/the rail refuse navigation with
-  // zero window for a race between "job fired" and "job owner recorded".
+  // Which step's mutation is in flight — the LABEL only; the busy boolean
+  // itself lives in launching/switching/tearingDown above, and `startJob`
+  // below sets both synchronously in the same click handler that fires the
+  // mutation, not via the child's own onBusyChange effect (which runs a
+  // render later, and — worse — that render can itself be waiting on a
+  // react-query notification that lands in a microtask, later still). A
+  // mutation library's own isPending is not required to be observable in
+  // the same synchronous tick as the call that started it, so this page
+  // cannot depend on it for the zero-window guarantee; only a plain
+  // setState in the SAME event handler can give that guarantee.
   const [jobOwner, setJobOwner] = useState<FlowStepId | null>(null)
   const panelRef = useRef<HTMLDivElement>(null)
   const hashFocusedRef = useRef(false)
+  const emitTopbarMessage = useTopbarMessageStore((s) => s.emit)
+  // Captured during render (not a hook), so the terminal-message effect
+  // below — which fires on a render where `workload` might not have been
+  // re-looked-up yet — still has a name to echo. Only ever written when
+  // workload is genuinely resolved, never with a fallback.
+  const workloadNameRef = useRef<string>('')
 
   const workload = data?.workloads.find((w) => w.slug === slug)
+  if (workload) workloadNameRef.current = workload.name
   const jobInFlight = launching || switching || tearingDown
 
   // Computed with a safe fallback so the hooks below can run unconditionally,
@@ -195,9 +211,16 @@ export default function WorkloadDetail() {
   // The job owner is cleared once the job settles (any of the three busy
   // flags falls) — the START is synchronous (via startJob below); the END
   // is not time-critical the same way, so an effect on jobInFlight is fine.
+  // Also echoes the terminal moment to the topbar's supplemental message
+  // surface (GATE-D1 P2.4) — a courtesy notice only; the real outcome stays
+  // at the stage that ran the job (Constitution Art. 2), so this fires
+  // regardless of whether the mutation actually succeeded.
   useEffect(() => {
-    if (!jobInFlight) setJobOwner(null)
-  }, [jobInFlight])
+    if (!jobInFlight && jobOwner) {
+      emitTopbarMessage(`${STEP_LABEL[jobOwner]} job for ${workloadNameRef.current} completed`)
+      setJobOwner(null)
+    }
+  }, [jobInFlight, jobOwner, emitTopbarMessage])
 
   useEffect(() => {
     if (
@@ -290,10 +313,22 @@ export default function WorkloadDetail() {
   }
 
   // Called synchronously from a stage's own click handler, in the same event
-  // that fires its mutation — see the file docstring's point 3.
+  // that fires its mutation — see the file docstring's point 3. Sets the
+  // busy flag itself (GATE-D1 P1.1), not just the owner label: a mutation
+  // library's isPending is not guaranteed observable in this same
+  // synchronous tick (react-query's own notification can land in a
+  // microtask), so jobInFlight cannot wait on it to close the window. The
+  // corresponding stage's onBusyChange effect keeps independently reporting
+  // the SAME flag once the mutation settles — that is still what drives the
+  // eventual clear back to false; this call only forces the true edge to
+  // land with zero delay.
   const startJob = (step: FlowStepId) => {
     setJobOwner(step)
     setSelectedStep(step)
+    if (step === 'provision') setLaunching(true)
+    else if (step === 'configure') setSwitching(true)
+    else if (step === 'finalise') setTearingDown(true)
+    emitTopbarMessage(`${STEP_LABEL[step]} job for ${workload.name} started`)
   }
 
   const requestedIsLocked =
