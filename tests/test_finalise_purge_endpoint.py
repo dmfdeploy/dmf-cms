@@ -1016,12 +1016,21 @@ def test_p1r2_int_subclass_service_id_refuses_source_inconsistent(monkeypatch):
 _TENANT_A = MediaTenancySettings(mode="scoped", group_tenant_map=(("dmf-console-operator", ("tenant-a",)),))
 
 
-def _scoped_netbox(*, device_services: list, tag_exists: bool):
+def _scoped_netbox(*, device_services: list, tag_exists: bool, unscoped_services: list | None = None):
     """A scoped-tenant NetBox double: the operator's own tenant (tenant-a)
     resolves to one device; that device's own catalog services are
     `device_services` (may be empty or carry an unrelated workload tag —
     either way, never the attacked slug); the global tag lookup reports
-    `tag_exists` regardless of tenant (the vulnerability's own root cause)."""
+    `tag_exists` regardless of tenant (the vulnerability's own root cause).
+
+    `unscoped_services` (FIX-A2b.8, GATE-A2b.5 P1) is what an UNSCOPED
+    (no device/vm filter) services read returns — the completeness-of-
+    authority check's own internal re-fetch. Defaults to `device_services`
+    (i.e. "fully visible": the scoped and true membership coincide), which
+    keeps every pre-FIX-A2b.8 caller of this fixture correct unchanged."""
+    if unscoped_services is None:
+        unscoped_services = device_services
+
     def fake(*args, **kwargs):
         path = args[2]
         if "/api/extras/tags/" in path:
@@ -1032,8 +1041,12 @@ def _scoped_netbox(*, device_services: list, tag_exists: bool):
         if path.startswith("/api/virtualization/virtual-machines/"):
             assert "tenant=tenant-a" in path
             return {"results": []}
-        assert "device_id=7" in path
-        return {"count": len(device_services), "results": device_services}
+        if "device_id=7" in path:
+            return {"count": len(device_services), "results": device_services}
+        # The unscoped completeness-of-authority re-fetch: no tenant/device
+        # filter of any kind on the path at all.
+        assert "device_id=" not in path
+        return {"count": len(unscoped_services), "results": unscoped_services}
 
     return fake
 
@@ -1134,3 +1147,170 @@ def test_p1_7_scoped_operator_with_own_members_present_is_unaffected(monkeypatch
 
     assert len(awx_spy) == 1
     assert awx_spy[-1]["extra_vars"]["purge_expected_service_ids"] == [11]
+
+
+# ---------------------------------------------------------------------------
+# FIX-A2b.8 (GATE-A2b.5, authorization-axis gate) pinned regressions.
+# P1 — completeness of authority: a scoped caller's non-empty, visible
+# member list can still be a PARTIAL view of the workload's true (unscoped)
+# membership; dispatching from a partial view launches a purge whose
+# extra_vars cover only the visible subset while the global workload Tag
+# deletion removes every tenant's grouping regardless.
+# P2 — operations were not tenant-isolated: dedupe/reattach/conflict/
+# facility-busy keyed only on action+global slug, disclosing full operation
+# dicts (incl. another tenant's initiator) cross-tenant.
+# ---------------------------------------------------------------------------
+
+
+def test_p1_8_scoped_operator_straddle_refuses_workload_not_fully_visible(monkeypatch, caplog):
+    import logging
+
+    # THE probe from the gate verdict: tenant-a's own scoped read sees
+    # Service 11; Service 22 (tenant-b's) is tagged with the SAME
+    # workload:{SLUG} but sits entirely outside tenant-a's scope.
+    svc_11 = _service("studio-a-1", ["dmf-catalog", f"workload:{SLUG}", "lifecycle:bootstrapped"], svc_id=11)
+    svc_22 = _service("studio-a-2", ["dmf-catalog", f"workload:{SLUG}", "lifecycle:bootstrapped"], svc_id=22)
+    monkeypatch.setattr(
+        netbox_module, "_request",
+        _scoped_netbox(device_services=[svc_11], tag_exists=True, unscoped_services=[svc_11, svc_22]),
+    )
+    monkeypatch.setattr(prometheus_module, "query", lambda **k: [])
+
+    def boom(**k):
+        raise AssertionError("must never launch a purge whose extra_vars cover only a partial workload")
+
+    monkeypatch.setattr(main, "launch_job", boom)
+
+    client = _client(OPERATOR, media_tenancy=_TENANT_A)
+    with caplog.at_level(logging.INFO, logger="dmf_cms.main"):
+        resp = _post(client, {"reason": "go", "confirm": SLUG})
+    assert resp.status_code == 422, resp.text
+    body = resp.json()
+    assert body["error"] == "not-purgeable"
+    assert body["kind"] == "workload-not-fully-visible"
+    # No out-of-scope detail (counts, ids, tenant names) anywhere in the
+    # body — the kind alone is the legible reason (decision #1).
+    assert set(body.keys()) - {"request_id"} == {"error", "kind"}
+
+    lines = _audit_lines(caplog)
+    assert any("outcome=workload-not-fully-visible" in ln for ln in lines)
+    assert not any("22" in ln or "tenant-b" in ln for ln in lines)
+
+
+def test_p1_8_slug_coincidentally_shared_across_tenants_refuses_workload_not_fully_visible(monkeypatch):
+    # Decision #2: the SAME rule covers, by construction, two entirely
+    # independent workloads that merely happen to share the slug name
+    # "studio-a" in different tenants — from here that looks identical to
+    # one workload straddling both, and both must refuse identically.
+    tenant_a_own = _service(
+        "tenant-a-owned", ["dmf-catalog", f"workload:{SLUG}", "lifecycle:bootstrapped"], svc_id=11,
+    )
+    tenant_b_own = _service(
+        "tenant-b-owned-unrelated", ["dmf-catalog", f"workload:{SLUG}", "lifecycle:bootstrapped"], svc_id=99,
+    )
+    monkeypatch.setattr(
+        netbox_module, "_request",
+        _scoped_netbox(
+            device_services=[tenant_a_own], tag_exists=True,
+            unscoped_services=[tenant_a_own, tenant_b_own],
+        ),
+    )
+    monkeypatch.setattr(prometheus_module, "query", lambda **k: [])
+    monkeypatch.setattr(main, "launch_job", lambda **k: (_ for _ in ()).throw(AssertionError("must never launch")))
+
+    client = _client(OPERATOR, media_tenancy=_TENANT_A)
+    resp = _post(client, {"reason": "go", "confirm": SLUG})
+    assert resp.status_code == 422, resp.text
+    body = resp.json()
+    assert body["error"] == "not-purgeable"
+    assert body["kind"] == "workload-not-fully-visible"
+
+
+def test_p1_8_unscoped_caller_unaffected_by_new_authorization_checks(monkeypatch, awx_spy):
+    # Decision #3 + #7 "unscoped unchanged": an unscoped (admin/global,
+    # tenant_slugs is None) caller is never subject to either FIX-A2b.8
+    # check. P1's completeness re-fetch only runs when tenant_slugs is not
+    # None (the whole existing single-mode suite already pins this for the
+    # membership check); this test pins the P2 side — an unscoped caller
+    # reattaching to an op some OTHER caller's scope created still sees it
+    # in full, since ``purge_op_visible_to_scope`` is unconditional for an
+    # unscoped caller.
+    monkeypatch.setattr(
+        media_workloads, "resolve_purge_target",
+        lambda *a, **k: {"members": [], "tag_present": True},
+    )
+    with TestClient(create_app(settings=_settings(OPERATOR, autoscale=True))) as client:
+        client.get("/auth/login", follow_redirects=False)
+        existing, _created, _conflict = client.app.state.operations.get_or_create_exclusive(
+            action="finalise-purge", target=SLUG,
+            conflicts=("deploy", "teardown", "rollback", "finalise-purge"),
+            request_id="tenant-b-request", initiator="tenant-b-user",
+            purge_tenant_scope=("tenant-b",),
+        )
+
+        resp = _post(client, {"reason": "go", "confirm": SLUG})
+        assert resp.status_code == 200, resp.text
+        body = resp.json()
+        assert body["operation_id"] == existing.operation_id
+        assert body["initiator"] == "tenant-b-user"
+    assert awx_spy == []
+
+
+def test_p1_8_scoped_operator_cross_tenant_operation_minimal_disclosure(monkeypatch):
+    # THE other probe from the gate verdict: a finalise-purge operation on
+    # the SAME slug already in flight, initiated by tenant-b. A scoped
+    # tenant-a caller for the same slug must NOT reattach with tenant-b's
+    # initiator/operation_id/dict — same minimal 409 the genuinely-conflict
+    # path uses.
+    monkeypatch.setattr(
+        media_workloads, "resolve_purge_target",
+        lambda *a, **k: {"members": [], "tag_present": True},
+    )
+
+    def boom(**k):
+        raise AssertionError("must never launch")
+
+    monkeypatch.setattr(main, "launch_job", boom)
+
+    with TestClient(create_app(settings=_settings(OPERATOR, autoscale=True, media_tenancy=_TENANT_A))) as client:
+        client.get("/auth/login", follow_redirects=False)
+        existing, _created, _conflict = client.app.state.operations.get_or_create_exclusive(
+            action="finalise-purge", target=SLUG,
+            conflicts=("deploy", "teardown", "rollback", "finalise-purge"),
+            request_id="tenant-b-request", initiator="tenant-b-user",
+            purge_tenant_scope=("tenant-b",),
+        )
+
+        resp = _post(client, {"reason": "go", "confirm": SLUG})
+        assert resp.status_code == 409, resp.text
+        body = resp.json()
+        assert body["error"] == "conflicting lifecycle operation in progress"
+        assert "operation_id" not in body
+        assert "initiator" not in body
+        assert "conflicting_operation" not in body
+        assert set(body.keys()) - {"request_id"} == {"error"}
+        assert existing.initiator == "tenant-b-user"  # sanity: really was tenant-b's op
+
+
+def test_p1_8_scoped_operator_own_operation_reattach_still_returns_full_dict(monkeypatch, awx_spy):
+    # Decision #4's own carve-out: a caller's OWN in-scope operation keeps
+    # the existing reattach behavior unchanged (200 + full dict).
+    monkeypatch.setattr(
+        media_workloads, "resolve_purge_target",
+        lambda *a, **k: {"members": [], "tag_present": True},
+    )
+    with TestClient(create_app(settings=_settings(OPERATOR, autoscale=True, media_tenancy=_TENANT_A))) as client:
+        client.get("/auth/login", follow_redirects=False)
+        existing, _created, _conflict = client.app.state.operations.get_or_create_exclusive(
+            action="finalise-purge", target=SLUG,
+            conflicts=("deploy", "teardown", "rollback", "finalise-purge"),
+            request_id="tenant-a-request", initiator="tenant-a-user",
+            purge_tenant_scope=("tenant-a",),
+        )
+
+        resp = _post(client, {"reason": "go", "confirm": SLUG})
+        assert resp.status_code == 200, resp.text
+        body = resp.json()
+        assert body["operation_id"] == existing.operation_id
+        assert body["initiator"] == "tenant-a-user"
+    assert awx_spy == []

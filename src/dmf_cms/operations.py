@@ -191,6 +191,17 @@ class Operation:
     # see main.py's _watch_job_operation); this field is the actual
     # absence-confirmed claim.
     purge_verified_at: str | None = None
+    # umbrella #347, FIX-A2b.8 (GATE-A2b.5 P2): the SCOPED caller's tenant
+    # slugs at the moment a "finalise-purge" op was CREATED (never set on
+    # any other action, never overwritten on reattach — set once, alongside
+    # request_id/initiator). None means either an unscoped (admin) caller
+    # dispatched it, or the op isn't a finalise-purge op at all. Existence
+    # ONLY to let ``purge_op_visible_to_scope`` decide "is this scoped
+    # caller allowed to see this op's detail" server-side — INTERNAL ONLY:
+    # deliberately excluded from ``to_dict()`` below so it can never reach
+    # an API response body (that disclosure IS the vulnerability this
+    # field closes).
+    purge_tenant_scope: tuple[str, ...] | None = None
     created_at: datetime = field(default_factory=lambda: datetime.now(timezone.utc))
     updated_at: datetime = field(default_factory=lambda: datetime.now(timezone.utc))
 
@@ -373,6 +384,7 @@ class OperationStore:
         conflicts: tuple[str, ...] = (),
         request_id: str | None = None,
         initiator: str | None = None,
+        purge_tenant_scope: tuple[str, ...] | None = None,
     ) -> tuple[Operation | None, bool, Operation | None]:
         """Atomically find/create an operation, exclusive of conflicting actions.
 
@@ -390,6 +402,9 @@ class OperationStore:
             conflicts: Actions that block creation for the same target
             request_id: C5 request_id, set only if a new op is created
             initiator: Dispatching user's subject, set only if created
+            purge_tenant_scope: umbrella #347, FIX-A2b.8 — the finalise-purge
+                caller's tenant scope, set only if a new op is created (never
+                on reattach); see ``Operation.purge_tenant_scope``
 
         Returns:
             Tuple of (operation, created, conflict):
@@ -422,6 +437,7 @@ class OperationStore:
                 state=initial_state,
                 request_id=request_id,
                 initiator=initiator,
+                purge_tenant_scope=purge_tenant_scope,
                 created_at=now,
                 updated_at=now,
             )
@@ -520,3 +536,29 @@ class OperationStore:
         with self._lock:
             self._gc()
             return list(self._operations.values())
+
+
+def purge_op_visible_to_scope(op: Operation, tenant_slugs: tuple[str, ...] | None) -> bool:
+    """umbrella #347, FIX-A2b.8 (GATE-A2b.5 P2): may this caller see ``op``'s
+    full detail (operation_id/initiator/dict), or only a minimal, non-
+    disclosing refusal?
+
+    An UNSCOPED caller (``tenant_slugs is None`` — the admin/global case)
+    always sees everything, exactly as before this fix.
+
+    A SCOPED caller sees full detail only for an op it can attribute to its
+    OWN scope. Only "finalise-purge" ops ever carry ``purge_tenant_scope``
+    (deploy/teardown/rollback are explicitly out of scope for this round —
+    GATE-A2b.5 decision #6 files their own generic-GET scope gap
+    separately), so any non-"finalise-purge" op is left fully visible here,
+    unchanged. A "finalise-purge" op with no recorded scope (dispatched by
+    an unscoped/admin caller) is NOT attributable to any scoped caller's own
+    scope, so it stays minimally disclosed to one.
+    """
+    if tenant_slugs is None:
+        return True
+    if op.action != "finalise-purge":
+        return True
+    if op.purge_tenant_scope is None:
+        return False
+    return bool(set(op.purge_tenant_scope) & set(tenant_slugs))

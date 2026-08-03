@@ -819,6 +819,12 @@ def resolve_purge_target(
                                                   longer matters)
       {"error": "workload-not-found"}         -- no members AND no Tag
                                                   residue
+      {"error": "workload-not-fully-visible"} -- FIX-A2b.8 (GATE-A2b.5
+                                                  P1): a scoped caller's
+                                                  visible members are a
+                                                  strict subset of the
+                                                  workload's true (unscoped)
+                                                  membership
       {"error": "observability-unavailable"}  -- Prometheus unconfigured,
                                                   unreachable, or its
                                                   overlay was malformed
@@ -894,6 +900,45 @@ def resolve_purge_target(
     # cross.
     if not members and (tenant_slugs is not None or not tag_present):
         return {"error": "workload-not-found"}
+
+    # FIX-A2b.8 (GATE-A2b.5 P1, umbrella #347): completeness of authority.
+    # A SCOPED caller's non-empty ``members`` only proves PARTIAL visibility
+    # — the ``workload:<slug>`` Tag carries no tenant field at all, so a
+    # caller who can see SOME tagged services can still dispatch a purge
+    # whose AWX extra_vars (purge_expected_service_ids) cover only their
+    # visible subset, while the launcher's global Tag deletion removes
+    # every tenant's grouping regardless. Re-resolve membership UNSCOPED —
+    # strictly an internal comparison, never returned, never logged with
+    # ids — and refuse unless the scoped view already IS the complete
+    # membership. This construction also covers, for free, two unrelated
+    # workloads that merely happen to share a slug name across tenants:
+    # from here that looks identical to one workload straddling both, and
+    # both must refuse identically — there is no way, nor any need, to
+    # tell them apart.
+    if tenant_slugs is not None and members:
+        try:
+            all_services = _fetch_services_complete(netbox_url, read_token, ssl_verify, None)
+        except _netbox.NetboxAPIError as exc:
+            logger.warning("media-workloads: purge preflight authority-scope lookup failed: %s", exc)
+            return {"error": "netbox-unreachable"}
+        except RuntimeError as exc:
+            logger.warning("media-workloads: purge preflight authority-scope read incomplete: %s", exc)
+            return {"error": "source-read-incomplete"}
+        except Exception as exc:
+            logger.warning("media-workloads: purge preflight authority-scope unexpected error: %s", exc)
+            return {"error": "netbox-error"}
+        scoped_ids = {svc.get("id") for svc in members}
+        true_ids: set[Any] = set()
+        for svc in all_services:
+            true_slug, _true_status = _workload_assignment(_tag_names(svc))
+            if true_slug == slug:
+                true_ids.add(svc.get("id"))
+        if not true_ids <= scoped_ids:
+            logger.warning(
+                "media-workloads: purge preflight refused — scoped caller's visibility "
+                "of a workload is incomplete relative to its true membership",
+            )
+            return {"error": "workload-not-fully-visible"}
 
     if not prometheus_url:
         return {"error": "observability-unavailable"}
