@@ -874,7 +874,25 @@ def resolve_purge_target(
         logger.warning("media-workloads: purge tag lookup unexpected error: %s", exc)
         return {"error": "netbox-error"}
 
-    if not members and not tag_present:
+    # FIX-A2b.7 (operator review 2026-08-03, tenancy escape): a SCOPED
+    # caller's empty member list is workload-not-found REGARDLESS of
+    # tag_present — NetBox Tag objects carry no tenant field at all, so
+    # tag_exists() can never prove a scoped caller actually owns this
+    # workload. Without this, a scoped operator targeting another
+    # tenant's slug got members=[] (correctly scoped) + tag_present=True
+    # (the tag exists, just not in THEIR tenant) and reached the
+    # legitimate-looking "tag-only residue" path below — dispatching a
+    # purge against out-of-scope residue. tag_exists() is still called
+    # unconditionally above (same timing profile either way); its result
+    # is simply never consulted here for a scoped caller with no scoped
+    # members — existence disclosure (via the response, an error kind, or
+    # timing) is itself part of the vulnerability, so this refuses
+    # byte-identically to the genuinely-absent case, never a distinct
+    # kind. Unscoped callers (tenant_slugs is None — the admin/global
+    # case) keep the tag-only path unchanged: that IS the legitimate
+    # "residue after a partial purge" case, with no tenant boundary to
+    # cross.
+    if not members and (tenant_slugs is not None or not tag_present):
         return {"error": "workload-not-found"}
 
     if not prometheus_url:

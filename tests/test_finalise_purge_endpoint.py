@@ -48,7 +48,7 @@ VIEWER = ("dmf-console-viewer",)
 SLUG = "studio-a"
 
 
-def _settings(groups=OPERATOR, *, autoscale=False) -> Settings:
+def _settings(groups=OPERATOR, *, autoscale=False, media_tenancy=None) -> Settings:
     return Settings(
         runtime_mode="local",
         dev_login_enabled=True,
@@ -60,7 +60,7 @@ def _settings(groups=OPERATOR, *, autoscale=False) -> Settings:
             else AWXAutoscaleSettings(enabled=False)
         ),
         netbox=NetboxSettings(api_url="http://netbox.test", api_token="tok"),
-        media_tenancy=MediaTenancySettings(mode="single"),
+        media_tenancy=media_tenancy if media_tenancy is not None else MediaTenancySettings(mode="single"),
         prometheus=PrometheusSettings(url="http://prom.test"),
     )
 
@@ -1001,3 +1001,136 @@ def test_p1r2_int_subclass_service_id_refuses_source_inconsistent(monkeypatch):
     resp = _post(client, {"reason": "go", "confirm": SLUG})
     assert resp.status_code == 409
     assert resp.json()["kind"] == "source-inconsistent"
+
+
+# ---------------------------------------------------------------------------
+# FIX-A2b.7 (operator review 2026-08-03) — tenancy escape pinned regressions.
+# NetBox Tag objects carry no tenant field, so the global tag_exists() check
+# can never itself prove a SCOPED caller owns a workload: a scoped operator
+# targeting another tenant's slug got members=[] (correctly scoped) plus
+# tag_present=True (the tag exists, just not in their tenant) and reached
+# the legitimate-looking "tag-only residue" path — dispatching a purge
+# against out-of-scope residue.
+# ---------------------------------------------------------------------------
+
+_TENANT_A = MediaTenancySettings(mode="scoped", group_tenant_map=(("dmf-console-operator", ("tenant-a",)),))
+
+
+def _scoped_netbox(*, device_services: list, tag_exists: bool):
+    """A scoped-tenant NetBox double: the operator's own tenant (tenant-a)
+    resolves to one device; that device's own catalog services are
+    `device_services` (may be empty or carry an unrelated workload tag —
+    either way, never the attacked slug); the global tag lookup reports
+    `tag_exists` regardless of tenant (the vulnerability's own root cause)."""
+    def fake(*args, **kwargs):
+        path = args[2]
+        if "/api/extras/tags/" in path:
+            return {"results": [{"id": 55, "name": f"workload:{SLUG}"}]} if tag_exists else {"results": []}
+        if path.startswith("/api/dcim/devices/"):
+            assert "tenant=tenant-a" in path
+            return {"results": [{"id": 7}]}
+        if path.startswith("/api/virtualization/virtual-machines/"):
+            assert "tenant=tenant-a" in path
+            return {"results": []}
+        assert "device_id=7" in path
+        return {"count": len(device_services), "results": device_services}
+
+    return fake
+
+
+def test_p1_7_scoped_operator_cross_tenant_tag_refuses_workload_not_found_no_disclosure(monkeypatch):
+    # THE attack: SLUG belongs to another tenant. The operator's own
+    # tenant-a has infrastructure (a device) but none of its services
+    # carry workload:{SLUG} — members=[] once scoped. The global tag
+    # lookup still reports the tag exists (it does, just for tenant-b).
+    # Must refuse workload-not-found — same as genuinely absent — never
+    # dispatch, never a distinct error kind that discloses cross-tenant
+    # existence.
+    monkeypatch.setattr(netbox_module, "_request", _scoped_netbox(device_services=[], tag_exists=True))
+    monkeypatch.setattr(prometheus_module, "query", lambda **k: [])
+
+    def boom(**k):
+        raise AssertionError("must never launch a purge against out-of-scope cross-tenant residue")
+
+    monkeypatch.setattr(main, "launch_job", boom)
+
+    client = _client(OPERATOR, media_tenancy=_TENANT_A)
+    attack_resp = _post(client, {"reason": "go", "confirm": SLUG})
+    assert attack_resp.status_code == 404
+    attack_body = attack_resp.json()
+    assert attack_body["error"] == "workload-not-found"
+
+    # Byte-identical (aside from the per-request request_id) to the
+    # genuinely-absent case — the response must not distinguish "this
+    # workload never existed" from "it exists, just not in your scope".
+    monkeypatch.setattr(netbox_module, "_request", _scoped_netbox(device_services=[], tag_exists=False))
+    genuinely_absent_client = _client(OPERATOR, media_tenancy=_TENANT_A)
+    absent_resp = _post(genuinely_absent_client, {"reason": "go", "confirm": SLUG})
+    assert absent_resp.status_code == attack_resp.status_code
+    absent_body = absent_resp.json()
+    attack_body.pop("request_id", None)
+    absent_body.pop("request_id", None)
+    assert attack_body == absent_body
+
+
+def test_p1_7_scoped_operator_cross_tenant_tag_audit_outcome_matches_absent_case(monkeypatch, caplog):
+    import logging
+
+    monkeypatch.setattr(netbox_module, "_request", _scoped_netbox(device_services=[], tag_exists=True))
+    monkeypatch.setattr(prometheus_module, "query", lambda **k: [])
+    monkeypatch.setattr(main, "launch_job", lambda **k: (_ for _ in ()).throw(AssertionError("must never launch")))
+
+    client = _client(OPERATOR, media_tenancy=_TENANT_A)
+    with caplog.at_level(logging.INFO, logger="dmf_cms.main"):
+        resp = _post(client, {"reason": "go", "confirm": SLUG})
+    assert resp.status_code == 404
+    lines = _audit_lines(caplog)
+    assert any("outcome=workload-not-found" in ln for ln in lines)
+    # No distinct outcome token anywhere (e.g. nothing naming a conflict/
+    # cross-tenant/tag-exists condition) — same audited outcome as a
+    # genuinely absent workload.
+    assert not any("cross-tenant" in ln or "tag-exists" in ln or "not-purgeable" in ln for ln in lines)
+
+
+def test_p1_7_unscoped_caller_tag_only_residue_still_dispatches(monkeypatch, awx_spy):
+    # Regression guard (decision 3/5b): the UNSCOPED (admin/global) caller
+    # keeps the legitimate tag-only-residue purge target unchanged — this
+    # is the SAME scenario test_happy_path_empty_members_tag_only_residue_
+    # is_a_valid_purge_target already pins (mode="single" -> tenant_slugs
+    # is None throughout this whole file); restated explicitly here as
+    # this fix round's own dedicated regression.
+    def fake_netbox(*args, **kwargs):
+        path = args[2]
+        if "/api/extras/tags/" in path:
+            return {"results": [{"id": 99, "name": f"workload:{SLUG}"}]}
+        return {"count": 0, "results": []}
+
+    monkeypatch.setattr(netbox_module, "_request", fake_netbox)
+    monkeypatch.setattr(prometheus_module, "query", lambda **k: [])
+
+    with TestClient(create_app(settings=_settings(OPERATOR, autoscale=True))) as client:
+        client.get("/auth/login", follow_redirects=False)
+        resp = _post(client, {"reason": "tag-only cleanup", "confirm": SLUG})
+        assert resp.status_code == 202, resp.text
+        _wait_for(lambda: awx_spy or None)
+
+    assert len(awx_spy) == 1
+    assert awx_spy[-1]["extra_vars"]["purge_expected_service_ids"] == []
+
+
+def test_p1_7_scoped_operator_with_own_members_present_is_unaffected(monkeypatch, awx_spy):
+    # Regression guard (decision 5c): a scoped operator purging a workload
+    # THEY legitimately own (their own tenant's services carry the tag)
+    # must be entirely unaffected by this fix.
+    svc = _service("studio-a-1", ["dmf-catalog", f"workload:{SLUG}", "lifecycle:bootstrapped"], svc_id=11)
+    monkeypatch.setattr(netbox_module, "_request", _scoped_netbox(device_services=[svc], tag_exists=True))
+    monkeypatch.setattr(prometheus_module, "query", lambda **k: [])
+
+    with TestClient(create_app(settings=_settings(OPERATOR, autoscale=True, media_tenancy=_TENANT_A))) as client:
+        client.get("/auth/login", follow_redirects=False)
+        resp = _post(client, {"reason": "go", "confirm": SLUG})
+        assert resp.status_code == 202, resp.text
+        _wait_for(lambda: awx_spy or None)
+
+    assert len(awx_spy) == 1
+    assert awx_spy[-1]["extra_vars"]["purge_expected_service_ids"] == [11]
