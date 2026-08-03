@@ -818,18 +818,21 @@ def test_p1r_cross_page_count_mismatch_refuses_source_read_incomplete(monkeypatc
 
 
 def test_p1r_malformed_instance_identity_refuses_observability_unavailable(monkeypatch):
-    # codex's exact GATE-A2b.3R probe: an `instance` label that does NOT
-    # conform to the real probe-target shape (no .svc.cluster.local:<port>
-    # suffix at all) — the LENIENT _cluster_service_from_target still
-    # returned it as a truthy "identity" (splitting on a dot that isn't
-    # there just returns the whole garbage string), so layer 1 never
-    # tripped: `members=[{id:11, observed_state:"unknown"}]` instead of
-    # refusing. The strict parser must reject this shape outright.
+    # codex's original GATE-A2b.3R probe used a bare hyphenated string
+    # ("totally-not-a-valid-probe-target") as its "malformed" exemplar —
+    # GATE-A2b.3R2 found that exact shape is actually a LEGITIMATE
+    # dmf-promsd target (a bare single-label hostname, same shape as that
+    # repo's own "device-one"-style records with no cluster_service), so
+    # FIX-A2b.6 reclassifies it as ignorable, not malformed (see
+    # test_p1r_ignorable_non_cluster_service_targets_never_refuse below).
+    # A genuinely malformed instance — one that doesn't even look like a
+    # valid host[:port][/path] target at all (a bare space is invalid in
+    # any of those) — must still refuse.
     svc = _service("studio-a-1", ["dmf-catalog", f"workload:{SLUG}", "lifecycle:bootstrapped"], svc_id=11)
     monkeypatch.setattr(netbox_module, "_request", _members_page(count=1, results=[svc]))
     monkeypatch.setattr(
         prometheus_module, "query",
-        lambda **k: [{"metric": {"instance": "totally-not-a-valid-probe-target"}, "value": [0, "1"]}],
+        lambda **k: [{"metric": {"instance": "not a valid target at all"}, "value": [0, "1"]}],
     )
 
     def boom(**k):
@@ -867,3 +870,134 @@ def test_p1r_nan_sample_refuses_observability_unavailable(monkeypatch):
     resp = _post(client, {"reason": "go", "confirm": SLUG})
     assert resp.status_code == 409
     assert resp.json()["kind"] == "observability-unavailable"
+
+
+# ---------------------------------------------------------------------------
+# FIX-A2b.6 (GATE-A2b.3R2) pinned regressions — a second micro round on
+# FIX-A2b.5's OWN strict-parser/count code: legitimate non-cluster-service
+# dmf-promsd targets were wrongly refused (a real deadlock risk), port 0
+# slipped through, a trailing newline could smuggle garbage past `$`, and
+# int subclasses bypassed the count/id type checks.
+# ---------------------------------------------------------------------------
+
+
+def test_p1r2_ignorable_non_cluster_service_targets_never_refuse(monkeypatch, awx_spy):
+    # codex's exact GATE-A2b.3R2 finding 1: dmf-promsd legitimately emits
+    # "dmf.example.com:9100" (a service/VM with a metrics port, no
+    # cluster_service) and bare "dmf.example.com" (an SNMP-only device) —
+    # see ../dmf-promsd/src/dmf_promsd/sd.py's own tests/test_sd.py
+    # fixtures, read read-only. Before this fix, EITHER row appearing
+    # anywhere in the SAME probe_success series refused the whole purge
+    # preflight (observability-unavailable) — a real facility with even
+    # one monitored physical device would deadlock every purge attempt
+    # permanently. Neither row corresponds to this purge's own member (no
+    # cluster_service claimed), so both must be silently ignored, never
+    # block the launch.
+    svc = _service("studio-a-1", ["dmf-catalog", f"workload:{SLUG}", "lifecycle:bootstrapped"], svc_id=11)
+    monkeypatch.setattr(netbox_module, "_request", _members_page(count=1, results=[svc]))
+    monkeypatch.setattr(
+        prometheus_module, "query",
+        lambda **k: [
+            {"metric": {"instance": "dmf.example.com:9100"}, "value": [0, "1"]},
+            {"metric": {"instance": "dmf.example.com"}, "value": [0, "1"]},
+        ],
+    )
+
+    with TestClient(create_app(settings=_settings(OPERATOR, autoscale=True))) as client:
+        client.get("/auth/login", follow_redirects=False)
+        resp = _post(client, {"reason": "go", "confirm": SLUG})
+        assert resp.status_code == 202, resp.text
+        _wait_for(lambda: awx_spy or None)
+
+    assert len(awx_spy) == 1
+
+
+def test_p1r2_joinable_target_with_port_zero_refuses_observability_unavailable(monkeypatch):
+    # codex's exact GATE-A2b.3R2 finding 2: "svc.ns.svc.cluster.local:0"
+    # parsed as a joinable cluster-service identity ("svc") with the
+    # digits-only port pattern accepting "0" — an invalid port (1-65535)
+    # masquerading as a legitimate identity. Looks like it's attempting to
+    # BE a cluster-service target, just with broken data — malformed, not
+    # ignorable.
+    svc = _service("studio-a-1", ["dmf-catalog", f"workload:{SLUG}", "lifecycle:bootstrapped"], svc_id=11)
+    monkeypatch.setattr(netbox_module, "_request", _members_page(count=1, results=[svc]))
+    monkeypatch.setattr(
+        prometheus_module, "query",
+        lambda **k: [{"metric": {"instance": "svc.ns.svc.cluster.local:0"}, "value": [0, "1"]}],
+    )
+
+    def boom(**k):
+        raise AssertionError("must never launch against a port-0 joinable-shaped target")
+
+    monkeypatch.setattr(main, "launch_job", boom)
+
+    client = _client(OPERATOR)
+    resp = _post(client, {"reason": "go", "confirm": SLUG})
+    assert resp.status_code == 409
+    assert resp.json()["kind"] == "observability-unavailable"
+
+
+def test_p1r2_trailing_newline_cannot_smuggle_garbage_past_the_anchor(monkeypatch):
+    # codex's exact GATE-A2b.3R2 finding 3: a bare `.match()` against a
+    # `...$`-terminated pattern is satisfiable just before an embedded
+    # newline, so "<valid-target>\nGARBAGE" would still "match" — anything
+    # after the newline rides along unexamined. \A/\Z + fullmatch must
+    # reject this outright (malformed, never joinable).
+    svc = _service("studio-a-1", ["dmf-catalog", f"workload:{SLUG}", "lifecycle:bootstrapped"], svc_id=11)
+    monkeypatch.setattr(netbox_module, "_request", _members_page(count=1, results=[svc]))
+    monkeypatch.setattr(
+        prometheus_module, "query",
+        lambda **k: [
+            {
+                "metric": {"instance": "mxl-videotestsrc.mxl.svc.cluster.local:9000\nnot-actually-this-target"},
+                "value": [0, "1"],
+            },
+        ],
+    )
+
+    def boom(**k):
+        raise AssertionError("must never launch when a trailing newline smuggles extra content past the anchor")
+
+    monkeypatch.setattr(main, "launch_job", boom)
+
+    client = _client(OPERATOR)
+    resp = _post(client, {"reason": "go", "confirm": SLUG})
+    assert resp.status_code == 409
+    assert resp.json()["kind"] == "observability-unavailable"
+
+
+class _IntSubclass(int):
+    """codex's exact GATE-A2b.3R2 finding 4 fixture: a custom int subclass
+    — isinstance(x, int) is True for this, but type(x) is int is False."""
+
+
+def test_p1r2_int_subclass_count_refuses_source_read_incomplete(monkeypatch):
+    svc = _service("studio-a-1", ["dmf-catalog", f"workload:{SLUG}", "lifecycle:bootstrapped"], svc_id=11)
+    monkeypatch.setattr(netbox_module, "_request", _members_page(count=_IntSubclass(1), results=[svc]))
+    monkeypatch.setattr(prometheus_module, "query", lambda **k: [])
+
+    def boom(**k):
+        raise AssertionError("must never launch on an int-subclass count")
+
+    monkeypatch.setattr(main, "launch_job", boom)
+
+    client = _client(OPERATOR)
+    resp = _post(client, {"reason": "go", "confirm": SLUG})
+    assert resp.status_code == 409
+    assert resp.json()["kind"] == "source-read-incomplete"
+
+
+def test_p1r2_int_subclass_service_id_refuses_source_inconsistent(monkeypatch):
+    svc = _service("studio-a-1", ["dmf-catalog", f"workload:{SLUG}", "lifecycle:bootstrapped"], svc_id=_IntSubclass(11))
+    monkeypatch.setattr(netbox_module, "_request", _members_page(count=1, results=[svc]))
+    monkeypatch.setattr(prometheus_module, "query", lambda **k: [])
+
+    def boom(**k):
+        raise AssertionError("must never launch on an int-subclass service id")
+
+    monkeypatch.setattr(main, "launch_job", boom)
+
+    client = _client(OPERATOR)
+    resp = _post(client, {"reason": "go", "confirm": SLUG})
+    assert resp.status_code == 409
+    assert resp.json()["kind"] == "source-inconsistent"

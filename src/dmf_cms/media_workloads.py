@@ -334,42 +334,81 @@ def _cluster_service_from_target(instance_target: str) -> Optional[str]:
     return host.split(".", 1)[0]
 
 
-# umbrella #347 fix round FIX-A2b.5 (GATE-A2b.3R P1): the real dmf-promsd
-# probe-target shape (ADR-0038 target construction) is
-# <cluster_service>.<namespace>.svc.cluster.local:<port>[/path] — not "any
-# non-empty string with an optional scheme/path/port stripped", which is
-# what _cluster_service_from_target's own LENIENT parser accepts (correct
-# for its own display-path callers, list_workloads_grouped/list_instances:
-# degrade gracefully on an odd label, never break the read). The purge
-# overlay's own layer-1 integrity check must not treat a syntactically
-# invalid instance label as a legitimate identity, or a malformed row
-# reads as a clean "no match" instead of the malformed-overlay refusal it
-# actually is.
+# umbrella #347 fix round FIX-A2b.5 (GATE-A2b.3R P1), hardened FIX-A2b.6
+# (GATE-A2b.3R2): the real dmf-promsd probe-target shape (ADR-0038 target
+# construction) is <cluster_service>.<namespace>.svc.cluster.local:<port>
+# [/path] for an in-cluster Service — but dmf-promsd
+# (../dmf-promsd/src/dmf_promsd/sd.py _probe_target, read read-only for
+# this fix) ALSO legitimately emits a plain host[:port] target for every
+# device/VM/service that has no cluster_service (a physical device probed
+# over SNMP/ICMP, a bare-metal service reachable at a DNS name — see that
+# repo's own tests/test_sd.py fixtures: "dmf.example.com:9100" for a
+# service/VM with a metrics port, bare "dmf.example.com" for an SNMP-only
+# device). FIX-A2b.5's own strict parser refused the WHOLE overlay read
+# the moment ANY such legitimate non-cluster-service row appeared anywhere
+# in the SAME probe_success series — a real facility with even one
+# monitored device would deadlock every purge attempt permanently. The
+# purge overlay read now classifies every row THREE ways
+# (_classify_purge_probe_target):
+#   joinable  — the cluster-service shape; extract the identity, join it.
+#   ignorable — any OTHER shape dmf-promsd legitimately emits (host[:port]
+#               [/path]); skip it for the join, but never refuse the read
+#               over it — it simply isn't one of THIS purge's own members.
+#   malformed — anything that doesn't even look like a valid target at
+#               all; refuse the whole read (layer-1 integrity intact).
+#
+# Anchored with \A/\Z and matched via fullmatch (GATE-A2b.3R2 P2) — never
+# bare .match() with a trailing $, which is satisfiable just before an
+# embedded or trailing newline and lets anything after it (including
+# outright garbage) silently ride along.
 _PURGE_PROBE_TARGET_RE = re.compile(
-    r"^(?:[a-zA-Z][a-zA-Z0-9+.-]*://)?"
+    r"\A(?:[a-zA-Z][a-zA-Z0-9+.-]*://)?"
     r"(?P<cluster_service>[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?)"
     r"\.(?:[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?)"
     r"\.svc\.cluster\.local"
-    r":[0-9]+"
-    r"(?:/.*)?$"
+    r":(?P<port>[0-9]+)"
+    r"(?:/.*)?\Z"
+)
+
+# The legitimate NON-cluster-service target shape dmf-promsd emits (see
+# _probe_target/_record_address/_extract_address there): a bare hostname/
+# IP, optionally followed by :<port>, optionally followed by /<path> — no
+# .svc.cluster.local structure at all. Deliberately permissive on the host
+# segment (dmf-promsd's own _extract_address can surface an IP, an FQDN,
+# or an arbitrary NetBox-recorded name/value string) — over-matching here
+# costs nothing, since anything matching this shape was never going to
+# resolve to one of THIS purge's own cluster-service members anyway; it is
+# only ever used to decide "ignorable", never to extract an identity.
+_PURGE_IGNORABLE_TARGET_RE = re.compile(
+    r"\A(?:[a-zA-Z][a-zA-Z0-9+.-]*://)?"
+    r"[a-zA-Z0-9](?:[a-zA-Z0-9.-]*[a-zA-Z0-9])?"
+    r"(?::[0-9]+)?"
+    r"(?:/.*)?\Z"
 )
 
 
-def _strict_cluster_service_from_target(instance_target: str) -> Optional[str]:
-    """Strict counterpart to ``_cluster_service_from_target``, used ONLY by
-    the purge overlay read (``resolve_purge_target``) — see the module-level
-    comment above ``_PURGE_PROBE_TARGET_RE`` for why. Returns the leading
-    DNS label ONLY when the ENTIRE instance string conforms to the real
-    probe-target shape; any other shape (a garbage string, a bare hostname
-    with no namespace/port, anything the lenient display-path parser would
-    still happily split on the first dot) returns None — the purge overlay
-    layer treats that as a malformed row and refuses the whole read, never
-    a silent join under a coincidentally-truthy identity.
+def _classify_purge_probe_target(instance_target: str) -> tuple[str, Optional[str]]:
+    """Classify a Prometheus ``instance`` label for the purge overlay read
+    (umbrella #347 fix round FIX-A2b.6, GATE-A2b.3R2) — see the module-level
+    comment above ``_PURGE_PROBE_TARGET_RE`` for the full rationale.
+
+    Returns ``("joinable", cluster_service)``, ``("ignorable", None)``, or
+    ``("malformed", None)``. A joinable-shaped target whose port is outside
+    1-65535 (GATE-A2b.3R2 P1, e.g. port 0) is classified ``malformed``, NOT
+    ignorable — it is clearly attempting to be a cluster-service identity
+    with broken/suspicious data, not a benign unrelated device row.
     """
     if not isinstance(instance_target, str) or not instance_target:
-        return None
-    match = _PURGE_PROBE_TARGET_RE.match(instance_target)
-    return match.group("cluster_service") if match else None
+        return "malformed", None
+    match = _PURGE_PROBE_TARGET_RE.fullmatch(instance_target)
+    if match:
+        port = int(match.group("port"))
+        if not (1 <= port <= 65535):
+            return "malformed", None
+        return "joinable", match.group("cluster_service")
+    if _PURGE_IGNORABLE_TARGET_RE.fullmatch(instance_target):
+        return "ignorable", None
+    return "malformed", None
 
 
 def _observed_by_identity(prometheus_url: str) -> dict[str, float]:
@@ -645,7 +684,11 @@ def _fetch_services_page_complete(
         # page, and identical across every page — any violation is a
         # malformed/inconsistent read, never partially trusted.
         page_count = result.get("count")
-        if not isinstance(page_count, int) or isinstance(page_count, bool) or page_count < 0:
+        # FIX-A2b.6 (GATE-A2b.3R2 P2): type(x) is int, not isinstance — a
+        # custom int subclass (bool included, but also any other) passes
+        # isinstance(x, int) while not actually being the plain int the
+        # launcher/NetBox contract requires.
+        if type(page_count) is not int or page_count < 0:
             raise RuntimeError(f"purge fetch: malformed page (count is not a plain non-negative int: {page_count!r})")
         if reported_count is None:
             reported_count = page_count
@@ -843,24 +886,28 @@ def resolve_purge_target(
         logger.warning("media-workloads: purge observed-state overlay unreachable: %s", exc)
         return {"error": "observability-unavailable"}
 
-    # Layer 1 — overlay integrity (FIX-A2b.4 P1-1, hardened FIX-A2b.5
-    # GATE-A2b.3R): unlike _observed_by_identity/list_workloads_grouped's
-    # own join (which silently `continue`s past a row it can't parse), a
-    # purge preflight must never partially trust a damaged overlay — ANY
-    # row that fails to resolve a STRICTLY-conforming cluster_service
-    # identity, a numeric value, or a FINITE value refuses the WHOLE read,
-    # not just that one row. Strict identity parsing (never the lenient
-    # _cluster_service_from_target) and math.isfinite (never NaN/inf
-    # silently feeding a lifecycle classification) are both load-bearing
-    # here — see _strict_cluster_service_from_target's own docstring.
+    # Layer 1 — overlay integrity (FIX-A2b.4 P1-1, hardened FIX-A2b.5/
+    # FIX-A2b.6 GATE-A2b.3R/R2): unlike _observed_by_identity/
+    # list_workloads_grouped's own join (which silently `continue`s past a
+    # row it can't parse), a purge preflight must never partially trust a
+    # damaged overlay — a genuinely MALFORMED row (never a legitimate
+    # non-cluster-service target dmf-promsd itself would emit — see
+    # _classify_purge_probe_target) refuses the WHOLE read. A joinable
+    # row's numeric value must also be present and FINITE (never NaN/inf
+    # silently feeding a lifecycle classification).
     observed: dict[str, float] = {}
     for row in rows or []:
         metric = row.get("metric") if isinstance(row, dict) else None
         if not isinstance(metric, dict):
             return {"error": "observability-unavailable"}
-        cluster_svc = _strict_cluster_service_from_target(metric.get("instance", ""))
-        if not cluster_svc:
+        kind, cluster_svc = _classify_purge_probe_target(metric.get("instance", ""))
+        if kind == "malformed":
             return {"error": "observability-unavailable"}
+        if kind == "ignorable":
+            # A legitimate dmf-promsd target this purge simply has no
+            # member under (a monitored device/VM/non-cluster service) —
+            # skip the join, never refuse the read over it.
+            continue
         try:
             value = float(row["value"][1])
         except (KeyError, IndexError, TypeError, ValueError):
@@ -879,7 +926,9 @@ def resolve_purge_target(
         # STRING (or any other non-int shape) means the source read is
         # inconsistent with what the launcher will accept; refuse before
         # any operation is created rather than dispatch a doomed launch.
-        if not isinstance(svc_id, int) or isinstance(svc_id, bool) or svc_id <= 0:
+        # FIX-A2b.6 (GATE-A2b.3R2 P2): type(x) is int, not isinstance —
+        # same custom-int-subclass hole as the count check above.
+        if type(svc_id) is not int or svc_id <= 0:
             logger.warning(
                 "media-workloads: purge preflight found a non-positive-int service id: %r", svc_id,
             )
