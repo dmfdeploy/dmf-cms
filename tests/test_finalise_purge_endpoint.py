@@ -22,6 +22,7 @@ precedent — a shared-JT, non-catalog-key-keyed async write):
 
 from __future__ import annotations
 
+import re
 import time
 
 import pytest
@@ -73,6 +74,27 @@ def _client(groups=OPERATOR, **kwargs) -> TestClient:
 
 def _audit_lines(caplog):
     return [r.getMessage() for r in caplog.records if r.getMessage().startswith("awx write:")]
+
+
+_AUDIT_LINE_RE = re.compile(
+    r"^awx write: action=(?P<action>\S*) actor=(?P<actor>\S*) role=(?P<role>\S*) "
+    r"real_role=(?P<real_role>\S*) request_id=(?P<request_id>\S*) target=(?P<target>\S*) "
+    r"reason=(?P<reason>.*?) outcome=(?P<outcome>\S*) workload=(?P<workload>\S*) capacity=(?P<capacity>.*)$"
+)
+
+
+def _parse_audit_line(line: str) -> dict[str, str]:
+    """Parse one ``_audit_awx_write`` log line into its named C5 fields.
+
+    FIX-A2b.9 (GATE-A2b.5R P2): never substring-search the raw line — its
+    ``request_id`` is a random hex32 (``uuid4().hex``, no dashes) that can
+    coincidentally contain any short digit sequence, making a bare
+    ``"22" in line`` check flaky. Parse fields and assert on the parsed
+    values instead.
+    """
+    match = _AUDIT_LINE_RE.match(line)
+    assert match is not None, f"unparseable audit line: {line!r}"
+    return match.groupdict()
 
 
 def _wait_for(predicate, timeout=5.0):
@@ -1193,8 +1215,14 @@ def test_p1_8_scoped_operator_straddle_refuses_workload_not_fully_visible(monkey
     assert set(body.keys()) - {"request_id"} == {"error", "kind"}
 
     lines = _audit_lines(caplog)
-    assert any("outcome=workload-not-fully-visible" in ln for ln in lines)
-    assert not any("22" in ln or "tenant-b" in ln for ln in lines)
+    parsed = [_parse_audit_line(ln) for ln in lines]
+    assert any(p["outcome"] == "workload-not-fully-visible" for p in parsed)
+    # No out-of-scope detail anywhere in the parsed fields (GATE-A2b.5R P2:
+    # never substring-search the raw line — request_id is random hex and
+    # can coincidentally contain "22"). target is the slug alone; workload/
+    # capacity are unused by this call site (logged as "" via `x or ""`).
+    assert all(p["target"] == SLUG for p in parsed)
+    assert all(p["workload"] == "" and p["capacity"] == "" for p in parsed)
 
 
 def test_p1_8_slug_coincidentally_shared_across_tenants_refuses_workload_not_fully_visible(monkeypatch):
@@ -1314,3 +1342,82 @@ def test_p1_8_scoped_operator_own_operation_reattach_still_returns_full_dict(mon
         assert body["operation_id"] == existing.operation_id
         assert body["initiator"] == "tenant-a-user"
     assert awx_spy == []
+
+
+# ---------------------------------------------------------------------------
+# FIX-A2b.9 (GATE-A2b.5R) pinned regressions — the completeness-of-authority
+# rule replaced: membership for the comparison is "slug among workload:*
+# tags, any position" (not _workload_assignment()'s first-tag-only return),
+# computed identically for both sides, and the two id sets must be EXACTLY
+# EQUAL — a strict superset (true_ids has more) is the ordinary straddle
+# (422 workload-not-fully-visible); any OTHER inequality (scoped_ids has
+# members true_ids lacks, or the sets are disjoint) is a fail-closed READ
+# problem (409 source-read-incomplete), not an authorization question.
+# ---------------------------------------------------------------------------
+
+
+def test_p1_9_out_of_scope_member_second_workload_tag_is_not_missed(monkeypatch):
+    # codex's exact probe: the out-of-scope service's slug is its SECOND
+    # workload:* tag. The old _workload_assignment()-based true-membership
+    # computation only ever reported the FIRST tag ("other"), silently
+    # dropping this member from true_ids and letting scoped_ids == true_ids
+    # (both {11}) pass as "fully visible" when it wasn't.
+    svc_11 = _service("studio-a-1", ["dmf-catalog", f"workload:{SLUG}", "lifecycle:bootstrapped"], svc_id=11)
+    svc_second_tag = _service(
+        "tenant-b-multi-tagged",
+        ["dmf-catalog", "workload:other", f"workload:{SLUG}", "lifecycle:bootstrapped"],
+        svc_id=33,
+    )
+    monkeypatch.setattr(
+        netbox_module, "_request",
+        _scoped_netbox(device_services=[svc_11], tag_exists=True, unscoped_services=[svc_11, svc_second_tag]),
+    )
+    monkeypatch.setattr(prometheus_module, "query", lambda **k: [])
+    monkeypatch.setattr(main, "launch_job", lambda **k: (_ for _ in ()).throw(AssertionError("must never launch")))
+
+    client = _client(OPERATOR, media_tenancy=_TENANT_A)
+    resp = _post(client, {"reason": "go", "confirm": SLUG})
+    assert resp.status_code == 422, resp.text
+    assert resp.json()["kind"] == "workload-not-fully-visible"
+
+
+def test_p1_9_inverse_empty_unscoped_read_fails_closed_source_read_incomplete(monkeypatch):
+    # An empty unscoped read against a non-empty scoped read is not the
+    # ordinary straddle (true_ids is not a superset — it's empty, smaller
+    # than scoped_ids) — the old subset test (`true_ids <= scoped_ids`)
+    # wrongly passed this as "fully visible" and dispatched. The two reads
+    # of the SAME workload contradicting each other is a read problem.
+    svc_11 = _service("studio-a-1", ["dmf-catalog", f"workload:{SLUG}", "lifecycle:bootstrapped"], svc_id=11)
+    monkeypatch.setattr(
+        netbox_module, "_request",
+        _scoped_netbox(device_services=[svc_11], tag_exists=True, unscoped_services=[]),
+    )
+    monkeypatch.setattr(prometheus_module, "query", lambda **k: [])
+    monkeypatch.setattr(main, "launch_job", lambda **k: (_ for _ in ()).throw(AssertionError("must never launch")))
+
+    client = _client(OPERATOR, media_tenancy=_TENANT_A)
+    resp = _post(client, {"reason": "go", "confirm": SLUG})
+    assert resp.status_code == 409, resp.text
+    body = resp.json()
+    assert body["error"] == "purge-preflight-refused"
+    assert body["kind"] == "source-read-incomplete"
+
+
+def test_p1_9_disjoint_scoped_and_unscoped_membership_fails_closed(monkeypatch):
+    # scoped_ids={11}, true_ids={77} — disjoint, neither a superset nor a
+    # subset of the other. Not an authorization question (there's no
+    # "more" the caller lacks visibility into) — the two reads simply
+    # disagree about which services carry this slug at all.
+    svc_11 = _service("studio-a-1", ["dmf-catalog", f"workload:{SLUG}", "lifecycle:bootstrapped"], svc_id=11)
+    svc_77 = _service("studio-a-elsewhere", ["dmf-catalog", f"workload:{SLUG}", "lifecycle:bootstrapped"], svc_id=77)
+    monkeypatch.setattr(
+        netbox_module, "_request",
+        _scoped_netbox(device_services=[svc_11], tag_exists=True, unscoped_services=[svc_77]),
+    )
+    monkeypatch.setattr(prometheus_module, "query", lambda **k: [])
+    monkeypatch.setattr(main, "launch_job", lambda **k: (_ for _ in ()).throw(AssertionError("must never launch")))
+
+    client = _client(OPERATOR, media_tenancy=_TENANT_A)
+    resp = _post(client, {"reason": "go", "confirm": SLUG})
+    assert resp.status_code == 409, resp.text
+    assert resp.json()["kind"] == "source-read-incomplete"

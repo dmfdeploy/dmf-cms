@@ -805,7 +805,18 @@ def resolve_purge_target(
       {"error": "source-read-incomplete"}     -- FIX-A2b.4 P1-2: the
                                                   completeness-verified
                                                   member fetch could not
-                                                  confirm it saw every page
+                                                  confirm it saw every page;
+                                                  ALSO (FIX-A2b.9, GATE-
+                                                  A2b.5R P1) a scoped
+                                                  caller's completeness-of-
+                                                  authority comparison came
+                                                  back neither equal nor a
+                                                  clean superset — the
+                                                  scoped and unscoped reads
+                                                  of the SAME workload
+                                                  contradict each other,
+                                                  which is a read problem,
+                                                  not an authorization one
       {"error": "source-inconsistent"}        -- FIX-A2b.4 P2-2: a member's
                                                   own id violates the
                                                   launcher's frozen
@@ -901,20 +912,32 @@ def resolve_purge_target(
     if not members and (tenant_slugs is not None or not tag_present):
         return {"error": "workload-not-found"}
 
-    # FIX-A2b.8 (GATE-A2b.5 P1, umbrella #347): completeness of authority.
-    # A SCOPED caller's non-empty ``members`` only proves PARTIAL visibility
-    # — the ``workload:<slug>`` Tag carries no tenant field at all, so a
-    # caller who can see SOME tagged services can still dispatch a purge
-    # whose AWX extra_vars (purge_expected_service_ids) cover only their
-    # visible subset, while the launcher's global Tag deletion removes
-    # every tenant's grouping regardless. Re-resolve membership UNSCOPED —
-    # strictly an internal comparison, never returned, never logged with
-    # ids — and refuse unless the scoped view already IS the complete
-    # membership. This construction also covers, for free, two unrelated
-    # workloads that merely happen to share a slug name across tenants:
-    # from here that looks identical to one workload straddling both, and
-    # both must refuse identically — there is no way, nor any need, to
-    # tell them apart.
+    # FIX-A2b.8 (GATE-A2b.5 P1, umbrella #347), rule replaced by FIX-A2b.9
+    # (GATE-A2b.5R): completeness of authority. A SCOPED caller's non-empty
+    # ``members`` only proves PARTIAL visibility — the ``workload:<slug>``
+    # Tag carries no tenant field at all, so a caller who can see SOME
+    # tagged services can still dispatch a purge whose AWX extra_vars
+    # (purge_expected_service_ids) cover only their visible subset, while
+    # the launcher's global Tag deletion removes every tenant's grouping
+    # regardless. Re-resolve membership UNSCOPED — strictly an internal
+    # comparison, never returned, never logged with ids.
+    #
+    # FIX-A2b.9: membership for THIS comparison is "the slug appears among
+    # the service's workload:* tags, any position" — the same test the
+    # not-purgeable multi-tag check above already applies — computed
+    # identically for both sides, NOT ``_workload_assignment()``'s
+    # first-tag-only return (GATE-A2b.5R P1: an out-of-scope service
+    # carrying ``workload:other`` THEN ``workload:studio-a`` was silently
+    # dropped from the true set, since ``_workload_assignment`` only ever
+    # reports the first tag). And the two sets must be EXACTLY EQUAL, not
+    # merely scoped-is-subset-of-true: a strict superset (true_ids has
+    # members scoped_ids lacks) is the ordinary straddle — an authorization
+    # refusal. Any OTHER inequality (scoped_ids has members true_ids
+    # lacks, or the two are simply disjoint) is not an authorization
+    # question at all — it is two reads of the same workload contradicting
+    # each other, which fails closed as a READ problem instead (GATE-A2b.5R
+    # P1: an inverse/empty unscoped read against a non-empty scoped read
+    # satisfied the old subset test and dispatched).
     if tenant_slugs is not None and members:
         try:
             all_services = _fetch_services_complete(netbox_url, read_token, ssl_verify, None)
@@ -927,18 +950,25 @@ def resolve_purge_target(
         except Exception as exc:
             logger.warning("media-workloads: purge preflight authority-scope unexpected error: %s", exc)
             return {"error": "netbox-error"}
-        scoped_ids = {svc.get("id") for svc in members}
-        true_ids: set[Any] = set()
-        for svc in all_services:
-            true_slug, _true_status = _workload_assignment(_tag_names(svc))
-            if true_slug == slug:
-                true_ids.add(svc.get("id"))
-        if not true_ids <= scoped_ids:
+
+        def _tagged_with(svc: dict[str, Any]) -> bool:
+            tags = [n.split(":", 1)[1] for n in _tag_names(svc) if n.startswith("workload:")]
+            return slug in tags
+
+        scoped_ids = {svc.get("id") for svc in services if _tagged_with(svc)}
+        true_ids = {svc.get("id") for svc in all_services if _tagged_with(svc)}
+        if scoped_ids != true_ids:
+            if true_ids > scoped_ids:
+                logger.warning(
+                    "media-workloads: purge preflight refused — scoped caller's visibility "
+                    "of a workload is incomplete relative to its true membership",
+                )
+                return {"error": "workload-not-fully-visible"}
             logger.warning(
-                "media-workloads: purge preflight refused — scoped caller's visibility "
-                "of a workload is incomplete relative to its true membership",
+                "media-workloads: purge preflight refused — scoped and unscoped membership "
+                "reads for a workload contradict each other",
             )
-            return {"error": "workload-not-fully-visible"}
+            return {"error": "source-read-incomplete"}
 
     if not prometheus_url:
         return {"error": "observability-unavailable"}
