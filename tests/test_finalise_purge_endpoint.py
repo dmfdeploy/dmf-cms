@@ -365,6 +365,7 @@ def test_happy_path_launches_with_exact_extra_vars_contract(monkeypatch, awx_spy
         if "/api/extras/tags/" in path:
             return {"results": [{"id": 99, "name": f"workload:{SLUG}"}]}
         return {
+            "count": 1,
             "results": [
                 _service("studio-a-1", ["dmf-catalog", f"workload:{SLUG}", "lifecycle:bootstrapped"], svc_id=11),
             ]
@@ -402,7 +403,7 @@ def test_happy_path_empty_members_tag_only_residue_is_a_valid_purge_target(monke
         path = args[2]
         if "/api/extras/tags/" in path:
             return {"results": [{"id": 99, "name": f"workload:{SLUG}"}]}
-        return {"results": []}  # no member Services left
+        return {"count": 0, "results": []}  # no member Services left
 
     monkeypatch.setattr(netbox_module, "_request", fake_netbox)
     monkeypatch.setattr(prometheus_module, "query", lambda **k: [])
@@ -422,7 +423,7 @@ def test_dispatched_operation_reaches_run_complete_with_purge_verified_at(monkey
         path = args[2]
         if "/api/extras/tags/" in path:
             return {"results": []}
-        return {"results": [_service("studio-a-1", ["dmf-catalog", f"workload:{SLUG}", "lifecycle:bootstrapped"], svc_id=11)]}
+        return {"count": 1, "results": [_service("studio-a-1", ["dmf-catalog", f"workload:{SLUG}", "lifecycle:bootstrapped"], svc_id=11)]}
 
     monkeypatch.setattr(netbox_module, "_request", fake_netbox)
     monkeypatch.setattr(prometheus_module, "query", lambda **k: [])
@@ -463,6 +464,7 @@ def test_p1_1_invisible_running_member_refuses_members_unverifiable(monkeypatch)
         if "/api/extras/tags/" in path:
             return {"results": [{"id": 99, "name": f"workload:{SLUG}"}]}
         return {
+            "count": 1,
             "results": [
                 _service(
                     "studio-a-1", ["dmf-catalog", f"workload:{SLUG}", "lifecycle:bootstrapped"],
@@ -509,6 +511,7 @@ def test_p1_1_malformed_overlay_row_refuses_observability_unavailable(monkeypatc
         if "/api/extras/tags/" in path:
             return {"results": [{"id": 99, "name": f"workload:{SLUG}"}]}
         return {
+            "count": 1,
             "results": [
                 _service("studio-a-1", ["dmf-catalog", f"workload:{SLUG}", "lifecycle:bootstrapped"], svc_id=11),
             ]
@@ -543,6 +546,7 @@ def test_p1_1_member_with_no_monitoring_identity_is_acceptable_unknown(monkeypat
         if "/api/extras/tags/" in path:
             return {"results": [{"id": 99, "name": f"workload:{SLUG}"}]}
         return {
+            "count": 1,
             "results": [
                 _service("studio-a-1", ["dmf-catalog", f"workload:{SLUG}", "lifecycle:bootstrapped"], svc_id=11),
             ]
@@ -678,6 +682,7 @@ def test_p2_1_invalid_multiple_target_in_second_tag_position_refuses_422(monkeyp
         if "/api/extras/tags/" in path:
             return {"results": [{"id": 99, "name": f"workload:{SLUG}"}]}
         return {
+            "count": 1,
             "results": [
                 _service(
                     "studio-a-1",
@@ -714,7 +719,7 @@ def test_p2_2_string_id_from_netbox_refuses_source_inconsistent(monkeypatch):
             return {"results": [{"id": 99, "name": f"workload:{SLUG}"}]}
         svc = _service("studio-a-1", ["dmf-catalog", f"workload:{SLUG}", "lifecycle:bootstrapped"], svc_id=11)
         svc["id"] = "11"  # NetBox drift: a string, not an int
-        return {"results": [svc]}
+        return {"count": 1, "results": [svc]}
 
     monkeypatch.setattr(netbox_module, "_request", fake_netbox)
     monkeypatch.setattr(prometheus_module, "query", lambda **k: [])
@@ -728,3 +733,137 @@ def test_p2_2_string_id_from_netbox_refuses_source_inconsistent(monkeypatch):
     resp = _post(client, {"reason": "go", "confirm": SLUG})
     assert resp.status_code == 409
     assert resp.json()["kind"] == "source-inconsistent"
+
+
+# ---------------------------------------------------------------------------
+# FIX-A2b.5 (GATE-A2b.3R) pinned regressions — a micro round on FIX-A2b.4's
+# OWN new code: completeness verification still failed open on a
+# malformed/wrong-type count, layer-1 accepted a syntactically invalid
+# Prometheus instance identity, and a NaN sample slipped through float().
+# ---------------------------------------------------------------------------
+
+
+def _members_page(*, count, results):
+    def fake(*args, **kwargs):
+        path = args[2]
+        if "/api/extras/tags/" in path:
+            return {"results": [{"id": 99, "name": f"workload:{SLUG}"}]}
+        page: dict = {"results": results}
+        if count is not _MISSING:
+            page["count"] = count
+        return page
+
+    return fake
+
+
+_MISSING = object()
+
+
+@pytest.mark.parametrize("bad_count", [_MISSING, True, 1.0, -1])
+def test_p1r_malformed_count_refuses_source_read_incomplete(monkeypatch, bad_count):
+    # codex's exact GATE-A2b.3R probes: count entirely absent, count=True
+    # (a bool — Python's `1 != True` is False, so a naive numeric compare
+    # would have silently accepted it), count=1.0 (a float, same silent-
+    # accept risk), and a negative count. Every one must refuse — never
+    # accepted as "the completeness check happens to pass".
+    svc = _service("studio-a-1", ["dmf-catalog", f"workload:{SLUG}", "lifecycle:bootstrapped"], svc_id=11)
+    monkeypatch.setattr(netbox_module, "_request", _members_page(count=bad_count, results=[svc]))
+    monkeypatch.setattr(prometheus_module, "query", lambda **k: [])
+
+    def boom(**k):
+        raise AssertionError("must never launch on a malformed/wrong-type count")
+
+    monkeypatch.setattr(main, "launch_job", boom)
+
+    client = _client(OPERATOR)
+    resp = _post(client, {"reason": "go", "confirm": SLUG})
+    assert resp.status_code == 409, bad_count
+    assert resp.json()["kind"] == "source-read-incomplete", bad_count
+
+
+def test_p1r_cross_page_count_mismatch_refuses_source_read_incomplete(monkeypatch):
+    # Page 1 claims count=2 (with 1 result + a `next`); page 2 claims
+    # count=1 (with 1 more result, next=None) — TOTAL collected is 2,
+    # which happens to equal page 1's OWN claim, so a naive "capture count
+    # from page 1 only, check once at the end" implementation would see
+    # 2 == 2 and wrongly call this complete — even though the pages
+    # disagree with EACH OTHER about the total. The count must be
+    # cross-checked on every page, not just compared once against the
+    # final tally.
+    survivor = _service("studio-a-2", ["dmf-catalog", f"workload:{SLUG}", "lifecycle:bootstrapped"], svc_id=12)
+
+    def fake(*args, **kwargs):
+        path = args[2]
+        if "/api/extras/tags/" in path:
+            return {"results": []}
+        if "offset=500" in path:
+            return {"count": 1, "next": None, "results": [survivor]}
+        return {
+            "count": 2, "next": "http://netbox.test/api/ipam/services/?tag=dmf-catalog&limit=500&offset=500",
+            "results": [_service("studio-a-1", ["dmf-catalog", f"workload:{SLUG}", "lifecycle:bootstrapped"], svc_id=11)],
+        }
+
+    monkeypatch.setattr(netbox_module, "_request", fake)
+    monkeypatch.setattr(prometheus_module, "query", lambda **k: [])
+
+    def boom(**k):
+        raise AssertionError("must never launch on a cross-page count mismatch")
+
+    monkeypatch.setattr(main, "launch_job", boom)
+
+    client = _client(OPERATOR)
+    resp = _post(client, {"reason": "go", "confirm": SLUG})
+    assert resp.status_code == 409
+    assert resp.json()["kind"] == "source-read-incomplete"
+
+
+def test_p1r_malformed_instance_identity_refuses_observability_unavailable(monkeypatch):
+    # codex's exact GATE-A2b.3R probe: an `instance` label that does NOT
+    # conform to the real probe-target shape (no .svc.cluster.local:<port>
+    # suffix at all) — the LENIENT _cluster_service_from_target still
+    # returned it as a truthy "identity" (splitting on a dot that isn't
+    # there just returns the whole garbage string), so layer 1 never
+    # tripped: `members=[{id:11, observed_state:"unknown"}]` instead of
+    # refusing. The strict parser must reject this shape outright.
+    svc = _service("studio-a-1", ["dmf-catalog", f"workload:{SLUG}", "lifecycle:bootstrapped"], svc_id=11)
+    monkeypatch.setattr(netbox_module, "_request", _members_page(count=1, results=[svc]))
+    monkeypatch.setattr(
+        prometheus_module, "query",
+        lambda **k: [{"metric": {"instance": "totally-not-a-valid-probe-target"}, "value": [0, "1"]}],
+    )
+
+    def boom(**k):
+        raise AssertionError("must never launch against a syntactically invalid instance identity")
+
+    monkeypatch.setattr(main, "launch_job", boom)
+
+    client = _client(OPERATOR)
+    resp = _post(client, {"reason": "go", "confirm": SLUG})
+    assert resp.status_code == 409
+    assert resp.json()["kind"] == "observability-unavailable"
+
+
+def test_p1r_nan_sample_refuses_observability_unavailable(monkeypatch):
+    # codex's exact GATE-A2b.3R probe: float("nan") parses cleanly via
+    # float(), and min(1.0, nan) == 1.0 in Python (NaN comparisons are
+    # always False, so min() picks the non-NaN operand) — silently
+    # classifying as "running" regardless of the real sample. A non-finite
+    # value is a malformed row, never a lifecycle classification.
+    svc = _service("studio-a-1", ["dmf-catalog", f"workload:{SLUG}", "lifecycle:bootstrapped"], svc_id=11)
+    monkeypatch.setattr(netbox_module, "_request", _members_page(count=1, results=[svc]))
+    monkeypatch.setattr(
+        prometheus_module, "query",
+        lambda **k: [
+            {"metric": {"instance": "mxl-videotestsrc.mxl.svc.cluster.local:9000/status"}, "value": [0, "nan"]},
+        ],
+    )
+
+    def boom(**k):
+        raise AssertionError("must never launch on a NaN overlay sample")
+
+    monkeypatch.setattr(main, "launch_job", boom)
+
+    client = _client(OPERATOR)
+    resp = _post(client, {"reason": "go", "confirm": SLUG})
+    assert resp.status_code == 409
+    assert resp.json()["kind"] == "observability-unavailable"
