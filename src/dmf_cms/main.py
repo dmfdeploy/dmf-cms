@@ -121,7 +121,14 @@ from .catalog import CatalogEntry, load_catalog_entries, get_lifecycle_status, l
 from .catalog import _netbox_service_names as _catalog_service_names
 from .contracts import AppContract, load_app_contract
 from . import l3_detail_tokens
-from .operations import Operation, OperationStore, OperationState, terminal_states, DIRTY_STATES
+from .operations import (
+    Operation,
+    OperationStore,
+    OperationState,
+    terminal_states,
+    DIRTY_STATES,
+    purge_op_visible_to_scope,
+)
 from .switch_source import (
     ReconnectViaAwxActuator,
     SwitchCommandStore,
@@ -5593,6 +5600,24 @@ def create_app(settings: Settings | None = None, contract: AppContract | None = 
                 request_id=request_id, reason=reason, outcome="not-purgeable",
             )
             return JSONResponse({"error": "not-purgeable", "request_id": request_id}, status_code=422)
+        # FIX-A2b.8 (GATE-A2b.5 P1, umbrella #347): a scoped caller's
+        # visible membership is a strict subset of the workload's true
+        # membership — dispatching would launch a purge whose
+        # extra_vars cover only part of the workload while the global
+        # Tag deletion removes every tenant's grouping. No counts, ids,
+        # or tenant detail here — the kind alone is the legible reason.
+        if preflight_error == "workload-not-fully-visible":
+            _audit_awx_write(
+                request, user, action="finalise-purge", target=slug,
+                request_id=request_id, reason=reason, outcome="workload-not-fully-visible",
+            )
+            return JSONResponse(
+                {
+                    "error": "not-purgeable", "kind": "workload-not-fully-visible",
+                    "request_id": request_id,
+                },
+                status_code=422,
+            )
         if preflight_error == "workload-not-found":
             _audit_awx_write(
                 request, user, action="finalise-purge", target=slug,
@@ -5651,12 +5676,25 @@ def create_app(settings: Settings | None = None, contract: AppContract | None = 
             action="finalise-purge", target=slug,
             conflicts=("deploy", "teardown", "rollback", "finalise-purge"),
             request_id=request_id, initiator=user.subject,
+            purge_tenant_scope=tenant_slugs,
         )
+        # FIX-A2b.8 (GATE-A2b.5 P2, umbrella #347): the EXCLUSIVITY itself
+        # stays global — the Tag is a global object, so two tenants racing
+        # the same slug is a genuine conflict and must still be refused —
+        # but a scoped caller who cannot attribute the conflicting/existing
+        # op to their OWN scope gets only the minimal body: no
+        # operation_id, no initiator, no operation dict. A caller's own
+        # in-scope op keeps the existing full reattach (200 + dict).
         if conflict is not None:
             _audit_awx_write(
                 request, user, action="finalise-purge", target=slug,
                 request_id=request_id, reason=reason, outcome="conflict-active-operation",
             )
+            if not purge_op_visible_to_scope(conflict, tenant_slugs):
+                return JSONResponse(
+                    {"error": "conflicting lifecycle operation in progress", "request_id": request_id},
+                    status_code=409,
+                )
             return JSONResponse(
                 {
                     "error": "conflicting lifecycle operation in progress",
@@ -5666,6 +5704,15 @@ def create_app(settings: Settings | None = None, contract: AppContract | None = 
                 status_code=409,
             )
         if not created:
+            if not purge_op_visible_to_scope(op, tenant_slugs):
+                _audit_awx_write(
+                    request, user, action="finalise-purge", target=slug,
+                    request_id=request_id, reason=reason, outcome="conflict-active-operation",
+                )
+                return JSONResponse(
+                    {"error": "conflicting lifecycle operation in progress", "request_id": request_id},
+                    status_code=409,
+                )
             _audit_awx_write(
                 request, user, action="finalise-purge", target=slug,
                 request_id=request_id, reason=reason, outcome="reattached",
@@ -5682,6 +5729,17 @@ def create_app(settings: Settings | None = None, contract: AppContract | None = 
                 request, user, action="finalise-purge", target=slug,
                 request_id=request_id, reason=reason, outcome="facility-busy",
             )
+            # FIX-A2b.8 (GATE-A2b.5 P2): same minimal-disclosure principle —
+            # the blocking op's own detail is only ever attributable via
+            # purge_tenant_scope, so this only actually engages when
+            # ``blocking`` is itself another finalise-purge op outside the
+            # caller's scope; deploy/teardown/rollback blockers (out of
+            # scope, GATE-A2b.5 decision #6) are unaffected.
+            if not purge_op_visible_to_scope(blocking, tenant_slugs):
+                return JSONResponse(
+                    {"error": "facility-busy", "advisory": True, "request_id": request_id},
+                    status_code=409,
+                )
             return JSONResponse(
                 {
                     "error": "facility-busy", "advisory": True,
