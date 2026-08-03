@@ -542,6 +542,128 @@ def list_workloads_grouped(
         "invalid_instances": invalid_instances,
     }
 
+# umbrella #347 fix round FIX-A2b.4 (P1-2, GATE-A2b.3): hard cap on pages a
+# completeness-verified purge fetch will follow before refusing — generous
+# enough for any real facility's residue, small enough that a runaway
+# `next` chain fails fast rather than hanging.
+_PURGE_FETCH_MAX_PAGES = 20
+
+
+def _next_page_path(next_url: str) -> str:
+    """NetBox's own paginated ``next`` is a full absolute URL;
+    ``netbox._request`` wants a path (it composes ``api_url + path``
+    itself) — extract path+query."""
+    parsed = urllib.parse.urlsplit(next_url)
+    return parsed.path + (f"?{parsed.query}" if parsed.query else "")
+
+
+def _fetch_services_page_complete(
+    netbox_url: str, netbox_token: str, ssl_verify: bool, path: str,
+) -> list[dict[str, Any]]:
+    """Follow NetBox's own ``next`` pagination to exhaustion and verify the
+    collected total against the reported ``count`` (umbrella #347 fix round
+    FIX-A2b.4, P1-2, GATE-A2b.3) — never a silent partial read.
+    ``_fetch_services`` (the plain, single-page read every other consumer —
+    list/grouped/clear — keeps using unchanged, out of this round's scope)
+    silently truncates to page 1 of any >500-result set; the finalise-purge
+    preflight's purgeability decision and the post-job watcher's SOLE
+    absence claim (Console Constitution Art. 1) must never be built on that
+    truncation.
+
+    Raises ``RuntimeError`` on any incompleteness — the page cap hit with
+    ``next`` still set, a collected/reported-count mismatch, or a malformed
+    page — never a partial list. Callers map the exception to a fail-closed
+    refusal (preflight: 409 ``source-read-incomplete``; the post-job
+    re-read: the existing unreachable-read handling, RUN_STATUS_UNKNOWN,
+    never RUN_COMPLETE).
+    """
+    from . import netbox as _netbox
+
+    ctx = _netbox._ssl_context(ssl_verify)
+    collected: list[dict[str, Any]] = []
+    reported_count = None
+    next_path: Optional[str] = path
+    pages = 0
+    while next_path:
+        if pages >= _PURGE_FETCH_MAX_PAGES:
+            raise RuntimeError(
+                f"purge fetch: page cap ({_PURGE_FETCH_MAX_PAGES}) exceeded with more pages remaining"
+            )
+        pages += 1
+        result = _netbox._request(netbox_url, netbox_token, next_path, ssl_context=ctx)
+        if not isinstance(result, dict):
+            raise RuntimeError("purge fetch: malformed page (not an object)")
+        page_results = result.get("results")
+        if not isinstance(page_results, list):
+            raise RuntimeError("purge fetch: malformed page (results not a list)")
+        collected.extend(page_results)
+        if reported_count is None:
+            reported_count = result.get("count")
+        next_url = result.get("next")
+        next_path = _next_page_path(next_url) if next_url else None
+    if reported_count is not None and len(collected) != reported_count:
+        raise RuntimeError(
+            f"purge fetch: incomplete read (collected {len(collected)}, reported count {reported_count})"
+        )
+    return collected
+
+
+def _fetch_services_complete(
+    netbox_url: str,
+    netbox_token: str,
+    ssl_verify: bool,
+    tenant_slugs: Optional[tuple[str, ...]],
+) -> list[dict[str, Any]]:
+    """Completeness-verified counterpart to ``_fetch_services`` (umbrella
+    #347 fix round FIX-A2b.4, P1-2) — used ONLY by the finalise-purge
+    preflight (``resolve_purge_target``) and the post-job residue check
+    (``purge_residue_present``). See ``_fetch_services_page_complete``'s
+    own docstring for why this is a parallel function rather than a change
+    to the shared one every other consumer keeps using.
+    """
+    base = f"/api/ipam/services/?tag={urllib.parse.quote(CATALOG_TAG)}&limit=500"
+
+    if tenant_slugs is None:
+        return _fetch_services_page_complete(netbox_url, netbox_token, ssl_verify, base)
+
+    if not tenant_slugs:
+        return []  # scoped, nothing mapped: fail closed to empty
+
+    from . import netbox as _netbox
+
+    ctx = _netbox._ssl_context(ssl_verify)
+    device_ids: list[int] = []
+    vm_ids: list[int] = []
+    for slug in tenant_slugs:
+        quoted = urllib.parse.quote(slug)
+        result = _netbox._request(
+            netbox_url, netbox_token,
+            f"/api/dcim/devices/?tenant={quoted}&brief=true&limit=500",
+            ssl_context=ctx,
+        )
+        device_ids.extend(d["id"] for d in result.get("results", []) if d.get("id"))
+        result = _netbox._request(
+            netbox_url, netbox_token,
+            f"/api/virtualization/virtual-machines/?tenant={quoted}&brief=true&limit=500",
+            ssl_context=ctx,
+        )
+        vm_ids.extend(v["id"] for v in result.get("results", []) if v.get("id"))
+
+    if not device_ids and not vm_ids:
+        return []
+
+    by_id: dict[Any, dict[str, Any]] = {}
+    if device_ids:
+        path = base + "".join(f"&device_id={d}" for d in device_ids)
+        for svc in _fetch_services_page_complete(netbox_url, netbox_token, ssl_verify, path):
+            by_id[svc.get("id")] = svc
+    if vm_ids:
+        path = base + "".join(f"&virtual_machine_id={v}" for v in vm_ids)
+        for svc in _fetch_services_page_complete(netbox_url, netbox_token, ssl_verify, path):
+            by_id[svc.get("id")] = svc
+    return list(by_id.values())
+
+
 def resolve_purge_target(
     netbox_url: str,
     read_token: str,
@@ -551,7 +673,7 @@ def resolve_purge_target(
     slug: str,
 ) -> dict[str, Any]:
     """Fresh finalise-purge preflight read (umbrella #347 WO-A2b-2, operator
-    ruling 2026-08-02).
+    ruling 2026-08-02; hardened by fix round FIX-A2b.4 / GATE-A2b.3).
 
     NEVER a cached snapshot: every call re-reads NetBox (the tagged Service
     members + the standalone workload Tag object) and re-queries Prometheus,
@@ -561,18 +683,49 @@ def resolve_purge_target(
     never proceeds unverified, so any read failure refuses rather than
     guessing.
 
+    The zero-running check is THREE-LAYERED (FIX-A2b.4 P1-1 — GATE-A2b.3
+    proved the prior two-state version fails OPEN on an invisible-running
+    member: a real running sample present in Prometheus under an identity
+    the join simply never matched):
+      1. Overlay integrity — the Prometheus fetch itself, AND every row it
+         returns, must parse cleanly (a joinable ``cluster_service`` +
+         numeric value). A damaged overlay is never partially trusted: one
+         malformed row refuses the WHOLE read, it is not silently skipped.
+      2. A member whose ``custom_fields.cluster_service`` is non-empty
+         CLAIMS a monitoring identity — it must resolve to a CONCLUSIVE
+         sample (found in the overlay, running or failing). No sample at
+         all for a claimed identity is ``members-unverifiable``, never
+         silently "unknown".
+      3. A member with NO monitoring identity (cleared at finalise — the
+         NORMAL, expected purge candidate) is acceptable-unknown; nothing
+         to verify, nothing to refuse on this axis.
+
     Returns one of:
       {"error": "netbox-unreachable" | "netbox-error"}
+      {"error": "source-read-incomplete"}     -- FIX-A2b.4 P1-2: the
+                                                  completeness-verified
+                                                  member fetch could not
+                                                  confirm it saw every page
+      {"error": "source-inconsistent"}        -- FIX-A2b.4 P2-2: a member's
+                                                  own id violates the
+                                                  launcher's frozen
+                                                  positive-int contract
       {"error": "not-purgeable"}              -- unassigned slug, or a
-                                                  member carrying >1
+                                                  service carrying >1
                                                   workload:* tag naming
-                                                  this slug
+                                                  this slug (checked BEFORE
+                                                  the slug-match skip,
+                                                  FIX-A2b.4 P2-1 — order no
+                                                  longer matters)
       {"error": "workload-not-found"}         -- no members AND no Tag
                                                   residue
-      {"error": "observability-unavailable"}  -- Prometheus unconfigured or
-                                                  unreachable
+      {"error": "observability-unavailable"}  -- Prometheus unconfigured,
+                                                  unreachable, or its
+                                                  overlay was malformed
       {"members": [{"id", "name", "requested_state", "observed_state"}],
-       "tag_present": bool}
+       "tag_present": bool}                   -- observed_state is one of
+                                                  "running" | "failing" |
+                                                  "unverifiable" | "unknown"
     """
     from . import netbox as _netbox
 
@@ -580,10 +733,13 @@ def resolve_purge_target(
         return {"error": "not-purgeable"}
 
     try:
-        services = _fetch_services(netbox_url, read_token, ssl_verify, tenant_slugs)
+        services = _fetch_services_complete(netbox_url, read_token, ssl_verify, tenant_slugs)
     except _netbox.NetboxAPIError as exc:
         logger.warning("media-workloads: purge preflight lookup failed: %s", exc)
         return {"error": "netbox-unreachable"}
+    except RuntimeError as exc:
+        logger.warning("media-workloads: purge preflight read incomplete: %s", exc)
+        return {"error": "source-read-incomplete"}
     except Exception as exc:
         logger.warning("media-workloads: purge preflight unexpected error: %s", exc)
         return {"error": "netbox-error"}
@@ -591,11 +747,19 @@ def resolve_purge_target(
     members: list[dict[str, Any]] = []
     for svc in services:
         names = _tag_names(svc)
-        member_slug, status = _workload_assignment(names)
+        # FIX-A2b.4 P2-1 (GATE-A2b.3): detect a multi-workload-tag service
+        # BEFORE the slug-match skip below — _workload_assignment only ever
+        # reports the FIRST workload:* tag, so checking status AFTER
+        # filtering on member_slug == slug missed this slug entirely
+        # whenever it wasn't that first tag. Any service naming this slug
+        # among MORE than one workload:* tag makes it not-purgeable,
+        # regardless of tag order.
+        workload_tags = [n.split(":", 1)[1] for n in names if n.startswith("workload:")]
+        if len(workload_tags) > 1 and slug in workload_tags:
+            return {"error": "not-purgeable"}
+        member_slug, _status = _workload_assignment(names)
         if member_slug != slug:
             continue
-        if status == "invalid-multiple":
-            return {"error": "not-purgeable"}
         members.append(svc)
 
     tag_name = f"workload:{slug}"
@@ -622,33 +786,59 @@ def resolve_purge_target(
         logger.warning("media-workloads: purge observed-state overlay unreachable: %s", exc)
         return {"error": "observability-unavailable"}
 
-    # Same identity-join as _observed_by_identity/list_workloads_grouped
-    # (ADR-0046 §3), inlined rather than reused: unlike that helper, a
-    # Prometheus failure here must be VISIBLE to the caller (observability-
-    # unavailable, above), never silently degraded to an empty overlay.
+    # Layer 1 — overlay integrity (FIX-A2b.4 P1-1): unlike
+    # _observed_by_identity/list_workloads_grouped's own join (which
+    # silently `continue`s past a row it can't parse), a purge preflight
+    # must never partially trust a damaged overlay — ANY row that fails to
+    # resolve a joinable cluster_service or a numeric value refuses the
+    # WHOLE read, not just that one row.
     observed: dict[str, float] = {}
     for row in rows or []:
-        metric = row.get("metric") or {}
+        metric = row.get("metric") if isinstance(row, dict) else None
+        if not isinstance(metric, dict):
+            return {"error": "observability-unavailable"}
         cluster_svc = _cluster_service_from_target(metric.get("instance", ""))
+        if not cluster_svc:
+            return {"error": "observability-unavailable"}
         try:
             value = float(row["value"][1])
         except (KeyError, IndexError, TypeError, ValueError):
-            continue
-        if cluster_svc:
-            observed[cluster_svc] = min(observed.get(cluster_svc, 1.0), value)
+            return {"error": "observability-unavailable"}
+        observed[cluster_svc] = min(observed.get(cluster_svc, 1.0), value)
 
     result_members = []
     for svc in members:
         names = _tag_names(svc)
+        svc_id = svc.get("id")
+        # FIX-A2b.4 P2-2 (GATE-A2b.3): the launcher's frozen contract
+        # (playbooks/finalise-purge.yml) asserts purge_expected_service_ids
+        # are plain positive ints — a NetBox id surfacing as a numeric
+        # STRING (or any other non-int shape) means the source read is
+        # inconsistent with what the launcher will accept; refuse before
+        # any operation is created rather than dispatch a doomed launch.
+        if not isinstance(svc_id, int) or isinstance(svc_id, bool) or svc_id <= 0:
+            logger.warning(
+                "media-workloads: purge preflight found a non-positive-int service id: %r", svc_id,
+            )
+            return {"error": "source-inconsistent"}
         cf = svc.get("custom_fields")
         cs = cf.get("cluster_service") if isinstance(cf, dict) else None
-        if not isinstance(cs, str) or not cs:
-            cs = svc.get("name")
-        observed_state = "unknown"
-        if cs in observed:
-            observed_state = "running" if observed[cs] >= 1.0 else "failing"
+        claims_observability = isinstance(cs, str) and bool(cs)
+        if claims_observability:
+            # Layer 2 — a member that still declares a monitoring identity
+            # must resolve to a CONCLUSIVE sample; no sample found for a
+            # claimed identity is unverifiable, never silently "unknown"
+            # (the exact invisible-running gap GATE-A2b.3 proved).
+            if cs in observed:
+                observed_state = "running" if observed[cs] >= 1.0 else "failing"
+            else:
+                observed_state = "unverifiable"
+        else:
+            # Layer 3 — no monitoring identity left (the normal,
+            # fully-finalised purge candidate): acceptable-unknown.
+            observed_state = "unknown"
         result_members.append({
-            "id": svc.get("id"),
+            "id": svc_id,
             "name": svc.get("name"),
             "requested_state": _tag_suffix(names, "lifecycle") or "unknown",
             "observed_state": observed_state,
@@ -672,12 +862,20 @@ def purge_residue_present(
     (``tenant_slugs=None``) deliberately: this is a completion check, not a
     user-facing listing, and the workload was already gate-approved
     tenant-scoped at dispatch time — it must see every tenant's records to
-    confirm true absence. Exceptions propagate (NetboxAPIError included);
-    the watcher itself decides how to fail closed on an unreachable re-read.
+    confirm true absence. Exceptions propagate (NetboxAPIError AND, since
+    FIX-A2b.4 P1-2, RuntimeError from an incomplete paginated read included)
+    — the watcher itself decides how to fail closed on an unreachable/
+    incomplete re-read (RUN_STATUS_UNKNOWN, never RUN_COMPLETE).
+
+    Uses the SAME completeness-verified fetch as the preflight
+    (``_fetch_services_complete``), not the plain ``_fetch_services`` —
+    GATE-A2b.3 proved a partial page-1-only read here would silently
+    report absence while a surviving member sat on a later page, false-
+    greening the operation's own ``purge_verified_at`` claim.
     """
     from . import netbox as _netbox
 
-    services = _fetch_services(netbox_url, read_token, ssl_verify, None)
+    services = _fetch_services_complete(netbox_url, read_token, ssl_verify, None)
     tag_name = f"workload:{slug}"
     if any(tag_name in _tag_names(s) for s in services):
         return True

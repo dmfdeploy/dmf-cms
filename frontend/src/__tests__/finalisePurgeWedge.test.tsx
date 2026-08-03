@@ -190,10 +190,7 @@ describe('Finalise & Review: delete permanently drives to a real completion', ()
     expect(within(finalise).queryByText(/[Rr]etrying/)).toBeNull()
   })
 
-  it('is NOT offered while a member is observed running, and NOT offered while the read is stale (isFetching)', async () => {
-    // Two negative cases against the REAL WorkloadDetail wiring (not just
-    // the pure stageActions unit tests) — a member running, and a
-    // never-settling grouped fetch (isFetching stays true).
+  it('is NOT offered while a member is observed running', async () => {
     const runningMember = eligibleWorkload({
       instances: [
         {
@@ -221,5 +218,60 @@ describe('Finalise & Review: delete permanently drives to a real completion', ()
     // position, not off-flow — but regardless of position, delete-
     // permanently must not appear anywhere while a member is running.
     expect(screen.queryByRole('button', { name: '🗑 Delete permanently' })).toBeNull()
+  })
+
+  it('is withdrawn during a genuinely pending background refetch (isFetching), even though the retained payload is still eligible', async () => {
+    // umbrella #347 fix round FIX-A2b.4 (GATE-A2b.3, P2-3): the prior
+    // version of this test only ever supplied a COMPLETED response and
+    // never actually constructed a pending fetch — react-query's own
+    // isFetching never went true, so it never exercised
+    // WorkloadDetail.tsx's `!isError && !isFetching` gate at all. This one
+    // does: the grouped query resolves once (eligible), then a SECOND
+    // fetch (triggered by invalidateQueries, mirroring the exact "next
+    // background poll" pattern workloadDetailStageWedge.test.tsx already
+    // uses) is held open indefinitely — react-query keeps the PREVIOUS
+    // (still-eligible) payload in `data` while `isFetching` is true, and
+    // the button must disappear anyway.
+    const wl = eligibleWorkload()
+    const grouped: MediaWorkloadsGroupedResponse = {
+      configured: true, degraded: false, scope: [], workloads: [wl], invalid_instances: [],
+    }
+    let fetchCount = 0
+    const refetchControl: { resolve: (() => void) | null } = { resolve: null }
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(async (input: RequestInfo | URL) => {
+        const url = (typeof input === 'string' ? input : (input as Request).url).toString()
+        if (url.endsWith('/api/catalog')) return json({ entries: [] })
+        if (url.endsWith('/api/media-workloads/grouped')) {
+          fetchCount += 1
+          if (fetchCount === 1) return json(grouped)
+          // The refetch: genuinely held open — this IS what makes
+          // isFetching true for the duration of this test, not a stand-in.
+          return new Promise<Response>((resolve) => {
+            refetchControl.resolve = () => resolve(json(grouped))
+          })
+        }
+        return json({})
+      }),
+    )
+
+    const queryClient = renderDetail()
+    await screen.findByRole('navigation', { name: 'Media workload lifecycle' })
+    fireEvent.click(within(rail()).getByRole('button', { name: 'Finalise & Review' }))
+    const finalise = stageSection('Finalise & Review')
+    await within(finalise).findByRole('button', { name: '🗑 Delete permanently' })
+
+    // Trigger the background refetch WITHOUT awaiting it (it never settles
+    // within this test) — same trigger workloadDetailStageWedge.test.tsx
+    // uses to simulate "the next poll tick lands".
+    void queryClient.invalidateQueries({ queryKey: ['media-workloads-grouped'] })
+
+    await waitFor(() =>
+      expect(within(finalise).queryByRole('button', { name: '🗑 Delete permanently' })).toBeNull(),
+    )
+
+    // Let the held-open fetch resolve so nothing dangles past the test.
+    refetchControl.resolve?.()
   })
 })

@@ -5557,6 +5557,36 @@ def create_app(settings: Settings | None = None, contract: AppContract | None = 
                 },
                 status_code=409,
             )
+        # FIX-A2b.4 P1-2 (GATE-A2b.3): the completeness-verified member
+        # fetch could not confirm it saw every page — never proceed on a
+        # possibly-partial member list.
+        if preflight_error == "source-read-incomplete":
+            _audit_awx_write(
+                request, user, action="finalise-purge", target=slug,
+                request_id=request_id, reason=reason, outcome="source-read-incomplete",
+            )
+            return JSONResponse(
+                {
+                    "error": "purge-preflight-refused", "kind": "source-read-incomplete",
+                    "request_id": request_id,
+                },
+                status_code=409,
+            )
+        # FIX-A2b.4 P2-2 (GATE-A2b.3): a member's own NetBox id violates the
+        # launcher's frozen positive-int contract — refuse before an
+        # operation is ever created, never dispatch a doomed launch.
+        if preflight_error == "source-inconsistent":
+            _audit_awx_write(
+                request, user, action="finalise-purge", target=slug,
+                request_id=request_id, reason=reason, outcome="source-inconsistent",
+            )
+            return JSONResponse(
+                {
+                    "error": "purge-preflight-refused", "kind": "source-inconsistent",
+                    "request_id": request_id,
+                },
+                status_code=409,
+            )
         if preflight_error == "not-purgeable":
             _audit_awx_write(
                 request, user, action="finalise-purge", target=slug,
@@ -5594,6 +5624,22 @@ def create_app(settings: Settings | None = None, contract: AppContract | None = 
                 {
                     "error": "purge-preflight-refused", "kind": "members-running",
                     "members": running, "request_id": request_id,
+                },
+                status_code=409,
+            )
+        # FIX-A2b.4 P1-1 (GATE-A2b.3): a member that still claims a
+        # monitoring identity but resolved to no conclusive sample — the
+        # invisible-running gap. Never silently treated as "not running".
+        unverifiable = [m["id"] for m in members if m["observed_state"] == "unverifiable"]
+        if unverifiable:
+            _audit_awx_write(
+                request, user, action="finalise-purge", target=slug,
+                request_id=request_id, reason=reason, outcome="members-unverifiable",
+            )
+            return JSONResponse(
+                {
+                    "error": "purge-preflight-refused", "kind": "members-unverifiable",
+                    "members": unverifiable, "request_id": request_id,
                 },
                 status_code=409,
             )

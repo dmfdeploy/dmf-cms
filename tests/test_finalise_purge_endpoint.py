@@ -443,3 +443,288 @@ def test_dispatched_operation_reaches_run_complete_with_purge_verified_at(monkey
     assert op is not None
     assert op.action == "finalise-purge"
     assert op.purge_verified_at is not None
+
+
+# ---------------------------------------------------------------------------
+# FIX-A2b.4 (GATE-A2b.3) pinned regressions — five probe-proven findings.
+# ---------------------------------------------------------------------------
+
+
+def test_p1_1_invisible_running_member_refuses_members_unverifiable(monkeypatch):
+    # codex's exact GATE-A2b.3 P1 fixture: a bootstrapped member that still
+    # CLAIMS a monitoring identity (custom_fields.cluster_service set), but
+    # Prometheus's own overlay reports a running sample under a DIFFERENT,
+    # well-formed identity — the join never matches, so the member's own
+    # observed_state used to silently fall to "unknown" (treated as "not
+    # running") instead of being flagged unverifiable. Must refuse, never
+    # launch.
+    def fake_netbox(*args, **kwargs):
+        path = args[2]
+        if "/api/extras/tags/" in path:
+            return {"results": [{"id": 99, "name": f"workload:{SLUG}"}]}
+        return {
+            "results": [
+                _service(
+                    "studio-a-1", ["dmf-catalog", f"workload:{SLUG}", "lifecycle:bootstrapped"],
+                    svc_id=11, custom_fields={"cluster_service": "mxl-videotestsrc"},
+                ),
+            ]
+        }
+
+    def fake_prometheus(**kwargs):
+        # Well-formed row (parses cleanly) — but for an UNRELATED identity,
+        # never "mxl-videotestsrc". Not malformed, just genuinely unjoinable
+        # for this member.
+        return [
+            {
+                "metric": {"instance": "unrelated-svc.mxl.svc.cluster.local:9000/status", "job": "netbox-probe"},
+                "value": [0, "1"],
+            },
+        ]
+
+    monkeypatch.setattr(netbox_module, "_request", fake_netbox)
+    monkeypatch.setattr(prometheus_module, "query", fake_prometheus)
+
+    def boom(**k):
+        raise AssertionError("must never launch on an unverifiable member")
+
+    monkeypatch.setattr(main, "launch_job", boom)
+
+    client = _client(OPERATOR)
+    resp = _post(client, {"reason": "go", "confirm": SLUG})
+    assert resp.status_code == 409
+    body = resp.json()
+    assert body["error"] == "purge-preflight-refused"
+    assert body["kind"] == "members-unverifiable"
+    assert body["members"] == [11]
+
+
+def test_p1_1_malformed_overlay_row_refuses_observability_unavailable(monkeypatch):
+    # Layer 1 (overlay integrity): a member with NO monitoring identity at
+    # all would otherwise sail through — but if even ONE row in the SAME
+    # overlay fetch is malformed (unparseable value here), the whole read
+    # is untrustworthy. A damaged overlay is never partially trusted.
+    def fake_netbox(*args, **kwargs):
+        path = args[2]
+        if "/api/extras/tags/" in path:
+            return {"results": [{"id": 99, "name": f"workload:{SLUG}"}]}
+        return {
+            "results": [
+                _service("studio-a-1", ["dmf-catalog", f"workload:{SLUG}", "lifecycle:bootstrapped"], svc_id=11),
+            ]
+        }
+
+    def fake_prometheus(**kwargs):
+        return [
+            {"metric": {"instance": "mxl-videotestsrc.mxl.svc.cluster.local:9000/status"}, "value": [0, "not-a-number"]},
+        ]
+
+    monkeypatch.setattr(netbox_module, "_request", fake_netbox)
+    monkeypatch.setattr(prometheus_module, "query", fake_prometheus)
+
+    def boom(**k):
+        raise AssertionError("must never launch against a malformed overlay")
+
+    monkeypatch.setattr(main, "launch_job", boom)
+
+    client = _client(OPERATOR)
+    resp = _post(client, {"reason": "go", "confirm": SLUG})
+    assert resp.status_code == 409
+    body = resp.json()
+    assert body["kind"] == "observability-unavailable"
+
+
+def test_p1_1_member_with_no_monitoring_identity_is_acceptable_unknown(monkeypatch, awx_spy):
+    # Layer 3 — the NORMAL purge candidate: a fully-finalised member has no
+    # cluster_service left at all, and the overlay itself is clean (nothing
+    # malformed). "unknown" here is legitimately purgeable, not refused.
+    def fake_netbox(*args, **kwargs):
+        path = args[2]
+        if "/api/extras/tags/" in path:
+            return {"results": [{"id": 99, "name": f"workload:{SLUG}"}]}
+        return {
+            "results": [
+                _service("studio-a-1", ["dmf-catalog", f"workload:{SLUG}", "lifecycle:bootstrapped"], svc_id=11),
+            ]
+        }
+
+    def fake_prometheus(**kwargs):
+        return [{"metric": {"instance": "some-other-thing.mxl.svc.cluster.local:9000/status"}, "value": [0, "1"]}]
+
+    monkeypatch.setattr(netbox_module, "_request", fake_netbox)
+    monkeypatch.setattr(prometheus_module, "query", fake_prometheus)
+
+    with TestClient(create_app(settings=_settings(OPERATOR, autoscale=True))) as client:
+        client.get("/auth/login", follow_redirects=False)
+        resp = _post(client, {"reason": "go", "confirm": SLUG})
+        assert resp.status_code == 202, resp.text
+        _wait_for(lambda: awx_spy or None)
+    assert len(awx_spy) == 1
+
+
+def _paginated_netbox(*, page1_results, page2_results, count, page2_next=None):
+    """A 2-page NetBox ipam/services response — codex's exact GATE-A2b.3
+    P1-2 fixture shape: count=1, non-null next, empty first page, the
+    survivor sitting on the page a non-completeness-verified fetch would
+    never follow to."""
+    next_url = "http://netbox.test/api/ipam/services/?tag=dmf-catalog&limit=500&offset=500"
+
+    def fake(*args, **kwargs):
+        path = args[2]
+        if "/api/extras/tags/" in path:
+            return {"results": []}
+        if "offset=500" in path:
+            return {"count": count, "next": page2_next, "previous": next_url, "results": page2_results}
+        return {"count": count, "next": next_url, "previous": None, "results": page1_results}
+
+    return fake
+
+
+def test_p1_2_preflight_finds_survivor_across_a_paginated_read(monkeypatch, awx_spy):
+    survivor = _service("studio-a-1", ["dmf-catalog", f"workload:{SLUG}", "lifecycle:bootstrapped"], svc_id=11)
+    monkeypatch.setattr(
+        netbox_module, "_request",
+        _paginated_netbox(page1_results=[], page2_results=[survivor], count=1),
+    )
+    monkeypatch.setattr(prometheus_module, "query", lambda **k: [])
+
+    with TestClient(create_app(settings=_settings(OPERATOR, autoscale=True))) as client:
+        client.get("/auth/login", follow_redirects=False)
+        resp = _post(client, {"reason": "go", "confirm": SLUG})
+        assert resp.status_code == 202, resp.text
+        _wait_for(lambda: awx_spy or None)
+
+    assert len(awx_spy) == 1
+    assert awx_spy[-1]["extra_vars"]["purge_expected_service_ids"] == [11]
+
+
+def test_p1_2_preflight_refuses_on_count_mismatch(monkeypatch):
+    # count claims 2, but only 1 is ever returned across all pages (next
+    # goes null after page 1) — an inconsistent read, never trusted.
+    def fake_netbox(*args, **kwargs):
+        path = args[2]
+        if "/api/extras/tags/" in path:
+            return {"results": []}
+        return {
+            "count": 2, "next": None,
+            "results": [_service("studio-a-1", ["dmf-catalog", f"workload:{SLUG}", "lifecycle:bootstrapped"], svc_id=11)],
+        }
+
+    monkeypatch.setattr(netbox_module, "_request", fake_netbox)
+    monkeypatch.setattr(prometheus_module, "query", lambda **k: [])
+
+    def boom(**k):
+        raise AssertionError("must never launch on an incomplete read")
+
+    monkeypatch.setattr(main, "launch_job", boom)
+
+    client = _client(OPERATOR)
+    resp = _post(client, {"reason": "go", "confirm": SLUG})
+    assert resp.status_code == 409
+    assert resp.json()["kind"] == "source-read-incomplete"
+
+
+def test_p1_2_preflight_refuses_when_the_page_cap_is_exceeded(monkeypatch):
+    # `next` never goes null — a runaway pagination chain must fail fast,
+    # not hang or silently stop at whatever it's fetched so far.
+    def fake_netbox(*args, **kwargs):
+        return {
+            "count": 999,
+            "next": "http://netbox.test/api/ipam/services/?tag=dmf-catalog&limit=500&offset=999999",
+            "results": [],
+        }
+
+    monkeypatch.setattr(netbox_module, "_request", fake_netbox)
+    monkeypatch.setattr(prometheus_module, "query", lambda **k: [])
+
+    def boom(**k):
+        raise AssertionError("must never launch when the page cap is exceeded")
+
+    monkeypatch.setattr(main, "launch_job", boom)
+
+    client = _client(OPERATOR)
+    resp = _post(client, {"reason": "go", "confirm": SLUG})
+    assert resp.status_code == 409
+    assert resp.json()["kind"] == "source-read-incomplete"
+
+
+def test_p1_2_post_job_residue_check_finds_survivor_across_pagination():
+    # The post-job absence authority (purge_residue_present) must ALSO
+    # follow pagination to exhaustion — the same fixture shape, this time
+    # exercised directly (unit-level, not through the HTTP route).
+    import dmf_cms.netbox as _netbox_mod
+
+    survivor = _service("studio-a-1", ["dmf-catalog", f"workload:{SLUG}"], svc_id=11)
+    orig_request = _netbox_mod._request
+    _netbox_mod._request = _paginated_netbox(page1_results=[], page2_results=[survivor], count=1)
+    try:
+        present = media_workloads.purge_residue_present(
+            "http://netbox.test", "tok", False, SLUG,
+        )
+    finally:
+        _netbox_mod._request = orig_request
+    assert present is True
+
+
+def test_p2_1_invalid_multiple_target_in_second_tag_position_refuses_422(monkeypatch):
+    # codex's exact GATE-A2b.3 P2 fixture: a service tagged workload:other-
+    # workload FIRST, then workload:studio-a SECOND. _workload_assignment
+    # only ever reports the FIRST tag, so the old "skip on member_slug !=
+    # slug, check invalid-multiple only after" ordering silently omitted
+    # this service — the launcher would refuse the stale set, but dmf-cms
+    # itself must never dispatch a doomed launch.
+    def fake_netbox(*args, **kwargs):
+        path = args[2]
+        if "/api/extras/tags/" in path:
+            return {"results": [{"id": 99, "name": f"workload:{SLUG}"}]}
+        return {
+            "results": [
+                _service(
+                    "studio-a-1",
+                    ["dmf-catalog", "workload:other-workload", f"workload:{SLUG}", "lifecycle:bootstrapped"],
+                    svc_id=11,
+                ),
+            ]
+        }
+
+    monkeypatch.setattr(netbox_module, "_request", fake_netbox)
+    monkeypatch.setattr(prometheus_module, "query", lambda **k: [])
+
+    def boom(**k):
+        raise AssertionError("must never launch against a stale/conflicting member set")
+
+    monkeypatch.setattr(main, "launch_job", boom)
+
+    client = _client(OPERATOR)
+    resp = _post(client, {"reason": "go", "confirm": SLUG})
+    assert resp.status_code == 422
+    assert resp.json()["error"] == "not-purgeable"
+
+
+def test_p2_2_string_id_from_netbox_refuses_source_inconsistent(monkeypatch):
+    # codex's exact GATE-A2b.3 P2 fixture: a NetBox id surfacing as the
+    # numeric STRING '11' instead of the int 11. The launcher's own frozen
+    # contract (playbooks/finalise-purge.yml) asserts
+    # purge_expected_service_ids are plain ints — dmf-cms must refuse
+    # before creating an operation, never send ['11'] and let AWX's own
+    # assert catch it after the fact.
+    def fake_netbox(*args, **kwargs):
+        path = args[2]
+        if "/api/extras/tags/" in path:
+            return {"results": [{"id": 99, "name": f"workload:{SLUG}"}]}
+        svc = _service("studio-a-1", ["dmf-catalog", f"workload:{SLUG}", "lifecycle:bootstrapped"], svc_id=11)
+        svc["id"] = "11"  # NetBox drift: a string, not an int
+        return {"results": [svc]}
+
+    monkeypatch.setattr(netbox_module, "_request", fake_netbox)
+    monkeypatch.setattr(prometheus_module, "query", lambda **k: [])
+
+    def boom(**k):
+        raise AssertionError("must never launch with a non-int expected-service-id")
+
+    monkeypatch.setattr(main, "launch_job", boom)
+
+    client = _client(OPERATOR)
+    resp = _post(client, {"reason": "go", "confirm": SLUG})
+    assert resp.status_code == 409
+    assert resp.json()["kind"] == "source-inconsistent"

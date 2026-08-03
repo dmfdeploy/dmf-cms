@@ -20,7 +20,7 @@ import pytest
 import dmf_cms.main as main
 from dmf_cms import media_workloads
 from dmf_cms.operations import OperationState, OperationStore
-from dmf_cms.settings import AWXSettings, L3Settings, Settings
+from dmf_cms.settings import AWXSettings, L3Settings, NetboxSettings, Settings
 
 
 def _fake_app(*, poll_interval=0, ttl_seconds=3600):
@@ -202,3 +202,46 @@ def test_other_watched_actions_are_unaffected_by_the_finalise_purge_branch(monke
         assert updated.state == OperationState.ROLLBACK_INCOMPLETE
     else:
         assert updated.state == OperationState.RUN_COMPLETE
+
+
+def test_p1_2_incomplete_post_job_paginated_read_is_run_status_unknown(monkeypatch):
+    # umbrella #347 fix round FIX-A2b.4 (GATE-A2b.3) — codex's exact P1-2
+    # fixture, exercised end-to-end through the REAL purge_residue_present
+    # (only the raw NetBox HTTP call is mocked): count=1, non-null next,
+    # empty first page — and this time the survivor's page is NEVER
+    # returned (next stays set forever), so the completeness-verified fetch
+    # itself cannot terminate cleanly. Before this fix, the plain
+    # single-page _fetch_services would have seen page 1's empty results
+    # and reported RUN_COMPLETE with a false purge_verified_at.
+    import dmf_cms.netbox as _netbox_mod
+
+    app, ops_store = _fake_app()
+    app.state.settings = Settings(
+        awx=AWXSettings(api_url="http://awx.test", api_token="t"),
+        l3=L3Settings(job_poll_interval_seconds=0),
+        netbox=NetboxSettings(api_url="http://netbox.test", api_token="tok"),
+    )
+    op = ops_store.create("finalise-purge", "studio-a")
+    monkeypatch.setattr(
+        main, "get_job",
+        lambda **k: {"status": "successful", "started": "t0", "finished": "t1", "event_processing_finished": True},
+    )
+    monkeypatch.setattr(main, "get_job_events_for_task", lambda **k: [])
+
+    def never_terminating_page(*args, **kwargs):
+        # Every page claims count=1 but returns zero results and always
+        # has a `next` — the page cap must trip, never silently stop.
+        return {
+            "count": 1,
+            "next": "http://netbox.test/api/ipam/services/?tag=dmf-catalog&limit=500&offset=999999",
+            "results": [],
+        }
+
+    monkeypatch.setattr(_netbox_mod, "_request", never_terminating_page)
+
+    _run_watcher(app, op.operation_id, 111, "studio-a")
+
+    updated = ops_store.get(op.operation_id)
+    assert updated.state == OperationState.RUN_STATUS_UNKNOWN
+    assert updated.error == "purge-verify-unreachable"
+    assert updated.purge_verified_at is None
