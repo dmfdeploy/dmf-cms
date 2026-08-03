@@ -124,7 +124,7 @@ export default function WorkloadDetail() {
   // ONLY thing that distinguishes "this workload does not exist" from "this
   // workload was launched seconds ago and has not been recorded yet".
   const launch = readLaunchState(routerState)
-  const { data, isLoading, error } = useMediaWorkloadsGrouped()
+  const { data, isLoading, isError, isFetching, error } = useMediaWorkloadsGrouped()
 
   const workload = data?.workloads.find((w) => w.slug === slug)
 
@@ -198,7 +198,13 @@ export default function WorkloadDetail() {
   // INTENDED equivalence, not a regression: the backend is what's actually
   // running the job, and the wizard's local overlay was never anything
   // more than an optimistic echo of it.
-  return <WorkloadWizard key={workload.slug} workload={workload} />
+  return (
+    <WorkloadWizard
+      key={workload.slug}
+      workload={workload}
+      membersDataTrustworthy={!isError && !isFetching}
+    />
+  )
 }
 
 /**
@@ -216,7 +222,16 @@ export default function WorkloadDetail() {
  * (above) puts a workload switch through that exact same re-derivation, not
  * a special case of it.
  */
-function WorkloadWizard({ workload }: { workload: MediaWorkload }) {
+function WorkloadWizard({
+  workload,
+  membersDataTrustworthy,
+}: {
+  workload: MediaWorkload
+  // umbrella #347: freshness of the SAME grouped read `workload` itself came
+  // from — computed by the parent (the only place that holds the query's
+  // own isError/isFetching), threaded through rather than re-queried here.
+  membersDataTrustworthy: boolean
+}) {
   const { hash } = useLocation()
   const { data: catalogData, isLoading: catalogLoading } = useCatalog()
 
@@ -257,6 +272,15 @@ function WorkloadWizard({ workload }: { workload: MediaWorkload }) {
     hasBootstrappedMembers: workload.instances.some(
       (i) => !i.reconcile_pending && i.requested_state === 'bootstrapped',
     ),
+    // umbrella #347: delete-permanently needs EVERY member bootstrapped
+    // (nothing cleared to run) and NONE observed running — the same
+    // member-state facts the backend's own preflight re-derives fresh at
+    // dispatch time; this is only the affordance gate, never authoritative.
+    allMembersBootstrapped:
+      workload.instances.length > 0 &&
+      workload.instances.every((i) => i.requested_state === 'bootstrapped'),
+    anyMemberObservedRunning: workload.instances.some((i) => i.observed_state === 'running'),
+    membersDataTrustworthy,
   }
   const { steps, current, offFlow, undetermined } = classifyWorkloadFlow(input)
   const badge = lifecycleBadge(input)

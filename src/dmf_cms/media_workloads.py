@@ -542,6 +542,148 @@ def list_workloads_grouped(
         "invalid_instances": invalid_instances,
     }
 
+def resolve_purge_target(
+    netbox_url: str,
+    read_token: str,
+    ssl_verify: bool,
+    tenant_slugs: Optional[tuple[str, ...]],
+    prometheus_url: str,
+    slug: str,
+) -> dict[str, Any]:
+    """Fresh finalise-purge preflight read (umbrella #347 WO-A2b-2, operator
+    ruling 2026-08-02).
+
+    NEVER a cached snapshot: every call re-reads NetBox (the tagged Service
+    members + the standalone workload Tag object) and re-queries Prometheus,
+    using the SAME identity-join ``list_workloads_grouped`` uses (ADR-0046
+    §3) — preflight truth and the grouped view's own truth can never
+    diverge. Fail-closed throughout (Console Constitution Art. 1): a purge
+    never proceeds unverified, so any read failure refuses rather than
+    guessing.
+
+    Returns one of:
+      {"error": "netbox-unreachable" | "netbox-error"}
+      {"error": "not-purgeable"}              -- unassigned slug, or a
+                                                  member carrying >1
+                                                  workload:* tag naming
+                                                  this slug
+      {"error": "workload-not-found"}         -- no members AND no Tag
+                                                  residue
+      {"error": "observability-unavailable"}  -- Prometheus unconfigured or
+                                                  unreachable
+      {"members": [{"id", "name", "requested_state", "observed_state"}],
+       "tag_present": bool}
+    """
+    from . import netbox as _netbox
+
+    if slug == "unassigned":
+        return {"error": "not-purgeable"}
+
+    try:
+        services = _fetch_services(netbox_url, read_token, ssl_verify, tenant_slugs)
+    except _netbox.NetboxAPIError as exc:
+        logger.warning("media-workloads: purge preflight lookup failed: %s", exc)
+        return {"error": "netbox-unreachable"}
+    except Exception as exc:
+        logger.warning("media-workloads: purge preflight unexpected error: %s", exc)
+        return {"error": "netbox-error"}
+
+    members: list[dict[str, Any]] = []
+    for svc in services:
+        names = _tag_names(svc)
+        member_slug, status = _workload_assignment(names)
+        if member_slug != slug:
+            continue
+        if status == "invalid-multiple":
+            return {"error": "not-purgeable"}
+        members.append(svc)
+
+    tag_name = f"workload:{slug}"
+    try:
+        tag_present = _netbox.tag_exists(
+            api_url=netbox_url, api_token=read_token, ssl_verify=ssl_verify, name=tag_name,
+        )
+    except _netbox.NetboxAPIError as exc:
+        logger.warning("media-workloads: purge tag lookup failed: %s", exc)
+        return {"error": "netbox-unreachable"}
+    except Exception as exc:
+        logger.warning("media-workloads: purge tag lookup unexpected error: %s", exc)
+        return {"error": "netbox-error"}
+
+    if not members and not tag_present:
+        return {"error": "workload-not-found"}
+
+    if not prometheus_url:
+        return {"error": "observability-unavailable"}
+    try:
+        from . import prometheus as _prometheus
+        rows = _prometheus.query(url=prometheus_url, expr='probe_success{job="netbox-probe"}')
+    except Exception as exc:
+        logger.warning("media-workloads: purge observed-state overlay unreachable: %s", exc)
+        return {"error": "observability-unavailable"}
+
+    # Same identity-join as _observed_by_identity/list_workloads_grouped
+    # (ADR-0046 §3), inlined rather than reused: unlike that helper, a
+    # Prometheus failure here must be VISIBLE to the caller (observability-
+    # unavailable, above), never silently degraded to an empty overlay.
+    observed: dict[str, float] = {}
+    for row in rows or []:
+        metric = row.get("metric") or {}
+        cluster_svc = _cluster_service_from_target(metric.get("instance", ""))
+        try:
+            value = float(row["value"][1])
+        except (KeyError, IndexError, TypeError, ValueError):
+            continue
+        if cluster_svc:
+            observed[cluster_svc] = min(observed.get(cluster_svc, 1.0), value)
+
+    result_members = []
+    for svc in members:
+        names = _tag_names(svc)
+        cf = svc.get("custom_fields")
+        cs = cf.get("cluster_service") if isinstance(cf, dict) else None
+        if not isinstance(cs, str) or not cs:
+            cs = svc.get("name")
+        observed_state = "unknown"
+        if cs in observed:
+            observed_state = "running" if observed[cs] >= 1.0 else "failing"
+        result_members.append({
+            "id": svc.get("id"),
+            "name": svc.get("name"),
+            "requested_state": _tag_suffix(names, "lifecycle") or "unknown",
+            "observed_state": observed_state,
+        })
+    return {"members": result_members, "tag_present": tag_present}
+
+
+def purge_residue_present(
+    netbox_url: str,
+    read_token: str,
+    ssl_verify: bool,
+    slug: str,
+) -> bool:
+    """Fresh, unscoped existence check (umbrella #347): True iff any Service
+    still carries ``workload:<slug>`` OR the ``workload:<slug>`` Tag object
+    itself still exists.
+
+    The console's own post-job absence claim (Console Constitution Art. 1)
+    — called by the finalise-purge job watcher after AWX reports job
+    success, NEVER derived from the bare job status alone. Unscoped
+    (``tenant_slugs=None``) deliberately: this is a completion check, not a
+    user-facing listing, and the workload was already gate-approved
+    tenant-scoped at dispatch time — it must see every tenant's records to
+    confirm true absence. Exceptions propagate (NetboxAPIError included);
+    the watcher itself decides how to fail closed on an unreachable re-read.
+    """
+    from . import netbox as _netbox
+
+    services = _fetch_services(netbox_url, read_token, ssl_verify, None)
+    tag_name = f"workload:{slug}"
+    if any(tag_name in _tag_names(s) for s in services):
+        return True
+    return _netbox.tag_exists(api_url=netbox_url, api_token=read_token, ssl_verify=ssl_verify, name=tag_name)
+
+
 def clear_for_deployment(
     netbox_url: str,
     writer_token: str,

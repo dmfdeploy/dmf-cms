@@ -91,6 +91,16 @@ export type StageActionId =
   | 'switch-source'
   /** Tear the workload down (Finalise & Review, once running). */
   | 'tear-down'
+  /**
+   * Delete permanently — SoT removal of a fully finalised workload's
+   * residual catalog records (umbrella #347, operator ruling 2026-08-02).
+   * Offered at Finalise & Review, but keyed to MEMBER STATE, not position,
+   * same discipline as `clear-for-deployment`: every member bootstrapped
+   * (nothing cleared to run), zero observed running, and the backing read
+   * itself trustworthy. Mutually exclusive with `tear-down` — while
+   * anything is running, tear-down is the only Finalise action.
+   */
+  | 'delete-permanently'
 
 /**
  * The backend's derived workload lifecycle, verbatim from
@@ -130,6 +140,26 @@ export interface WorkloadLifecycleInput {
    * this says what it still NEEDS.
    */
   hasBootstrappedMembers?: boolean
+  /**
+   * Every current member is bootstrapped (none cleared to run) — the
+   * mirror image of `hasBootstrappedMembers`'s "at least one": purging
+   * requires ALL of them to be, not just one, since it removes the whole
+   * workload's residue. False (not just absent) when the workload has no
+   * members at all — nothing to derive "every" over honestly.
+   */
+  allMembersBootstrapped?: boolean
+  /** At least one member's observed state is `running` right now. */
+  anyMemberObservedRunning?: boolean
+  /**
+   * The member-state read this input was built from is fresh and error-free
+   * (`!isError && !isFetching` on the grouped query, umbrella #343's
+   * discipline: a failed or in-flight refetch retains the PREVIOUS
+   * payload, so `data` alone cannot prove the snapshot is current — a
+   * stale snapshot must never be allowed to offer a destructive action).
+   * Fail-closed like every other field here: absent/false withholds
+   * `delete-permanently` regardless of what the other two claim.
+   */
+  membersDataTrustworthy?: boolean
 }
 
 export interface LifecycleState {
@@ -189,7 +219,13 @@ export function stageActions(
     case 'configure':
       return running(input) ? ['switch-source'] : []
     case 'finalise':
-      return running(input) ? ['tear-down'] : []
+      // While anything is running, tear-down is the only Finalise action —
+      // delete-permanently and tear-down are mutually exclusive by
+      // construction, never offered together.
+      if (running(input)) return ['tear-down']
+      return input.allMembersBootstrapped && !input.anyMemberObservedRunning && input.membersDataTrustworthy
+        ? ['delete-permanently']
+        : []
     // Design, Plan and Operate carry no action BY DESIGN. Design/Plan are
     // the record of choices already made; Operate is where the operator
     // reads running state and is pointed at Problems — it deliberately

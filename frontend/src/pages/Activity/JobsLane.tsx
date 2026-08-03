@@ -233,19 +233,23 @@ function OperationMonitor({
 
   if (!operation) return null
 
-  const stateLabel = {
+  // umbrella #347: Record<string, string> + fallback — see the matching
+  // note in pages/Catalog/index.tsx's own copy of this widget.
+  const STATE_LABEL: Record<string, string> = {
     waking: '🔄 Waking AWX...',
     launching: '🚀 Launching job...',
     launched: '✓ Launched',
     error: '✗ Error',
-  }[operation.state]
+  }
+  const stateLabel = STATE_LABEL[operation.state] ?? operation.state
 
-  const stateColor = {
+  const STATE_COLOR: Record<string, string> = {
     waking: 'badge-status-pending',
     launching: 'badge-status-running',
     launched: 'badge-status-successful',
     error: 'badge-status-failed',
-  }[operation.state]
+  }
+  const stateColor = STATE_COLOR[operation.state] ?? 'badge-status-pending'
 
   return (
     <div className="flex items-center justify-between">

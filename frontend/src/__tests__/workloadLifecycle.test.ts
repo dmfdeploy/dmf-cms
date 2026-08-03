@@ -250,3 +250,56 @@ describe('a bootstrapped member always has a reachable clear path', () => {
     })).toEqual([])
   })
 })
+
+describe('delete-permanently (umbrella #347): member-state gated, mutually exclusive with tear-down', () => {
+  const eligible = {
+    lifecycle: 'provision' as const,
+    allMembersBootstrapped: true,
+    anyMemberObservedRunning: false,
+    membersDataTrustworthy: true,
+  }
+
+  it('is offered at Finalise when every member is bootstrapped, none observed running, and the read is trustworthy', () => {
+    expect(stageActions('finalise', eligible)).toEqual(['delete-permanently'])
+  })
+
+  it('withdraws it — never tear-down alongside it — the moment ANY member is observed running', () => {
+    // Discriminates: flips ONLY anyMemberObservedRunning; a mutant that
+    // ignores this field would still offer delete-permanently here.
+    expect(stageActions('finalise', { ...eligible, anyMemberObservedRunning: true })).toEqual([])
+  })
+
+  it('withdraws it the moment NOT every member is bootstrapped', () => {
+    // Discriminates: flips ONLY allMembersBootstrapped; a mutant that reads
+    // hasBootstrappedMembers (the "at least one" field) instead would pass
+    // this workload through incorrectly.
+    expect(stageActions('finalise', { ...eligible, allMembersBootstrapped: false })).toEqual([])
+  })
+
+  it('withdraws it when the backing read is not trustworthy (isError/isFetching), even though members qualify', () => {
+    // Discriminates umbrella #343's own discipline: a mutant that drops the
+    // membersDataTrustworthy gate entirely would still pass this case.
+    expect(stageActions('finalise', { ...eligible, membersDataTrustworthy: false })).toEqual([])
+    expect(stageActions('finalise', { ...eligible, membersDataTrustworthy: undefined })).toEqual([])
+  })
+
+  it('while anything is running, tear-down is the ONLY Finalise action — never both, never neither', () => {
+    // A workload can satisfy delete-permanently's member-state facts on
+    // paper (all bootstrapped elsewhere, one running here) — running()
+    // must win outright, not merge the two action lists.
+    const runningTooToo = { ...eligible, lifecycle: 'operate' as const }
+    expect(stageActions('finalise', runningTooToo)).toEqual(['tear-down'])
+  })
+
+  it('busy suppression (job in flight anywhere) withdraws it exactly like every other action', () => {
+    expect(stageActions('finalise', { ...eligible, tearingDown: true })).toEqual([])
+    expect(stageActions('finalise', { ...eligible, launching: true })).toEqual([])
+  })
+
+  it('is absent by default when the new fields are simply omitted (fail-closed, not opt-out)', () => {
+    // A workload the caller never annotated with the new facts must not
+    // silently qualify — this is the discriminator for "fail-closed
+    // defaults" versus a mutant that defaults any of the three to true.
+    expect(stageActions('finalise', { lifecycle: 'provision' })).toEqual([])
+  })
+})

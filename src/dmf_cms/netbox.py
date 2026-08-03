@@ -4,8 +4,9 @@ from __future__ import annotations
 
 import json
 import ssl
-import urllib.request
 import urllib.error
+import urllib.parse
+import urllib.request
 
 
 class NetboxAPIError(Exception):
@@ -94,6 +95,27 @@ def list_sites(
         ssl_context=ctx,
     )
     return result.get("results", [])
+
+
+def tag_exists(
+    *,
+    api_url: str,
+    api_token: str,
+    ssl_verify: bool = True,
+    name: str,
+) -> bool:
+    """True iff a NetBox extras.Tag with this exact name exists.
+
+    Read-only (dmf-cms never creates or deletes NetBox Tag objects itself —
+    that mutation is AWX/launcher-side, CONSULT-D1b, ADR-0013/0025); this
+    exists for the finalise-purge preflight/post-job residue reads (umbrella
+    #347), where the Tag object's own presence/absence is part of the SoT
+    residue claim alongside the tagged Service members.
+    """
+    ctx = _ssl_context(ssl_verify)
+    path = f"/api/extras/tags/?name={urllib.parse.quote(name)}"
+    result = _request(api_url, api_token, path, ssl_context=ctx)
+    return bool(result.get("results"))
 
 
 def list_devices(

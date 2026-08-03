@@ -31,6 +31,7 @@ import type {
   InstanceTopology,
   SwitchSourceResult,
   Operation,
+  OperationState,
 } from './types'
 
 // Type guard: check if response is an async operation (has operation_id)
@@ -92,6 +93,20 @@ export function useLaunchWorkflow() {
   })
 }
 
+// umbrella #347: terminal states for a WATCHED action (#202 WP2's
+// deploy/teardown/rollback/finalise-purge) — LAUNCHED is a mid-flight state
+// for these (the job watcher takes over), unlike a plain "launch" op, for
+// which LAUNCHED itself is terminal (see operations.py's own
+// terminal_states()). Existing consumers (OperationStatusLine) unmount
+// themselves right at LAUNCHED via their own onLaunched hand-off, so
+// widening the stop condition to this full set is behavior-neutral for
+// them — it only newly lets a consumer that stays mounted (e.g. a
+// finalise-purge completion tracker) keep observing through to the
+// operation's REAL outcome.
+const _WATCHED_TERMINAL_STATES: OperationState[] = [
+  'run_complete', 'run_failed', 'failed_rollback_required', 'rollback_incomplete', 'run_status_unknown',
+]
+
 export function useOperationStatus(operationId: string | null) {
   return useQuery({
     queryKey: ['operation', operationId],
@@ -100,9 +115,10 @@ export function useOperationStatus(operationId: string | null) {
     refetchInterval: (query) => {
       // Stop polling when operation reaches terminal state
       const data = query.state.data
-      if (data && (data.state === 'launched' || data.state === 'error')) {
-        return false
-      }
+      if (!data) return 3000
+      if (data.state === 'error') return false
+      if (data.action === 'launch' && data.state === 'launched') return false
+      if (_WATCHED_TERMINAL_STATES.includes(data.state)) return false
       return 3000 // Poll every 3s for non-terminal states
     },
   })
@@ -478,5 +494,26 @@ export function useClearForDeployment() {
           body: JSON.stringify({ reason }),
         },
       ),
+  })
+}
+
+// umbrella #347 (Arc 2b) — delete permanently: SoT removal of a finalised
+// workload's residual dmf-catalog NetBox records via the finalise-purge AWX
+// launcher. Always an async Operation (the backend never launches this
+// synchronously) — the response is dispatch-only ("launched", not "done");
+// completion is observed by polling the returned operation_id via
+// useOperationStatus to a REAL terminal state (see that hook's own #347
+// note), never assumed from this mutation settling. No onSuccess
+// invalidation here for the same reason useTeardownCatalog has none: a
+// 202 response means dispatched, not complete — the caller invalidates at
+// the operation's own terminal state instead (FinaliseStage).
+export function usePurgeWorkload() {
+  return useMutation({
+    mutationFn: ({ slug, confirm, reason }: { slug: string; confirm: string; reason: string }) =>
+      apiCall<Operation>(`/api/media-workloads/${encodeURIComponent(slug)}/purge`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ confirm, reason }),
+      }),
   })
 }

@@ -4,11 +4,13 @@ import {
   isOperation,
   useCatalog,
   useCurrentUser,
+  useOperationStatus,
+  usePurgeWorkload,
   useTeardownCatalog,
 } from '../../../api/hooks'
 import { useActivityStore } from '../../../store/activity'
 import ReasonConfirm from '../../../components/ReasonConfirm'
-import type { CatalogEntry, MediaWorkload, SwitchSourceResult } from '../../../api/types'
+import type { CatalogEntry, MediaWorkload, Operation, SwitchSourceResult } from '../../../api/types'
 import type { StageActionId, StageState } from '../../../lib/workloadLifecycle'
 import StageCard from './StageCard'
 import { JobStatusLine, OperationStatusLine } from './JobProgress'
@@ -27,6 +29,20 @@ import { JobStatusLine, OperationStatusLine } from './JobProgress'
  * PROVISION-time action: it moves a workload from "members exist, no active
  * intent" to an active intent. It now lives on Provision and flows through
  * stageActions() like every other write.
+ *
+ * Delete permanently (umbrella #347, operator ruling 2026-08-02) is a
+ * SECOND, workload-level write alongside per-entry teardown — not another
+ * FinaliseEntry, since it purges the whole workload's residue in one shot,
+ * keyed by slug rather than catalog key. It tracks its own operation
+ * independently of `track` (the per-entry teardown map): unlike teardown's
+ * hand-off to raw job-id polling (JobStatusLine, catalog-key-scoped and
+ * inapplicable to a workload-slug-keyed launch), the finalise-purge job
+ * template is shared and this component watches the OPERATION itself all
+ * the way to a real terminal state (useOperationStatus, umbrella #347's
+ * widened stop condition) — job-success alone is never the completion
+ * signal (Console Constitution Art. 1: the backend's own post-job source
+ * re-read is the sole absence authority, and `purge_verified_at` on the
+ * terminal Operation is that confirmation's timestamp).
  */
 interface EntryTrack {
   jobId: number | null
@@ -34,6 +50,13 @@ interface EntryTrack {
 }
 
 const EMPTY_TRACK: EntryTrack = { jobId: null, opId: null }
+
+// umbrella #347: the SAME "watched terminal" set useOperationStatus itself
+// polls to (see that hook's own note) — repeated here only to know WHEN to
+// stop tracking a purge locally, not to re-derive polling behavior.
+const PURGE_TERMINAL_STATES: Operation['state'][] = [
+  'run_complete', 'run_failed', 'run_status_unknown', 'error',
+]
 
 export default function FinaliseStage({
   workload,
@@ -57,11 +80,18 @@ export default function FinaliseStage({
   const { data: catalogData, isLoading: catalogLoading } = useCatalog()
   const { data: user } = useCurrentUser()
   const teardownMutation = useTeardownCatalog()
+  const purgeMutation = usePurgeWorkload()
   const recordAwxWrite = useActivityStore((s) => s.recordAwxWrite)
   const queryClient = useQueryClient()
 
   const [track, setTrack] = useState<Record<string, EntryTrack>>({})
   const [lastJob, setLastJob] = useState<{ entryKey: string; jobId: number; status: string } | null>(null)
+
+  const [purgeArming, setPurgeArming] = useState(false)
+  const [purgeConfirmText, setPurgeConfirmText] = useState('')
+  const [purgeOpId, setPurgeOpId] = useState<string | null>(null)
+  const [purgeReview, setPurgeReview] = useState<Operation | null>(null)
+  const { data: purgeOp } = useOperationStatus(purgeOpId)
 
   // Read at call time inside the stable callback below (see
   // statusCallbackFor), never captured at render time — track changes
@@ -113,12 +143,33 @@ export default function FinaliseStage({
   // (FinaliseStage.tsx:104-107 pre-fix). No pruning effect: a departed key's
   // track value is simply never read again.
   const activeTrack = (t: EntryTrack | undefined) => t != null && (t.jobId !== null || t.opId !== null)
-  const busy = teardownMutation.isPending || functionKeys.some((key) => activeTrack(track[key]))
+  const busy =
+    teardownMutation.isPending ||
+    functionKeys.some((key) => activeTrack(track[key])) ||
+    purgeMutation.isPending ||
+    purgeOpId !== null
   useEffect(() => onBusyChange(busy), [busy, onBusyChange])
+
+  // umbrella #347: once the tracked purge operation reaches a REAL terminal
+  // state (never just "launched" — see useOperationStatus's own widened
+  // stop condition), close the loop at the point of action (Art. 2): stop
+  // tracking it, keep its final shape for the Review section below, and
+  // invalidate the SAME two query keys teardown's own completion does. The
+  // refreshed grouped read no longer listing this workload IS the absence
+  // claim (Art. 1) — this effect only reacts to the operation's own
+  // terminal state, it never asserts absence itself.
+  useEffect(() => {
+    if (!purgeOp || !PURGE_TERMINAL_STATES.includes(purgeOp.state)) return
+    setPurgeReview(purgeOp)
+    setPurgeOpId(null)
+    void queryClient.invalidateQueries({ queryKey: ['media-workloads-grouped'] })
+    void queryClient.invalidateQueries({ queryKey: ['catalog'] })
+  }, [purgeOp, queryClient])
 
   const entries = (catalogData?.entries ?? []).filter((e) => functionKeys.includes(e.key))
 
   const allowed = actions.includes('tear-down')
+  const purgeAllowed = actions.includes('delete-permanently')
 
   const handleTeardown = async (entry: CatalogEntry, reason: string) => {
     onJobStart()
@@ -148,6 +199,27 @@ export default function FinaliseStage({
     setTrack((prev) => ({ ...prev, [key]: EMPTY_TRACK }))
     void queryClient.invalidateQueries({ queryKey: ['media-workloads-grouped'] })
     void queryClient.invalidateQueries({ queryKey: ['catalog'] })
+  }
+
+  const handlePurge = async (reason: string) => {
+    onJobStart()
+    try {
+      const result = await purgeMutation.mutateAsync({ slug: workload.slug, confirm: purgeConfirmText, reason })
+      recordAwxWrite({
+        request_id: result.request_id ?? '',
+        action: 'finalise-purge',
+        target: workload.slug,
+        reason,
+        actor: user?.subject ?? 'unknown',
+        role: user?.role ?? 'unknown',
+        outcome: 'dispatched',
+      })
+      setPurgeOpId(result.operation_id)
+      setPurgeArming(false)
+      setPurgeConfirmText('')
+    } catch (e) {
+      console.error('Delete permanently failed:', e)
+    }
   }
 
   return (
@@ -187,11 +259,62 @@ export default function FinaliseStage({
           )}
         </div>
 
+        <div className="border-t border-white/5 pt-3">
+          <h3 className="text-xs uppercase tracking-wide text-muted">Delete permanently</h3>
+          {purgeOpId != null ? (
+            <div className="mt-2 text-xs">
+              <p className="text-muted">
+                Deleting <span className="font-mono">{workload.slug}</span> permanently…
+              </p>
+              <p className="mt-1 text-muted/70">
+                op <span className="font-mono">{purgeOpId.slice(0, 8)}...</span>
+                {purgeOp ? ` — ${purgeOp.state}` : ' — querying status…'}
+              </p>
+            </div>
+          ) : purgeAllowed ? (
+            purgeArming ? (
+              <div className="mt-2">
+                <ReasonConfirm
+                  variant="danger"
+                  title={`Delete ${workload.name} permanently?`}
+                  description="Removes this workload's residual catalog records from the source of truth via the finalise-purge automation. The entry stops existing — there is no rollback."
+                  confirmLabel="Delete permanently"
+                  pendingLabel="Deleting…"
+                  pending={purgeMutation.isPending}
+                  error={purgeMutation.isError ? purgeMutation.error : undefined}
+                  extraField={{
+                    label: 'Type the workload slug to confirm',
+                    placeholder: workload.slug,
+                    value: purgeConfirmText,
+                    onChange: setPurgeConfirmText,
+                    invalid: purgeConfirmText !== workload.slug,
+                    invalidHint: `Type "${workload.slug}" exactly to confirm — this cannot be undone.`,
+                  }}
+                  onConfirm={(reason) => handlePurge(reason)}
+                  onCancel={() => {
+                    setPurgeArming(false)
+                    setPurgeConfirmText('')
+                  }}
+                />
+              </div>
+            ) : (
+              <button className="btn btn-danger btn-sm mt-2" onClick={() => setPurgeArming(true)}>
+                🗑 Delete permanently
+              </button>
+            )
+          ) : (
+            <p className="mt-1 text-muted">
+              {state === 'not-applicable'
+                ? 'Nothing is running yet, so there is nothing to finalise.'
+                : "Delete permanently isn't currently offered — see the rail state above."}
+            </p>
+          )}
+        </div>
 
         <div className="border-t border-white/5 pt-3">
           <h3 className="text-xs uppercase tracking-wide text-muted">Review</h3>
-          {!lastJob && !lastSwitchResult ? (
-            <p className="mt-1 text-muted">No teardown or switch has run yet in this session.</p>
+          {!lastJob && !lastSwitchResult && !purgeReview ? (
+            <p className="mt-1 text-muted">No teardown, switch, or delete has run yet in this session.</p>
           ) : (
             <div className="mt-1 space-y-2">
               {lastJob && (
@@ -212,6 +335,32 @@ export default function FinaliseStage({
                     request {lastSwitchResult.request_id}
                     {lastSwitchResult.outcome ? ` · ${lastSwitchResult.outcome}` : ''}
                   </p>
+                </div>
+              )}
+              {purgeReview && (
+                <div className="text-xs">
+                  {purgeReview.state === 'run_complete' ? (
+                    <>
+                      <p className="text-green-400">
+                        Deleted permanently — confirmed absent by a fresh source read.
+                      </p>
+                      {purgeReview.purge_verified_at && (
+                        <p className="mt-1 font-mono text-muted/70">
+                          verified {purgeReview.purge_verified_at}
+                        </p>
+                      )}
+                    </>
+                  ) : (
+                    <>
+                      {/* Art. 8, honestly: whatever the backend actually recorded —
+                          never a fake success, never "retrying". */}
+                      <p className="text-red-300">
+                        Delete permanently did not complete —{' '}
+                        {purgeReview.error ?? purgeReview.l3_outcome ?? purgeReview.state}
+                      </p>
+                      <p className="mt-1 font-mono text-muted/70">request {purgeReview.request_id}</p>
+                    </>
+                  )}
                 </div>
               )}
             </div>

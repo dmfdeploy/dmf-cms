@@ -16,6 +16,7 @@ export type ConsoleActionType =
   | 'teardown'
   | 'launch'
   | 'switch-source'
+  | 'finalise-purge'
 
 export interface ConsoleActionRecord {
   request_id: string
@@ -39,7 +40,7 @@ export interface ConsoleActionRecord {
  * (effective) user — the record is explicitly browser-local (see file docstring). */
 export interface AwxWriteRecord {
   request_id: string
-  action: 'deploy' | 'teardown' | 'launch' | 'switch-source'
+  action: 'deploy' | 'teardown' | 'launch' | 'switch-source' | 'finalise-purge'
   target: string
   reason: string
   actor: string

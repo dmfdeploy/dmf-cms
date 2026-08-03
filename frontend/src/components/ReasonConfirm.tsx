@@ -6,6 +6,14 @@ import { useState } from 'react'
  * the audit trail). Extracted from the clear-for-deployment surface so the
  * catalog deploy/teardown and the Activity Jobs launch share one graduated-
  * friction affordance (UX Constitution hard gate 3, #185 WP-E).
+ *
+ * ``variant="danger"`` (umbrella #347, Console UX Constitution Art. 7 —
+ * "destructive" needs MORE friction than "disruptive"): a distinct red
+ * treatment plus a redundant text+icon badge (Art. 11 — colour is never the
+ * only signal), for actions with no rollback path, layered on top of the
+ * SAME typed-``extraField`` + mandatory-reason mechanics every variant
+ * shares. Defaults to ``"warning"`` (byte-for-byte the original amber
+ * styling) so every existing caller is unaffected.
  */
 export interface ReasonConfirmExtraField {
   label: string
@@ -32,6 +40,7 @@ export default function ReasonConfirm({
   onConfirm,
   onCancel,
   extraField,
+  variant = 'warning',
 }: {
   title: string
   description: string
@@ -45,14 +54,28 @@ export default function ReasonConfirm({
   // workload). Generic slot, not hardcoded to one feature — an invalid value
   // disables Confirm alongside the existing empty-reason guard.
   extraField?: ReasonConfirmExtraField
+  variant?: 'warning' | 'danger'
 }) {
   const [reason, setReason] = useState('')
   const extraInvalid = extraField?.invalid ?? false
+  const danger = variant === 'danger'
 
   return (
-    <div className="min-w-64 rounded-lg border border-amber-500/30 bg-amber-500/10 p-3 text-amber-100">
+    <div
+      className={
+        danger
+          ? 'min-w-64 rounded-lg border border-red-500/40 bg-red-500/10 p-3 text-red-100'
+          : 'min-w-64 rounded-lg border border-amber-500/30 bg-amber-500/10 p-3 text-amber-100'
+      }
+    >
+      {danger && (
+        <div className="mb-1 flex items-center gap-1 text-[11px] font-semibold uppercase tracking-wide text-red-300">
+          <span aria-hidden="true">⚠</span>
+          <span>Destructive — cannot be undone</span>
+        </div>
+      )}
       <div className="text-xs font-semibold">{title}</div>
-      <p className="mt-1 text-xs text-amber-200/80">{description}</p>
+      <p className={`mt-1 text-xs ${danger ? 'text-red-200/80' : 'text-amber-200/80'}`}>{description}</p>
       <textarea
         className="mt-2 w-full rounded border border-white/10 bg-black/20 p-1 text-xs text-text"
         placeholder="Reason (required, recorded in the audit trail)"
@@ -62,7 +85,9 @@ export default function ReasonConfirm({
       />
       {extraField && (
         <div className="mt-2">
-          <label className="block text-xs text-amber-200/80">{extraField.label}</label>
+          <label className={`block text-xs ${danger ? 'text-red-200/80' : 'text-amber-200/80'}`}>
+            {extraField.label}
+          </label>
           {extraField.options ? (
             <select
               className="mt-1 w-full rounded border border-white/10 bg-black/20 p-1 text-xs text-text"
@@ -90,7 +115,9 @@ export default function ReasonConfirm({
           {extraInvalid && extraField.invalidHint ? (
             <p className="mt-1 text-[11px] text-red-300">{extraField.invalidHint}</p>
           ) : extraField.helperText ? (
-            <p className="mt-1 text-[11px] text-amber-200/60">{extraField.helperText}</p>
+            <p className={`mt-1 text-[11px] ${danger ? 'text-red-200/60' : 'text-amber-200/60'}`}>
+              {extraField.helperText}
+            </p>
           ) : null}
         </div>
       )}
@@ -104,7 +131,7 @@ export default function ReasonConfirm({
       )}
       <div className="mt-2 flex gap-2">
         <button
-          className="btn btn-primary btn-sm"
+          className={`btn btn-sm ${danger ? 'btn-danger' : 'btn-primary'}`}
           disabled={!reason.trim() || pending || extraInvalid}
           onClick={() => onConfirm(reason.trim())}
         >

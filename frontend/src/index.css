@@ -53,6 +53,10 @@
     @apply bg-panel text-text border border-muted/30 hover:bg-panel/80;
   }
 
+  .btn-danger {
+    @apply bg-red-600 text-white hover:bg-red-500;
+  }
+
   .btn-sm {
     @apply text-sm px-2 py-1;
   }
