@@ -18,6 +18,7 @@ tenant slug. All errors surface as a degraded payload, never a raw 500
 from __future__ import annotations
 
 import logging
+import math
 import re
 import threading
 import time
@@ -333,6 +334,44 @@ def _cluster_service_from_target(instance_target: str) -> Optional[str]:
     return host.split(".", 1)[0]
 
 
+# umbrella #347 fix round FIX-A2b.5 (GATE-A2b.3R P1): the real dmf-promsd
+# probe-target shape (ADR-0038 target construction) is
+# <cluster_service>.<namespace>.svc.cluster.local:<port>[/path] — not "any
+# non-empty string with an optional scheme/path/port stripped", which is
+# what _cluster_service_from_target's own LENIENT parser accepts (correct
+# for its own display-path callers, list_workloads_grouped/list_instances:
+# degrade gracefully on an odd label, never break the read). The purge
+# overlay's own layer-1 integrity check must not treat a syntactically
+# invalid instance label as a legitimate identity, or a malformed row
+# reads as a clean "no match" instead of the malformed-overlay refusal it
+# actually is.
+_PURGE_PROBE_TARGET_RE = re.compile(
+    r"^(?:[a-zA-Z][a-zA-Z0-9+.-]*://)?"
+    r"(?P<cluster_service>[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?)"
+    r"\.(?:[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?)"
+    r"\.svc\.cluster\.local"
+    r":[0-9]+"
+    r"(?:/.*)?$"
+)
+
+
+def _strict_cluster_service_from_target(instance_target: str) -> Optional[str]:
+    """Strict counterpart to ``_cluster_service_from_target``, used ONLY by
+    the purge overlay read (``resolve_purge_target``) — see the module-level
+    comment above ``_PURGE_PROBE_TARGET_RE`` for why. Returns the leading
+    DNS label ONLY when the ENTIRE instance string conforms to the real
+    probe-target shape; any other shape (a garbage string, a bare hostname
+    with no namespace/port, anything the lenient display-path parser would
+    still happily split on the first dot) returns None — the purge overlay
+    layer treats that as a malformed row and refuses the whole read, never
+    a silent join under a coincidentally-truthy identity.
+    """
+    if not isinstance(instance_target, str) or not instance_target:
+        return None
+    match = _PURGE_PROBE_TARGET_RE.match(instance_target)
+    return match.group("cluster_service") if match else None
+
+
 def _observed_by_identity(prometheus_url: str) -> dict[str, float]:
     """Map cluster_service (from probe target) -> probe_success (ADR-0046 §3).
 
@@ -581,7 +620,7 @@ def _fetch_services_page_complete(
 
     ctx = _netbox._ssl_context(ssl_verify)
     collected: list[dict[str, Any]] = []
-    reported_count = None
+    reported_count: Optional[int] = None
     next_path: Optional[str] = path
     pages = 0
     while next_path:
@@ -597,11 +636,29 @@ def _fetch_services_page_complete(
         if not isinstance(page_results, list):
             raise RuntimeError("purge fetch: malformed page (results not a list)")
         collected.extend(page_results)
+        # FIX-A2b.5 (GATE-A2b.3R P1): count is validated on EVERY page, not
+        # just captured once from page 1 — a missing/malformed count used
+        # to silently SKIP the completeness comparison below entirely
+        # (`reported_count is not None and ...`), and a page count that
+        # happened to numerically equal the wrong type (True, 1.0) slipped
+        # through un-flagged. A plain, non-negative int, required on every
+        # page, and identical across every page — any violation is a
+        # malformed/inconsistent read, never partially trusted.
+        page_count = result.get("count")
+        if not isinstance(page_count, int) or isinstance(page_count, bool) or page_count < 0:
+            raise RuntimeError(f"purge fetch: malformed page (count is not a plain non-negative int: {page_count!r})")
         if reported_count is None:
-            reported_count = result.get("count")
+            reported_count = page_count
+        elif page_count != reported_count:
+            raise RuntimeError(
+                f"purge fetch: inconsistent count across pages ({reported_count} vs {page_count})"
+            )
         next_url = result.get("next")
         next_path = _next_page_path(next_url) if next_url else None
-    if reported_count is not None and len(collected) != reported_count:
+    # The completeness comparison is ALWAYS enforced — never skipped just
+    # because reported_count ended up None (which, after the per-page
+    # validation above, can only happen if the loop never ran at all).
+    if reported_count is None or len(collected) != reported_count:
         raise RuntimeError(
             f"purge fetch: incomplete read (collected {len(collected)}, reported count {reported_count})"
         )
@@ -786,23 +843,29 @@ def resolve_purge_target(
         logger.warning("media-workloads: purge observed-state overlay unreachable: %s", exc)
         return {"error": "observability-unavailable"}
 
-    # Layer 1 — overlay integrity (FIX-A2b.4 P1-1): unlike
-    # _observed_by_identity/list_workloads_grouped's own join (which
-    # silently `continue`s past a row it can't parse), a purge preflight
-    # must never partially trust a damaged overlay — ANY row that fails to
-    # resolve a joinable cluster_service or a numeric value refuses the
-    # WHOLE read, not just that one row.
+    # Layer 1 — overlay integrity (FIX-A2b.4 P1-1, hardened FIX-A2b.5
+    # GATE-A2b.3R): unlike _observed_by_identity/list_workloads_grouped's
+    # own join (which silently `continue`s past a row it can't parse), a
+    # purge preflight must never partially trust a damaged overlay — ANY
+    # row that fails to resolve a STRICTLY-conforming cluster_service
+    # identity, a numeric value, or a FINITE value refuses the WHOLE read,
+    # not just that one row. Strict identity parsing (never the lenient
+    # _cluster_service_from_target) and math.isfinite (never NaN/inf
+    # silently feeding a lifecycle classification) are both load-bearing
+    # here — see _strict_cluster_service_from_target's own docstring.
     observed: dict[str, float] = {}
     for row in rows or []:
         metric = row.get("metric") if isinstance(row, dict) else None
         if not isinstance(metric, dict):
             return {"error": "observability-unavailable"}
-        cluster_svc = _cluster_service_from_target(metric.get("instance", ""))
+        cluster_svc = _strict_cluster_service_from_target(metric.get("instance", ""))
         if not cluster_svc:
             return {"error": "observability-unavailable"}
         try:
             value = float(row["value"][1])
         except (KeyError, IndexError, TypeError, ValueError):
+            return {"error": "observability-unavailable"}
+        if not math.isfinite(value):
             return {"error": "observability-unavailable"}
         observed[cluster_svc] = min(observed.get(cluster_svc, 1.0), value)
 
