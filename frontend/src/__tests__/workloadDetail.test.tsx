@@ -485,10 +485,17 @@ describe('locked steps are always prose in the rail, never a control', () => {
       within(stageSection('Provision')).getByRole('button', { name: 'Clear for deployment' }),
     ).toBeTruthy()
 
-    // Finalise is locked — never mounted, never a control, its own reason
-    // stated in the rail.
-    expect(within(strip).queryByRole('button', { name: 'Finalise & Review' })).toBeNull()
-    expect(within(strip).getByText(/nothing to tear down/)).toBeTruthy()
+    // umbrella #347: this exact shape — every member bootstrapped, none
+    // observed running — is now ALSO the delete-permanently condition, so
+    // Finalise is legitimately OPEN here (not locked), offering that action
+    // instead of tear-down. The regression this test actually guards
+    // (GATE-S1 P1) is narrower than "Finalise stays locked": clear-for-
+    // deployment must never appear there, which still holds.
+    const strip2 = within(strip)
+    expect(strip2.getByRole('button', { name: 'Finalise & Review' })).toBeTruthy()
+    const finaliseSection = selectStep('Finalise & Review')
+    expect(within(finaliseSection).queryByRole('button', { name: 'Clear for deployment' })).toBeNull()
+    expect(within(finaliseSection).getByRole('button', { name: '🗑 Delete permanently' })).toBeTruthy()
   })
 
   it('suppresses the clear control while a job is in flight, like every other action', async () => {

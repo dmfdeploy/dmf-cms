@@ -85,6 +85,115 @@ describe('ReasonConfirm component', () => {
   })
 })
 
+describe('ReasonConfirm variant="danger" (umbrella #347, delete-permanently)', () => {
+  // The exact extraField shape FinaliseStage wires for typed-slug
+  // confirmation: invalid whenever the typed text doesn't equal the slug,
+  // INCLUDING when it's empty — Confirm must never be reachable on an
+  // untouched field.
+  function typedSlugField(value: string, slug = 'studio-a') {
+    return {
+      label: 'Type the workload slug to confirm',
+      placeholder: slug,
+      value,
+      onChange: () => {},
+      invalid: value !== slug,
+      invalidHint: `Type "${slug}" exactly to confirm — this cannot be undone.`,
+    }
+  }
+
+  it('renders the destructive badge text (Art. 11: colour is never the only signal)', () => {
+    render(
+      <ReasonConfirm
+        variant="danger"
+        title="Delete studio-a permanently?"
+        description="D"
+        onConfirm={vi.fn()}
+        onCancel={() => {}}
+        extraField={typedSlugField('')}
+      />,
+    )
+    expect(screen.getByText(/Destructive — cannot be undone/)).toBeTruthy()
+  })
+
+  it('keeps Confirm disabled on an EMPTY typed-slug field, even with a valid reason', () => {
+    // Discriminates the empty-vs-mismatch distinction: a mutant using
+    // `value.length > 0 && value !== slug` (mismatch-only) would leave
+    // Confirm enabled here since the field is empty.
+    render(
+      <ReasonConfirm
+        variant="danger"
+        title="Delete studio-a permanently?"
+        description="D"
+        confirmLabel="Delete permanently"
+        onConfirm={vi.fn()}
+        onCancel={() => {}}
+        extraField={typedSlugField('')}
+      />,
+    )
+    fireEvent.change(screen.getByPlaceholderText(/Reason \(required/), { target: { value: 'confirmed clean' } })
+    expect((screen.getByRole('button', { name: 'Delete permanently' }) as HTMLButtonElement).disabled).toBe(true)
+  })
+
+  it('keeps Confirm disabled while the typed slug is a near-miss, and enables it only on an exact match', () => {
+    const onConfirm = vi.fn()
+    const { rerender } = render(
+      <ReasonConfirm
+        variant="danger"
+        title="Delete studio-a permanently?"
+        description="D"
+        confirmLabel="Delete permanently"
+        onConfirm={onConfirm}
+        onCancel={() => {}}
+        extraField={typedSlugField('studio-a-x')}
+      />,
+    )
+    fireEvent.change(screen.getByPlaceholderText(/Reason \(required/), { target: { value: 'confirmed clean' } })
+    expect((screen.getByRole('button', { name: 'Delete permanently' }) as HTMLButtonElement).disabled).toBe(true)
+    expect(screen.getByText(/Type "studio-a" exactly to confirm/)).toBeTruthy()
+
+    rerender(
+      <ReasonConfirm
+        variant="danger"
+        title="Delete studio-a permanently?"
+        description="D"
+        confirmLabel="Delete permanently"
+        onConfirm={onConfirm}
+        onCancel={() => {}}
+        extraField={typedSlugField('studio-a')}
+      />,
+    )
+    const confirm = screen.getByRole('button', { name: 'Delete permanently' }) as HTMLButtonElement
+    expect(confirm.disabled).toBe(false)
+    fireEvent.click(confirm)
+    expect(onConfirm).toHaveBeenCalledWith('confirmed clean')
+  })
+
+  it('pending/error states render the same as the warning variant', () => {
+    render(
+      <ReasonConfirm
+        variant="danger"
+        title="Delete studio-a permanently?"
+        description="D"
+        confirmLabel="Delete permanently"
+        pendingLabel="Deleting…"
+        pending
+        error={new Error('boom')}
+        onConfirm={vi.fn()}
+        onCancel={() => {}}
+        extraField={typedSlugField('studio-a')}
+      />,
+    )
+    expect(screen.getByText('Deleting…')).toBeTruthy()
+    expect(screen.getByText(/nothing was changed/)).toBeTruthy()
+    expect((screen.getByRole('button', { name: 'Deleting…' }) as HTMLButtonElement).disabled).toBe(true)
+  })
+
+  it('the default (omitted) variant is unaffected — no destructive badge, unchanged styling', () => {
+    render(<ReasonConfirm title="T" description="D" onConfirm={vi.fn()} onCancel={() => {}} />)
+    expect(screen.queryByText(/Destructive — cannot be undone/)).toBeNull()
+  })
+})
+
 const OPERATOR: UserIdentity = {
   subject: 'ops',
   display_name: 'Ops',

@@ -89,7 +89,11 @@ class OperationState(str, Enum):
 # Actions whose ops get a job-terminal watcher attached (#202 WP2). Every
 # other action (today: "launch", the generic AWX workflow launch) has no
 # watcher, so LAUNCHED stays its own terminal state — see terminal_states().
-_WATCHED_ACTIONS = frozenset({"deploy", "teardown", "rollback"})
+# "finalise-purge" (umbrella #347): a NetBox-only, permanent SoT removal —
+# see main.py's _watch_job_operation for its own success/failure branch
+# (the post-job refreshed source read is the sole absence authority, never
+# the bare AWX job status).
+_WATCHED_ACTIONS = frozenset({"deploy", "teardown", "rollback", "finalise-purge"})
 
 _LAUNCH_TERMINAL_STATES = frozenset({OperationState.LAUNCHED, OperationState.ERROR})
 _WATCHED_TERMINAL_STATES = frozenset({
@@ -178,6 +182,15 @@ class Operation:
     # this run's identity is genuinely unknown to the console (see
     # main._maybe_auto_trigger_rollback's "identity-unknown" handling).
     run_id: str | None = None
+    # umbrella #347: set ONLY for a "finalise-purge" op that reached
+    # RUN_COMPLETE via a CONFIRMED-absent post-job source read (Console
+    # Constitution Art. 1 provenance) — the ISO timestamp of that read, not
+    # the job's own completion time. l3_outcome on the same op stays the
+    # RAW DMF_L3_PURGE_OUTCOME marker token (provenance only, never
+    # authoritative here — unlike rollback's marker-authoritative contract,
+    # see main.py's _watch_job_operation); this field is the actual
+    # absence-confirmed claim.
+    purge_verified_at: str | None = None
     created_at: datetime = field(default_factory=lambda: datetime.now(timezone.utc))
     updated_at: datetime = field(default_factory=lambda: datetime.now(timezone.utc))
 
@@ -195,6 +208,7 @@ class Operation:
             "l3_outcome": self.l3_outcome,
             "auto_rollback": self.auto_rollback,
             "run_id": self.run_id,
+            "purge_verified_at": self.purge_verified_at,
             "created_at": self.created_at.isoformat(),
             "updated_at": self.updated_at.isoformat(),
         }
@@ -423,6 +437,7 @@ class OperationStore:
         l3_outcome: str | None = None,
         auto_rollback: str | None = None,
         run_id: str | None = None,
+        purge_verified_at: str | None = None,
     ) -> Operation | None:
         """Update an operation's state and/or fields.
 
@@ -455,6 +470,11 @@ class OperationStore:
                 same convention as every other optional field here — an
                 intentionally-unknown identity is represented by simply
                 never calling update with a value, not by this method).
+            purge_verified_at: umbrella #347 — ISO timestamp of the
+                confirmed-absent post-job source read, set once when a
+                "finalise-purge" op reaches RUN_COMPLETE (see
+                ``Operation.purge_verified_at``'s own comment). Same
+                never-explicitly-cleared convention as every field here.
 
         Returns:
             Updated Operation if found, None otherwise
@@ -476,6 +496,8 @@ class OperationStore:
                 op.auto_rollback = auto_rollback
             if run_id is not None:
                 op.run_id = run_id
+            if purge_verified_at is not None:
+                op.purge_verified_at = purge_verified_at
             op.updated_at = datetime.now(timezone.utc)
 
             return op

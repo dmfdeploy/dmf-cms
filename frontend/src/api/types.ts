@@ -48,18 +48,42 @@ export interface WorkflowLaunchResponse {
   request_id?: string
 }
 
-// Async operation tracking (WS5 scale-to-zero)
-export type OperationState = 'waking' | 'launching' | 'launched' | 'error'
+// Async operation tracking (WS5 scale-to-zero). umbrella #347: widened past
+// the original waking/launching/launched/error set — those four are all a
+// plain "launch" operation ever reaches, but deploy/teardown/rollback/
+// finalise-purge (#202 WP2's watched actions) continue past LAUNCHED
+// through the job-terminal states below; a purge consumer needs to observe
+// those to know when the operation is ACTUALLY done, not just dispatched.
+export type OperationState =
+  | 'waking'
+  | 'launching'
+  | 'launched'
+  | 'running'
+  | 'run_complete'
+  | 'run_failed'
+  | 'failed_rollback_required'
+  | 'rollback_incomplete'
+  | 'run_status_unknown'
+  | 'error'
 
 export interface Operation {
   operation_id: string
-  action: 'launch' | 'deploy' | 'teardown'
+  action: 'launch' | 'deploy' | 'teardown' | 'finalise-purge'
   target: string
   state: OperationState
   job_id: number | null
   error: string | null
   created_at: string
   updated_at: string
+  // Provenance-only launcher outcome token (umbrella #347: e.g. a
+  // finalise-purge job's raw DMF_L3_PURGE_OUTCOME token) — present on the
+  // watched-action states, absent/null otherwise.
+  l3_outcome?: string | null
+  // umbrella #347: ISO timestamp of the CONFIRMED-absent post-job source
+  // read (Console Constitution Art. 1) — set only on a finalise-purge op
+  // that reached run_complete via that confirmation, never derived from
+  // job status alone.
+  purge_verified_at?: string | null
   // Spread onto the 202/200 async write response by the operator-gated write
   // (#185 WP-E); absent on later poll reads of the operation itself.
   request_id?: string

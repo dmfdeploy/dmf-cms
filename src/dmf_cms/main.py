@@ -892,7 +892,7 @@ def _facility_busy_check(
     for op in ops_store.list_all():
         if op.operation_id == current_operation_id:
             continue
-        if op.action not in ("deploy", "teardown", "rollback"):
+        if op.action not in ("deploy", "teardown", "rollback", "finalise-purge"):
             continue
         if (
             current_action == "rollback"
@@ -1319,6 +1319,73 @@ async def _fetch_l3_outcome_from_events(app: FastAPI, job_id: int) -> tuple[str 
         if not isinstance(msg, str):
             continue
         match = _L3_OUTCOME_RE.match(msg.strip())
+        if match:
+            token, kv = match.group("token"), match.group("kv")
+            return token, _sanitize_kv(kv)
+
+    return None, None
+
+
+# umbrella #347 (Arc 2b): finalise-purge's OWN marker — a genuinely separate
+# contract from DMF_L3_OUTCOME above (different task name, different tiny
+# vocabulary: success|refused — see roles/l3_run_guard/tasks/
+# _emit_purge_outcome.yml on dmf-runbooks branch arc2b-finalise-purge for the
+# full non-forgeability argument). Read via job events, anchored to this
+# task name, exactly like _L3_OUTCOME_RE/_fetch_l3_outcome_from_events —
+# never conflated with that marker's own vocabulary or task.
+_L3_PURGE_OUTCOME_RE = re.compile(r"^DMF_L3_PURGE_OUTCOME: (?P<token>[a-z0-9_-]+)(?: (?P<kv>.*))?$")
+_L3_PURGE_OUTCOME_TASK_NAME = "dmf-l3-purge-outcome"
+
+
+async def _fetch_l3_purge_outcome_from_events(app: FastAPI, job_id: int) -> tuple[str | None, str | None]:
+    """Fetch a finalise-purge job's ``dmf-l3-purge-outcome`` task events and
+    parse the ``DMF_L3_PURGE_OUTCOME`` marker (umbrella #347).
+
+    Byte-for-byte the same task-name-anchored, job-events-only fetch
+    discipline as ``_fetch_l3_outcome_from_events`` (see that function's own
+    docstring for the full defensive-parsing rationale) — same "last event
+    wins", same per-level dict validation, same tolerance of the AWX fetch
+    itself failing. The only difference is the task name and marker regex,
+    since finalise-purge is a structurally different, NetBox-only action
+    with its own small vocabulary.
+
+    Provenance ONLY — unlike the rollback marker, this token/kv is never
+    authoritative for the operation's own outcome. The fresh post-job NetBox
+    re-read (``media_workloads.purge_residue_present``) is the sole absence
+    authority (Console Constitution Art. 1); see ``_watch_job_operation``'s
+    finalise-purge branch.
+    """
+    settings = app.state.settings
+    try:
+        events = await run_in_threadpool(
+            get_job_events_for_task,
+            api_url=settings.awx.api_url,
+            api_token=settings.awx.api_token,
+            job_id=job_id,
+            task_name=_L3_PURGE_OUTCOME_TASK_NAME,
+            ssl_verify=settings.awx.ssl_verify,
+        )
+    except Exception:
+        return None, None
+
+    if not events:
+        return None, None
+
+    for event in reversed(events):
+        if not isinstance(event, dict):
+            continue
+        if event.get("task") != _L3_PURGE_OUTCOME_TASK_NAME:
+            continue
+        event_data = event.get("event_data")
+        if not isinstance(event_data, dict):
+            continue
+        res = event_data.get("res")
+        if not isinstance(res, dict):
+            continue
+        msg = res.get("msg")
+        if not isinstance(msg, str):
+            continue
+        match = _L3_PURGE_OUTCOME_RE.match(msg.strip())
         if match:
             token, kv = match.group("token"), match.group("kv")
             return token, _sanitize_kv(kv)
@@ -1869,6 +1936,17 @@ async def _watch_job_operation(app: FastAPI, operation_id: str, job_id: int, act
           any token other than ``rollback_complete``) -> ROLLBACK_INCOMPLETE,
           a DIRTY terminal state (``operations.DIRTY_STATES`` —
           ``_facility_busy_check`` keeps treating it as blocking).
+    * ``action == "finalise-purge"`` (umbrella #347): the INVERSE posture
+      from rollback — the ``DMF_L3_PURGE_OUTCOME`` marker is fetched on
+      every terminal but is provenance ONLY, never authoritative. On
+      ``successful``, a fresh, unscoped NetBox re-read
+      (``media_workloads.purge_residue_present``) is the sole absence
+      authority (Console Constitution Art. 1): residue confirmed gone ->
+      RUN_COMPLETE with ``purge_verified_at`` stamped; residue still present
+      -> RUN_FAILED (job-success is never sufficient on its own); the
+      re-read itself failing -> RUN_STATUS_UNKNOWN (unverified, never
+      assumed clean). Any non-successful job status -> RUN_FAILED, no
+      re-read attempted.
 
     Gives up via ``_watch_lost_terminal_state`` (never leaves the op
     stranded mid-flight, codex R2-4):
@@ -1957,9 +2035,53 @@ async def _watch_job_operation(app: FastAPI, operation_id: str, job_id: int, act
                 # started-then-failed deploy (codex R2-3): a pre-mutation
                 # refusal token changes that classification.
                 outcome_token = outcome_kv = None
-                if action == "rollback" or status != "successful":
+                if action in ("rollback", "finalise-purge") or status != "successful":
                     await _await_event_ingestion_finished(app, job, job_id, poll_interval)
-                    outcome_token, outcome_kv = await _fetch_l3_outcome_from_events(app, job_id)
+                    if action == "finalise-purge":
+                        outcome_token, outcome_kv = await _fetch_l3_purge_outcome_from_events(app, job_id)
+                    else:
+                        outcome_token, outcome_kv = await _fetch_l3_outcome_from_events(app, job_id)
+
+                if action == "finalise-purge":
+                    # umbrella #347: job-success is never sufficient on its
+                    # own (Console Constitution Art. 1) — the fresh,
+                    # post-job NetBox re-read is the ONLY absence authority.
+                    # The marker token/kv above is attached for provenance/
+                    # audit only and never gates this classification.
+                    if status == "successful":
+                        try:
+                            residue_present = await run_in_threadpool(
+                                media_workloads.purge_residue_present,
+                                settings.netbox.api_url, settings.netbox.api_token,
+                                settings.netbox.ssl_verify, key,
+                            )
+                        except Exception:
+                            logger.exception(
+                                "finalise-purge: post-job source read failed for operation %s (slug %s)",
+                                operation_id, key,
+                            )
+                            ops_store.update(
+                                operation_id, state=OperationState.RUN_STATUS_UNKNOWN,
+                                error="purge-verify-unreachable", l3_outcome=outcome_token,
+                            )
+                        else:
+                            if residue_present:
+                                ops_store.update(
+                                    operation_id, state=OperationState.RUN_FAILED,
+                                    error=_append_kv("purge-incomplete:residue-present", outcome_kv),
+                                    l3_outcome=outcome_token,
+                                )
+                            else:
+                                ops_store.update(
+                                    operation_id, state=OperationState.RUN_COMPLETE,
+                                    l3_outcome=outcome_token, purge_verified_at=_utc_now().isoformat(),
+                                )
+                    else:
+                        ops_store.update(
+                            operation_id, state=OperationState.RUN_FAILED,
+                            error=_append_kv(f"job-{status}", outcome_kv), l3_outcome=outcome_token,
+                        )
+                    return
 
                 if action == "rollback":
                     # codex R2-1: RUN_COMPLETE requires BOTH a successful
@@ -2560,6 +2682,97 @@ async def _run_rollback_operation(app: FastAPI, operation_id: str, run_id: str, 
     except Exception:
         logger.exception("Unexpected error in rollback operation %s", operation_id)
         ops_store.update(operation_id, state=OperationState.ERROR, error="Unexpected error while rolling back")
+
+
+# umbrella #347: the finalise-purge JT name is FROZEN by the launcher
+# contract (dmf-runbooks playbooks/finalise-purge.yml's own header) — not
+# yet registered in AWX as of this landing (registration rides the next
+# release cycle); dmf-cms codes against the name regardless, same posture
+# as every other not-yet-registered JT this codebase has shipped against.
+_FINALISE_PURGE_JT_NAME = "media-finalise-purge"
+
+
+async def _run_finalise_purge_operation(
+    app: FastAPI, operation_id: str, slug: str, expected_service_ids: list[int],
+    actor: str, role: str, reason: str,
+) -> None:
+    """Background task to wake AWX and launch finalise-purge for a workload
+    (umbrella #347 WO-A2b-2, operator ruling 2026-08-02: delete permanently).
+
+    Mirrors ``_run_rollback_operation``'s shape, not ``_run_teardown_operation``'s:
+    the finalise-purge job template is SHARED across every workload slug
+    (like the rollback JT is shared across every run being rolled back),
+    not a per-entry template — so, like rollback, this never reattaches to
+    an AWX-side already-active job for the JT (there is no identity-safe
+    way to do that across slugs without the rollback JT's own dedicated
+    run_id wire contract, which finalise-purge's launch contract doesn't
+    carry). The ops store's own ``get_or_create_exclusive`` (the caller,
+    before this task is ever spawned) is this action's ONLY dedupe.
+
+    extra_vars follow the frozen launcher contract byte-for-byte
+    (playbooks/finalise-purge.yml's own header, dmf-runbooks branch
+    arc2b-finalise-purge, PR #37): ``workload_slug``,
+    ``purge_expected_service_ids`` (MAY be empty — tag-only residue is a
+    valid purge target), ``purge_actor``, ``purge_role``, ``purge_reason``,
+    and ``l3_request_id`` (this op's own request_id, the same
+    dispatch-identity convention ``_run_rollback_operation`` uses).
+    """
+    settings = app.state.settings
+    ops_store = app.state.operations
+
+    try:
+        await run_in_threadpool(
+            ensure_awx_awake,
+            helper_url=settings.awx_autoscale.helper_url,
+            bearer_token=settings.awx_autoscale.bearer_token,
+            max_startup_wait=settings.awx_autoscale.max_startup_wait,
+        )
+
+        ops_store.update(operation_id, state=OperationState.LAUNCHING)
+
+        # First authenticated call after the wake (#295).
+        template = await _post_wake_template_lookup(settings, _FINALISE_PURGE_JT_NAME)
+        if template is None:
+            ops_store.update(
+                operation_id,
+                state=OperationState.ERROR,
+                error="finalise-purge-jt-not-registered",
+            )
+            return
+
+        op = ops_store.get(operation_id)
+        l3_request_id = op.request_id if (op is not None and op.request_id) else uuid.uuid4().hex
+
+        job_id = await run_in_threadpool(
+            launch_job,
+            api_url=settings.awx.api_url,
+            api_token=settings.awx.api_token,
+            job_template_id=template["id"],
+            ssl_verify=settings.awx.ssl_verify,
+            extra_vars={
+                "workload_slug": slug,
+                "purge_expected_service_ids": expected_service_ids,
+                "purge_actor": actor,
+                "purge_role": role,
+                "purge_reason": reason,
+                "l3_request_id": l3_request_id,
+            },
+        )
+
+        ops_store.update(operation_id, state=OperationState.LAUNCHED, job_id=job_id, run_id=l3_request_id)
+        _spawn_job_watcher(app, operation_id, job_id, "finalise-purge", slug)
+    except AWXAutoscaleError as exc:
+        logger.error("AWX autoscale error in finalise-purge operation %s: %s", operation_id, exc.body)
+        ops_store.update(operation_id, state=OperationState.ERROR, error="AWX wake failed")
+    except AWXAPIError as exc:
+        logger.error("AWX API error in finalise-purge operation %s: %s", operation_id, exc.body)
+        ops_store.update(operation_id, state=OperationState.ERROR, error="AWX API error while purging")
+    except urllib.error.URLError as exc:
+        logger.error("AWX unreachable in finalise-purge operation %s: %s", operation_id, exc.reason)
+        ops_store.update(operation_id, state=OperationState.ERROR, error="AWX unreachable while purging")
+    except Exception:
+        logger.exception("Unexpected error in finalise-purge operation %s", operation_id)
+        ops_store.update(operation_id, state=OperationState.ERROR, error="Unexpected error while purging")
 
 
 # umbrella #320/#321 fix-round (gate finding): the read-path fail-closed
@@ -5253,6 +5466,195 @@ def create_app(settings: Settings | None = None, contract: AppContract | None = 
         payload["actor"] = user.subject
         payload["role"] = user.role
         return JSONResponse(payload)
+
+    @app.post("/api/media-workloads/{slug}/purge")
+    async def api_media_workloads_purge(request: Request, slug: str):
+        """Delete permanently — SoT removal of a finalised workload's
+        residual dmf-catalog NetBox records (umbrella #347, operator ruling
+        2026-08-02: "the entry stops existing because the source of truth no
+        longer contains it; the UI never fakes absence").
+
+        Gated on the operator role ladder alone (NOT
+        ``_require_media_workloads_access``'s media-engineers-group OR-gate
+        — this is the console's most consequential media-workloads write,
+        so it takes the stricter, capability-only gate every other
+        AWX-launching write uses). Every refusal branch is audited and
+        echoes ``request_id`` (minted immediately after the role gate, ahead
+        of reason/confirmation/preflight, so even the earliest refusals are
+        attributable — a deliberate strengthening over the lighter existing
+        writes above, which only start auditing once ``reason`` is valid).
+
+        Typed confirmation is validated BACKEND-side (never trust a client's
+        own enable/disable of its Confirm button): the body's ``confirm``
+        field must equal ``slug`` exactly. Purgeability and the fresh
+        zero-running preflight are ``media_workloads.resolve_purge_target``
+        — a live NetBox+Prometheus read, never a cached snapshot, fail-closed
+        throughout. Absence itself is established ONLY by the job watcher's
+        post-job refreshed source read (Console Constitution Art. 1) — this
+        endpoint's own 202 means "dispatched", nothing more.
+        """
+        user, err = _require_min_role(request, "operator")
+        if err is not None:
+            return err
+        assert user is not None
+        # umbrella #347: request_id minted FIRST (before reason/confirm),
+        # so every refusal below — reason-required included — is audited
+        # and echoes it (see the docstring above).
+        request_id = uuid.uuid4().hex
+
+        reason, rerr = await _require_reason(request)
+        if rerr is not None:
+            _audit_awx_write(
+                request, user, action="finalise-purge", target=slug,
+                request_id=request_id, reason="", outcome="reason-required",
+            )
+            return JSONResponse({"error": "reason-required", "request_id": request_id}, status_code=400)
+        assert reason is not None
+
+        try:
+            body = await request.json()
+        except Exception:
+            body = None
+        if not isinstance(body, dict):
+            body = None
+        confirm = (body or {}).get("confirm")
+        if not isinstance(confirm, str) or not confirm:
+            _audit_awx_write(
+                request, user, action="finalise-purge", target=slug,
+                request_id=request_id, reason=reason, outcome="confirmation-required",
+            )
+            return JSONResponse({"error": "confirmation-required", "request_id": request_id}, status_code=400)
+        if confirm != slug:
+            _audit_awx_write(
+                request, user, action="finalise-purge", target=slug,
+                request_id=request_id, reason=reason, outcome="confirmation-mismatch",
+            )
+            return JSONResponse({"error": "confirmation-mismatch", "request_id": request_id}, status_code=422)
+
+        if not settings.awx.configured:
+            _audit_awx_write(
+                request, user, action="finalise-purge", target=slug,
+                request_id=request_id, reason=reason, outcome="awx-not-configured",
+            )
+            return JSONResponse({"error": "AWX API not configured", "request_id": request_id}, status_code=503)
+
+        tenant_slugs = settings.media_tenancy.tenants_for(user.groups)
+        preflight = await run_in_threadpool(
+            media_workloads.resolve_purge_target,
+            settings.netbox.api_url, settings.netbox.api_token, settings.netbox.ssl_verify,
+            tenant_slugs, settings.prometheus.url, slug,
+        )
+        preflight_error = preflight.get("error")
+        if preflight_error in ("netbox-unreachable", "netbox-error", "observability-unavailable"):
+            _audit_awx_write(
+                request, user, action="finalise-purge", target=slug,
+                request_id=request_id, reason=reason, outcome="observability-unavailable",
+            )
+            return JSONResponse(
+                {
+                    "error": "purge-preflight-refused", "kind": "observability-unavailable",
+                    "request_id": request_id,
+                },
+                status_code=409,
+            )
+        if preflight_error == "not-purgeable":
+            _audit_awx_write(
+                request, user, action="finalise-purge", target=slug,
+                request_id=request_id, reason=reason, outcome="not-purgeable",
+            )
+            return JSONResponse({"error": "not-purgeable", "request_id": request_id}, status_code=422)
+        if preflight_error == "workload-not-found":
+            _audit_awx_write(
+                request, user, action="finalise-purge", target=slug,
+                request_id=request_id, reason=reason, outcome="workload-not-found",
+            )
+            return JSONResponse({"error": "workload-not-found", "request_id": request_id}, status_code=404)
+
+        members = preflight["members"]
+        not_bootstrapped = [m["id"] for m in members if m["requested_state"] != "bootstrapped"]
+        if not_bootstrapped:
+            _audit_awx_write(
+                request, user, action="finalise-purge", target=slug,
+                request_id=request_id, reason=reason, outcome="members-not-bootstrapped",
+            )
+            return JSONResponse(
+                {
+                    "error": "purge-preflight-refused", "kind": "members-not-bootstrapped",
+                    "members": not_bootstrapped, "request_id": request_id,
+                },
+                status_code=409,
+            )
+        running = [m["id"] for m in members if m["observed_state"] == "running"]
+        if running:
+            _audit_awx_write(
+                request, user, action="finalise-purge", target=slug,
+                request_id=request_id, reason=reason, outcome="members-running",
+            )
+            return JSONResponse(
+                {
+                    "error": "purge-preflight-refused", "kind": "members-running",
+                    "members": running, "request_id": request_id,
+                },
+                status_code=409,
+            )
+
+        expected_service_ids = [m["id"] for m in members]
+
+        ops_store = request.app.state.operations
+        op, created, conflict = ops_store.get_or_create_exclusive(
+            action="finalise-purge", target=slug,
+            conflicts=("deploy", "teardown", "rollback", "finalise-purge"),
+            request_id=request_id, initiator=user.subject,
+        )
+        if conflict is not None:
+            _audit_awx_write(
+                request, user, action="finalise-purge", target=slug,
+                request_id=request_id, reason=reason, outcome="conflict-active-operation",
+            )
+            return JSONResponse(
+                {
+                    "error": "conflicting lifecycle operation in progress",
+                    "conflicting_operation": conflict.to_dict(),
+                    "request_id": request_id,
+                },
+                status_code=409,
+            )
+        if not created:
+            _audit_awx_write(
+                request, user, action="finalise-purge", target=slug,
+                request_id=request_id, reason=reason, outcome="reattached",
+            )
+            return JSONResponse({**op.to_dict(), "request_id": request_id}, status_code=200)
+
+        blocking = _facility_busy_check(
+            ops_store, current_target=slug, current_action="finalise-purge",
+            current_operation_id=op.operation_id,
+        )
+        if blocking is not None:
+            ops_store.update(op.operation_id, state=OperationState.ERROR, error="facility-busy")
+            _audit_awx_write(
+                request, user, action="finalise-purge", target=slug,
+                request_id=request_id, reason=reason, outcome="facility-busy",
+            )
+            return JSONResponse(
+                {
+                    "error": "facility-busy", "advisory": True,
+                    "blocking_operation": blocking.to_dict(), "request_id": request_id,
+                },
+                status_code=409,
+            )
+
+        task = asyncio.create_task(_run_finalise_purge_operation(
+            request.app, op.operation_id, slug, expected_service_ids, user.subject, user.role, reason,
+        ))
+        request.app.state.operation_tasks.add(task)
+        task.add_done_callback(request.app.state.operation_tasks.discard)
+
+        _audit_awx_write(
+            request, user, action="finalise-purge", target=slug,
+            request_id=request_id, reason=reason, outcome="dispatched",
+        )
+        return JSONResponse({**op.to_dict(), "request_id": request_id}, status_code=202)
 
     # ------------------------------------------------------------------
     # Media Workloads live view (WP-D / G26): per-instance MXL status +

@@ -18,6 +18,8 @@ function actionTitle(action: ConsoleActionType, target: string): string {
       return `Launched ${target}`
     case 'switch-source':
       return `Switched source on ${target}`
+    case 'finalise-purge':
+      return `Deleted ${target} permanently`
   }
 }
 

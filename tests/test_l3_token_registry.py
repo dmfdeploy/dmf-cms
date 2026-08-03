@@ -110,10 +110,19 @@ _EXPECTED_RUNBOOKS_DETAIL_TOKENS = frozenset({
     "chart-resolve",                      # switch-mxl-fabrics-demo.yml (_switch_stage)
     "coordinator-read",                   # switch-mxl-fabrics-demo.yml (_switch_stage)
     "final-readback",                     # switch-mxl-fabrics-demo.yml (_switch_stage)
-    "pre-lock",                           # the templated site's own default
+    "pre-lock",                           # the templated site's own default (shared with finalise-purge)
     "quiesce",                            # switch-mxl-fabrics-demo.yml (_switch_stage)
     "repoint",                            # switch-mxl-fabrics-demo.yml (_switch_stage)
     "select",                             # switch-mxl-fabrics-demo.yml (_switch_stage)
+    # umbrella #347 (Arc 2b): finalise-purge's own STAGE vocabulary, the
+    # SAME templated shape as the switch play's — `detail={{ _purge_stage |
+    # default('pre-lock') }}` in playbooks/finalise-purge.yml. 'pre-lock' is
+    # already a member above (the templated default both plays share); the
+    # four values below are that play's own `_purge_stage:` set_facts.
+    "preflight",                          # finalise-purge.yml (_purge_stage)
+    "member-purge",                       # finalise-purge.yml (_purge_stage)
+    "tag-purge",                          # finalise-purge.yml (_purge_stage)
+    "final-read",                         # finalise-purge.yml (_purge_stage)
 })
 
 _DETAIL_KV_RE = re.compile(r"detail=([a-zA-Z0-9_-]+)")
@@ -126,6 +135,14 @@ _SWITCH_STAGE_RE = re.compile(r"^\s*_switch_stage:\s*([a-zA-Z0-9_-]+)\s*$", re.M
 # entered: `detail={{ _switch_stage | default('pre-lock') }}`.
 _SWITCH_STAGE_DEFAULT_RE = re.compile(
     r"detail=\{\{\s*_switch_stage\s*\|\s*default\(\s*'([a-zA-Z0-9_-]+)'\s*\)"
+)
+
+# umbrella #347: finalise-purge.yml sets this fact to name its own stage in
+# flight, rendered through the identical templated-default shape the switch
+# play uses — see _SWITCH_STAGE_RE/_SWITCH_STAGE_DEFAULT_RE above.
+_PURGE_STAGE_RE = re.compile(r"^\s*_purge_stage:\s*([a-zA-Z0-9_-]+)\s*$", re.M)
+_PURGE_STAGE_DEFAULT_RE = re.compile(
+    r"detail=\{\{\s*_purge_stage\s*\|\s*default\(\s*'([a-zA-Z0-9_-]+)'\s*\)"
 )
 
 
@@ -179,6 +196,11 @@ _RUNBOOKS_TASKS_DIR = _RUNBOOKS_ROOT / "roles" / "l3_run_guard" / "tasks"
 # would be invisible to a tasks-dir-only glob. Scanned in ADDITION to the
 # tasks dir below, not instead of it.
 _RUNBOOKS_SWITCH_DEMO_PLAYBOOK = _RUNBOOKS_ROOT / "playbooks" / "switch-mxl-fabrics-demo.yml"
+
+# umbrella #347: finalise-purge's own detail=<stage> emission site lives in
+# its own playbook, not under roles/l3_run_guard/tasks/ — same reason the
+# switch demo playbook above is scanned separately.
+_RUNBOOKS_FINALISE_PURGE_PLAYBOOK = _RUNBOOKS_ROOT / "playbooks" / "finalise-purge.yml"
 
 
 def test_emitting_lines_drops_tokens_that_only_appear_in_comments():
@@ -277,6 +299,14 @@ def test_kv_detail_tokens_matches_live_runbooks_source_when_sibling_present():
         # silently lacked every stage value it actually receives.
         found.update(_SWITCH_STAGE_RE.findall(demo))
         found.update(_SWITCH_STAGE_DEFAULT_RE.findall(demo))
+    if _RUNBOOKS_FINALISE_PURGE_PLAYBOOK.is_file():
+        purge_playbook = _RUNBOOKS_FINALISE_PURGE_PLAYBOOK.read_text()
+        found.update(_DETAIL_KV_RE.findall(_emitting_lines(purge_playbook)))
+        # umbrella #347: same templated-stage blind spot as the switch play
+        # above — derive the vocabulary from finalise-purge.yml's own
+        # `_purge_stage` set_facts and its templated site's default.
+        found.update(_PURGE_STAGE_RE.findall(purge_playbook))
+        found.update(_PURGE_STAGE_DEFAULT_RE.findall(purge_playbook))
 
     assert found == main._KV_DETAIL_TOKENS, (
         f"Live scan of {_RUNBOOKS_TASKS_DIR} found detail= values "

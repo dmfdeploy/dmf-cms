@@ -444,19 +444,26 @@ function OperationStatusLine({
     )
   }
 
-  const stateLabel = {
+  // umbrella #347: Record<string, string> (not an inferred 4-key literal) —
+  // Operation.state now spans the full #202 WP2 watched-action vocabulary
+  // (run_complete/run_failed/…), which this pre-existing widget never
+  // switched over to observing; the fallback below keeps it honest about an
+  // unrecognized value instead of rendering `undefined`.
+  const STATE_LABEL: Record<string, string> = {
     waking: 'Waking AWX',
     launching: 'Launching job',
     launched: 'Launched',
     error: 'Error',
-  }[operation.state]
+  }
+  const stateLabel = STATE_LABEL[operation.state] ?? operation.state
 
-  const stateClass = {
+  const STATE_CLASS: Record<string, string> = {
     waking: 'text-yellow-300',
     launching: 'text-blue-300',
     launched: 'text-green-400',
     error: 'text-red-400',
-  }[operation.state]
+  }
+  const stateClass = STATE_CLASS[operation.state] ?? 'text-muted'
 
   return (
     <div className="flex items-center gap-2 text-xs">
