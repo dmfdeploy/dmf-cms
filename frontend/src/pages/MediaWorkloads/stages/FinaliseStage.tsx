@@ -183,28 +183,28 @@ export default function FinaliseStage({
   const allowed = actions.includes('tear-down')
   const purgeAllowed = actions.includes('delete-permanently')
 
+  // umbrella #386 / WP-3 spec B2: THROWS on failure, deliberately — see
+  // ProvisionStage.tsx's identical handleDeploy note. This is FinaliseEntry's
+  // own copy of the exact same onConfirm-then-close shape ProvisionEntry had,
+  // and the sweep the umbrella issue calls for found it here too.
   const handleTeardown = async (entry: CatalogEntry, reason: string) => {
     onJobStart()
-    try {
-      const result = await teardownMutation.mutateAsync({ key: entry.key, reason })
-      recordAwxWrite({
-        request_id: result.request_id ?? '',
-        action: 'teardown',
-        target: entry.key,
-        reason,
-        actor: user?.subject ?? 'unknown',
-        role: user?.role ?? 'unknown',
-        outcome: isOperation(result) ? 'dispatched' : result.status,
-      })
-      setTrack((prev) => ({
-        ...prev,
-        [entry.key]: isOperation(result)
-          ? { jobId: null, opId: result.operation_id }
-          : { jobId: result.job_id, opId: null },
-      }))
-    } catch (e) {
-      console.error('Teardown failed:', e)
-    }
+    const result = await teardownMutation.mutateAsync({ key: entry.key, reason })
+    recordAwxWrite({
+      request_id: result.request_id ?? '',
+      action: 'teardown',
+      target: entry.key,
+      reason,
+      actor: user?.subject ?? 'unknown',
+      role: user?.role ?? 'unknown',
+      outcome: isOperation(result) ? 'dispatched' : result.status,
+    })
+    setTrack((prev) => ({
+      ...prev,
+      [entry.key]: isOperation(result)
+        ? { jobId: null, opId: result.operation_id }
+        : { jobId: result.job_id, opId: null },
+    }))
   }
 
   const handleJobComplete = (key: string) => {
@@ -400,7 +400,7 @@ function FinaliseEntry({
   track: EntryTrack
   isTearingDown: boolean
   teardownError: unknown
-  onTeardown: (reason: string) => void
+  onTeardown: (reason: string) => Promise<void>
   onOpLaunched: (jobId: number) => void
   onOpError: () => void
   onStatusChange: (status: string) => void
@@ -443,8 +443,17 @@ function FinaliseEntry({
             pending={isTearingDown}
             error={teardownError}
             onConfirm={(reason) => {
-              onTeardown(reason)
-              setArming(false)
+              // umbrella #386 / WP-3 spec B2: close ONLY on success — see
+              // ProvisionEntry's identical note. Staying armed on rejection
+              // keeps ReasonConfirm's own error paragraph on screen.
+              void (async () => {
+                try {
+                  await onTeardown(reason)
+                  setArming(false)
+                } catch {
+                  // Stay armed — teardownError renders the failure here.
+                }
+              })()
             }}
             onCancel={() => setArming(false)}
           />

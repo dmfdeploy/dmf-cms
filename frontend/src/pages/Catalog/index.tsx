@@ -57,47 +57,43 @@ export default function Catalog() {
       outcome,
     })
 
+  // umbrella #386 / WP-3 spec B2: THROW on failure, deliberately — see
+  // ProvisionStage.tsx's handleDeploy for the full rationale. This page's
+  // EntryCard had the identical onConfirm-then-close shape, found by the
+  // sweep the umbrella issue calls for.
   const handleDeploy = async (entry: CatalogEntry, reason: string, workload?: string) => {
-    try {
-      const result = await deployMutation.mutateAsync({ key: entry.key, reason, workload })
-      record('deploy', entry.key, reason, result, isOperation(result) ? 'dispatched' : result.status)
-      if (isOperation(result)) {
-        // Async flow (202): track the operation
-        setEntryActions((prev) => ({
-          ...prev,
-          [entry.key]: { ...prev[entry.key], deployOpId: result.operation_id, deployJobId: null },
-        }))
-      } else {
-        // Sync flow (200): immediate job_id
-        setEntryActions((prev) => ({
-          ...prev,
-          [entry.key]: { ...prev[entry.key], deployJobId: result.job_id, deployOpId: null },
-        }))
-      }
-    } catch (e) {
-      console.error('Deploy failed:', e)
+    const result = await deployMutation.mutateAsync({ key: entry.key, reason, workload })
+    record('deploy', entry.key, reason, result, isOperation(result) ? 'dispatched' : result.status)
+    if (isOperation(result)) {
+      // Async flow (202): track the operation
+      setEntryActions((prev) => ({
+        ...prev,
+        [entry.key]: { ...prev[entry.key], deployOpId: result.operation_id, deployJobId: null },
+      }))
+    } else {
+      // Sync flow (200): immediate job_id
+      setEntryActions((prev) => ({
+        ...prev,
+        [entry.key]: { ...prev[entry.key], deployJobId: result.job_id, deployOpId: null },
+      }))
     }
   }
 
   const handleTeardown = async (entry: CatalogEntry, reason: string) => {
-    try {
-      const result = await teardownMutation.mutateAsync({ key: entry.key, reason })
-      record('teardown', entry.key, reason, result, isOperation(result) ? 'dispatched' : result.status)
-      if (isOperation(result)) {
-        // Async flow (202): track the operation
-        setEntryActions((prev) => ({
-          ...prev,
-          [entry.key]: { ...prev[entry.key], teardownOpId: result.operation_id, teardownJobId: null },
-        }))
-      } else {
-        // Sync flow (200): immediate job_id
-        setEntryActions((prev) => ({
-          ...prev,
-          [entry.key]: { ...prev[entry.key], teardownJobId: result.job_id, teardownOpId: null },
-        }))
-      }
-    } catch (e) {
-      console.error('Teardown failed:', e)
+    const result = await teardownMutation.mutateAsync({ key: entry.key, reason })
+    record('teardown', entry.key, reason, result, isOperation(result) ? 'dispatched' : result.status)
+    if (isOperation(result)) {
+      // Async flow (202): track the operation
+      setEntryActions((prev) => ({
+        ...prev,
+        [entry.key]: { ...prev[entry.key], teardownOpId: result.operation_id, teardownJobId: null },
+      }))
+    } else {
+      // Sync flow (200): immediate job_id
+      setEntryActions((prev) => ({
+        ...prev,
+        [entry.key]: { ...prev[entry.key], teardownJobId: result.job_id, teardownOpId: null },
+      }))
     }
   }
 
@@ -188,8 +184,8 @@ function EntryCard({
 }: {
   entry: CatalogEntry
   actionState: EntryActionState
-  onDeploy: (entry: CatalogEntry, reason: string, workload?: string) => void
-  onTeardown: (entry: CatalogEntry, reason: string) => void
+  onDeploy: (entry: CatalogEntry, reason: string, workload?: string) => Promise<void>
+  onTeardown: (entry: CatalogEntry, reason: string) => Promise<void>
   isDeploying: boolean
   isTearingDown: boolean
   deployError: unknown
@@ -285,9 +281,19 @@ function EntryCard({
             pending={isDeploying}
             error={deployError}
             onConfirm={(reason) => {
-              onDeploy(entry, reason, workload.trim() || undefined)
-              setArming(null)
-              setWorkload('')
+              // umbrella #386 / WP-3 spec B2: close ONLY on success — see
+              // ProvisionStage.tsx's ProvisionEntry for the full rationale.
+              // The typed workload value is kept on failure too, so a retry
+              // doesn't make the operator retype it.
+              void (async () => {
+                try {
+                  await onDeploy(entry, reason, workload.trim() || undefined)
+                  setArming(null)
+                  setWorkload('')
+                } catch {
+                  // Stay armed — deployError renders the failure here.
+                }
+              })()
             }}
             onCancel={() => { setArming(null); setWorkload('') }}
             extraField={{
@@ -311,7 +317,17 @@ function EntryCard({
             pendingLabel="Tearing down…"
             pending={isTearingDown}
             error={teardownError}
-            onConfirm={(reason) => { onTeardown(entry, reason); setArming(null) }}
+            onConfirm={(reason) => {
+              // umbrella #386 / WP-3 spec B2: close ONLY on success.
+              void (async () => {
+                try {
+                  await onTeardown(entry, reason)
+                  setArming(null)
+                } catch {
+                  // Stay armed — teardownError renders the failure here.
+                }
+              })()
+            }}
             onCancel={() => setArming(null)}
           />
         </div>
