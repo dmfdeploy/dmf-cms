@@ -1286,40 +1286,33 @@ describe('delete-permanently gate: authorization (umbrella dmfdeploy/dmfdeploy#3
     expect(screen.queryByRole('button', { name: '🗑 Delete permanently' })).toBeNull()
   })
 
-  // umbrella #378b fix round 2: the REJECTED fix for the test above was
-  // staleTime: 30_000 on useCurrentUser() — it doesn't remove the duplicate
-  // ['user'] subscriber (FinaliseStage used to call useCurrentUser() itself,
-  // purely for audit fields), it only POSTPONES the mount-triggered refetch
-  // until the cache is older than the staleTime window. That is worse than
-  // no fix: a deterministic bug becomes an intermittent one, and it would
-  // bounce the operator off Finalise & Review on literally every real-world
-  // demo (which takes well over 30s to reach that step). The real fix is
-  // ONE subscriber (WorkloadWizard's own userQuery, threaded down as a
-  // prop) — this test AGES the cache well past any such staleTime window
-  // before the first Finalise navigation specifically so it discriminates
-  // "no duplicate subscriber" from "duplicate subscriber, not stale yet":
-  // without the aging step, a postponed-not-removed bug would pass this
-  // test by coincidence, right up until it demo'd badly on camera.
-  // umbrella #378b fix round 3: round 2's version of this test aged the
-  // cache 120s and treated that as proof the duplicate subscriber was gone.
-  // It wasn't proof — it only outran a staleTime BELOW 120s. Reintroduce the
-  // duplicate subscriber together with staleTime: 300_000 and the cache is
-  // still "fresh" at 120s old: no refetch fires, calls.me stays 1, and the
-  // control renders — the rejected implementation passes both assertions
-  // that used to be here. Any finite aging duration has the same hole one
-  // staleTime value higher, so aging cannot be the proof, only a bonus
-  // behavioural check.
+  // umbrella #378b: the REJECTED fix for the test above was staleTime:
+  // 30_000 on useCurrentUser(). It does not remove the duplicate ['user']
+  // subscriber (FinaliseStage used to call useCurrentUser() itself, purely
+  // for audit fields) — it only POSTPONES the mount-triggered refetch until
+  // the cache is older than the staleTime window. That is worse than no
+  // fix: a deterministic bug becomes an intermittent one, and it would
+  // bounce the operator off Finalise & Review on every real demo, which
+  // takes well over 30s to reach that step. The real fix is ONE subscriber
+  // (WorkloadWizard's own userQuery, threaded down as a prop).
   //
-  // The actual invariant is STRUCTURAL, not timing-dependent: the ['user']
-  // query has TWO observers before the operator ever navigates (measured
-  // against this exact fixture, not assumed — WorkloadWizard's own
-  // userQuery, plus ProvisionStage's own useCurrentUser(), since Provision
-  // is what's mounted initially at lifecycle=provision). Correct code drops
-  // to ONE the moment Finalise is selected (Provision unmounts and stops
-  // observing; Finalise never subscribes at all — it takes `user` as a
-  // prop). The rejected implementation stays at TWO regardless of any
-  // staleTime value, because the second subscription is a structural fact,
-  // not a timing race.
+  // Proving that requires a STRUCTURAL assertion, not a timing one. An
+  // earlier version of this test aged the cache 120s and treated surviving
+  // that as proof — it wasn't. Reintroduce the duplicate subscriber with
+  // staleTime: 300_000 and a 120s-old cache is still fresh: no refetch
+  // fires, calls.me stays 1, the control renders, and the rejected
+  // implementation passes. Any finite aging duration has the same hole one
+  // staleTime value higher, which is why no aging happens here at all.
+  //
+  // The invariant instead: the ['user'] query has TWO observers before the
+  // operator navigates (measured against this fixture, not assumed —
+  // WorkloadWizard's userQuery plus ProvisionStage's own useCurrentUser(),
+  // since Provision is what's mounted initially at lifecycle=provision).
+  // Correct code drops to ONE the moment Finalise is selected: Provision
+  // unmounts and stops observing, and Finalise never subscribes at all —
+  // it takes `user` as a prop. The rejected implementation stays at TWO
+  // regardless of any staleTime, because the second subscription is a
+  // structural fact rather than a timing race.
   it('drops the [\'user\'] query from two observers to one on the FIRST navigation to Finalise — no bounce to Provision', async () => {
     const h = mkFetch({
       workload: purgeEligibleWorkload(),
