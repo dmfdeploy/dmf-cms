@@ -1,23 +1,60 @@
 @import "tailwindcss";
 
 @theme {
-  --color-bg: #0b121f;
-  --color-panel: #151e2d;
-  --color-sidebar: #111927;
-  --color-border: #1f2937;
-  --color-accent: #7c3aed;
+  /* Arc 4 WP-2 (umbrella dmfdeploy/dmfdeploy#347, operator ruling
+     2026-08-11): neutral near-black ground + the dmf-init Day-0 identity
+     cyan reused as the sole action accent, for cross-product continuity
+     along the dmf-init installer -> dmf-cms console path. Frozen values —
+     every foreground passes 4.5:1 (text)/3:1 (non-text) on both bg and
+     panel; see the issue comment for the measured contrast table. The
+     accent fill always pairs with text-bg, never white text (1.67:1). */
+  --color-bg: #0a0a0b;
+  --color-panel: #141416;
+  --color-sidebar: #101012;
+  --color-border: #26262a;
+  --color-accent: #7dd3fc;
+  /* Hover/active only — cyan and green sit at near-identical luminance
+     (1.37:1), so anywhere an accent control sits beside a green status the
+     distinction must come from icon + text + position, never hue alone. */
+  --color-accent-soft: #67e8f9;
   --color-accent-green: #22c55e;
   --color-accent-blue: #3b82f6;
   --color-warning: #efc15a;
-  --color-muted: #9ca3af;
-  --color-text: #e2e8f0;
+  --color-muted: #9a9aa2;
+  --color-text: #e8e8ea;
 
-  /* Status / trend colors */
+  /* Status / trend colors — unchanged: green stays "ok" and never carries
+     action (Constitution Art. 11; operator ruling 2026-08-11). */
   --color-trend-up: #22c55e;
   --color-trend-down: #ef4444;
   --color-ok: #22c55e;
   --color-fault: #ef4444;
   --color-warn: #f97316;
+
+  /* Lifecycle-stage identity colours, relocated byte-for-byte out of
+     LifecycleStrip.tsx's former STAGE_FILL/CONTROL_FILL literals (umbrella
+     #347 WP-2). Consumed exclusively through lib/stagePalette.ts — no
+     component should reach for a bg-[#hex] literal again. Named for
+     STAGES, not EBU: the EBU taxonomy vocabulary is leaving default level
+     in WP-3, and these tokens must not reintroduce it. */
+  --color-stage-design: #007A33;
+  --color-stage-design-fg: #ffffff;
+  --color-stage-plan: #7AC142;
+  --color-stage-plan-fg: #0F1720;
+  --color-stage-provision: #9B9400;
+  --color-stage-provision-fg: #0F1720;
+  --color-stage-configure: #F68B1F;
+  --color-stage-configure-fg: #0F1720;
+  --color-stage-finalise: #92278F;
+  --color-stage-finalise-fg: #ffffff;
+  --color-stage-control: #F0523D;
+  --color-stage-control-fg: #0F1720;
+
+  /* Micro-label size (Arc 4 WP-2): one token for the duplicated arbitrary
+     text-[10px] (LifecycleStrip) / text-[11px] (.metric-label) micro-copy
+     sizes. */
+  --text-2xs: 0.6875rem;
+  --text-2xs--line-height: 1rem;
 }
 
 @keyframes grain-flow {
@@ -84,7 +121,7 @@
   }
 
   .metric-card .metric-label {
-    @apply text-[11px] text-muted uppercase tracking-wider font-semibold;
+    @apply text-2xs text-muted uppercase tracking-wider font-semibold;
   }
 
   .metric-value {
@@ -172,11 +209,21 @@
   }
 
   .data-table tbody td {
-    @apply py-3 border-b border-muted/10;
+    @apply py-2 border-b border-muted/10;
   }
 
   .data-table tbody tr:last-child td {
     @apply border-b-0;
+  }
+
+  /* ---- Tile grids ----
+     auto-fill, NOT auto-fit: auto-fit stretches a lone tile to fill an
+     empty row (looks fine in a full grid, wrong in the one-item case).
+     auto-fill keeps every tile at its own size and leaves the remainder
+     of the row empty instead. Defined here for WP-4 to consume. */
+  .tile-grid {
+    display: grid;
+    grid-template-columns: repeat(auto-fill, minmax(8.5rem, 9.5rem));
   }
 
   /* ---- Nav ---- */
