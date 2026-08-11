@@ -1,5 +1,6 @@
 import { Link } from 'react-router-dom'
 import { FLOW_STEPS, type FlowStepId, type FlowStepState } from '../../lib/workloadFlow'
+import { STAGE_FILL, CONTROL_FILL } from '../../lib/stagePalette'
 
 /**
  * The wizard rail (umbrella #347 WO-D1, operator direction 2026-08-02:
@@ -18,7 +19,10 @@ import { FLOW_STEPS, type FlowStepId, type FlowStepState } from '../../lib/workl
  * fixed EBU-mapping colour regardless of open/complete/locked/current — the
  * hard gate is "never colour alone" (Constitution Art. 11), not "no colour
  * ever": state is carried by the icon + text label + (for locked) a dashed
- * border, layered on top of the constant identity fill.
+ * border, layered on top of the constant identity fill. The fill values
+ * themselves (Arc 4 WP-2) live as tokens in index.css, turned into class
+ * names by lib/stagePalette.ts — this file only consumes STAGE_FILL /
+ * CONTROL_FILL, it does not own the hex values anymore.
  *
  * SELECTION AND POSITION ARE TWO DIFFERENT FACTS, deliberately never
  * conflated onto one signal. `aria-pressed` + a focus-style outline mark
@@ -36,18 +40,6 @@ const STEP_LABEL: Record<FlowStepId, string> = {
   configure: 'Configure',
   finalise: 'Finalise & Review',
 }
-
-/** EBU-mapping identity colour per stage — constant across every state. */
-const STAGE_FILL: Record<FlowStepId, string> = {
-  design: 'bg-[#007A33] text-white',
-  plan: 'bg-[#7AC142] text-[#0F1720]',
-  provision: 'bg-[#9B9400] text-[#0F1720]',
-  configure: 'bg-[#F68B1F] text-[#0F1720]',
-  finalise: 'bg-[#92278F] text-white',
-}
-
-/** The Control vertical's own identity colour (EBU coral), for Operate. */
-const CONTROL_FILL = 'bg-[#F0523D] text-[#0F1720]'
 
 const STATE_TEXT: Record<FlowStepState, string> = {
   current: 'Now',
@@ -169,7 +161,7 @@ export default function LifecycleStrip({
               </svg>
               <span className="flex flex-col items-start leading-tight">
                 <span className="text-xs font-semibold">{STEP_LABEL[id]}</span>
-                <span className="text-[10px] uppercase tracking-wide opacity-80">
+                <span className="text-2xs uppercase tracking-wide opacity-80">
                   {jobInFlight ? 'Waiting' : STATE_TEXT[state]}
                 </span>
               </span>
@@ -202,7 +194,7 @@ export default function LifecycleStrip({
                 </div>
               )}
               {isPosition && (
-                <span className="flex items-center gap-1 text-[10px] text-muted">
+                <span className="flex items-center gap-1 text-2xs text-muted">
                   <PositionGlyph />
                   Current position
                 </span>
@@ -216,15 +208,15 @@ export default function LifecycleStrip({
                   <div>s. Current-position's marker already had this
                   property; selection needed the same one. */}
               {isSelected && (
-                <span className="text-[10px] text-muted">Selected</span>
+                <span className="text-2xs text-muted">Selected</span>
               )}
               {locked && (
-                <span className="max-w-[9rem] text-center text-[10px] text-muted">
+                <span className="max-w-[9rem] text-center text-2xs text-muted">
                   {lockedReasons[id]}
                 </span>
               )}
               {jobInFlight && !locked && (
-                <span className="max-w-[9rem] text-center text-[10px] text-muted">{jobReason}</span>
+                <span className="max-w-[9rem] text-center text-2xs text-muted">{jobReason}</span>
               )}
             </li>
           )
@@ -243,7 +235,7 @@ export default function LifecycleStrip({
         aria-label="Control"
         className="flex flex-col items-center gap-1 border-l border-white/10 pl-3"
       >
-        <span className="text-[10px] uppercase tracking-wide text-muted">Control</span>
+        <span className="text-2xs uppercase tracking-wide text-muted">Control</span>
         {!jobInFlight ? (
           <Link
             to={`/media-workloads/${encodeURIComponent(slug)}/operate`}
@@ -264,13 +256,13 @@ export default function LifecycleStrip({
           </div>
         )}
         {offFlow && (
-          <span className="flex items-center gap-1 text-[10px] text-muted">
+          <span className="flex items-center gap-1 text-2xs text-muted">
             <PositionGlyph />
             Current position
           </span>
         )}
         {jobInFlight && (
-          <span className="max-w-[9rem] text-center text-[10px] text-muted">{jobReason}</span>
+          <span className="max-w-[9rem] text-center text-2xs text-muted">{jobReason}</span>
         )}
       </div>
     </nav>
