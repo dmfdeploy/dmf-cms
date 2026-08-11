@@ -1,7 +1,11 @@
 import { useCallback, useMemo, useState, useEffect } from 'react'
-import { Link, useParams } from 'react-router-dom'
+import { Link, useNavigate, useParams } from 'react-router-dom'
 import { useCatalog, useMediaWorkloadsGrouped, useInstanceTopology } from '../../api/hooks'
 import type { MediaWorkloadInstance } from '../../api/types'
+import { classifyWorkloadForHeaderSlot, buildHeaderSlotRail, useRegisterHeaderSlot } from '../../store/headerSlot'
+import type { WorkloadLifecycleInput } from '../../lib/workloadLifecycle'
+import type { FlowStepId } from '../../lib/workloadFlow'
+import { LOCKED_REASON } from './WorkloadDetail'
 import WorkloadTile from './WorkloadTile'
 import InstanceLiveModal from './InstanceLiveModal'
 import { LIVE_TILE_CAP, useDocumentVisible, usePrefersReducedMotion } from './liveView'
@@ -40,6 +44,14 @@ import { LIVE_TILE_CAP, useDocumentVisible, usePrefersReducedMotion } from './li
  * the same reason that panel did: a second implementation of "visible tab
  * only, capped concurrent churn, reduced-motion honoured" is how a
  * backgrounded console quietly starts hammering the sidecars again.
+ *
+ * Arc 4 WP-3 (umbrella #347): registers the rail into the header slot too,
+ * same as WorkloadDetail — the route contract puts it here with Operate
+ * itself selected (`activeChip: 'operate'`, independent of the workload's
+ * actual backend position — see store/headerSlot.ts's own docstring on why
+ * those are two different facts) and its five stage entries NAVIGATING
+ * rather than locally selecting, since this page mounts no wizard step of
+ * its own to select into.
  */
 
 // Mirrors the first four designed states WorkloadDetail.tsx uses for this
@@ -52,6 +64,7 @@ export default function WorkloadOperate() {
   const { data, isLoading, error } = useMediaWorkloadsGrouped()
   const { data: catalogData } = useCatalog()
   const [openInstance, setOpenInstance] = useState<MediaWorkloadInstance | null>(null)
+  const navigate = useNavigate()
 
   const visible = useDocumentVisible()
   const reducedMotion = usePrefersReducedMotion()
@@ -67,6 +80,40 @@ export default function WorkloadOperate() {
   }, [catalogData?.entries])
   const nameFor = (i: MediaWorkloadInstance) =>
     displayNames.get(i.function_key ?? '') ?? i.function_key ?? i.instance
+
+  // Arc 4 WP-3 (umbrella #347): the rail is present here too, Operate
+  // selected, its five stage entries navigating rather than locally
+  // selecting (this page mounts no wizard step of its own). Computed here,
+  // ahead of every early return below, and registered unconditionally
+  // (content is null until a workload resolves) — useRegisterHeaderSlot is
+  // a hook and must run in the same order every render; WorkloadDetail.tsx
+  // gets to call it deeper in an inner component because ITS early returns
+  // all happen in an outer wrapper that owns no hooks of its own, this page
+  // has no such split.
+  const workloadForRail = data?.workloads.find((w) => w.slug === slug)
+  const railInput: WorkloadLifecycleInput | null = workloadForRail
+    ? {
+        lifecycle: workloadForRail.lifecycle,
+        hasBootstrappedMembers: workloadForRail.instances.some(
+          (i) => !i.reconcile_pending && i.requested_state === 'bootstrapped',
+        ),
+      }
+    : null
+  useRegisterHeaderSlot(
+    railInput && workloadForRail
+      ? {
+          slug: workloadForRail.slug,
+          rail: buildHeaderSlotRail(classifyWorkloadForHeaderSlot(railInput), {
+            activeChip: 'operate',
+            lockedReasons: LOCKED_REASON,
+            jobOwnerLabel: null,
+            jobInFlight: false,
+            onSelect: (step: FlowStepId) =>
+              navigate(`/media-workloads/${encodeURIComponent(workloadForRail.slug)}#${step}`),
+          }),
+        }
+      : null,
+  )
 
   if (isLoading) {
     return (
@@ -96,7 +143,10 @@ export default function WorkloadOperate() {
     )
   }
 
-  const workload = data?.workloads.find((w) => w.slug === slug)
+  // Same lookup the rail registration above already made — reused, not
+  // recomputed, so there is exactly one "which workload is this" answer
+  // per render.
+  const workload = workloadForRail
 
   if (!workload) {
     return (

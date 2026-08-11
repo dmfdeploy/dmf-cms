@@ -1,39 +1,43 @@
-import { useEffect } from 'react'
+import { useLayoutEffect } from 'react'
 import { create } from 'zustand'
 import { classifyWorkloadFlow, type FlowState, type FlowStepId, type FlowStepState } from '../lib/workloadFlow'
 import type { WorkloadLifecycleInput } from '../lib/workloadLifecycle'
 
 /**
  * The typed, route-scoped header slot (umbrella dmfdeploy/dmfdeploy#347 Arc
- * 4 WP-2). Topbar renders a second header row beneath the h-14 breadcrumb
- * row on workload-detail routes, and only there; WP-3 registers into it
- * from WorkloadDetail — the route component that already owns steps,
- * selection, locked reasons, and job-in-flight state. Topbar itself must
- * never derive that state — lib/workloadLifecycle.ts is the single
+ * 4 WP-2/WP-3). Topbar renders a second header row beneath the h-14
+ * breadcrumb row on workload-detail routes, and only there; WorkloadDetail
+ * and Operate register into it — the route components that already own
+ * steps, selection, locked reasons, and job-in-flight state. Topbar itself
+ * must never derive that state — lib/workloadLifecycle.ts is the single
  * derivation of "where is this workload", and a second one living in
  * Topbar (or smuggled in through this slot) would defeat that.
  *
- * WHAT IS ACTUALLY ENFORCED, not just claimed (fix round 4 — round 3's
- * brand made hand-BUILDING a rail model impossible, but not hand-building
- * the FlowState fed into the factory that minted it: FlowState was, and
- * still is, a plain structural type, so a caller could fabricate one and
- * pass it through unchanged. That is the same defect one level deeper —
- * the earlier fix pinned the CEREMONY of going through a factory, not the
- * PROVENANCE of the data the factory used):
+ * WHAT IS ACTUALLY ENFORCED, not just claimed:
  *
- * 1. `rail` is UNFORGEABLE, and now for the property that actually matters:
- *    classifyWorkloadForHeaderSlot is the only function that can produce a
- *    HeaderSlotRailModel, AND it is the only place classifyWorkloadFlow is
- *    called for this purpose — it takes the workload's raw
- *    WorkloadLifecycleInput, not a FlowState, so no FlowState (real or
- *    fabricated) ever crosses the boundary from outside. Classification
- *    happens exactly once; the function returns both the FlowState the
- *    page needs for its own rendering and the branded rail model for the
- *    slot, so nothing calls classifyWorkloadFlow a second time. Pinned by
- *    a `@ts-expect-error` case in topbarBrand.test.tsx asserting that a
- *    hand-built model fails to typecheck — mutation-verified: removing
- *    the brand, or reopening a FlowState-shaped parameter, makes that
- *    directive go unused and `npm run build`'s tsc pass fails.
+ * 1. `rail` is UNFORGEABLE, and only classifyWorkloadFlow's real output can
+ *    produce one. Classification is a TWO-PHASE, still-single-call-per-page
+ *    process, split for a real reason (WP-3): a caller needs the
+ *    classifier's own steps/current/offFlow to compute its selection
+ *    (activeChip) BEFORE it can build the extras a rail needs — so one
+ *    function can't take raw input and the caller's selection in a single
+ *    call, and returning a plain FlowState between the phases would reopen
+ *    exactly the gap round 4 closed (a hand-built FlowState reaching the
+ *    rail without ever calling the classifier).
+ *      - classifyWorkloadForHeaderSlot(input) calls classifyWorkloadFlow
+ *        once and returns a ClassifiedFlow — structurally a FlowState (the
+ *        caller reads .steps/.current/.offFlow/.undetermined exactly as
+ *        before) plus a module-private brand.
+ *      - buildHeaderSlotRail(flow, extras) accepts ONLY a ClassifiedFlow —
+ *        a plain FlowState-shaped object literal does not typecheck here
+ *        either, so the two-phase split does not reopen the single-call
+ *        version's guarantee. Pinned by @ts-expect-error cases in
+ *        topbarBrand.test.tsx, mutation-verified the same way round 4's
+ *        pin was.
+ *    Honest limit, unchanged from round 4: WorkloadLifecycleInput itself is
+ *    a plain structural type, so a caller can still choose what to feed
+ *    classifyWorkloadFlow. The brand makes calling the classifier
+ *    mandatory; it does not make its input tamper-proof.
  * 2. `primaryAction` is a discriminated union: `disabledReason` is
  *    REQUIRED whenever `disabled` is `true` (fails to typecheck
  *    otherwise). Topbar renders the reason as visible text beside the
@@ -49,23 +53,37 @@ import type { WorkloadLifecycleInput } from '../lib/workloadLifecycle'
  * parsed from the current URL, so even a caller that forgets to clear on
  * unmount cannot leak its rail onto a different route.
  *
- * WP-2 registers nothing into this slot — it wires the container only.
- * Reshaping LifecycleStrip's own layout to fit a single non-wrapping row
- * (it currently carries mt-6, wraps, and stacks captions beneath each
- * chip) is WP-3's job, not this module's.
+ * `activeChip` names which chip (one of the five orchestration stages, or
+ * `'operate'`, or none) reads as selected — WorkloadDetail passes its own
+ * wizard selection; Operate always passes `'operate'`, since on that route
+ * Operate is what the operator is looking at regardless of the workload's
+ * backend position (that fact is `offFlow`, a separate axis — see
+ * lib/workloadFlow.ts's FlowState docstring). The two must not be
+ * conflated: a workload can sit at Operate (offFlow) while the operator
+ * has a flow step selected on the detail page, and vice versa is not
+ * reachable but the type does not assume it never will be.
  */
 
-// Module-private brand — deliberately not exported. TypeScript is
-// structurally typed, so without a brand that no other module can name, a
-// hand-built object matching HeaderSlotRailModel's public fields would
-// satisfy the type. Only code in this file can reference RAIL_BRAND, so
-// only classifyWorkloadForHeaderSlot (below) can produce a value
-// assignable to it.
+// Module-private brands — deliberately not exported. TypeScript is
+// structurally typed, so without a brand no other module can name, a
+// hand-built object matching either type's public fields would satisfy it.
+const FLOW_BRAND: unique symbol = Symbol('ClassifiedFlow')
 const RAIL_BRAND: unique symbol = Symbol('HeaderSlotRailModel')
+
+export type ClassifiedFlow = FlowState & { readonly [FLOW_BRAND]: true }
+
+/**
+ * Phase 1: the only function that can produce a ClassifiedFlow. Calls
+ * classifyWorkloadFlow exactly once.
+ */
+export function classifyWorkloadForHeaderSlot(input: WorkloadLifecycleInput): ClassifiedFlow {
+  const flow = classifyWorkloadFlow(input)
+  return { ...flow, [FLOW_BRAND]: true }
+}
 
 export interface HeaderSlotRailModel {
   steps: Record<FlowStepId, FlowStepState>
-  activeStep: FlowStepId
+  activeChip: FlowStepId | 'operate' | null
   current: FlowStepId | null
   offFlow: boolean
   lockedReasons: Record<FlowStepId, string>
@@ -76,11 +94,12 @@ export interface HeaderSlotRailModel {
 }
 
 /** Everything a rail model needs beyond classification itself —
- *  presentation/interaction facts WorkloadDetail already owns directly
- *  (wizard selection, locked-reason copy, job tracking, the click handler),
- *  none of which is a lifecycle-derivation fact. */
+ *  presentation/interaction facts the caller already owns directly
+ *  (wizard selection or route identity, locked-reason copy, job tracking,
+ *  the click/navigate handler), none of which is a lifecycle-derivation
+ *  fact. */
 export interface RailModelExtras {
-  activeStep: FlowStepId
+  activeChip: FlowStepId | 'operate' | null
   lockedReasons: Record<FlowStepId, string>
   jobOwnerLabel: string | null
   jobInFlight: boolean
@@ -88,28 +107,19 @@ export interface RailModelExtras {
 }
 
 /**
- * The single entry point from a workload's raw lifecycle input to both the
- * FlowState the page needs for its own rendering (which step is openable,
- * what the position is, ...) and the branded rail model the header slot
- * accepts. Takes `WorkloadLifecycleInput`, NOT `FlowState` — classification
- * happens exactly once, inside this function, so no FlowState, real or
- * fabricated, ever crosses the module boundary from outside. That is what
- * makes calling classifyWorkloadFlow itself mandatory, not merely calling
- * this function with data shaped like its output.
+ * Phase 2: the only function that can produce a HeaderSlotRailModel. Takes
+ * ONLY a ClassifiedFlow (phase 1's output) — a plain FlowState-shaped
+ * object literal does not typecheck as the first argument, so splitting
+ * classification into two calls does not reopen the gap round 4 closed.
  */
-export function classifyWorkloadForHeaderSlot(
-  input: WorkloadLifecycleInput,
-  extras: RailModelExtras,
-): { flow: FlowState; rail: HeaderSlotRailModel } {
-  const flow = classifyWorkloadFlow(input)
-  const rail: HeaderSlotRailModel = {
+export function buildHeaderSlotRail(flow: ClassifiedFlow, extras: RailModelExtras): HeaderSlotRailModel {
+  return {
     steps: flow.steps,
     current: flow.current,
     offFlow: flow.offFlow,
     ...extras,
     [RAIL_BRAND]: true,
   }
-  return { flow, rail }
 }
 
 export type HeaderSlotPrimaryAction =
@@ -146,15 +156,26 @@ const useHeaderSlotStore = create<HeaderSlotState>((set) => ({
 
 /**
  * Convenience hook for the route component that owns the slot's state
- * (WP-3: WorkloadDetail). Registers on mount/update, clears on unmount —
+ * (WorkloadDetail, Operate). Registers on mount/update, clears on unmount —
  * so navigating away always clears the row even if the caller forgets to,
  * rather than leaving a stale rail for the slug guard above to catch.
+ *
+ * useLayoutEffect, not useEffect: the registering page and the slot's
+ * consumer (Topbar) are separate subtrees now — the rail no longer
+ * commits in the SAME render pass as the rest of the page the way it did
+ * when LifecycleStrip rendered inline. A layout effect's setState cascades
+ * synchronously, before the browser (or, in tests, a MutationObserver-based
+ * wait) gets a chance to observe an in-between commit that has the page's
+ * other content but not yet the rail — a passive effect's cascade is not
+ * guaranteed to land in that same synchronous window. This is a purely
+ * client-side SPA (no SSR), so useLayoutEffect's client-only nature costs
+ * nothing here.
  */
 export function useRegisterHeaderSlot(content: HeaderSlotContent | null) {
   const setHeaderSlot = useHeaderSlotStore((s) => s.setHeaderSlot)
   const clearHeaderSlot = useHeaderSlotStore((s) => s.clearHeaderSlot)
 
-  useEffect(() => {
+  useLayoutEffect(() => {
     if (content) {
       setHeaderSlot(content)
     }
