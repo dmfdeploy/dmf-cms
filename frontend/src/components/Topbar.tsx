@@ -287,15 +287,24 @@ export default function Topbar() {
         >
           <LifecycleStrip {...slotContent.rail} slug={slotContent.slug} />
           {slotContent.primaryAction && (
-            <button
-              type="button"
-              className="btn btn-primary text-xs whitespace-nowrap shrink-0 disabled:opacity-50 disabled:cursor-not-allowed"
-              onClick={slotContent.primaryAction.onClick}
-              disabled={slotContent.primaryAction.disabled}
-              title={slotContent.primaryAction.disabledReason}
-            >
-              {slotContent.primaryAction.label}
-            </button>
+            <span className="flex items-center gap-2 shrink-0">
+              <button
+                type="button"
+                className="btn btn-primary text-xs whitespace-nowrap shrink-0 disabled:opacity-50 disabled:cursor-not-allowed"
+                onClick={slotContent.primaryAction.onClick}
+                disabled={slotContent.primaryAction.disabled}
+              >
+                {slotContent.primaryAction.label}
+              </button>
+              {/* Visible text, not a hover-only title (Art. 11) — a
+                  disabled action states why reachably by keyboard, touch
+                  and screen readers, not just to a mouse hovering it. */}
+              {slotContent.primaryAction.disabled && (
+                <span className="max-w-[12rem] text-2xs text-muted">
+                  {slotContent.primaryAction.disabledReason}
+                </span>
+              )}
+            </span>
           )}
         </div>
       )}

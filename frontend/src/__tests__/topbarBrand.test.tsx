@@ -1,5 +1,5 @@
 /**
- * Three Arc 4 WP-2 contracts (umbrella dmfdeploy/dmfdeploy#347) that live in
+ * Four Arc 4 WP-2 contracts (umbrella dmfdeploy/dmfdeploy#347) that live in
  * Topbar.tsx/store/headerSlot.ts but aren't covered by nav.test.tsx or
  * topbarMessage.test.tsx:
  *
@@ -9,10 +9,14 @@
  *    content-presence-gated: registering content while on a non-workload
  *    route (or under a mismatched slug) must never render row 2.
  * 3. The module surface enforces "data in, Topbar renders" rather than
- *    merely claiming it (fix round 2, umbrella #347): no raw store setter
- *    is reachable from outside store/headerSlot.ts, and the only way to
- *    register content is useRegisterHeaderSlot with the typed rail MODEL —
- *    there is no way to hand Topbar a pre-rendered node instead.
+ *    merely claiming it (fix round 2): no raw store setter is reachable
+ *    from outside store/headerSlot.ts, and the only way to register
+ *    content is useRegisterHeaderSlot with the typed rail MODEL — there
+ *    is no way to hand Topbar a pre-rendered node instead.
+ * 4. The rail model is UNFORGEABLE, not merely typed, and a disabled
+ *    primary action cannot omit its reason (fix round 3): both are
+ *    @ts-expect-error-pinned, and the reason renders as visible text, not
+ *    a hover-only title.
  */
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import { cleanup, render, screen, within } from '@testing-library/react'
@@ -21,8 +25,14 @@ import { MemoryRouter } from 'react-router-dom'
 import Topbar from '../components/Topbar'
 import { useAuthStore } from '../store/auth'
 import * as headerSlotModule from '../store/headerSlot'
-import { useRegisterHeaderSlot, type HeaderSlotContent, type HeaderSlotRailModel } from '../store/headerSlot'
-import type { FlowStepId, FlowStepState } from '../lib/workloadFlow'
+import {
+  useRegisterHeaderSlot,
+  railModelFromFlow,
+  type HeaderSlotContent,
+  type HeaderSlotRailModel,
+  type HeaderSlotPrimaryAction,
+} from '../store/headerSlot'
+import type { FlowState, FlowStepId, FlowStepState } from '../lib/workloadFlow'
 import type { UserIdentity } from '../api/types'
 
 function identity(overrides: Partial<UserIdentity> = {}): UserIdentity {
@@ -60,18 +70,23 @@ const NO_LOCKED_REASONS: Record<FlowStepId, string> = {
   finalise: '',
 }
 
-function railModel(overrides: Partial<HeaderSlotRailModel> = {}): HeaderSlotRailModel {
-  return {
+/** Builds a rail model the only sanctioned way — through railModelFromFlow,
+ *  never as a hand-built object literal (see the unforgeability describe
+ *  block below for what happens when a test tries that anyway). */
+function railModel(overrides: { activeStep?: FlowStepId; current?: FlowStepId | null; offFlow?: boolean } = {}): HeaderSlotRailModel {
+  const flow: FlowState = {
+    current: overrides.current ?? null,
+    offFlow: overrides.offFlow ?? false,
+    undetermined: false,
     steps: OPEN_STEPS,
-    activeStep: 'design',
-    current: null,
-    offFlow: false,
+  }
+  return railModelFromFlow(flow, {
+    activeStep: overrides.activeStep ?? 'design',
     lockedReasons: NO_LOCKED_REASONS,
     jobOwnerLabel: null,
     jobInFlight: false,
     onSelect: () => {},
-    ...overrides,
-  }
+  })
 }
 
 /** The only sanctioned way to register slot content — mirrors how a real
@@ -127,12 +142,58 @@ describe('exactly one accessible brand name at a time', () => {
 describe('the header slot module surface enforces its guarantees, not just claims them', () => {
   it('does not export a raw store setter or the store hook itself', () => {
     // A caller with only these exports cannot register a rail computed any
-    // way other than through useRegisterHeaderSlot's typed HeaderSlotContent
-    // — there is no setHeaderSlot / useHeaderSlotStore to reach around it.
+    // way other than through railModelFromFlow + useRegisterHeaderSlot —
+    // there is no setHeaderSlot / useHeaderSlotStore to reach around it.
     expect('useHeaderSlotStore' in headerSlotModule).toBe(false)
     expect('setHeaderSlot' in headerSlotModule).toBe(false)
     const exported = Object.keys(headerSlotModule).sort()
-    expect(exported).toEqual(['useHeaderSlotContent', 'useRegisterHeaderSlot'])
+    expect(exported).toEqual(['railModelFromFlow', 'useHeaderSlotContent', 'useRegisterHeaderSlot'])
+  })
+})
+
+describe('the rail model is unforgeable — only railModelFromFlow can produce one', () => {
+  it('a hand-built object matching every PUBLIC field does not typecheck as HeaderSlotRailModel', () => {
+    // @ts-expect-error — HeaderSlotRailModel carries a module-private brand
+    // that only railModelFromFlow can attach. This object is structurally
+    // complete for every public field, yet must still fail to typecheck;
+    // if this stops erroring, the brand has regressed to a plain
+    // structural interface. Enforced by `npm run build`'s tsc pass — this
+    // include=["src"] project type-checks __tests__ too — not by vitest,
+    // which strips types without checking them.
+    const forged: HeaderSlotRailModel = {
+      steps: OPEN_STEPS,
+      activeStep: 'design',
+      current: null,
+      offFlow: false,
+      lockedReasons: NO_LOCKED_REASONS,
+      jobOwnerLabel: null,
+      jobInFlight: false,
+      onSelect: () => {},
+    }
+    expect(forged.activeStep).toBe('design')
+  })
+
+  it('copies steps/current/offFlow straight from the classifier-shaped FlowState it is given', () => {
+    const flow: FlowState = { current: 'configure', offFlow: false, undetermined: false, steps: OPEN_STEPS }
+    const model = railModelFromFlow(flow, {
+      activeStep: 'configure',
+      lockedReasons: NO_LOCKED_REASONS,
+      jobOwnerLabel: null,
+      jobInFlight: false,
+      onSelect: () => {},
+    })
+    expect(model.steps).toBe(flow.steps)
+    expect(model.current).toBe('configure')
+    expect(model.offFlow).toBe(false)
+  })
+})
+
+describe('the primary-action descriptor requires a reason whenever disabled is true', () => {
+  it('{ disabled: true } with no disabledReason does not typecheck', () => {
+    // @ts-expect-error — disabledReason is required when disabled is true
+    // (discriminated union, not two independently-optional fields).
+    const forged: HeaderSlotPrimaryAction = { label: 'Deploy', onClick: () => {}, disabled: true }
+    expect(forged.label).toBe('Deploy')
   })
 })
 
@@ -181,7 +242,7 @@ describe('the rail is rendered from the registered MODEL, not an injected node',
     expect(within(row).getByRole('button', { name: 'Deploy' })).toBeTruthy()
   })
 
-  it('the primary-action button is disabled with a stated reason when the descriptor says so', () => {
+  it('a disabled primary action states why as visible text, not a hover-only title', () => {
     renderTopbarAt('/media-workloads/studio-a', {
       slug: 'studio-a',
       rail: railModel(),
@@ -189,6 +250,10 @@ describe('the rail is rendered from the registered MODEL, not an injected node',
     })
     const button = screen.getByRole('button', { name: 'Deploy' })
     expect(button.hasAttribute('disabled')).toBe(true)
-    expect(button.getAttribute('title')).toBe('A job is already running.')
+    // Reachable without hovering: a normal text query finds it...
+    expect(screen.getByText('A job is already running.')).toBeTruthy()
+    // ...and it is not stashed in a title attribute (hover-only, fails
+    // keyboard/touch/screen-reader users — Art. 11).
+    expect(button.hasAttribute('title')).toBe(false)
   })
 })
