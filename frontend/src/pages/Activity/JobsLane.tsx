@@ -19,7 +19,7 @@ interface PendingOperation {
 // C). Launch outcomes stay anchored on the card (hard gate 2).
 export default function JobsLane() {
   const { data: user } = useCurrentUser()
-  const { data: workflowsData, isLoading } = useWorkflows()
+  const { data: workflowsData, isLoading, isError } = useWorkflows()
   const launchMutation = useLaunchWorkflow()
   const recordAwxWrite = useActivityStore((s) => s.recordAwxWrite)
   const [activeJobs, setActiveJobs] = useState<ActiveJob[]>([])
@@ -58,6 +58,14 @@ export default function JobsLane() {
       ) : isLoading ? (
         <div className="panel text-center py-12">
           <p className="text-muted">Loading workflows...</p>
+        </div>
+      ) : isError ? (
+        // Hard gate 1: AWX is configured (the branch above already ruled out
+        // "not configured"), so a failed read here is a transient read
+        // failure, not evidence the template list is empty — must not read
+        // the same as "No workflows available".
+        <div className="panel text-center py-12">
+          <p className="text-muted">Workflows could not be loaded right now. Retrying automatically.</p>
         </div>
       ) : !workflowsData?.templates || workflowsData.templates.length === 0 ? (
         <div className="panel text-center py-12">

@@ -409,6 +409,13 @@ function WorkloadCountPanel() {
               ? facilityReasonCopy(data.reason) || 'Media workloads are not configured for this environment.'
               : 'Media workloads are not configured for this environment.'}
           </p>
+        ) : data.degraded && data.reason ? (
+          // Same shape as Media Workloads' own degraded banner (hard gate 1):
+          // a `reason` token here means the read failed outright, so
+          // `workloads` is empty by construction — an empty array is not
+          // evidence there are zero workloads, and this count must not claim
+          // otherwise.
+          <p className="text-sm text-muted">{facilityReasonCopy(data.reason)}</p>
         ) : (
           <p className="text-sm text-text">
             <span className="font-mono">{data.workloads.length}</span> media workload
