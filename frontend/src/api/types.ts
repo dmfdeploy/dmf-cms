@@ -368,11 +368,16 @@ export interface RepoCommits {
 
 export interface ChangesCommitsResponse {
   repos: RepoCommits[]
-  // Fail-soft reason token, same contract as AdminJobsResponse.reason:
-  // "" means Forgejo answered and `repos` is authoritative; a non-empty
-  // token names why it could not (see lib/changesState.ts's classifier).
-  // Optional so older payloads (and fixtures) classify as ok.
-  reason?: '' | 'forgejo-unconfigured' | 'forgejo-unreachable' | 'forgejo-partial'
+  // Fail-soft reason token: "" means Forgejo answered and `repos` is
+  // authoritative; a non-empty token names why it could not or could only
+  // partially (see lib/changesState.ts's classifier). REQUIRED, not
+  // optional — every backend path (api_changes_commits) always sets it.
+  // classifyForgejo fails CLOSED (non-authoritative) on anything other than
+  // an exact `""`, including this field being absent at runtime despite the
+  // type saying otherwise (apiCall's generic return type is a compile-time
+  // cast, not runtime validation) — so an omitted `reason` is a bug to fix
+  // at the source, never a case to design comfortably around here.
+  reason: '' | 'forgejo-unconfigured' | 'forgejo-unreachable' | 'forgejo-partial'
 }
 
 export interface PullEntry {
@@ -387,8 +392,9 @@ export interface PullEntry {
 
 export interface ChangesPullsResponse {
   pulls: PullEntry[]
-  // Same fail-soft contract as ChangesCommitsResponse.reason.
-  reason?: '' | 'forgejo-unconfigured' | 'forgejo-unreachable' | 'forgejo-partial'
+  // Same fail-soft contract as ChangesCommitsResponse.reason — REQUIRED,
+  // see that field's comment for why.
+  reason: '' | 'forgejo-unconfigured' | 'forgejo-unreachable' | 'forgejo-partial'
 }
 
 // ------------------------------------------------------------------

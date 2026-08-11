@@ -393,18 +393,23 @@ function WorkloadCountPanel() {
   // never re-derives that count (a second, divergent count would be a
   // trust hazard, not a convenience).
   const { data, isLoading, isError } = useMediaWorkloadsGrouped()
-  // fix-round P1-1 (umbrella #385 PR #81): `degraded` is the completeness
-  // gate on its own, `reason` only selects which explanation — see
-  // MediaWorkloads/index.tsx's `degradedReasonCopy` docstring for the full
-  // reasoning. This panel only withholds the NUMBER when workloads is empty
-  // by construction (a non-zero grouped-workload count stays honest even
-  // when other, unrelated instances were excluded for conflicting tags —
-  // each surviving workload's own `instances` already excludes them).
+  // fix-round P1-1, SECOND PASS (umbrella #385 PR #81): the first pass only
+  // withheld the number when `workloads` was EMPTY, reasoning that a
+  // non-zero count stayed honest because "each surviving workload's own
+  // instances already excludes" any invalid-tagged member. That reasoning
+  // was wrong: an invalid instance can carry workload:beta AND
+  // workload:gamma tags naming groups that have NO other instance at all —
+  // those groups are then entirely unrepresented in `workloads`, not just
+  // short one member. So `degraded` (with no `reason` — NetBox answered,
+  // some instances just couldn't be grouped) means the exact COUNT of
+  // groups is unknown, non-zero or not: "1 media workload provisioned" is
+  // exactly as false as "0" when a beta/gamma group might also exist. The
+  // gate is now `!degraded`, full stop — array length never re-admits it.
   //
-  // fix-round P2-3: `isError` wins regardless of retained data, same as
-  // MediaWorkloads/index.tsx — a settled failed refetch must not let a
-  // stale, previously-honest `degraded: false` re-license this count.
-  const countUnreliable = Boolean(isError || (data?.degraded && data?.workloads.length === 0))
+  // `isError` wins regardless of retained data, same as MediaWorkloads/
+  // index.tsx — a settled failed refetch must not let a stale, previously-
+  // honest `degraded: false` re-license this count.
+  const countUnreliable = Boolean(isError || data?.degraded)
   return (
     <div className="panel mb-6">
       <div className="px-6 py-4 border-b border-panel flex items-center justify-between">
@@ -431,13 +436,28 @@ function WorkloadCountPanel() {
               ? facilityReasonCopy(data.reason) || 'Media workloads are not configured for this environment.'
               : 'Media workloads are not configured for this environment.'}
           </p>
-        ) : countUnreliable ? (
+        ) : isError ? (
           <p className="text-sm text-muted">
-            {isError
-              ? 'Cannot confirm the media workload count — the last read attempt failed. Retrying automatically.'
-              : data.reason
-                ? degradedReasonCopy(data.reason)
-                : 'This count is incomplete — every recorded instance has a conflicting workload assignment and none could be grouped (see Media Workloads for details).'}
+            Cannot confirm the media workload count — the last read attempt failed. Retrying automatically.
+          </p>
+        ) : countUnreliable && data.reason ? (
+          // Fail-hard path: `workloads` is empty by construction here (see
+          // media_workloads.py), so there is no partial count to salvage.
+          <p className="text-sm text-muted">{degradedReasonCopy(data.reason)}</p>
+        ) : countUnreliable && data.workloads.length === 0 ? (
+          <p className="text-sm text-muted">
+            This count is incomplete — every recorded instance has a conflicting workload assignment and none
+            could be grouped (see Media Workloads for details).
+          </p>
+        ) : countUnreliable ? (
+          // Reachable, some groups resolved, but at least one instance
+          // could not be — the resolved groups are real, the TOTAL is not
+          // known. A lower bound, stated as one, never as the exact count.
+          <p className="text-sm text-muted">
+            At least <span className="font-mono">{data.workloads.length}</span> media workload
+            {data.workloads.length === 1 ? '' : 's'} provisioned on this facility — this count may be incomplete:
+            one or more instances have a conflicting workload assignment and could not be grouped (see Media
+            Workloads for details).
           </p>
         ) : (
           <p className="text-sm text-text">

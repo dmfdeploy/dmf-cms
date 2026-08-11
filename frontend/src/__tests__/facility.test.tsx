@@ -446,6 +446,49 @@ describe('Facility Detail — media workloads count panel honesty (umbrella #385
     expect(screen.queryByText(/isn.t responding right now/)).toBeNull()
   })
 
+  // fix-round P1-1, SECOND PASS (PR #81): the first pass only withheld the
+  // number when `workloads` was empty — this is the missing counter-example
+  // the reviewer named. One VALID group ("alpha") plus an invalid instance
+  // that names workload:beta AND workload:gamma: those two tags could each
+  // name an entire group with NO other member at all, so the true total is
+  // unknown — it could be 1, 2, or 3. The endpoint cannot tell, so this
+  // panel must not print "1 media workload provisioned" as if it could.
+  it('a degraded read with SOME valid groups still refuses an exact count — states a lower bound instead', async () => {
+    renderDetail('dmf-lab', {
+      '/api/facility/dmf-lab/detail': detailPayload(),
+      '/api/media-workloads/grouped': {
+        configured: true,
+        degraded: true,
+        scope: [],
+        workloads: [
+          { slug: 'alpha', name: 'alpha', lifecycle: 'operate', health: 'ok', instances: [], functions: [] },
+        ],
+        invalid_instances: [
+          {
+            instance: 'bad-svc',
+            function_key: 'mxl-videotestsrc',
+            workload_assignment: 'invalid-multiple',
+            conflicting_workloads: ['beta', 'gamma'],
+          },
+        ],
+      },
+    })
+    expect(await screen.findByText('Media workloads')).toBeTruthy()
+    // The exact-count sentence must never appear here.
+    expect(
+      screen.queryByText(
+        (_, el) => el?.tagName === 'P' && /^1 media workload provisioned on this facility\.$/.test((el.textContent ?? '').trim()),
+      ),
+    ).toBeNull()
+    // A stated lower bound instead — real, but explicitly not the total.
+    expect(
+      await screen.findByText(
+        (_, el) => el?.tagName === 'P' && /At least 1 media workload/.test(el.textContent ?? ''),
+      ),
+    ).toBeTruthy()
+    expect(screen.getByText(/this count may be incomplete/)).toBeTruthy()
+  })
+
   // fix-round P2-3 (PR #81): a settled failed refetch must win over stale
   // retained data — hold-then-reject, not first-load (see the matching pin
   // in mediaWorkloadsGrid.test.tsx for the full reasoning). Fake timers so

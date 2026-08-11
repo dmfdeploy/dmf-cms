@@ -64,7 +64,12 @@ describe('classifyForgejo', () => {
   // used to return 'ok', which turns a malformed payload plus an empty
   // array into a claimed genuine empty.
   it('an absent reason token fails closed, not open', () => {
-    const q: ForgejoQueryLike = { isLoading: false, isError: false, data: {} }
+    // `reason` is REQUIRED on the response types (fix-round P3), but
+    // apiCall's generic return is a compile-time cast, not runtime
+    // validation — a malformed real payload can still omit it. Bypassing
+    // the type here is the point of the test: prove the classifier defends
+    // itself even when the type-level contract is violated at runtime.
+    const q = { isLoading: false, isError: false, data: {} } as unknown as ForgejoQueryLike
     expect(classifyForgejo(q)).not.toBe('ok')
     expect(classifyForgejo(q)).toBe('error')
   })

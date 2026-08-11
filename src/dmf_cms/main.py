@@ -4052,6 +4052,18 @@ def create_app(settings: Settings | None = None, contract: AppContract | None = 
 
             all_pulls = []
             failed_repos = 0
+            # fix-round P2 (PR #81, second pass): the ladder below keys off
+            # THIS count, not `all_pulls` truthiness — a repo can be
+            # successfully read and legitimately have zero open+closed PRs,
+            # contributing no items at all (unlike commits, where a
+            # successful repo always appends its own entry, even with an
+            # empty `commits` list — see api_changes_commits). Keying off
+            # `all_pulls` conflated "nothing succeeded" with "something
+            # succeeded and found nothing": one empty-but-successful repo
+            # plus one failed repo classified as `forgejo-unreachable`, not
+            # `forgejo-partial` — the wrong claim, since Forgejo WAS
+            # reachable for at least one of the two.
+            successful_repos = 0
             for repo in repos[:5]:
                 full_name = repo.get("full_name", "")
                 parts = full_name.split("/")
@@ -4066,6 +4078,7 @@ def create_app(settings: Settings | None = None, contract: AppContract | None = 
                         repo=repo_name,
                         state="all",
                     )
+                    successful_repos += 1
 
                     for pr in pulls:
                         all_pulls.append({
@@ -4085,7 +4098,7 @@ def create_app(settings: Settings | None = None, contract: AppContract | None = 
 
             if failed_repos == 0:
                 reason = ""
-            elif all_pulls:
+            elif successful_repos > 0:
                 reason = "forgejo-partial"
             else:
                 reason = "forgejo-unreachable"
