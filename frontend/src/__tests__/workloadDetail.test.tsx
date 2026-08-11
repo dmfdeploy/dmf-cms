@@ -444,6 +444,69 @@ describe('the flow is five steps under a six-stage vocabulary', () => {
     expect(controlGroup.contains(operateLink), 'Operate must sit inside the Control group').toBe(true)
   })
 
+  it('keeps EBU/layer/vertical taxonomy out of the default-level accessibility tree, reachable only behind System details', async () => {
+    // Arc 4 WP-3 (umbrella #347): stage NAMES stay visible; the EBU
+    // layer/vertical/function-type/lifecycle-owner ontology is expert-tier
+    // vocabulary that must not reach the operator by default (Constitution
+    // Art. 3). DesignStage.tsx already gates it behind a native <details>
+    // disclosure — this pins that the disclosure is genuinely CLOSED by
+    // default (not just present-but-styled-away), which is the actual
+    // mechanism a real browser uses to withhold collapsed <details> content
+    // from assistive technology.
+    //
+    // WHAT THIS CAN AND CANNOT PROVE (same limit as nav.test.tsx's tooltip
+    // SMELL-PIN): jsdom has no rendering engine and does not implement a
+    // real browser's own "collapsed <details> content is inaccessible"
+    // behaviour — screen.getByRole/getByText here would find the taxonomy
+    // text regardless of the <details>'s open state, because jsdom does not
+    // hide it the way a real browser does. So this test does not assert
+    // "getByText finds nothing" — a whole-DOM query would pass whether the
+    // disclosure is closed OR ripped out entirely, and would silently stop
+    // proving anything the moment it is (exactly the "a whole-DOM grep
+    // cannot express this" trap the work order names). It asserts the
+    // actual DOM property a real browser's accessibility computation keys
+    // off: the <details> element is present, contains the taxonomy text,
+    // and its own `.open` is false by default — and that it is reachable
+    // by the same keyboard/tap-operable <summary> every other disclosure
+    // in this console uses, not some other path.
+    mkFetch({
+      workload: workload({ lifecycle: 'provision' }),
+      catalog: [
+        catalogEntry({
+          ebu_layer: 5,
+          ebu_vertical: 'orchestration',
+          ebu_media_function_type: 'crosspoint',
+          ebu_lifecycle_owner: 'platform',
+        }),
+      ],
+    })
+    renderDetail()
+    await findRail()
+    const designSection = await selectStep('Design')
+
+    // The stage NAME itself is default-level vocabulary and stays visible
+    // unconditionally.
+    expect(within(designSection).getByRole('heading', { name: 'Design', level: 2 })).toBeTruthy()
+
+    const disclosure = within(designSection).getByText('System details').closest('details') as HTMLDetailsElement
+    expect(disclosure, 'System details must be a native <details> disclosure').toBeTruthy()
+    expect(
+      disclosure.open,
+      'closed by default — a real browser withholds this from the accessibility tree until opened',
+    ).toBe(false)
+    expect(
+      within(disclosure).getByText(/EBU layer 5/),
+      'the taxonomy text lives inside the disclosure, not deleted',
+    ).toBeTruthy()
+
+    // Reachable by the same tappable/keyboard-operable affordance every
+    // other disclosure in this console uses — a real <summary>, not a
+    // title= tooltip or a hover-only reveal.
+    const summary = within(designSection).getByText('System details')
+    expect(summary.tagName).toBe('SUMMARY')
+    expect(summary.closest('details')).toBe(disclosure)
+  })
+
   it('marks the workload as operating and points at monitoring rather than losing it', async () => {
     // `current` is null at Operate exactly as it is on an undetermined
     // position, so the page must distinguish the two. This is the
