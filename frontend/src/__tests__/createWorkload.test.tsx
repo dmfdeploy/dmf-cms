@@ -260,22 +260,55 @@ describe('the draft gate', () => {
     )
   })
 
-  it('opens Provision once Plan resolves the single facility', async () => {
-    mkFetch()
-    renderCreate()
-    await screen.findByRole('heading', { name: 'Design' })
+  // WP-3 spec D: the placement CONFIRMATION gate. Resolving the single
+  // facility is necessary but no longer sufficient — Provision opens only
+  // once the operator has explicitly acknowledged it.
+  describe('Provision opens only once the resolved facility is confirmed', () => {
+    it('stays locked once the facility resolves, before the operator confirms it', async () => {
+      mkFetch()
+      renderCreate()
+      await screen.findByRole('heading', { name: 'Design' })
 
-    await chooseTemplate()
-    typeStudioName('Studio A')
+      await chooseTemplate()
+      typeStudioName('Studio A')
 
-    await waitFor(() =>
-      expect(within(stepSection('Provision')).queryByText(/This step opens once Plan is complete/)).toBeNull(),
-    )
-    expect(
-      within(stepSection('Provision')).getByRole('button', { name: '▶ Provision now' }),
-    ).toBeTruthy()
+      // The facility itself is readable — a true fact, not "select"/
+      // "assign" — but Provision has not opened on that alone.
+      await within(stepSection('Plan')).findByText(/This workload will run on/)
+      expect(
+        within(stepSection('Provision')).getByText(/This step opens once Plan is complete/),
+      ).toBeTruthy()
+    })
+
+    it('opens once the operator clicks Confirm placement', async () => {
+      mkFetch()
+      renderCreate()
+      await screen.findByRole('heading', { name: 'Design' })
+
+      await chooseTemplate()
+      typeStudioName('Studio A')
+
+      fireEvent.click(await within(stepSection('Plan')).findByRole('button', { name: 'Confirm placement' }))
+
+      await waitFor(() =>
+        expect(within(stepSection('Provision')).queryByText(/This step opens once Plan is complete/)).toBeNull(),
+      )
+      expect(
+        within(stepSection('Provision')).getByRole('button', { name: '▶ Provision now' }),
+      ).toBeTruthy()
+
+      // Plan is now `complete` — reviewable but folded by default, same as
+      // any other completed draft step. The confirmation itself reads back
+      // as settled, not as a control still waiting to be pressed again.
+      fireEvent.click(within(stepSection('Plan')).getByRole('button', { name: 'Review' }))
+      expect(within(stepSection('Plan')).getByText(/Confirmed — this workload will run on/)).toBeTruthy()
+      expect(within(stepSection('Plan')).queryByRole('button', { name: 'Confirm placement' })).toBeNull()
+    })
   })
 
+  // GATE ONLY IN THE EXACTLY-ONE-FACILITY CASE: both non-answers below are
+  // untouched by the confirmation gate — there is nothing to confirm, and
+  // no "Confirm placement" control ever appears to be skipped or missed.
   it('gives an honest non-answer instead of a picker when zero facilities are registered, and Provision stays locked', async () => {
     mkFetch({ facilitySites: [] })
     renderCreate()
@@ -285,6 +318,27 @@ describe('the draft gate', () => {
     typeStudioName('Studio A')
 
     await within(stepSection('Plan')).findByText(/can't be shown/)
+    expect(within(stepSection('Plan')).queryByRole('button', { name: 'Confirm placement' })).toBeNull()
+    expect(
+      within(stepSection('Provision')).getByText(/This step opens once Plan is complete/),
+    ).toBeTruthy()
+  })
+
+  it('gives an honest non-answer instead of a picker when more than one facility is registered, and Provision stays locked', async () => {
+    mkFetch({
+      facilitySites: [
+        { name: 'dmf-lab', slug: 'dmf-lab', device_count: 3 },
+        { name: 'dmf-lab-2', slug: 'dmf-lab-2', device_count: 1 },
+      ],
+    })
+    renderCreate()
+    await screen.findByRole('heading', { name: 'Design' })
+
+    await chooseTemplate()
+    typeStudioName('Studio A')
+
+    await within(stepSection('Plan')).findByText(/2 facilities are registered/)
+    expect(within(stepSection('Plan')).queryByRole('button', { name: 'Confirm placement' })).toBeNull()
     expect(
       within(stepSection('Provision')).getByText(/This step opens once Plan is complete/),
     ).toBeTruthy()
@@ -297,6 +351,7 @@ describe('the draft gate', () => {
 
     await chooseTemplate()
     typeStudioName('Studio A')
+    fireEvent.click(await within(stepSection('Plan')).findByRole('button', { name: 'Confirm placement' }))
     await waitFor(() =>
       expect(within(stepSection('Provision')).queryByText(/This step opens once Plan is complete/)).toBeNull(),
     )
@@ -368,6 +423,11 @@ describe('studio name → shown workload identity', () => {
 async function reachProvision() {
   await chooseTemplate()
   typeStudioName('Studio A')
+  // WP-3 spec D: the facility resolving is no longer enough on its own —
+  // Provision opens only once the operator confirms the resolved
+  // placement (see "Provision opens only once the resolved facility is
+  // confirmed" above for the gate itself, tested in isolation).
+  fireEvent.click(await within(stepSection('Plan')).findByRole('button', { name: 'Confirm placement' }))
   await waitFor(() =>
     expect(within(stepSection('Provision')).queryByText(/This step opens once Plan is complete/)).toBeNull(),
   )

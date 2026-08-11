@@ -230,8 +230,24 @@ export interface DraftProgress {
   hasName: boolean
   /** A template has been chosen from the catalog. */
   hasTemplate: boolean
-  /** A facility has been resolved for the draft. */
+  /** A facility has been resolved for the draft — exactly one site read
+   *  back from the facility summary. Zero or more than one is NOT this;
+   *  see PlanAssignment's own honest non-answer copy for both. */
   hasFacility: boolean
+  /**
+   * WP-3 spec D — the placement CONFIRMATION gate: the operator has
+   * explicitly acknowledged the resolved placement ("This workload will
+   * run on <facility>."). Only meaningful when `hasFacility` is true —
+   * there is nothing to confirm with zero or several facilities, and a
+   * confirmation the operator never actually saw would defeat the whole
+   * point of asking. This is a CONFIRMATION, not a CHOICE: there is no
+   * workload-to-facility relationship anywhere in the backend (nothing in
+   * media_workloads.py ties a workload to a site, and the launcher takes
+   * no site), so a picker here would write to nothing — the operator is
+   * acknowledging a fact the console already resolved on its own, not
+   * making a selection.
+   */
+  facilityConfirmed: boolean
 }
 
 /**
@@ -245,7 +261,9 @@ export interface DraftProgress {
  * A draft's steps are gated on the operator's own progress instead, which
  * is the only truth that exists yet:
  *   Design    — current until a template is chosen, then complete
- *   Plan      — locked until Design completes
+ *   Plan      — locked until Design completes; complete once the facility
+ *               is both resolved AND acknowledged (WP-3 spec D — resolved
+ *               alone is not enough, see DraftProgress.facilityConfirmed)
  *   Provision — locked until Plan completes; the deploy fires from here and
  *               ends the draft
  *   Configure } locked throughout: nothing runs yet, so there is genuinely
@@ -256,7 +274,12 @@ export interface DraftProgress {
  */
 export function classifyDraftFlow(draft: DraftProgress): FlowState {
   const designDone = draft.hasName && draft.hasTemplate
-  const planDone = designDone && draft.hasFacility
+  // WP-3 spec D: gated on the CONFIRMATION, not just the resolved fact —
+  // Provision does not open on data alone, only once the operator has
+  // acknowledged it. The zero/multiple-facility branches are untouched by
+  // this: hasFacility is already false there, so facilityConfirmed (which
+  // PlanAssignment never even offers a control for in that case) is moot.
+  const planDone = designDone && draft.hasFacility && draft.facilityConfirmed
 
   const steps: Record<FlowStepId, FlowStepState> = {
     design: designDone ? 'complete' : 'current',
