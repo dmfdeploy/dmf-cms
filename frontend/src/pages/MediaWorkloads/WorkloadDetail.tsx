@@ -527,8 +527,15 @@ function WorkloadWizard({
 
       {offFlow && (
         <div className="panel mt-4 border-white/10 px-4 py-3 text-sm text-muted">
-          This workload is operating. Operate sits in the Control vertical, not the
-          orchestration flow — its surface is observational, so it lives on its own page —{' '}
+          {/* WP-3 taxonomy sweep (umbrella #347): this used to name the EBU
+              "Control vertical" here — true, but expert-tier vocabulary that
+              does not belong at default level (Art. 3). The rail's own
+              "Control" group label stays (a navigation grouping, not the
+              taxonomy term), and the grouping fact this sentence needs to
+              convey — Operate isn't a step in this flow — survives without
+              naming the ontology it comes from. */}
+          This workload is operating. Operate isn&apos;t a step in this flow — its
+          surface is observational, so it lives on its own page —{' '}
           <Link
             to={`/media-workloads/${encodeURIComponent(workload.slug)}/operate`}
             className="text-accent hover:underline"
