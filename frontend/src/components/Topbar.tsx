@@ -3,6 +3,7 @@ import { Link, useLocation } from 'react-router-dom'
 import { useAuthStore } from '../store/auth'
 import { useTopbarMessageStore } from '../store/topbarMessage'
 import { useHeaderSlotContent } from '../store/headerSlot'
+import { useSetHeaderActionSlotNode } from '../store/headerActionSlot'
 import { useSetViewAs, useClearViewAs, useFacilityDetail, useMediaWorkloadsGrouped } from '../api/hooks'
 import NotificationBell from './NotificationBell'
 import LifecycleStrip from '../pages/MediaWorkloads/LifecycleStrip'
@@ -121,6 +122,7 @@ export default function Topbar() {
   const { crumbs, workloadSlug } = useBreadcrumbTrail(pathname)
   const transientMessage = useTopbarMessageStore((s) => s.message)
   const slotContent = useHeaderSlotContent()
+  const setActionSlotNode = useSetHeaderActionSlotNode()
 
   if (!user) return null
 
@@ -279,13 +281,28 @@ export default function Topbar() {
           this file is the only place that turns either into pixels, via
           the same LifecycleStrip component the page used to render inline.
           Reshaping that component's own layout to fit a single row is
-          WP-3's job, not this one's. */}
+          WP-3's job, not this one's.
+
+          WP-3 spec B: the scrolling moved from THIS row down onto the rail
+          alone (min-w-0 flex-1 overflow-x-auto on the wrapper below), and
+          the actions area is a plain shrink-0 sibling with no overflow
+          ancestor of its own. A promoted action's ReasonConfirm popover
+          (components/PromotedAction.tsx) opens absolutely-positioned below
+          its button — CSS forces overflow-y to auto wherever overflow-x is
+          auto, so if the popover's own ancestor still had overflow-x-auto
+          here, an operator scrolled to the end of a long rail would see the
+          popover's lower half silently clipped by that same scroll
+          container. A long rail scrolling internally, with the action
+          always pinned and unclipped at the row's end, is also the more
+          honest reading of "primary action" regardless. */}
       {showSlotRow && slotContent && (
         <div
           data-testid="header-slot-row"
-          className="flex flex-nowrap items-center gap-3 overflow-x-auto border-b border-border px-4 py-2"
+          className="flex flex-nowrap items-center gap-3 border-b border-border px-4 py-2"
         >
-          <LifecycleStrip {...slotContent.rail} slug={slotContent.slug} />
+          <div className="min-w-0 flex-1 overflow-x-auto">
+            <LifecycleStrip {...slotContent.rail} slug={slotContent.slug} />
+          </div>
           {slotContent.primaryAction && (
             <span className="flex items-center gap-2 shrink-0">
               <button
@@ -306,6 +323,20 @@ export default function Topbar() {
               )}
             </span>
           )}
+          {/* Promoted primary action mount point (Arc 4 WP-3 spec B): a
+              stage's own entry control (button + ReasonConfirm, with its
+              arming/pending/error state untouched) portals in here when the
+              CURRENT step has exactly one eligible primary action at
+              runtime — see store/headerActionSlot.ts and
+              components/PromotedAction.tsx. Topbar owns only the mount
+              point, never the decision of what (if anything) fills it, or
+              the eligibility count that decision is based on — that stays
+              with the stage that actually knows its own runtime action
+              model, matching the "Topbar must never derive state" rule this
+              slot's own doc comment already states for the rail. Relative
+              positioning: the popover a promoted control opens (its
+              ReasonConfirm) anchors below THIS element, not the page. */}
+          <span ref={setActionSlotNode} className="relative flex shrink-0 items-center gap-2 empty:hidden" />
         </div>
       )}
     </header>
