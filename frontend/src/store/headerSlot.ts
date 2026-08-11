@@ -1,6 +1,7 @@
 import { useEffect } from 'react'
 import { create } from 'zustand'
-import type { FlowState, FlowStepId, FlowStepState } from '../lib/workloadFlow'
+import { classifyWorkloadFlow, type FlowState, type FlowStepId, type FlowStepState } from '../lib/workloadFlow'
+import type { WorkloadLifecycleInput } from '../lib/workloadLifecycle'
 
 /**
  * The typed, route-scoped header slot (umbrella dmfdeploy/dmfdeploy#347 Arc
@@ -8,35 +9,36 @@ import type { FlowState, FlowStepId, FlowStepState } from '../lib/workloadFlow'
  * row on workload-detail routes, and only there; WP-3 registers into it
  * from WorkloadDetail — the route component that already owns steps,
  * selection, locked reasons, and job-in-flight state. Topbar itself must
- * never derive that state — lib/workloadLifecycle.ts exists precisely to
- * keep "where is this workload" a single derivation, and a second one
- * living in Topbar (or smuggled in through this slot) would defeat that.
+ * never derive that state — lib/workloadLifecycle.ts is the single
+ * derivation of "where is this workload", and a second one living in
+ * Topbar (or smuggled in through this slot) would defeat that.
  *
- * WHAT IS ACTUALLY ENFORCED, not just claimed (fix round 3 — a plain
- * structural interface and an independently-optional disabledReason both
- * promised guarantees the earlier types did not provide):
+ * WHAT IS ACTUALLY ENFORCED, not just claimed (fix round 4 — round 3's
+ * brand made hand-BUILDING a rail model impossible, but not hand-building
+ * the FlowState fed into the factory that minted it: FlowState was, and
+ * still is, a plain structural type, so a caller could fabricate one and
+ * pass it through unchanged. That is the same defect one level deeper —
+ * the earlier fix pinned the CEREMONY of going through a factory, not the
+ * PROVENANCE of the data the factory used):
  *
- * 1. `rail` is UNFORGEABLE, not merely typed. `HeaderSlotRailModel` carries
- *    a module-private brand; `railModelFromFlow(flow, extras)` below is the
- *    only function anywhere that can produce one, and `flow` is
- *    `classifyWorkloadFlow`'s/`classifyDraftFlow`'s own `FlowState` — this
- *    function copies its `steps`/`current`/`offFlow` straight through
- *    rather than accepting them from `extras`. A caller cannot hand-build a
- *    rail model (pinned by a `@ts-expect-error` case in
- *    topbarBrand.test.tsx — that assignment must fail to typecheck).
- *    Honest limit: `FlowState` itself is a plain structural type owned by
- *    lib/workloadFlow.ts, so a caller could in principle fabricate a
- *    `FlowState` and hand it to `railModelFromFlow`. The brand makes
- *    calling the classifier MANDATORY; it does not make every field of its
- *    input tamper-proof, and this module does not claim otherwise.
+ * 1. `rail` is UNFORGEABLE, and now for the property that actually matters:
+ *    classifyWorkloadForHeaderSlot is the only function that can produce a
+ *    HeaderSlotRailModel, AND it is the only place classifyWorkloadFlow is
+ *    called for this purpose — it takes the workload's raw
+ *    WorkloadLifecycleInput, not a FlowState, so no FlowState (real or
+ *    fabricated) ever crosses the boundary from outside. Classification
+ *    happens exactly once; the function returns both the FlowState the
+ *    page needs for its own rendering and the branded rail model for the
+ *    slot, so nothing calls classifyWorkloadFlow a second time. Pinned by
+ *    a `@ts-expect-error` case in topbarBrand.test.tsx asserting that a
+ *    hand-built model fails to typecheck — mutation-verified: removing
+ *    the brand, or reopening a FlowState-shaped parameter, makes that
+ *    directive go unused and `npm run build`'s tsc pass fails.
  * 2. `primaryAction` is a discriminated union: `disabledReason` is
  *    REQUIRED whenever `disabled` is `true` (fails to typecheck
- *    otherwise — the earlier two-independent-optionals shape let
- *    `{ disabled: true }` through with no reason). Topbar renders the
- *    reason as visible text beside the button, not a hover-only `title` —
- *    reachable by keyboard, touch and screen readers alike (Art. 11: a
- *    disabled control states why, and a tooltip that only fires on hover
- *    does not satisfy that for every input method).
+ *    otherwise). Topbar renders the reason as visible text beside the
+ *    button, not a hover-only `title` — reachable by keyboard, touch and
+ *    screen readers alike (Art. 11).
  * 3. The raw Zustand store is NOT exported. `useRegisterHeaderSlot` (write)
  *    and `useHeaderSlotContent` (read, Topbar-only) are the entire public
  *    surface — there is no `setHeaderSlot` reachable from outside this
@@ -57,7 +59,8 @@ import type { FlowState, FlowStepId, FlowStepState } from '../lib/workloadFlow'
 // structurally typed, so without a brand that no other module can name, a
 // hand-built object matching HeaderSlotRailModel's public fields would
 // satisfy the type. Only code in this file can reference RAIL_BRAND, so
-// only railModelFromFlow (below) can produce a value assignable to it.
+// only classifyWorkloadForHeaderSlot (below) can produce a value
+// assignable to it.
 const RAIL_BRAND: unique symbol = Symbol('HeaderSlotRailModel')
 
 export interface HeaderSlotRailModel {
@@ -72,7 +75,7 @@ export interface HeaderSlotRailModel {
   readonly [RAIL_BRAND]: true
 }
 
-/** Everything a rail model needs beyond the classifier's own FlowState —
+/** Everything a rail model needs beyond classification itself —
  *  presentation/interaction facts WorkloadDetail already owns directly
  *  (wizard selection, locked-reason copy, job tracking, the click handler),
  *  none of which is a lifecycle-derivation fact. */
@@ -85,20 +88,28 @@ export interface RailModelExtras {
 }
 
 /**
- * The only way to produce a HeaderSlotRailModel. `flow` must be
- * classifyWorkloadFlow's (or classifyDraftFlow's) own output — its
- * steps/current/offFlow are copied through unchanged, so a registered
- * rail's lifecycle facts are provably the classifier's output rather than
- * a hand-built stand-in.
+ * The single entry point from a workload's raw lifecycle input to both the
+ * FlowState the page needs for its own rendering (which step is openable,
+ * what the position is, ...) and the branded rail model the header slot
+ * accepts. Takes `WorkloadLifecycleInput`, NOT `FlowState` — classification
+ * happens exactly once, inside this function, so no FlowState, real or
+ * fabricated, ever crosses the module boundary from outside. That is what
+ * makes calling classifyWorkloadFlow itself mandatory, not merely calling
+ * this function with data shaped like its output.
  */
-export function railModelFromFlow(flow: FlowState, extras: RailModelExtras): HeaderSlotRailModel {
-  return {
+export function classifyWorkloadForHeaderSlot(
+  input: WorkloadLifecycleInput,
+  extras: RailModelExtras,
+): { flow: FlowState; rail: HeaderSlotRailModel } {
+  const flow = classifyWorkloadFlow(input)
+  const rail: HeaderSlotRailModel = {
     steps: flow.steps,
     current: flow.current,
     offFlow: flow.offFlow,
     ...extras,
     [RAIL_BRAND]: true,
   }
+  return { flow, rail }
 }
 
 export type HeaderSlotPrimaryAction =
