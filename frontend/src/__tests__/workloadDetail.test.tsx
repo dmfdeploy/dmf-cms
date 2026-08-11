@@ -1300,7 +1300,27 @@ describe('delete-permanently gate: authorization (umbrella dmfdeploy/dmfdeploy#3
   // "no duplicate subscriber" from "duplicate subscriber, not stale yet":
   // without the aging step, a postponed-not-removed bug would pass this
   // test by coincidence, right up until it demo'd badly on camera.
-  it('never issues a second /api/me read on the FIRST navigation to Finalise, even against a long-aged cache — no bounce to Provision', async () => {
+  // umbrella #378b fix round 3: round 2's version of this test aged the
+  // cache 120s and treated that as proof the duplicate subscriber was gone.
+  // It wasn't proof — it only outran a staleTime BELOW 120s. Reintroduce the
+  // duplicate subscriber together with staleTime: 300_000 and the cache is
+  // still "fresh" at 120s old: no refetch fires, calls.me stays 1, and the
+  // control renders — the rejected implementation passes both assertions
+  // that used to be here. Any finite aging duration has the same hole one
+  // staleTime value higher, so aging cannot be the proof, only a bonus
+  // behavioural check.
+  //
+  // The actual invariant is STRUCTURAL, not timing-dependent: the ['user']
+  // query has TWO observers before the operator ever navigates (measured
+  // against this exact fixture, not assumed — WorkloadWizard's own
+  // userQuery, plus ProvisionStage's own useCurrentUser(), since Provision
+  // is what's mounted initially at lifecycle=provision). Correct code drops
+  // to ONE the moment Finalise is selected (Provision unmounts and stops
+  // observing; Finalise never subscribes at all — it takes `user` as a
+  // prop). The rejected implementation stays at TWO regardless of any
+  // staleTime value, because the second subscription is a structural fact,
+  // not a timing race.
+  it('drops the [\'user\'] query from two observers to one on the FIRST navigation to Finalise — no bounce to Provision', async () => {
     const h = mkFetch({
       workload: purgeEligibleWorkload(),
       user: { role: 'operator', real_role: 'operator' },
@@ -1309,16 +1329,21 @@ describe('delete-permanently gate: authorization (umbrella dmfdeploy/dmfdeploy#3
     await findRail()
     await waitFor(() => expect(h.calls.me).toBe(1))
 
-    // Age the cached identity to 2 minutes old — well past the 30s the
-    // rejected fix used.
-    queryClient.setQueryData(['user'], (prev: unknown) => prev, { updatedAt: Date.now() - 120_000 })
+    const userQ = queryClient.getQueryCache().find({ queryKey: ['user'] })
+    // Before navigating: WorkloadWizard (mounted always) + ProvisionStage
+    // (the default-selected step at lifecycle=provision).
+    expect(userQ?.getObserversCount()).toBe(2)
 
-    // First-ever navigation to Finalise & Review. Deliberately synchronous
-    // assertions (getByRole, not findByRole/await): a bounce back to
-    // Provision happens within the SAME click's synchronous re-render (as
-    // observed reproducing the rejected fix's failure), so a findBy's own
-    // polling window would let this test pass by accident on a slow retry.
+    // First-ever navigation to Finalise & Review. Deliberately a
+    // synchronous assertion (getByRole, not findByRole/await): a bounce
+    // back to Provision happens within the SAME click's synchronous
+    // re-render (as observed reproducing the rejected fix's failure), so an
+    // awaited findBy's own polling window could let a regression pass here
+    // by accident.
     const finaliseSection = selectStep('Finalise & Review')
+    // After navigating: ProvisionStage unmounted (stopped observing),
+    // FinaliseStage never subscribes — WorkloadWizard alone.
+    expect(userQ?.getObserversCount()).toBe(1)
     expect(within(finaliseSection).getByRole('button', { name: '🗑 Delete permanently' })).toBeTruthy()
     expect(h.calls.me).toBe(1)
   })
