@@ -25,28 +25,27 @@ export default function JobsLane() {
   const [activeJobs, setActiveJobs] = useState<ActiveJob[]>([])
   const [pendingOps, setPendingOps] = useState<PendingOperation[]>([])
 
+  // umbrella #386 / WP-3 spec B2: THROWS on failure, deliberately — see
+  // ProvisionStage.tsx's handleDeploy for the full rationale. WorkflowCard
+  // had the identical onConfirm-then-close shape, found by the sweep.
   const handleLaunch = async (workflowName: string, reason: string) => {
-    try {
-      const result = await launchMutation.mutateAsync({ workflowName, reason })
-      // Console-local Activity record (plan §4a, #185 WP-E P2-3).
-      recordAwxWrite({
-        request_id: result.request_id ?? '',
-        action: 'launch',
-        target: workflowName,
-        reason,
-        actor: user?.subject ?? 'unknown',
-        role: user?.role ?? 'unknown',
-        outcome: isOperation(result) ? 'dispatched' : result.status,
-      })
-      if (isOperation(result)) {
-        // Async flow (202): track the operation
-        setPendingOps(prev => [...prev, { workflowName, operationId: result.operation_id }])
-      } else {
-        // Sync flow (200): immediate job_id
-        setActiveJobs(prev => [...prev, { workflowName, jobId: result.job_id }])
-      }
-    } catch (error) {
-      console.error('Failed to launch workflow:', error)
+    const result = await launchMutation.mutateAsync({ workflowName, reason })
+    // Console-local Activity record (plan §4a, #185 WP-E P2-3).
+    recordAwxWrite({
+      request_id: result.request_id ?? '',
+      action: 'launch',
+      target: workflowName,
+      reason,
+      actor: user?.subject ?? 'unknown',
+      role: user?.role ?? 'unknown',
+      outcome: isOperation(result) ? 'dispatched' : result.status,
+    })
+    if (isOperation(result)) {
+      // Async flow (202): track the operation
+      setPendingOps(prev => [...prev, { workflowName, operationId: result.operation_id }])
+    } else {
+      // Sync flow (200): immediate job_id
+      setActiveJobs(prev => [...prev, { workflowName, jobId: result.job_id }])
     }
   }
 
@@ -151,7 +150,7 @@ function WorkflowCard({
   onJobComplete,
 }: {
   template: any
-  onLaunch: (reason: string) => void
+  onLaunch: (reason: string) => Promise<void>
   isLaunching: boolean
   launchError: unknown
   activeJob?: { workflowName: string; jobId: number }
@@ -192,7 +191,17 @@ function WorkflowCard({
             pendingLabel="Launching…"
             pending={isLaunching}
             error={launchError}
-            onConfirm={(reason) => { onLaunch(reason); setArming(false) }}
+            onConfirm={(reason) => {
+              // umbrella #386 / WP-3 spec B2: close ONLY on success.
+              void (async () => {
+                try {
+                  await onLaunch(reason)
+                  setArming(false)
+                } catch {
+                  // Stay armed — launchError renders the failure here.
+                }
+              })()
+            }}
             onCancel={() => setArming(false)}
           />
         </div>

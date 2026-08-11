@@ -110,28 +110,32 @@ export default function ProvisionStage({
     .filter((i) => !i.reconcile_pending && i.requested_state === 'bootstrapped')
     .sort((a, b) => a.instance.localeCompare(b.instance))
 
+  // umbrella #386 / WP-3 spec B2: THROWS on failure now, deliberately — it
+  // used to swallow the rejection here (console.error and nothing else),
+  // which is what let ProvisionEntry's onConfirm close the arm panel
+  // unconditionally on every confirm, success or not. The panel contained
+  // the ONLY element rendering the failure, so a failed deploy vanished
+  // with it (GATE-B P1: "success may close the panel; failure must not").
+  // Letting the rejection propagate is what lets the caller decide to keep
+  // the panel open instead — see ProvisionEntry's onConfirm.
   const handleDeploy = async (entry: CatalogEntry, reason: string, workloadSlug: string) => {
     onJobStart()
-    try {
-      const result = await deployMutation.mutateAsync({ key: entry.key, reason, workload: workloadSlug || undefined })
-      recordAwxWrite({
-        request_id: result.request_id ?? '',
-        action: 'deploy',
-        target: entry.key,
-        reason,
-        actor: user?.subject ?? 'unknown',
-        role: user?.role ?? 'unknown',
-        outcome: isOperation(result) ? 'dispatched' : result.status,
-      })
-      setTrack((prev) => ({
-        ...prev,
-        [entry.key]: isOperation(result)
-          ? { jobId: null, opId: result.operation_id }
-          : { jobId: result.job_id, opId: null },
-      }))
-    } catch (e) {
-      console.error('Deploy failed:', e)
-    }
+    const result = await deployMutation.mutateAsync({ key: entry.key, reason, workload: workloadSlug || undefined })
+    recordAwxWrite({
+      request_id: result.request_id ?? '',
+      action: 'deploy',
+      target: entry.key,
+      reason,
+      actor: user?.subject ?? 'unknown',
+      role: user?.role ?? 'unknown',
+      outcome: isOperation(result) ? 'dispatched' : result.status,
+    })
+    setTrack((prev) => ({
+      ...prev,
+      [entry.key]: isOperation(result)
+        ? { jobId: null, opId: result.operation_id }
+        : { jobId: result.job_id, opId: null },
+    }))
   }
 
   const handleJobComplete = (key: string) => {
@@ -237,7 +241,7 @@ function ProvisionEntry({
   track: EntryTrack
   isDeploying: boolean
   deployError: unknown
-  onDeploy: (reason: string, workloadSlug: string) => void
+  onDeploy: (reason: string, workloadSlug: string) => Promise<void>
   onOpLaunched: (jobId: number) => void
   onOpError: () => void
   onJobComplete: () => void
@@ -285,8 +289,22 @@ function ProvisionEntry({
             pending={isDeploying}
             error={deployError}
             onConfirm={(reason) => {
-              onDeploy(reason, workload.trim())
-              setArming(false)
+              // umbrella #386 / WP-3 spec B2: close ONLY on success. Closing
+              // unconditionally (the old shape) unmounted this panel — the
+              // only element rendering `error` above — the instant Confirm
+              // was clicked, so a failed deploy vanished with no trace.
+              // Staying armed on rejection keeps ReasonConfirm's own error
+              // paragraph on screen for as long as the operator is looking
+              // at this control, well past the topbar's 6s transient echo.
+              void (async () => {
+                try {
+                  await onDeploy(reason, workload.trim())
+                  setArming(false)
+                } catch {
+                  // Stay armed — deployError (threaded from the stage's
+                  // mutation state) renders the failure right here.
+                }
+              })()
             }}
             onCancel={() => setArming(false)}
             extraField={{
