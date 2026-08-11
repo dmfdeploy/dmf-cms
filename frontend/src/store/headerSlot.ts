@@ -1,6 +1,6 @@
 import { useEffect } from 'react'
 import { create } from 'zustand'
-import type { FlowStepId, FlowStepState } from '../lib/workloadFlow'
+import type { FlowState, FlowStepId, FlowStepState } from '../lib/workloadFlow'
 
 /**
  * The typed, route-scoped header slot (umbrella dmfdeploy/dmfdeploy#347 Arc
@@ -12,22 +12,35 @@ import type { FlowStepId, FlowStepState } from '../lib/workloadFlow'
  * keep "where is this workload" a single derivation, and a second one
  * living in Topbar (or smuggled in through this slot) would defeat that.
  *
- * WHAT IS ACTUALLY ENFORCED, not just claimed:
+ * WHAT IS ACTUALLY ENFORCED, not just claimed (fix round 3 — a plain
+ * structural interface and an independently-optional disabledReason both
+ * promised guarantees the earlier types did not provide):
  *
- * 1. `rail` is DATA — the exact prop shape LifecycleStrip already takes
- *    (steps/activeStep/current/offFlow/lockedReasons/jobOwnerLabel/
- *    jobInFlight/onSelect), not a ReactNode. Topbar is the only place that
- *    turns it into pixels, via `<LifecycleStrip {...rail} slug={slug} />`.
- *    A caller cannot register a rail computed any way other than through
- *    classifyWorkloadFlow, because the payload IS that derivation's output
- *    — not "a caller could pass anything, but by convention doesn't."
- * 2. `primaryAction` is a narrow descriptor (label/onClick/disabled/
- *    disabledReason), not a node — Topbar owns the `<button>` markup, the
- *    caller supplies intent only.
+ * 1. `rail` is UNFORGEABLE, not merely typed. `HeaderSlotRailModel` carries
+ *    a module-private brand; `railModelFromFlow(flow, extras)` below is the
+ *    only function anywhere that can produce one, and `flow` is
+ *    `classifyWorkloadFlow`'s/`classifyDraftFlow`'s own `FlowState` — this
+ *    function copies its `steps`/`current`/`offFlow` straight through
+ *    rather than accepting them from `extras`. A caller cannot hand-build a
+ *    rail model (pinned by a `@ts-expect-error` case in
+ *    topbarBrand.test.tsx — that assignment must fail to typecheck).
+ *    Honest limit: `FlowState` itself is a plain structural type owned by
+ *    lib/workloadFlow.ts, so a caller could in principle fabricate a
+ *    `FlowState` and hand it to `railModelFromFlow`. The brand makes
+ *    calling the classifier MANDATORY; it does not make every field of its
+ *    input tamper-proof, and this module does not claim otherwise.
+ * 2. `primaryAction` is a discriminated union: `disabledReason` is
+ *    REQUIRED whenever `disabled` is `true` (fails to typecheck
+ *    otherwise — the earlier two-independent-optionals shape let
+ *    `{ disabled: true }` through with no reason). Topbar renders the
+ *    reason as visible text beside the button, not a hover-only `title` —
+ *    reachable by keyboard, touch and screen readers alike (Art. 11: a
+ *    disabled control states why, and a tooltip that only fires on hover
+ *    does not satisfy that for every input method).
  * 3. The raw Zustand store is NOT exported. `useRegisterHeaderSlot` (write)
  *    and `useHeaderSlotContent` (read, Topbar-only) are the entire public
  *    surface — there is no `setHeaderSlot` reachable from outside this
- *    module to bypass either guarantee above.
+ *    module to bypass any guarantee above.
  *
  * `slug` guards against a stale registration surviving past the route that
  * owns it — Topbar renders content only when it matches the workload slug
@@ -39,6 +52,14 @@ import type { FlowStepId, FlowStepState } from '../lib/workloadFlow'
  * (it currently carries mt-6, wraps, and stacks captions beneath each
  * chip) is WP-3's job, not this module's.
  */
+
+// Module-private brand — deliberately not exported. TypeScript is
+// structurally typed, so without a brand that no other module can name, a
+// hand-built object matching HeaderSlotRailModel's public fields would
+// satisfy the type. Only code in this file can reference RAIL_BRAND, so
+// only railModelFromFlow (below) can produce a value assignable to it.
+const RAIL_BRAND: unique symbol = Symbol('HeaderSlotRailModel')
+
 export interface HeaderSlotRailModel {
   steps: Record<FlowStepId, FlowStepState>
   activeStep: FlowStepId
@@ -48,16 +69,48 @@ export interface HeaderSlotRailModel {
   jobOwnerLabel: string | null
   jobInFlight: boolean
   onSelect: (step: FlowStepId) => void
+  readonly [RAIL_BRAND]: true
 }
 
-export interface HeaderSlotPrimaryAction {
-  label: string
-  onClick: () => void
-  disabled?: boolean
-  /** Shown (e.g. as a title/tooltip) when disabled — Art. 7/8: a disabled
-   *  control states why, it does not just go inert. */
-  disabledReason?: string
+/** Everything a rail model needs beyond the classifier's own FlowState —
+ *  presentation/interaction facts WorkloadDetail already owns directly
+ *  (wizard selection, locked-reason copy, job tracking, the click handler),
+ *  none of which is a lifecycle-derivation fact. */
+export interface RailModelExtras {
+  activeStep: FlowStepId
+  lockedReasons: Record<FlowStepId, string>
+  jobOwnerLabel: string | null
+  jobInFlight: boolean
+  onSelect: (step: FlowStepId) => void
 }
+
+/**
+ * The only way to produce a HeaderSlotRailModel. `flow` must be
+ * classifyWorkloadFlow's (or classifyDraftFlow's) own output — its
+ * steps/current/offFlow are copied through unchanged, so a registered
+ * rail's lifecycle facts are provably the classifier's output rather than
+ * a hand-built stand-in.
+ */
+export function railModelFromFlow(flow: FlowState, extras: RailModelExtras): HeaderSlotRailModel {
+  return {
+    steps: flow.steps,
+    current: flow.current,
+    offFlow: flow.offFlow,
+    ...extras,
+    [RAIL_BRAND]: true,
+  }
+}
+
+export type HeaderSlotPrimaryAction =
+  | { label: string; onClick: () => void; disabled?: false }
+  | {
+      label: string
+      onClick: () => void
+      disabled: true
+      /** Rendered as visible text beside the button — Art. 11 requires a
+       *  disabled control's reason to be reachable without hovering. */
+      disabledReason: string
+    }
 
 export interface HeaderSlotContent {
   /** The workload slug this content belongs to. */
