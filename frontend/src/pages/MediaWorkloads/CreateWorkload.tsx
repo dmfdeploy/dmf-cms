@@ -139,11 +139,11 @@ export default function CreateWorkload() {
     studioName,
     slug,
     selectedKey,
-    facilityConfirmed,
+    confirmedFacilityName,
     setStudioName,
     setSlug,
     setSelectedKey,
-    setFacilityConfirmed,
+    setConfirmedFacilityName,
     reset: resetDraft,
   } = useDraftWorkloadStore()
 
@@ -178,13 +178,25 @@ export default function CreateWorkload() {
   const trimmedSlug = slug.trim()
   const slugValid = trimmedSlug !== '' && isValidWorkloadSlug(trimmedSlug)
 
+  // Loading/error both read as "not resolved" — only a clean read of
+  // exactly one site counts, the same honest-non-answer rule PlanStage
+  // already applies to the real workload's Plan stage.
+  const hasFacility = !facilityLoading && !facilityFailed && sites.length === 1
+  const resolvedFacilityName = hasFacility ? sites[0].name : null
+  // FIX ROUND (WP-3 spec D gate, P2-4): the boolean classifyDraftFlow reads
+  // is derived HERE, by comparing the CONFIRMED identity to the CURRENTLY
+  // resolved one — not read straight off the store. A confirmation for a
+  // facility the live read has since stopped returning (or that stopped
+  // being exactly one site) must not silently carry over as "yes" for
+  // whatever is resolved now; see draftWorkload.ts's own docstring on
+  // confirmedFacilityName for the reachable case this closes.
+  const facilityConfirmed =
+    resolvedFacilityName !== null && confirmedFacilityName === resolvedFacilityName
+
   const draft: DraftProgress = {
     hasName: slugValid,
     hasTemplate: selectedEntry !== null,
-    // Loading/error both read as "not resolved" — only a clean read of
-    // exactly one site counts, the same honest-non-answer rule PlanStage
-    // already applies to the real workload's Plan stage.
-    hasFacility: !facilityLoading && !facilityFailed && sites.length === 1,
+    hasFacility,
     // WP-3 spec D: the resolved-vs-acknowledged split lives here, one level
     // up from the raw read — classifyDraftFlow decides what it means for
     // the flow, this component only reports the operator's own action.
@@ -329,7 +341,11 @@ export default function CreateWorkload() {
             failed={facilityFailed}
             sites={sites}
             confirmed={facilityConfirmed}
-            onConfirm={() => setFacilityConfirmed(true)}
+            // FIX ROUND P2-4: stores the IDENTITY the operator confirmed
+            // (resolvedFacilityName is only non-null here in the first
+            // place because onConfirm is only reachable from PlanAssignment's
+            // own exactly-one-site branch), not a bare "yes".
+            onConfirm={() => setConfirmedFacilityName(resolvedFacilityName)}
           />
         )}
         {stepId === 'provision' && (

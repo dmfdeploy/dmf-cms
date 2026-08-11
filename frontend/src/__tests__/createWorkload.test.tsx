@@ -101,6 +101,10 @@ function mkFetch(opts: FetchOpts = {}) {
   // Mutable so a test can simulate the launcher stamping the tag partway
   // through the journey, which is the real sequence.
   let workloads: MediaWorkload[] = opts.workloads ?? []
+  // FIX ROUND P2-4: mutable, so a test can simulate the facility summary's
+  // own periodic refresh returning a DIFFERENT single site mid-draft — the
+  // reachable transition the confirmed-facility identity check exists for.
+  let facilitySites = opts.facilitySites ?? [{ name: 'dmf-lab', slug: 'dmf-lab', device_count: 3 }]
   const jobStatus: Record<number, { status: string; is_done: boolean }> = { ...(opts.jobStatus ?? {}) }
   const calls = { deploy: [] as Array<{ url: string; init?: RequestInit }>, grouped: 0 }
 
@@ -117,8 +121,7 @@ function mkFetch(opts: FetchOpts = {}) {
       return json({ entries: catalog })
     }
     if (url.endsWith('/api/facility/summary')) {
-      const sites = opts.facilitySites ?? [{ name: 'dmf-lab', slug: 'dmf-lab', device_count: 3 }]
-      return json({ reason: '', site_count: sites.length, device_count: 0, sites })
+      return json({ reason: '', site_count: facilitySites.length, device_count: 0, sites: facilitySites })
     }
     if (url.match(/\/api\/catalog\/[^/]+\/deploy$/)) {
       calls.deploy.push({ url, init })
@@ -168,6 +171,9 @@ function mkFetch(opts: FetchOpts = {}) {
     },
     setJobStatus: (id: number, next: { status: string; is_done: boolean }) => {
       jobStatus[id] = next
+    },
+    setFacilitySites: (next: Array<{ name: string; slug: string | null; device_count: number }>) => {
+      facilitySites = next
     },
   }
 }
@@ -397,6 +403,56 @@ describe('the draft gate', () => {
       await clickPrevious() // Provision → Plan
       expect(within(stepSection('Plan')).getByText(/Confirmed — this workload will run on/)).toBeTruthy()
       expect(within(stepSection('Plan')).queryByRole('button', { name: 'Confirm placement' })).toBeNull()
+    })
+
+    // FIX ROUND (WP-3 spec D gate, P2-4). Mutation-tested repro: confirm
+    // dmf-lab, the facility summary's own periodic refresh then returns a
+    // DIFFERENT single site, navigate back to Plan — before this fix the
+    // page read "Confirmed — this workload will run on replacement-lab"
+    // with no Confirm button, asserting the operator confirmed a placement
+    // they never actually saw (a bare boolean survives any single-site
+    // read, not just the one it was set against).
+    it('does not carry a confirmation over to a DIFFERENT single facility the read starts returning', async () => {
+      const h = mkFetch()
+      const queryClient = renderCreate()
+      await screen.findByRole('heading', { name: 'Identity' })
+
+      await reachDesign()
+      await chooseTemplate()
+      await clickNext() // Design → Plan
+
+      // "dmf-lab" lands in its own <span>, split from "This workload will
+      // run on" by the element boundary — findByText matches per-node by
+      // default, so this checks the two facts the two separate queries
+      // that actually exist for.
+      await within(stepSection('Plan')).findByText(/This workload will run on/)
+      expect(within(stepSection('Plan')).getByText('dmf-lab')).toBeTruthy()
+      fireEvent.click(within(stepSection('Plan')).getByRole('button', { name: 'Confirm placement' }))
+      expect(within(stepSection('Plan')).getByText(/Confirmed — this workload will run on/)).toBeTruthy()
+
+      // The reachable transition: the SAME single-site shape, a DIFFERENT
+      // facility.
+      h.setFacilitySites([{ name: 'replacement-lab', slug: 'replacement-lab', device_count: 2 }])
+      await queryClient.invalidateQueries({ queryKey: ['facility', 'summary'] })
+
+      // Must read as UNCONFIRMED for the new facility — the true fact
+      // ("this workload will run on replacement-lab") stays visible, but
+      // asks for a fresh acknowledgement rather than silently inheriting
+      // the old one.
+      await waitFor(() => {
+        expect(within(stepSection('Plan')).getByText(/This workload will run on/)).toBeTruthy()
+        expect(within(stepSection('Plan')).queryByText(/Confirmed —/)).toBeNull()
+      })
+      expect(
+        within(stepSection('Plan')).getByRole('button', { name: 'Confirm placement' }),
+      ).toBeTruthy()
+
+      // And Provision must have re-locked behind it — the gate this whole
+      // fix is actually protecting, not just the Plan step's own copy.
+      await clickNext() // Plan → Provision
+      expect(
+        within(stepSection('Provision')).getByText(/This step opens once Plan is complete/),
+      ).toBeTruthy()
     })
   })
 
@@ -1308,7 +1364,9 @@ describe('the draft survives the tab, not the browser', () => {
     expect(useDraftWorkloadStore.getState().studioName).toBe('')
     expect(useDraftWorkloadStore.getState().slug).toBe('')
     expect(useDraftWorkloadStore.getState().selectedKey).toBeNull()
-    expect(useDraftWorkloadStore.getState().facilityConfirmed).toBe(false)
+    // FIX ROUND P2-4: renamed from a bare boolean to the confirmed
+    // facility's own identity — see draftWorkload.ts's own docstring.
+    expect(useDraftWorkloadStore.getState().confirmedFacilityName).toBeNull()
   })
 })
 
