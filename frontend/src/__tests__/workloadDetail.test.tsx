@@ -587,10 +587,14 @@ describe('locked steps are always prose in the rail, never a control', () => {
     // permanent caption (does not fit the rail's single-line row).
     expect(within(strip).queryByRole('button', { name: 'Configure' })).toBeNull()
     fireEvent.click(within(strip).getByRole('button', { name: 'Why Configure is locked' }))
-    expect(within(strip).getByText(/there is no source to select/)).toBeTruthy()
+    // FIX ROUND P2-2: the reason popover portals to document.body now (it
+    // has to escape the rail's own overflow-x-auto ancestor, which was
+    // silently clipping it — see LifecycleStrip.tsx's own comment), so it
+    // is no longer a DOM descendant of `strip` — screen, not within(strip).
+    expect(screen.getByText(/there is no source to select/)).toBeTruthy()
     expect(within(strip).queryByRole('button', { name: 'Finalise & Review' })).toBeNull()
     fireEvent.click(within(strip).getByRole('button', { name: 'Why Finalise & Review is locked' }))
-    expect(within(strip).getByText(/nothing to tear down/)).toBeTruthy()
+    expect(screen.getByText(/nothing to tear down/)).toBeTruthy()
 
     // Provision is the one authorised action at this lifecycle, and it is
     // the workload's position — auto-selected, no navigation required. Its
@@ -1271,7 +1275,9 @@ describe('delete-permanently gate: completeness (umbrella dmfdeploy/dmfdeploy#37
 
     expect(within(strip).queryByRole('button', { name: 'Finalise & Review' })).toBeNull()
     fireEvent.click(within(strip).getByRole('button', { name: 'Why Finalise & Review is locked' }))
-    expect(within(strip).getByText(/nothing to tear down/)).toBeTruthy()
+    // FIX ROUND P2-2: portaled to document.body — see the identical note
+    // above ("locked steps are always prose in the rail...").
+    expect(screen.getByText(/nothing to tear down/)).toBeTruthy()
     expect(screen.queryByRole('button', { name: '🗑 Delete permanently' })).toBeNull()
   })
 

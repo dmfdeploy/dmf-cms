@@ -1,4 +1,5 @@
-import { useState } from 'react'
+import { useEffect, useRef, useState } from 'react'
+import { createPortal } from 'react-dom'
 import { Link } from 'react-router-dom'
 import { FLOW_STEPS, type FlowStepId, type FlowStepState } from '../../lib/workloadFlow'
 
@@ -147,12 +148,53 @@ function PositionGlyph() {
  * caption (does not fit a single-line row). Own local state, since
  * LifecycleStrip itself has none: each locked chip's disclosure is
  * independent.
+ *
+ * FIX ROUND (WP-3 spec B gate, P2-2): this chip's own `<nav>` lives inside
+ * Topbar's overflow-x-auto rail wrapper (the same scrolling ancestor
+ * PromotedAction.tsx's own popover had to escape for the identical reason —
+ * see Topbar.tsx's "FIX ROUND P1a" comment). `position: absolute` here
+ * stayed a descendant of that ancestor regardless of z-index, so its lower
+ * half was silently clipped exactly like the promoted panel was — CSS
+ * forces overflow-y to auto wherever overflow-x is auto, and an ancestor's
+ * overflow clips ANY descendant, absolutely-positioned or not, that is not
+ * itself escaped via `position: fixed` or a portal outside that ancestor's
+ * DOM subtree. Fixed here the same way: `position: fixed`, measured against
+ * the trigger button's own real bounding box, portaled to `document.body` —
+ * outside the rail's DOM subtree entirely, so the scrolling ancestor's
+ * overflow has nothing of this popover left to clip.
  */
 function LockedReasonToggle({ label, reason }: { label: string; reason: string }) {
   const [open, setOpen] = useState(false)
+  const buttonRef = useRef<HTMLButtonElement>(null)
+  const [coords, setCoords] = useState<{ top: number; left: number } | null>(null)
+
+  useEffect(() => {
+    if (!open) {
+      setCoords(null)
+      return
+    }
+    const rect = buttonRef.current?.getBoundingClientRect()
+    if (rect) setCoords({ top: rect.bottom + 4, left: rect.left })
+
+    // The rail scrolls horizontally under this button (Topbar.tsx's
+    // overflow-x-auto wrapper) — a scroll moves the button without moving
+    // this fixed-position, one-shot-measured popover, so it closes rather
+    // than visibly detach from its trigger. `true` (capture phase) is
+    // required: a scroll on the rail's own scrolling element does not
+    // bubble to window in the normal phase, only capture.
+    const close = () => setOpen(false)
+    window.addEventListener('scroll', close, true)
+    window.addEventListener('resize', close)
+    return () => {
+      window.removeEventListener('scroll', close, true)
+      window.removeEventListener('resize', close)
+    }
+  }, [open])
+
   return (
     <span className="relative shrink-0">
       <button
+        ref={buttonRef}
         type="button"
         className="flex h-5 w-5 shrink-0 items-center justify-center rounded-full border border-white/20 text-2xs text-muted"
         aria-expanded={open}
@@ -161,14 +203,18 @@ function LockedReasonToggle({ label, reason }: { label: string; reason: string }
       >
         i
       </button>
-      {open && (
-        <span
-          role="note"
-          className="absolute left-0 top-full z-10 mt-1 block w-48 rounded-lg border border-border bg-panel p-2 text-left text-2xs text-muted shadow-lg"
-        >
-          {reason}
-        </span>
-      )}
+      {open &&
+        coords &&
+        createPortal(
+          <span
+            role="note"
+            style={{ position: 'fixed', top: coords.top, left: coords.left }}
+            className="z-30 block w-48 rounded-lg border border-border bg-panel p-2 text-left text-2xs text-muted shadow-lg"
+          >
+            {reason}
+          </span>,
+          document.body,
+        )}
     </span>
   )
 }

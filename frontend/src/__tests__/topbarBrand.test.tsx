@@ -1,5 +1,5 @@
 /**
- * Six Arc 4 WP-2/WP-3 contracts (umbrella dmfdeploy/dmfdeploy#347) that
+ * Five Arc 4 WP-2/WP-3 contracts (umbrella dmfdeploy/dmfdeploy#347) that
  * live in Topbar.tsx/store/headerSlot.ts but aren't covered by
  * nav.test.tsx or topbarMessage.test.tsx:
  *
@@ -13,13 +13,15 @@
  *    from outside store/headerSlot.ts, and the only way to register
  *    content is useRegisterHeaderSlot with the typed rail MODEL — there
  *    is no way to hand Topbar a pre-rendered node instead.
- * 4. The rail model is UNFORGEABLE, not merely typed, and a disabled
- *    primary action cannot omit its reason (fix round 3): both are
- *    @ts-expect-error-pinned, and the reason renders as visible text, not
- *    a hover-only title.
+ * 4. The rail model is UNFORGEABLE (fix round 3), pinned by
+ *    @ts-expect-error. (The primary-action descriptor this point used to
+ *    also cover — a disabled action's reason required to typecheck — was
+ *    deleted in the WP-3 spec B gate's fix round: it had no producer, the
+ *    promoted action that shipped is a portal instead. See headerSlot.ts's
+ *    own docstring.)
  * 5. classifyWorkloadForHeaderSlot takes the workload's raw
- *    WorkloadLifecycleInput, not a FlowState (fix round 4).
- * 6. Classification is a two-phase call — classifyWorkloadForHeaderSlot
+ *    WorkloadLifecycleInput, not a FlowState (fix round 4). Classification
+ *    is a two-phase call — classifyWorkloadForHeaderSlot
  *    (input -> ClassifiedFlow) then buildHeaderSlotRail (ClassifiedFlow +
  *    extras -> HeaderSlotRailModel) — split for WP-3 (a caller needs the
  *    classifier's own steps/current/offFlow to compute its selection
@@ -43,7 +45,6 @@ import {
   type ClassifiedFlow,
   type HeaderSlotContent,
   type HeaderSlotRailModel,
-  type HeaderSlotPrimaryAction,
 } from '../store/headerSlot'
 import { classifyWorkloadFlow } from '../lib/workloadFlow'
 import type { FlowState, FlowStepId, FlowStepState } from '../lib/workloadFlow'
@@ -217,15 +218,6 @@ describe('the rail model is unforgeable — only buildHeaderSlotRail can produce
   })
 })
 
-describe('the primary-action descriptor requires a reason whenever disabled is true', () => {
-  it('{ disabled: true } with no disabledReason does not typecheck', () => {
-    // @ts-expect-error — disabledReason is required when disabled is true
-    // (discriminated union, not two independently-optional fields).
-    const forged: HeaderSlotPrimaryAction = { label: 'Deploy', onClick: () => {}, disabled: true }
-    expect(forged.label).toBe('Deploy')
-  })
-})
-
 describe('the header slot is absent on every non-workload-detail route', () => {
   it.each(['/', '/facilities', '/facilities/site-1', '/media-workloads', '/media-workloads/new', '/admin'])(
     'renders no header-slot-row at %s',
@@ -254,11 +246,10 @@ describe('the header slot is genuinely route-scoped, not just content-presence-g
 })
 
 describe('the rail is rendered from the registered MODEL, not an injected node', () => {
-  it('renders the real LifecycleStrip chips from rail data, and the primary action from its descriptor', () => {
+  it('renders the real LifecycleStrip chips from rail data', () => {
     renderTopbarAt('/media-workloads/studio-a', {
       slug: 'studio-a',
       rail: railModel({ activeChip: 'configure', lifecycle: 'configure' }),
-      primaryAction: { label: 'Deploy', onClick: () => {} },
     })
     const row = screen.getByTestId('header-slot-row')
     // The five real orchestration chips + Operate, rendered by Topbar from
@@ -267,22 +258,5 @@ describe('the rail is rendered from the registered MODEL, not an injected node',
       expect(within(row).getByLabelText(label), `${label} chip missing`).toBeTruthy()
     }
     expect(within(row).getByRole('link', { name: 'Operate' })).toBeTruthy()
-    // Topbar owns the button markup — the caller supplied only intent.
-    expect(within(row).getByRole('button', { name: 'Deploy' })).toBeTruthy()
-  })
-
-  it('a disabled primary action states why as visible text, not a hover-only title', () => {
-    renderTopbarAt('/media-workloads/studio-a', {
-      slug: 'studio-a',
-      rail: railModel(),
-      primaryAction: { label: 'Deploy', onClick: () => {}, disabled: true, disabledReason: 'A job is already running.' },
-    })
-    const button = screen.getByRole('button', { name: 'Deploy' })
-    expect(button.hasAttribute('disabled')).toBe(true)
-    // Reachable without hovering: a normal text query finds it...
-    expect(screen.getByText('A job is already running.')).toBeTruthy()
-    // ...and it is not stashed in a title attribute (hover-only, fails
-    // keyboard/touch/screen-reader users — Art. 11).
-    expect(button.hasAttribute('title')).toBe(false)
   })
 })

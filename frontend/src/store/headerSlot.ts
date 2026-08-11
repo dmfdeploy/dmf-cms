@@ -38,12 +38,7 @@ import type { WorkloadLifecycleInput } from '../lib/workloadLifecycle'
  *    a plain structural type, so a caller can still choose what to feed
  *    classifyWorkloadFlow. The brand makes calling the classifier
  *    mandatory; it does not make its input tamper-proof.
- * 2. `primaryAction` is a discriminated union: `disabledReason` is
- *    REQUIRED whenever `disabled` is `true` (fails to typecheck
- *    otherwise). Topbar renders the reason as visible text beside the
- *    button, not a hover-only `title` — reachable by keyboard, touch and
- *    screen readers alike (Art. 11).
- * 3. The raw Zustand store is NOT exported. `useRegisterHeaderSlot` (write)
+ * 2. The raw Zustand store is NOT exported. `useRegisterHeaderSlot` (write)
  *    and `useHeaderSlotContent` (read, Topbar-only) are the entire public
  *    surface — there is no `setHeaderSlot` reachable from outside this
  *    module to bypass any guarantee above.
@@ -62,6 +57,27 @@ import type { WorkloadLifecycleInput } from '../lib/workloadLifecycle'
  * conflated: a workload can sit at Operate (offFlow) while the operator
  * has a flow step selected on the detail page, and vice versa is not
  * reachable but the type does not assume it never will be.
+ *
+ * FIX ROUND (WP-3 spec B gate, P2-1): this module used to also carry a
+ * `primaryAction` descriptor (`HeaderSlotPrimaryAction`, a branded
+ * discriminated union) plus a matching renderer in Topbar.tsx, built for a
+ * simple label/onClick/disabled affordance. Nothing ever produced one — the
+ * promoted action WP-3 spec B actually shipped needs the FULL arm/confirm/
+ * pending/error loop, which is a portal (components/PromotedAction.tsx,
+ * store/headerActionSlot.ts) so the owning stage keeps its own state and
+ * mutation, never a data descriptor Topbar would have to re-render generic
+ * pixels from. The descriptor was a complete second, unused architecture —
+ * a decoy for the next reader, not a fallback — so it is deleted rather
+ * than left beside the mechanism that actually ships. The portal does NOT
+ * carry the descriptor's type-level guarantee (a disabled control's reason
+ * required to typecheck): PromotedAction takes arbitrary ReactNode, by
+ * design, since it only relocates pixels the stage already built. The
+ * "never a dead control, a disabled action's reason is always visible text"
+ * property still holds for the promoted Deploy control — Provision offers
+ * it or doesn't (ProvisionStage.tsx's own no-dead-controls comment), and
+ * ReasonConfirm's error/pending states are always plain visible text — but
+ * that is now a PRODUCER-side property, verified in ProvisionStage's own
+ * tests, not something this module's types enforce for whatever portals in.
  */
 
 // Module-private brands — deliberately not exported. TypeScript is
@@ -122,22 +138,10 @@ export function buildHeaderSlotRail(flow: ClassifiedFlow, extras: RailModelExtra
   }
 }
 
-export type HeaderSlotPrimaryAction =
-  | { label: string; onClick: () => void; disabled?: false }
-  | {
-      label: string
-      onClick: () => void
-      disabled: true
-      /** Rendered as visible text beside the button — Art. 11 requires a
-       *  disabled control's reason to be reachable without hovering. */
-      disabledReason: string
-    }
-
 export interface HeaderSlotContent {
   /** The workload slug this content belongs to. */
   slug: string
   rail: HeaderSlotRailModel
-  primaryAction?: HeaderSlotPrimaryAction
 }
 
 interface HeaderSlotState {

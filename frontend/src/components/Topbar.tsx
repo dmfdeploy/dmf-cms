@@ -294,35 +294,27 @@ export default function Topbar() {
           popover's lower half silently clipped by that same scroll
           container. A long rail scrolling internally, with the action
           always pinned and unclipped at the row's end, is also the more
-          honest reading of "primary action" regardless. */}
+          honest reading of "primary action" regardless.
+
+          FIX ROUND P1a: `relative` lives on THIS row now, not on the mount
+          span below. The mount span's own in-flow width collapses to ~0 the
+          instant its only child is the armed panel (`position: absolute`
+          takes an element OUT of flow, so it contributes nothing to its
+          parent's box) — positioning the panel relative to that collapsed
+          span put its whole 20rem width past the header's right edge,
+          clipped invisible by this file's own overflow-hidden ancestor
+          (Shell.tsx). This row, by contrast, always has the rail's real
+          width — a stable containing block regardless of what the tiny
+          mount span's own box collapses to. See ProvisionStage.tsx's
+          matching `right-4` anchor. */}
       {showSlotRow && slotContent && (
         <div
           data-testid="header-slot-row"
-          className="flex flex-nowrap items-center gap-3 border-b border-border px-4 py-2"
+          className="relative flex flex-nowrap items-center gap-3 border-b border-border px-4 py-2"
         >
           <div className="min-w-0 flex-1 overflow-x-auto">
             <LifecycleStrip {...slotContent.rail} slug={slotContent.slug} />
           </div>
-          {slotContent.primaryAction && (
-            <span className="flex items-center gap-2 shrink-0">
-              <button
-                type="button"
-                className="btn btn-primary text-xs whitespace-nowrap shrink-0 disabled:opacity-50 disabled:cursor-not-allowed"
-                onClick={slotContent.primaryAction.onClick}
-                disabled={slotContent.primaryAction.disabled}
-              >
-                {slotContent.primaryAction.label}
-              </button>
-              {/* Visible text, not a hover-only title (Art. 11) — a
-                  disabled action states why reachably by keyboard, touch
-                  and screen readers, not just to a mouse hovering it. */}
-              {slotContent.primaryAction.disabled && (
-                <span className="max-w-[12rem] text-2xs text-muted">
-                  {slotContent.primaryAction.disabledReason}
-                </span>
-              )}
-            </span>
-          )}
           {/* Promoted primary action mount point (Arc 4 WP-3 spec B): a
               stage's own entry control (button + ReasonConfirm, with its
               arming/pending/error state untouched) portals in here when the
@@ -333,10 +325,10 @@ export default function Topbar() {
               the eligibility count that decision is based on — that stays
               with the stage that actually knows its own runtime action
               model, matching the "Topbar must never derive state" rule this
-              slot's own doc comment already states for the rail. Relative
-              positioning: the popover a promoted control opens (its
-              ReasonConfirm) anchors below THIS element, not the page. */}
-          <span ref={setActionSlotNode} className="relative flex shrink-0 items-center gap-2 empty:hidden" />
+              slot's own doc comment already states for the rail. NOT
+              `relative` (fix round P1a, above) — the panel it portals in
+              anchors to the ROW, not to this span's own collapsing box. */}
+          <span ref={setActionSlotNode} className="flex shrink-0 items-center gap-2 empty:hidden" />
         </div>
       )}
     </header>

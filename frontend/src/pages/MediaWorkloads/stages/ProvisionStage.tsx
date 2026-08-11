@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react'
+import { useEffect, useRef, useState } from 'react'
 import { useQueryClient } from '@tanstack/react-query'
 import {
   isOperation,
@@ -117,20 +117,50 @@ export default function ProvisionStage({
   // own arm → confirm → pending → outcome lifecycle instead of reassigning
   // mid-interaction.
   //
-  // Deploy is the only PRIMARY-styled action this stage (or Configure's
-  // switch-source, or Finalise's teardown/delete-permanently) has — those
-  // three are btn-secondary/btn-danger, a deliberately lower weight than
-  // the cyan primary accent the rail-treatment ruling reserves for "the
-  // thing to click" (LifecycleStrip.tsx's own docstring). Clear-for-
-  // deployment below is btn-secondary for the same reason and is never a
-  // promotion candidate either. "The current step's primary action" is
-  // therefore simply ABSENT on Configure/Finalise — their actions stay in
-  // the body unconditionally, which is the rule applied vacuously, not an
-  // oversight.
+  // Deploy is the only TOP-LEVEL OFFERED primary action anywhere in this
+  // flow — the FIRST control a stage offers, before anything is armed:
+  // Configure's "Switch source" and Finalise's "Teardown" are btn-secondary,
+  // "Delete permanently" is btn-danger, a deliberately lower weight than the
+  // cyan primary accent the rail-treatment ruling reserves for "the thing to
+  // click" (LifecycleStrip.tsx's own docstring). Clear-for-deployment below
+  // is btn-secondary for the same reason and is never a promotion candidate
+  // either. (NOT "Deploy is the only btn-primary in this flow" — that claim
+  // is false: ReasonConfirm's own Confirm button is btn-primary for every
+  // non-danger variant, so once ANY of these is armed, its Confirm button
+  // is primary-styled too. That is a uniform property of ReasonConfirm
+  // itself, not something Deploy is unique in.) "The current step's primary
+  // action" is therefore simply ABSENT, at top level, on Configure/Finalise
+  // — their actions stay in the body unconditionally, which is the rule
+  // applied vacuously, not an oversight.
   const eligibleDeployEntries = allowed && !busy
     ? entries.filter((e) => e.lifecycle !== 'active' && !activeTrack(track[e.key]))
     : []
-  const promotedEntryKey = eligibleDeployEntries.length === 1 ? eligibleDeployEntries[0].key : null
+  const computedPromotedKey = eligibleDeployEntries.length === 1 ? eligibleDeployEntries[0].key : null
+
+  // FIX ROUND P1b: LATCH the promoted identity through its own arm ->
+  // confirm -> pending -> settle lifecycle. `busy` intentionally goes true
+  // the instant Confirm fires (onJobStart, synchronously, in the same event)
+  // — that's what correctly withdraws every OTHER entry's offer — but it
+  // also zeroed `eligibleDeployEntries` for the very same render, which
+  // dropped the promoted entry back to inline mid-flight: the operator saw
+  // "Launching…" jump out of the header and into the page body the instant
+  // they clicked Confirm. Written directly during render, not an effect —
+  // an effect lands one render after `busy` flips true, which is exactly
+  // the gap that let the panel flash into the body before latching.
+  //
+  // `lastEligibleKeyRef` remembers the last entry that was cleanly eligible
+  // (nothing busy) — i.e. the identity as of the moment BEFORE arming.
+  // `promotedEntryKey` falls back to that latch ONLY while the busy state is
+  // this SAME entry's own deploy mutation — a different entry's or
+  // clear-for-deployment's write firing must still correctly withdraw
+  // promotion (busy for an unrelated reason is not "this entry's own
+  // pending window").
+  const lastEligibleKeyRef = useRef<string | null>(null)
+  if (computedPromotedKey !== null) lastEligibleKeyRef.current = computedPromotedKey
+  const latchedKey = lastEligibleKeyRef.current
+  const latchedEntryOwnDeployPending =
+    latchedKey !== null && deployMutation.isPending && deployMutation.variables?.key === latchedKey
+  const promotedEntryKey = computedPromotedKey ?? (latchedEntryOwnDeployPending ? latchedKey : null)
 
   // GATE-S1 P1: clear-for-deployment is a PROVISION-time action and now flows
   // through the rail like every other write. It used to render on Finalise
@@ -345,7 +375,19 @@ function ProvisionEntry({
 
       {arming && (
         <PromotedAction promote={promoted}>
-          <div className={promotable ? 'absolute left-0 top-full z-20 mt-2 w-80' : 'mt-2'}>
+          {/* FIX ROUND P1a: right-4, anchored to header-slot-row (Topbar.tsx
+              is `relative` there now, not on this control's own mount span,
+              whose box collapses to ~0 width the instant its only child is
+              this out-of-flow panel). max-w keeps it inside the viewport on
+              narrow widths instead of overflowing past it in the other
+              direction. */}
+          <div
+            className={
+              promotable
+                ? 'absolute right-4 top-full z-20 mt-2 w-80 max-w-[calc(100vw-2rem)]'
+                : 'mt-2'
+            }
+          >
             <ReasonConfirm
               title={`Deploy ${entry.display_name}?`}
               description="Provisions this media function via its AWX job template. The action is operator-gated and recorded in the audit trail with your reason."

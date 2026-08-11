@@ -18,8 +18,9 @@ import { cleanup, render, screen, waitFor, within } from '@testing-library/react
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query'
 import { MemoryRouter, Route, Routes } from 'react-router-dom'
 import WorkloadOperate from '../pages/MediaWorkloads/Operate'
+import HeaderSlotProbe from './testUtils/HeaderSlotProbe'
 import { REQUESTED_TITLE, OBSERVED_TITLE } from '../pages/MediaWorkloads/stateBadges'
-import type { CatalogEntry, MediaWorkload, MediaWorkloadInstance } from '../api/types'
+import type { CatalogEntry, MediaWorkload, MediaWorkloadInstance, UserIdentity } from '../api/types'
 
 // ---- fixtures (same shapes as workloadDetail.test.tsx) -----------------
 
@@ -106,6 +107,12 @@ interface FetchOpts {
   topologyFailAfter?: Record<string, number>
   /** After this many grouped-inventory reads, subsequent reads return `workload` instead of the base fixture — models an inventory change observed on a later poll/refetch (same after-N-reads shape as topologyFailAfter). */
   workloadAfter?: { reads: number; workload: MediaWorkload | null }
+  /** FIX ROUND P2-3: /api/me response — defaults to a bare {} (no role),
+   *  which isPurgeAuthorized fails closed on, matching every pre-fix-round
+   *  test in this file (they never exercised delete-permanently). Override
+   *  to prove Operate's rail now reads purge-eligibility consistently with
+   *  WorkloadDetail's. */
+  user?: UserIdentity
 }
 
 function mkFetch(opts: FetchOpts = {}) {
@@ -122,6 +129,7 @@ function mkFetch(opts: FetchOpts = {}) {
     if (opts.errorStatus) {
       return json({ error: 'boom' }, opts.errorStatus)
     }
+    if (opts.user && url.endsWith('/api/me')) return json(opts.user)
     if (url.endsWith('/api/catalog')) return json({ entries: catalog })
     if (url.endsWith('/api/media-workloads/grouped')) {
       groupedCalls += 1
@@ -167,6 +175,12 @@ function renderOperate(slug = 'studio-a') {
         <Routes>
           <Route path="/media-workloads/:slug/operate" element={<WorkloadOperate />} />
         </Routes>
+        {/* Test-only stand-in for Topbar's own header-slot rendering — see
+            HeaderSlotProbe's own docstring. Existing tests in this file never
+            queried the rail (they only assert on the page body), so this is
+            a no-op for them; the FIX ROUND P2-3 tests below are the first
+            to need it. */}
+        <HeaderSlotProbe />
       </MemoryRouter>
     </QueryClientProvider>,
   )
@@ -426,5 +440,73 @@ describe('request configuration change', () => {
     for (const forbidden of ['switch now', 're-route', 'take', 'cut', 'live']) {
       expect(text.includes(forbidden), `"${forbidden}" must not appear in: ${text}`).toBe(false)
     }
+  })
+})
+
+// ---------------------------------------------------------------------------
+// FIX ROUND (WP-3 spec B gate, P2-3): this route used to build its rail
+// input with only lifecycle/hasBootstrappedMembers set, leaving
+// allMembersBootstrapped/anyMemberObservedRunning/membersDataTrustworthy/
+// purgeAuthorized/isPurgeableEntity all silently absent — read as
+// false/withheld regardless of the real workload, so a purge-eligible
+// workload could show Finalise & Review OPEN on WorkloadDetail and LOCKED
+// here. Both routes now build through the same buildWorkloadLifecycleInput
+// constructor; this proves the two routes agree, not just that each one
+// individually renders something.
+// ---------------------------------------------------------------------------
+
+describe('FIX ROUND P2-3: the rail agrees with WorkloadDetail for a purge-eligible workload', () => {
+  const OPERATOR: UserIdentity = {
+    subject: 'ops',
+    display_name: 'Ops',
+    email: 'ops@dmf.example.com',
+    role: 'operator',
+    real_role: 'operator',
+    view_as_active: false,
+    groups: [],
+    awx_configured: true,
+    authentik_configured: true,
+  }
+
+  function purgeEligibleWorkload(): MediaWorkload {
+    // Same shape workloadDetail.test.tsx's own purgeEligibleWorkload uses:
+    // every member bootstrapped (nothing cleared to run), none observed
+    // running.
+    return workload({
+      lifecycle: 'provision',
+      instances: [instance({ requested_state: 'bootstrapped', observed_state: 'unknown' })],
+    })
+  }
+
+  it('does not lock Finalise & Review when the workload is purge-eligible and the operator is authorized', async () => {
+    mkFetch({ workload: purgeEligibleWorkload(), user: OPERATOR })
+    renderOperate()
+    await screen.findByText(/The monitoring surface for this workload/)
+
+    const strip = await screen.findByRole('navigation', { name: 'Media workload lifecycle' })
+    // A locked chip renders as an inert <div>, never a <button> — see
+    // LifecycleStrip.tsx. Before this fix, a purge-eligible workload still
+    // read as Finalise-locked here (allMembersBootstrapped/
+    // anyMemberObservedRunning/membersDataTrustworthy/purgeAuthorized were
+    // all silently absent), the same shape workloadDetail.test.tsx's own
+    // "locked steps are always prose in the rail" pins as the WRONG state
+    // for this workload.
+    expect(
+      within(strip).getByRole('button', { name: 'Finalise & Review' }),
+      'Finalise & Review must be a real button (not-locked), same as WorkloadDetail reads this workload',
+    ).toBeTruthy()
+  })
+
+  it('withholds it the same way WorkloadDetail does when the operator is not authorized', async () => {
+    mkFetch({ workload: purgeEligibleWorkload(), user: { ...OPERATOR, role: 'viewer', real_role: 'viewer' } })
+    renderOperate()
+    await screen.findByText(/The monitoring surface for this workload/)
+
+    // stageActions('finalise', ...) has NO action to offer without
+    // purgeAuthorized (running(input) is false for lifecycle: 'provision'),
+    // so the chip reads as locked — the fail-closed default, not a missing
+    // field silently producing the same visual result for the wrong reason.
+    const strip = await screen.findByRole('navigation', { name: 'Media workload lifecycle' })
+    expect(within(strip).queryByLabelText('Finalise & Review')?.tagName).toBe('DIV')
   })
 })

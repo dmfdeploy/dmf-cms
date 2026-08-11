@@ -1,8 +1,13 @@
 import { useEffect, useRef, useState, type ReactNode } from 'react'
 import { Link, useLocation, useParams } from 'react-router-dom'
 import { useCatalog, useCurrentUser, useMediaWorkloadsGrouped } from '../../api/hooks'
-import { stageActions, type WorkloadLifecycleInput } from '../../lib/workloadLifecycle'
-import { roleAtLeast } from '../../lib/roles'
+import {
+  stageActions,
+  buildWorkloadLifecycleInput,
+  isGroupedReadTrustworthy,
+  isPurgeAuthorized,
+  type WorkloadLifecycleInput,
+} from '../../lib/workloadLifecycle'
 import { useTopbarMessageStore } from '../../store/topbarMessage'
 import { classifyWorkloadForHeaderSlot, buildHeaderSlotRail, useRegisterHeaderSlot } from '../../store/headerSlot'
 import {
@@ -215,8 +220,10 @@ export default function WorkloadDetail() {
       // payload, per media_workloads.py's own definition), and an excluded
       // invalid-multiple member can share this workload's tag. Trust now
       // additionally requires the endpoint to report itself configured and
-      // not degraded.
-      membersDataTrustworthy={!isError && !isFetching && data?.configured === true && data?.degraded !== true}
+      // not degraded — via the ONE shared formula (fix round P2-3)
+      // isGroupedReadTrustworthy, which Operate.tsx's own grouped read now
+      // calls too.
+      membersDataTrustworthy={isGroupedReadTrustworthy({ isError, isFetching, configured: data?.configured, degraded: data?.degraded })}
     />
   )
 }
@@ -278,28 +285,20 @@ function WorkloadWizard({
 
   const jobInFlight = launching || switching || tearingDown
 
-  const input: WorkloadLifecycleInput = {
-    lifecycle: workload.lifecycle,
+  // FIX ROUND (WP-3 spec B gate, P2-3): built through the ONE shared
+  // constructor Operate.tsx now also uses (lib/workloadLifecycle.ts's
+  // buildWorkloadLifecycleInput) — member-state/purgeable-entity facts can
+  // no longer drift between the two routes reading the same workload.
+  // membersDataTrustworthy/purgeAuthorized stay THIS component's own to
+  // compute (each route holds its own query instances), via the same two
+  // shared formulas (isGroupedReadTrustworthy/isPurgeAuthorized) rather than
+  // each hand-rolling the freshness arithmetic — see membersDataTrustworthy's
+  // own prop docstring in WorkloadDetail() below for why the grouped-read
+  // half specifically is threaded down rather than recomputed here.
+  const input: WorkloadLifecycleInput = buildWorkloadLifecycleInput(workload, {
     launching,
     switching,
     tearingDown,
-    // Member state, not position: clearing one of several siblings moves the
-    // position to configure while the rest still need clearing, so the flow
-    // has to be told what the workload NEEDS as well as where it IS
-    // (GATE-S1-RV3 P1). workloadFlow.ts ranks affordance above position for
-    // exactly this case, which is what keeps the clear path reachable inside
-    // an otherwise-completed Provision step.
-    hasBootstrappedMembers: workload.instances.some(
-      (i) => !i.reconcile_pending && i.requested_state === 'bootstrapped',
-    ),
-    // umbrella #347: delete-permanently needs EVERY member bootstrapped
-    // (nothing cleared to run) and NONE observed running — the same
-    // member-state facts the backend's own preflight re-derives fresh at
-    // dispatch time; this is only the affordance gate, never authoritative.
-    allMembersBootstrapped:
-      workload.instances.length > 0 &&
-      workload.instances.every((i) => i.requested_state === 'bootstrapped'),
-    anyMemberObservedRunning: workload.instances.some((i) => i.observed_state === 'running'),
     membersDataTrustworthy,
     // umbrella #378b (fix round): fail-closed on IDENTITY FRESHNESS, not just
     // on the role value — mirrors membersDataTrustworthy's own discipline
@@ -313,14 +312,12 @@ function WorkloadWizard({
     // armed for the acting role mid-switch, and (useCurrentUser is declared
     // retry: false) indefinitely if that refetch then fails. Absent/loading/
     // fetching/errored all withhold, same as every other gate here.
-    purgeAuthorized:
-      !userQuery.isFetching && !userQuery.isError && roleAtLeast(userQuery.data?.role, 'operator'),
-    // umbrella #378c: the backend's synthetic "unassigned" bucket rides
-    // through this same workload prop (a real workloads[] entry with slug
-    // 'unassigned'), so the entity-identity gate is a plain fact about the
-    // workload, not a separate lookup.
-    isPurgeableEntity: workload.slug !== 'unassigned',
-  }
+    purgeAuthorized: isPurgeAuthorized({
+      isFetching: userQuery.isFetching,
+      isError: userQuery.isError,
+      role: userQuery.data?.role,
+    }),
+  })
   const flow = classifyWorkloadForHeaderSlot(input)
   const { steps, current, offFlow, undetermined } = flow
   const badge = lifecycleBadge(input)

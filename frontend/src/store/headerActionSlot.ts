@@ -9,14 +9,17 @@ import { create } from 'zustand'
  * arming/pending/error state stays exactly where it already lived (the
  * stage's own entry component); this only relocates its rendered pixels.
  *
- * WHY A PORTAL, NOT A SECOND HeaderSlotContent FIELD. store/headerSlot.ts's
- * `primaryAction` descriptor is a plain {label, onClick, disabled} button —
- * enough for a click, not for the WHOLE loop the ruling requires (arming,
- * ReasonConfirm, pending, error, terminal result). Building that loop out of
- * data passed through a store would mean re-deriving, in WorkloadDetail, the
- * exact runtime eligibility + mutation state each stage already owns — a
- * second copy of logic the stage is the only correct owner of. A portal
- * keeps the owning component the SAME component; only its mount point moves.
+ * WHY A PORTAL, NOT A SECOND HeaderSlotContent FIELD. store/headerSlot.ts
+ * used to also carry a `primaryAction` descriptor — a plain
+ * {label, onClick, disabled} button, enough for a click, not for the WHOLE
+ * loop the ruling requires (arming, ReasonConfirm, pending, error, terminal
+ * result). Building that loop out of data passed through a store would mean
+ * re-deriving, in WorkloadDetail, the exact runtime eligibility + mutation
+ * state each stage already owns — a second copy of logic the stage is the
+ * only correct owner of. A portal keeps the owning component the SAME
+ * component; only its mount point moves. The descriptor, having no producer,
+ * was deleted in the WP-3 spec B gate's fix round rather than left beside
+ * the mechanism that actually ships — see headerSlot.ts's own docstring.
  *
  * WHY THIS IS SAFE WITHOUT A SLUG GUARD OF ITS OWN. The node in this store is
  * only ever non-null while Topbar's header-slot row is actually mounted for
