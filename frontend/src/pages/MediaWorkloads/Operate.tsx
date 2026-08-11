@@ -3,12 +3,7 @@ import { Link, useNavigate, useParams } from 'react-router-dom'
 import { useCatalog, useCurrentUser, useMediaWorkloadsGrouped, useInstanceTopology } from '../../api/hooks'
 import type { MediaWorkloadInstance } from '../../api/types'
 import { classifyWorkloadForHeaderSlot, buildHeaderSlotRail, useRegisterHeaderSlot } from '../../store/headerSlot'
-import {
-  buildWorkloadLifecycleInput,
-  isGroupedReadTrustworthy,
-  isPurgeAuthorized,
-  type WorkloadLifecycleInput,
-} from '../../lib/workloadLifecycle'
+import { buildWorkloadLifecycleInput, type WorkloadLifecycleInput } from '../../lib/workloadLifecycle'
 import type { FlowStepId } from '../../lib/workloadFlow'
 import { LOCKED_REASON } from './WorkloadDetail'
 import WorkloadTile from './WorkloadTile'
@@ -110,19 +105,18 @@ export default function WorkloadOperate() {
   // see that file's identical comment on its own `input` for what this
   // fixes and why. No job-state flags: Operate runs no jobs of its own
   // (the file docstring's "WHY IT CARRIES NO ACTION OF ITS OWN").
+  // FIX ROUND (P3-5): passes the raw reads through — buildWorkloadLifecycleInput
+  // runs isGroupedReadTrustworthy/isPurgeAuthorized internally now, so this
+  // call site no longer reduces them to booleans itself (see that
+  // constructor's own docstring for why the boolean-shaped seam was the gap).
   const railInput: WorkloadLifecycleInput | null = workloadForRail
     ? buildWorkloadLifecycleInput(workloadForRail, {
-        membersDataTrustworthy: isGroupedReadTrustworthy({
-          isError,
-          isFetching,
-          configured: data?.configured,
-          degraded: data?.degraded,
-        }),
-        purgeAuthorized: isPurgeAuthorized({
+        groupedRead: { isError, isFetching, configured: data?.configured, degraded: data?.degraded },
+        userRead: {
           isFetching: userQuery.isFetching,
           isError: userQuery.isError,
           role: userQuery.data?.role,
-        }),
+        },
       })
     : null
   useRegisterHeaderSlot(

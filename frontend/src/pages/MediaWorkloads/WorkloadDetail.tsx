@@ -4,8 +4,6 @@ import { useCatalog, useCurrentUser, useMediaWorkloadsGrouped } from '../../api/
 import {
   stageActions,
   buildWorkloadLifecycleInput,
-  isGroupedReadTrustworthy,
-  isPurgeAuthorized,
   type WorkloadLifecycleInput,
 } from '../../lib/workloadLifecycle'
 import { useTopbarMessageStore } from '../../store/topbarMessage'
@@ -218,12 +216,13 @@ export default function WorkloadDetail() {
       // succeeded, not that it was COMPLETE — the grouped endpoint can
       // return HTTP 200 with degraded: true (members excluded from this
       // payload, per media_workloads.py's own definition), and an excluded
-      // invalid-multiple member can share this workload's tag. Trust now
-      // additionally requires the endpoint to report itself configured and
-      // not degraded — via the ONE shared formula (fix round P2-3)
-      // isGroupedReadTrustworthy, which Operate.tsx's own grouped read now
-      // calls too.
-      membersDataTrustworthy={isGroupedReadTrustworthy({ isError, isFetching, configured: data?.configured, degraded: data?.degraded })}
+      // invalid-multiple member can share this workload's tag. FIX ROUND
+      // (P3-5): this used to reduce to a boolean HERE via
+      // isGroupedReadTrustworthy and thread the boolean down — now threads
+      // the raw read down instead, so buildWorkloadLifecycleInput is the
+      // only place that formula runs (see its own docstring for why the
+      // boolean-shaped seam was the actual gap).
+      groupedRead={{ isError, isFetching, configured: data?.configured, degraded: data?.degraded }}
     />
   )
 }
@@ -245,13 +244,16 @@ export default function WorkloadDetail() {
  */
 function WorkloadWizard({
   workload,
-  membersDataTrustworthy,
+  groupedRead,
 }: {
   workload: MediaWorkload
   // umbrella #347: freshness of the SAME grouped read `workload` itself came
   // from — computed by the parent (the only place that holds the query's
   // own isError/isFetching), threaded through rather than re-queried here.
-  membersDataTrustworthy: boolean
+  // FIX ROUND (P3-5): the raw read, not membersDataTrustworthy's old
+  // pre-reduced boolean — buildWorkloadLifecycleInput below now runs
+  // isGroupedReadTrustworthy itself, so this component doesn't call it.
+  groupedRead: { isError: boolean; isFetching: boolean; configured?: boolean; degraded?: boolean }
 }) {
   const { hash } = useLocation()
   const { data: catalogData, isLoading: catalogLoading } = useCatalog()
@@ -285,25 +287,27 @@ function WorkloadWizard({
 
   const jobInFlight = launching || switching || tearingDown
 
-  // FIX ROUND (WP-3 spec B gate, P2-3): built through the ONE shared
-  // constructor Operate.tsx now also uses (lib/workloadLifecycle.ts's
-  // buildWorkloadLifecycleInput) — member-state/purgeable-entity facts can
-  // no longer drift between the two routes reading the same workload.
-  // membersDataTrustworthy/purgeAuthorized stay THIS component's own to
-  // compute (each route holds its own query instances), via the same two
-  // shared formulas (isGroupedReadTrustworthy/isPurgeAuthorized) rather than
-  // each hand-rolling the freshness arithmetic — see membersDataTrustworthy's
-  // own prop docstring in WorkloadDetail() below for why the grouped-read
-  // half specifically is threaded down rather than recomputed here.
+  // FIX ROUND (WP-3 spec B gate, P2-3; strengthened P3-5): built through the
+  // ONE shared constructor Operate.tsx now also uses
+  // (lib/workloadLifecycle.ts's buildWorkloadLifecycleInput) — member-state/
+  // purgeable-entity facts can no longer drift between the two routes
+  // reading the same workload. `groupedRead`/`userRead` stay THIS
+  // component's own query results to gather (each route holds its own query
+  // instances) — see `groupedRead`'s own prop docstring in WorkloadDetail()
+  // below for why that half specifically is threaded down rather than
+  // re-queried here — but buildWorkloadLifecycleInput runs the shared
+  // formulas on them now, not this call site (P3-5: a boolean handed in
+  // here could always have come from a different formula and still
+  // typechecked; a raw read cannot substitute the arithmetic).
   const input: WorkloadLifecycleInput = buildWorkloadLifecycleInput(workload, {
     launching,
     switching,
     tearingDown,
-    membersDataTrustworthy,
+    groupedRead,
     // umbrella #378b (fix round): fail-closed on IDENTITY FRESHNESS, not just
-    // on the role value — mirrors membersDataTrustworthy's own discipline
-    // (#343) for the exact same reason. TanStack Query retains the PREVIOUS
-    // /api/me payload while a refetch is in flight and after one fails, so
+    // on the role value — mirrors groupedRead's own discipline (#343) for
+    // the exact same reason. TanStack Query retains the PREVIOUS /api/me
+    // payload while a refetch is in flight and after one fails, so
     // `userQuery.data` alone can't prove the role is current. This is
     // reachable, not theoretical: useSetViewAs() invalidates every query
     // (including ['user']) with no queryKey filter, so an admin switching
@@ -312,11 +316,11 @@ function WorkloadWizard({
     // armed for the acting role mid-switch, and (useCurrentUser is declared
     // retry: false) indefinitely if that refetch then fails. Absent/loading/
     // fetching/errored all withhold, same as every other gate here.
-    purgeAuthorized: isPurgeAuthorized({
+    userRead: {
       isFetching: userQuery.isFetching,
       isError: userQuery.isError,
       role: userQuery.data?.role,
-    }),
+    },
   })
   const flow = classifyWorkloadForHeaderSlot(input)
   const { steps, current, offFlow, undetermined } = flow

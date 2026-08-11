@@ -1,4 +1,4 @@
-import { afterEach, describe, expect, it } from 'vitest'
+import { afterEach, describe, expect, it, vi } from 'vitest'
 import { cleanup, fireEvent, render, screen, within } from '@testing-library/react'
 import { MemoryRouter } from 'react-router-dom'
 import LifecycleStrip from '../pages/MediaWorkloads/LifecycleStrip'
@@ -115,15 +115,6 @@ describe('locked state carries a lock icon, "Locked" text, and a dashed-border s
     expect(toggle.getAttribute('aria-expanded')).toBe('true')
   })
 
-  // FIX ROUND (WP-3 spec B gate, P2-5): a locked chip's own opacity used to
-  // stack on top of the inner state-word span's identical opacity — two
-  // multipliers compounding well under the 4.5:1 AA floor for text
-  // (measured: ~3.96:1 from the chip's own opacity alone, ~2.50:1 once the
-  // inner span's stacks on it). jsdom cannot compute an actual contrast
-  // ratio, so this pins the structural fact the fix rests on: a locked
-  // chip's OWN opacity is gone, leaving it at the same muted-text treatment
-  // every inactive chip already uses — the inner state-word span's own
-  // opacity-70 is unchanged (that one was never the compounding half).
   it('does not dim a locked chip a second time on top of the state word\'s own opacity', () => {
     const steps: Record<FlowStepId, FlowStepState> = {
       design: 'complete',
@@ -141,7 +132,130 @@ describe('locked state carries a lock icon, "Locked" text, and a dashed-border s
     // the chip's other distinguishing treatment.
     expect(provision.className).toContain('border-dashed')
   })
+
+  // FIX ROUND (P3 round 3): the test above only ever pinned that the
+  // CHIP-level opacity class was gone — it said nothing about the inner
+  // state-word span, which carried the SAME opacity-70 independently and
+  // was still under AA on its own (~3.95:1, see below). A comment right
+  // here used to claim that span "was never the compounding half" and was
+  // therefore fine; that was true of round 2's specific defect and false of
+  // AA. This test computes the actual WCAG contrast ratio the state word's
+  // rendered className composites to against the real design tokens
+  // (src/index.css --color-muted / --color-bg — jsdom does not resolve CSS
+  // custom properties or paint anything, so the token values are mirrored
+  // here rather than read from a stylesheet) and pins that value, not the
+  // presence or absence of any one class — so a *different* opacity
+  // utility landing on this span in a future round still gets caught.
+  it('the state word text composites to at least the 4.5:1 AA floor at its actual rendered opacity', () => {
+    const steps: Record<FlowStepId, FlowStepState> = {
+      design: 'complete',
+      plan: 'complete',
+      provision: 'locked',
+      configure: 'locked',
+      finalise: 'locked',
+    }
+    renderRail({ steps, activeChip: 'design', current: null })
+
+    const provision = chip('Provision')
+    const stateWord = within(provision).getByText('Locked', { exact: false })
+
+    expect(effectiveContrastRatio(provision, stateWord)).toBeGreaterThanOrEqual(4.5)
+  })
 })
+
+// FIX ROUND (P3 round 3, P2-4): the popover escaped Topbar's clipping
+// ancestor via position:fixed (P2-2 above), but `left: rect.left` with no
+// viewport clamp still let a chip near the right edge place most of the
+// popover's fixed 192px (w-48) width off-screen. Closing on scroll/resize
+// (already tested elsewhere in this file) only handles the popover moving
+// out of place after opening — it says nothing about a bad INITIAL
+// placement, which is what this pins: a mocked near-right-edge trigger
+// rect, and the rendered note's own inline left must still fit.
+describe('the locked-reason popover stays inside the viewport for a trigger near the right edge', () => {
+  it('clamps left instead of placing straight off the trigger\'s own rect.left', () => {
+    const steps: Record<FlowStepId, FlowStepState> = {
+      design: 'complete',
+      plan: 'complete',
+      provision: 'locked',
+      configure: 'locked',
+      finalise: 'locked',
+    }
+    renderRail({ steps, activeChip: 'design', current: null })
+
+    const toggle = screen.getByRole('button', { name: 'Why Provision is locked' })
+    // jsdom's default viewport is 1024x768 — this rect models a trigger
+    // sitting almost at the right edge, where an unclamped popover would
+    // extend well past window.innerWidth.
+    vi.spyOn(toggle, 'getBoundingClientRect').mockReturnValue({
+      left: 1000,
+      right: 1020,
+      top: 40,
+      bottom: 60,
+      width: 20,
+      height: 20,
+      x: 1000,
+      y: 40,
+      toJSON: () => {},
+    })
+    fireEvent.click(toggle)
+
+    const note = screen.getByRole('note')
+    const left = Number(note.style.left.replace('px', ''))
+    const POPOVER_WIDTH_PX = 192 // w-48, mirrored from LifecycleStrip.tsx
+    expect(left + POPOVER_WIDTH_PX).toBeLessThanOrEqual(window.innerWidth)
+  })
+})
+
+// --- WCAG contrast helpers -------------------------------------------------
+// src/index.css: --color-bg: #0a0a0b; --color-muted: #9a9aa2. Mirrored here
+// because jsdom does not resolve CSS custom properties or compute actual
+// paint colours — if either token changes, this drifts out of sync and the
+// test below stops meaning what it says, same honest limit as any other
+// hardcoded-token test in this suite.
+const BG: readonly [number, number, number] = [0x0a, 0x0a, 0x0b]
+const MUTED: readonly [number, number, number] = [0x9a, 0x9a, 0xa2]
+
+function srgbToLinear(channel: number): number {
+  const c = channel / 255
+  return c <= 0.03928 ? c / 12.92 : ((c + 0.055) / 1.055) ** 2.4
+}
+
+function relativeLuminance([r, g, b]: readonly [number, number, number]): number {
+  return 0.2126 * srgbToLinear(r) + 0.7152 * srgbToLinear(g) + 0.0722 * srgbToLinear(b)
+}
+
+function wcagContrastRatio(a: readonly [number, number, number], b: readonly [number, number, number]): number {
+  const [hi, lo] = [relativeLuminance(a), relativeLuminance(b)].sort((x, y) => y - x)
+  return (hi + 0.05) / (lo + 0.05)
+}
+
+function compositeOnBg(fg: readonly [number, number, number], alpha: number): [number, number, number] {
+  return [0, 1, 2].map((i) => fg[i] * alpha + BG[i] * (1 - alpha)) as [number, number, number]
+}
+
+/** Tailwind's opacity-N utility, or 1 (fully opaque) if the element carries none. */
+function tailwindOpacity(el: Element): number {
+  const m = el.className.match(/\bopacity-(\d+)\b/)
+  return m ? Number(m[1]) / 100 : 1
+}
+
+/**
+ * The combined alpha a nested run of text actually renders at is the
+ * product of every ancestor-inclusive opacity between it and `root` — walks
+ * up from `leaf` and stops at (and includes) `root`, so it only accounts
+ * for opacity within the subtree under test, not anything above it in the
+ * page.
+ */
+function effectiveContrastRatio(root: Element, leaf: Element): number {
+  let alpha = 1
+  let node: Element | null = leaf
+  while (node) {
+    alpha *= tailwindOpacity(node)
+    if (node === root) break
+    node = node.parentElement
+  }
+  return wcagContrastRatio(compositeOnBg(MUTED, alpha), BG)
+}
 
 describe('a job in flight overrides every non-locked chip\'s text to "Waiting", not just its colour', () => {
   it('shows "Waiting" text on every non-locked chip and ONE shared reason note for the row', () => {
@@ -306,15 +420,22 @@ describe('Control/Operate is structurally NOT a sixth item of the orchestration 
 })
 
 // ---------------------------------------------------------------------------
-// FIX ROUND (WP-3 spec B gate, P3-6): a job-in-flight chip can still be the
-// selected one, and before this fix nothing but its fill colour said so —
-// every non-locked chip's text collapses to the identical "· Waiting" during
-// a job, so a screen-reader/colour-blind operator had no way to tell the
-// chip they're actually on apart from a merely-suppressed sibling.
+// FIX ROUND (WP-3 spec B gate, P3-6; corrected P3 round 3): a job-in-flight
+// chip can still be the selected one, and before this fix nothing but its
+// fill colour said so — every non-locked chip's text collapses to the
+// identical "· Waiting" during a job, so a screen-reader/colour-blind
+// operator had no way to tell the chip they're actually on apart from a
+// merely-suppressed sibling. The first attempt exposed this via
+// aria-pressed on the chip's inert <div> — invalid per WAI-ARIA 1.2
+// (aria-pressed is defined only for role="button"), so a user agent is not
+// required to expose it, and the tests below only ever proved the attribute
+// was present in markup, not that it was an exposed accessibility property.
+// Corrected to a visually-hidden "Selected" text node — reachable text,
+// not a state attribute with no widget role to attach to.
 // ---------------------------------------------------------------------------
 
 describe('a job-in-flight chip that is also the SELECTED one still carries that in the accessibility tree', () => {
-  it('exposes aria-pressed on the selected chip during a job, and omits it on an unselected sibling', () => {
+  it('exposes reachable "Selected" text on the selected chip during a job, and omits it on an unselected sibling', () => {
     const steps: Record<FlowStepId, FlowStepState> = {
       design: 'complete',
       plan: 'complete',
@@ -329,16 +450,18 @@ describe('a job-in-flight chip that is also the SELECTED one still carries that 
     // rest of this suite's "job in flight -> nothing is reachable" pins
     // rely on that absence).
     expect(provision.closest('li')?.querySelector('[role="button"]')).toBeNull()
-    expect(provision.getAttribute('aria-pressed')).toBe('true')
+    // Not aria-pressed — that state has no valid role to attach to on a
+    // non-button, so a user agent could legitimately ignore it.
+    expect(provision.getAttribute('aria-pressed')).toBeNull()
+    expect(within(provision).getByText('Selected')).toBeTruthy()
 
-    // Design is complete, not selected, also inert during the job — it
-    // gets the explicit false, same as the interactive button variant
-    // already sets for every unselected chip, not an absent attribute.
+    // Design is complete, not selected, also inert during the job — no
+    // "Selected" text renders for it.
     const design = chip('Design')
-    expect(design.getAttribute('aria-pressed')).toBe('false')
+    expect(within(design).queryByText('Selected')).toBeNull()
   })
 
-  it('never sets aria-pressed on a locked chip — it is never the selected one', () => {
+  it('never renders "Selected" text on a locked chip outside a job — it is never the selected one', () => {
     const steps: Record<FlowStepId, FlowStepState> = {
       design: 'complete',
       plan: 'complete',
@@ -347,7 +470,9 @@ describe('a job-in-flight chip that is also the SELECTED one still carries that 
       finalise: 'locked',
     }
     renderRail({ steps, activeChip: 'design', current: null, jobInFlight: false })
-    expect(chip('Provision').getAttribute('aria-pressed')).toBeNull()
+    const provision = chip('Provision')
+    expect(within(provision).queryByText('Selected')).toBeNull()
+    expect(provision.getAttribute('aria-pressed')).toBeNull()
   })
 })
 

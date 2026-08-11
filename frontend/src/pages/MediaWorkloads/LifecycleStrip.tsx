@@ -61,16 +61,21 @@ import { FLOW_STEPS, type FlowStepId, type FlowStepState } from '../../lib/workl
  *
  * SELECTION AND POSITION ARE TWO DIFFERENT FACTS, deliberately never
  * conflated onto one signal. On the five orchestration chips: `aria-pressed`
- * marks SELECTED (mounted below, on the interactive `<button>` variant, and
- * — fix round P3-6 — on a job-in-flight chip's own inert div too, since busy
- * is not the same fact as locked and a busy chip CAN still be the selected
- * one; that div deliberately carries no role="button", both because it
- * genuinely isn't one and because this suite's own "job in flight -> no
- * button reachable" tests rely on that absence); `aria-current="step"` marks the
- * backend-derived POSITION, and the same-line Position marker (icon + text,
- * described above) restates it visibly. On the Operate LINK specifically
- * (fix round P3-6): it carries no aria-pressed at all — a nav Link isn't a
- * toggle — so its own `aria-current` is repurposed to carry SELECTION
+ * marks SELECTED on the interactive `<button>` variant (mounted below). A
+ * job-in-flight chip is not a button (busy is not the same fact as locked,
+ * and a busy chip CAN still be the selected one) — round P3-6 first tried
+ * putting `aria-pressed` on that chip's own inert `<div>` too, but WAI-ARIA
+ * 1.2 only defines `aria-pressed` for `role="button"` and its descendants,
+ * so a user agent is not required to expose it there; corrected (P3 round
+ * 3) to a visually-hidden "Selected" text node instead, reachable text
+ * rather than a state attribute with nothing to attach it to. That div still
+ * deliberately carries no role="button", both because it genuinely isn't
+ * one and because this suite's own "job in flight -> no button reachable"
+ * tests rely on that absence. `aria-current="step"` marks the backend-derived
+ * POSITION, and the same-line Position marker (icon + text, described
+ * above) restates it visibly. On the Operate LINK specifically (fix round
+ * P3-6): it carries no aria-pressed at all — a nav Link isn't a toggle — so
+ * its own `aria-current` is repurposed to carry SELECTION
  * (`activeChip === 'operate'`) instead of position, matching the inverted
  * fill it renders on exactly that condition; POSITION there is still the
  * separate, unconditional "Position" badge, never aria-current. A workload
@@ -173,7 +178,19 @@ function PositionGlyph() {
  * the trigger button's own real bounding box, portaled to `document.body` —
  * outside the rail's DOM subtree entirely, so the scrolling ancestor's
  * overflow has nothing of this popover left to clip.
+ *
+ * FIX ROUND (P3 round 3, P2-4): escaping the clipping ancestor fixed WHERE
+ * the popover could render, not WHETHER it stayed on screen once there —
+ * `left: rect.left` with no clamp put most of its fixed 192px (w-48) width
+ * past the right edge for any chip near it, same failure shape as P1a's
+ * panel before that one got a containing-block fix. Closing on scroll/resize
+ * only handles the popover moving OUT of place after it opens; it does
+ * nothing for a bad INITIAL placement. Clamped against the real viewport
+ * width at measurement time instead.
  */
+const LOCKED_REASON_POPOVER_WIDTH_PX = 192 // w-48
+const LOCKED_REASON_POPOVER_MARGIN_PX = 8
+
 function LockedReasonToggle({ label, reason }: { label: string; reason: string }) {
   const [open, setOpen] = useState(false)
   const buttonRef = useRef<HTMLButtonElement>(null)
@@ -185,7 +202,11 @@ function LockedReasonToggle({ label, reason }: { label: string; reason: string }
       return
     }
     const rect = buttonRef.current?.getBoundingClientRect()
-    if (rect) setCoords({ top: rect.bottom + 4, left: rect.left })
+    if (rect) {
+      const maxLeft = window.innerWidth - LOCKED_REASON_POPOVER_WIDTH_PX - LOCKED_REASON_POPOVER_MARGIN_PX
+      const left = Math.max(LOCKED_REASON_POPOVER_MARGIN_PX, Math.min(rect.left, maxLeft))
+      setCoords({ top: rect.bottom + 4, left })
+    }
 
     // The rail scrolls horizontally under this button (Topbar.tsx's
     // overflow-x-auto wrapper) — a scroll moves the button without moving
@@ -270,17 +291,21 @@ export default function LifecycleStrip({
           const isSelected = id === activeChip
           const interactive = !jobInFlight && !locked
 
-          // FIX ROUND (WP-3 spec B gate, P2-5): the locked chip's own
-          // opacity-70 used to sit on top of the SAME opacity-70 the inner
-          // state-word span below already carries — two multipliers
-          // compounding on the label AND the state word, well under the
-          // 4.5:1 AA floor for text (measured: 7.08:1 muted-on-bg -> ~3.96:1
-          // from this chip's own opacity alone, ~2.50:1 once the inner
-          // span's opacity stacks on top). Locked chips read at the SAME
-          // muted-text contrast every other inactive chip already does now
-          // — the dashed border + lock glyph + "Locked" state word are the
-          // designed cue (Art. 11: colour/opacity is never the only
-          // signal), not a further-dimmed copy of it.
+          // FIX ROUND (WP-3 spec B gate, P2-5, then P3 round 3): the locked
+          // chip's own opacity-70 used to sit on top of the inner
+          // state-word span's own opacity-70 — two multipliers compounding
+          // to ~2.50:1. Round 2 removed the CHIP-level one, leaving the
+          // state word alone at its own single opacity-70 — which composites
+          // muted-on-bg's 7.08:1 down to ~3.95:1 on its own, still under the
+          // 4.5:1 AA floor for text. That was found and mis-cleared: a test
+          // asserted only the chip-level class was gone and its own comment
+          // claimed the state word's opacity "was never the compounding
+          // half", true of round 2's specific defect but not a real AA
+          // pass — the state word's own single multiplier was never checked
+          // against the floor at all. The state word below now carries no
+          // opacity class either; every chip, locked or not, reads its text
+          // at plain muted-on-bg. The dashed border + lock glyph + "Locked"
+          // state word remain the designed non-colour cue (Art. 11).
           const chipClass = [
             'flex items-center gap-1.5 whitespace-nowrap rounded-lg border px-2.5 py-1.5 transition-shadow',
             isSelected ? 'bg-text text-bg' : 'text-muted',
@@ -295,7 +320,7 @@ export default function LifecycleStrip({
               </svg>
               <span className="text-xs font-semibold">
                 {STEP_LABEL[id]}
-                <span className="ml-1 font-normal opacity-70">
+                <span className="ml-1 font-normal">
                   · {jobInFlight ? 'Waiting' : STATE_TEXT[state]}
                 </span>
               </span>
@@ -329,29 +354,37 @@ export default function LifecycleStrip({
                   className={chipClass}
                   aria-label={STEP_LABEL[id]}
                   aria-current={isPosition ? 'step' : undefined}
-                  // FIX ROUND (WP-3 spec B gate, P3-6): a job-in-flight chip
-                  // can still be the SELECTED one (the operator is looking
-                  // at Provision when Provision's own job starts), and
-                  // nothing besides the fill colour said so before this —
-                  // every non-locked chip's text collapses to the identical
-                  // "· Waiting" during a job, so a colour-blind or
-                  // screen-reader operator had no way to tell the chip
-                  // they're actually on apart from a merely-suppressed
-                  // sibling (Art. 11: colour is never the only signal).
-                  // aria-pressed WITHOUT role="button" is deliberate, not an
-                  // oversight: this branch only exists because
-                  // `interactive = !jobInFlight && !locked`, and every
-                  // OTHER test in this suite that proves a job-in-flight
-                  // chip is inert does so by asserting no button role is
-                  // reachable here (queryByRole('button', ...) === null) —
-                  // adding role="button" would satisfy this fix while
-                  // quietly breaking that much wider invariant. A locked
-                  // step is never selected (isStepOpenable excludes it, and
-                  // the sibling "locked chip is inert" test above pins
-                  // exactly that), so this never fires for the locked case.
-                  aria-pressed={jobInFlight ? isSelected : undefined}
                 >
                   {inner}
+                  {/* FIX ROUND (WP-3 spec B gate, P3-6; corrected P3 round
+                      3): a job-in-flight chip can still be the SELECTED one
+                      (the operator is looking at Provision when Provision's
+                      own job starts), and nothing besides the fill colour
+                      said so before this — every non-locked chip's text
+                      collapses to the identical "· Waiting" during a job, so
+                      a colour-blind or screen-reader operator had no way to
+                      tell the chip they're actually on apart from a
+                      merely-suppressed sibling (Art. 11: colour is never the
+                      only signal). The first fix put aria-pressed on this
+                      div — WAI-ARIA 1.2 defines aria-pressed only for
+                      role="button" (and its button-like descendants), so a
+                      user agent is not required to expose it here at all;
+                      the test that "proved" it only checked DOM spelling,
+                      not an exposed accessibility property. Reachable text
+                      is the actual fix — a visually-hidden "Selected" node,
+                      same pattern as any other sr-only label in this
+                      codebase, with no role/state attribute riding on an
+                      element that was never a widget. Still deliberately NO
+                      role="button": this branch only exists because
+                      `interactive = !jobInFlight && !locked`, and every
+                      OTHER test in this suite that proves a job-in-flight
+                      chip is inert does so by asserting no button role is
+                      reachable here (queryByRole('button', ...) === null) —
+                      adding role="button" would break that much wider
+                      invariant for the same reason it would have before. A
+                      locked step is never selected (isStepOpenable excludes
+                      it), so this never fires for the locked case. */}
+                  {jobInFlight && isSelected && <span className="sr-only">Selected</span>}
                 </div>
               )}
               {locked && <LockedReasonToggle label={STEP_LABEL[id]} reason={lockedReasons[id]} />}
