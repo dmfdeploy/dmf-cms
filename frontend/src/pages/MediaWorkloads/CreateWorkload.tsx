@@ -364,7 +364,7 @@ export default function CreateWorkload() {
 
   return (
     <div className="flex-1 overflow-y-auto p-6">
-      <div className="flex items-center justify-between gap-3">
+      <div className="flex flex-wrap items-start justify-between gap-x-3 gap-y-1">
         <p className="text-sm text-muted">
           Studio identity, template, and facility placement for a workload that does not exist
           yet — Provision is what creates it.
@@ -375,7 +375,10 @@ export default function CreateWorkload() {
             unconfirmed elsewhere on this page. Always reachable, not just
             from Identity, so an operator who changed their mind on Plan or
             Provision doesn't have to step backward through every step to
-            abandon the draft. */}
+            abandon the draft. flex-wrap (not nowrap) so this drops to its
+            own line under the paragraph on narrow viewports instead of
+            crowding it — a real ~480px regression caught by screenshot
+            verification, not a hypothetical. */}
         <button type="button" className="shrink-0 text-sm text-muted hover:text-text hover:underline" onClick={handleStartOver}>
           Start over
         </button>
