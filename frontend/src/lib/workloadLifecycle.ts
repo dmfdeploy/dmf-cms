@@ -365,14 +365,26 @@ export function classifyWorkloadLifecycle(
  *
  * Job-state flags (`launching`/`switching`/`tearingDown`) are the one
  * legitimately route-specific input — Operate runs no jobs of its own and
- * always passes none. `membersDataTrustworthy`/`purgeAuthorized` are taken
- * PRE-COMPUTED, not as raw query objects — isGroupedReadTrustworthy/
- * isPurgeAuthorized below are the shared formulas both routes call, so the
- * two callers can never compute those facts differently either, while each
- * still owns threading its own query results through (WorkloadDetail
- * already computed membersDataTrustworthy once in its outer component and
- * threads it down — this preserves that shape rather than forcing every
- * caller through a wider raw-query parameter).
+ * always passes none.
+ *
+ * FIX ROUND (P3 round 3, P3-5): `membersDataTrustworthy`/`purgeAuthorized`
+ * used to be taken PRE-COMPUTED, as plain booleans the caller was trusted
+ * to have run through isGroupedReadTrustworthy/isPurgeAuthorized below
+ * before handing them in — a docstring claim, not a type-level one: the
+ * `facts` parameter's shape was `{ membersDataTrustworthy: boolean;
+ * purgeAuthorized: boolean }`, which a third call site (or a careless edit
+ * to either existing one) could satisfy with any hand-rolled boolean
+ * formula and still typecheck, reopening exactly the drift this
+ * constructor exists to prevent. This constructor now takes the RAW read
+ * snapshots (`groupedRead`/`userRead`, the same shapes
+ * isGroupedReadTrustworthy/isPurgeAuthorized already accept) and calls both
+ * formulas itself — there is no boolean-shaped seam left for a caller to
+ * substitute a different computation through. Each caller still owns
+ * getting its own query results here: WorkloadDetail's outer component
+ * still computes nothing itself, it just threads its grouped read's raw
+ * fields down as a prop rather than a pre-reduced boolean (see that
+ * component's own prop docstring for why the read lives one component up
+ * from where `input` is built).
  */
 export function buildWorkloadLifecycleInput(
   workload: {
@@ -384,8 +396,8 @@ export function buildWorkloadLifecycleInput(
     launching?: boolean
     switching?: boolean
     tearingDown?: boolean
-    membersDataTrustworthy: boolean
-    purgeAuthorized: boolean
+    groupedRead: { isError: boolean; isFetching: boolean; configured?: boolean; degraded?: boolean }
+    userRead: { isFetching: boolean; isError: boolean; role?: ConsoleRole | null }
   },
 ): WorkloadLifecycleInput {
   return {
@@ -399,8 +411,8 @@ export function buildWorkloadLifecycleInput(
     allMembersBootstrapped:
       workload.instances.length > 0 && workload.instances.every((i) => i.requested_state === 'bootstrapped'),
     anyMemberObservedRunning: workload.instances.some((i) => i.observed_state === 'running'),
-    membersDataTrustworthy: facts.membersDataTrustworthy,
-    purgeAuthorized: facts.purgeAuthorized,
+    membersDataTrustworthy: isGroupedReadTrustworthy(facts.groupedRead),
+    purgeAuthorized: isPurgeAuthorized(facts.userRead),
     isPurgeableEntity: workload.slug !== 'unassigned',
   }
 }
@@ -410,9 +422,12 @@ export function buildWorkloadLifecycleInput(
  * affordance gating only when it is fresh, error-free, AND complete — the
  * grouped endpoint can return HTTP 200 with `degraded: true` (members
  * EXCLUDED from the payload), so success-and-not-fetching alone is not
- * enough. The ONE formula both WorkloadDetail and Operate call now, so a
- * caller cannot compute this differently by forgetting one of the four
- * conditions the way Operate's own copy previously omitted the whole thing.
+ * enough. The formula buildWorkloadLifecycleInput (above) calls internally
+ * from a caller's raw `groupedRead` — a route never calls this directly to
+ * produce a boolean it hands buildWorkloadLifecycleInput itself (P3-5: that
+ * seam was the actual gap the "ONE formula" claim previously overstated).
+ * Exported for its own direct tests and for any future caller that
+ * genuinely needs the formula outside a WorkloadLifecycleInput.
  */
 export function isGroupedReadTrustworthy(read: {
   isError: boolean
@@ -427,8 +442,10 @@ export function isGroupedReadTrustworthy(read: {
  * umbrella #378b: fail-closed on IDENTITY FRESHNESS, not just the role
  * value — TanStack Query retains the PREVIOUS /api/me payload while a
  * refetch is in flight and after one fails, so `data?.role` alone cannot
- * prove the role is CURRENT. The ONE formula every purge-gating caller
- * calls now.
+ * prove the role is CURRENT. Same P3-5 note as isGroupedReadTrustworthy
+ * above: called from a caller's raw `userRead` inside
+ * buildWorkloadLifecycleInput, not invoked at each call site to produce a
+ * boolean handed in separately.
  */
 export function isPurgeAuthorized(read: { isFetching: boolean; isError: boolean; role?: ConsoleRole | null }): boolean {
   return !read.isFetching && !read.isError && roleAtLeast(read.role, 'operator')

@@ -137,30 +137,52 @@ export default function ProvisionStage({
     : []
   const computedPromotedKey = eligibleDeployEntries.length === 1 ? eligibleDeployEntries[0].key : null
 
-  // FIX ROUND P1b: LATCH the promoted identity through its own arm ->
-  // confirm -> pending -> settle lifecycle. `busy` intentionally goes true
-  // the instant Confirm fires (onJobStart, synchronously, in the same event)
-  // — that's what correctly withdraws every OTHER entry's offer — but it
-  // also zeroed `eligibleDeployEntries` for the very same render, which
-  // dropped the promoted entry back to inline mid-flight: the operator saw
-  // "Launching…" jump out of the header and into the page body the instant
-  // they clicked Confirm. Written directly during render, not an effect —
-  // an effect lands one render after `busy` flips true, which is exactly
-  // the gap that let the panel flash into the body before latching.
+  // FIX ROUND P1b, extended P3 round 3 (P2-3, two independent reviewers,
+  // same lines): LATCH the promoted identity through its own arm -> confirm
+  // -> pending -> SETTLE lifecycle, not just through pending. `busy`
+  // intentionally goes true the instant Confirm fires (onJobStart,
+  // synchronously, in the same event) — that's what correctly withdraws
+  // every OTHER entry's offer — but it also zeroed `eligibleDeployEntries`
+  // for the very same render, which dropped the promoted entry back to
+  // inline mid-flight: the operator saw "Launching…" jump out of the header
+  // and into the page body the instant they clicked Confirm. Written
+  // directly during render, not an effect — an effect lands one render
+  // after `busy` flips true, which is exactly the gap that let the panel
+  // flash into the body before latching.
+  //
+  // P1b only covered the PENDING half of that lifecycle: the fallback was
+  // keyed to `deployMutation.isPending` alone. On REJECTION, isPending flips
+  // false in THIS stage's own render before the PARENT (WorkloadDetail) has
+  // re-derived its `actions` prop to include 'deploy' again — that only
+  // happens once this component's own passive onBusyChange effect below
+  // fires and the parent re-renders, one commit later. In the render
+  // between those two things, `allowed` (from the still-stale `actions`
+  // prop) is false, `busy` (from THIS component's own already-settled
+  // state) is now also false, and the P1b-only latch condition
+  // (isPending) is false too — so `promotedEntryKey` computed to null for
+  // exactly that one committed render, and the still-armed, now-erroring
+  // ReasonConfirm panel fell back to the page body before snapping back a
+  // tick later once the parent caught up. A flicker on the exact failure
+  // path spec B calls the signature case.
   //
   // `lastEligibleKeyRef` remembers the last entry that was cleanly eligible
   // (nothing busy) — i.e. the identity as of the moment BEFORE arming.
-  // `promotedEntryKey` falls back to that latch ONLY while the busy state is
-  // this SAME entry's own deploy mutation — a different entry's or
-  // clear-for-deployment's write firing must still correctly withdraw
-  // promotion (busy for an unrelated reason is not "this entry's own
-  // pending window").
+  // `promotedEntryKey` falls back to that latch while the deploy mutation
+  // CURRENTLY TRACKED is this SAME entry's own AND has not yet reached a
+  // resting state the operator has dismissed — pending OR a settled error
+  // still on screen. A different entry's or clear-for-deployment's write
+  // firing must still correctly withdraw promotion (busy for an unrelated
+  // reason is not "this entry's own unsettled attempt"), which is why this
+  // still checks `deployMutation.variables?.key === latchedKey` before
+  // trusting `isPending`/`isError` at all.
   const lastEligibleKeyRef = useRef<string | null>(null)
   if (computedPromotedKey !== null) lastEligibleKeyRef.current = computedPromotedKey
   const latchedKey = lastEligibleKeyRef.current
-  const latchedEntryOwnDeployPending =
-    latchedKey !== null && deployMutation.isPending && deployMutation.variables?.key === latchedKey
-  const promotedEntryKey = computedPromotedKey ?? (latchedEntryOwnDeployPending ? latchedKey : null)
+  const latchedEntryOwnAttemptUnsettled =
+    latchedKey !== null &&
+    deployMutation.variables?.key === latchedKey &&
+    (deployMutation.isPending || deployMutation.isError)
+  const promotedEntryKey = computedPromotedKey ?? (latchedEntryOwnAttemptUnsettled ? latchedKey : null)
 
   // GATE-S1 P1: clear-for-deployment is a PROVISION-time action and now flows
   // through the rail like every other write. It used to render on Finalise
@@ -240,6 +262,22 @@ export default function ProvisionStage({
               isDeploying={deployMutation.isPending && deployMutation.variables?.key === entry.key}
               deployError={deployMutation.variables?.key === entry.key ? deployMutation.error : null}
               onDeploy={(reason, ws) => handleDeploy(entry, reason, ws)}
+              // FIX ROUND (P2-3): explicit Cancel out of a FAILED attempt
+              // must not leave `latchedEntryOwnAttemptUnsettled` true
+              // forever — deployMutation.isError otherwise persists until
+              // some entry's NEXT mutate() call overwrites it, which could
+              // be a long time (or never) if the operator just walks away.
+              // Scoped to `deployMutation.variables?.key === entry.key` so
+              // cancelling THIS entry's panel can never reset a DIFFERENT
+              // entry's still-pending mutation out from under it — reset()
+              // clears the hook's displayed status, not the in-flight
+              // network call, so doing that to someone else's write would
+              // make an active deploy look like it never started.
+              onDismissError={() => {
+                if (deployMutation.variables?.key === entry.key && !deployMutation.isPending) {
+                  deployMutation.reset()
+                }
+              }}
               onOpLaunched={(jobId) => setTrack((prev) => ({ ...prev, [entry.key]: { jobId, opId: null } }))}
               onOpError={() => setTrack((prev) => ({ ...prev, [entry.key]: EMPTY_TRACK }))}
               onJobComplete={() => handleJobComplete(entry.key)}
@@ -294,6 +332,7 @@ function ProvisionEntry({
   isDeploying,
   deployError,
   onDeploy,
+  onDismissError,
   onOpLaunched,
   onOpError,
   onJobComplete,
@@ -313,6 +352,10 @@ function ProvisionEntry({
   isDeploying: boolean
   deployError: unknown
   onDeploy: (reason: string, workloadSlug: string) => Promise<void>
+  /** FIX ROUND (P2-3): called on Cancel, so an explicitly-dismissed error
+   *  doesn't keep the promotion latch (see ProvisionStage's
+   *  latchedEntryOwnAttemptUnsettled) unsettled indefinitely. */
+  onDismissError: () => void
   onOpLaunched: (jobId: number) => void
   onOpError: () => void
   onJobComplete: () => void
@@ -419,7 +462,10 @@ function ProvisionEntry({
                   }
                 })()
               }}
-              onCancel={() => setArming(false)}
+              onCancel={() => {
+                setArming(false)
+                onDismissError()
+              }}
               extraField={{
                 label: 'Workload (optional)',
                 placeholder: 'e.g. studio-a',

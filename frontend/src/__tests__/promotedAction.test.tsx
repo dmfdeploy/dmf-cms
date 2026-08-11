@@ -12,11 +12,15 @@
  * is what actually proves the promoted path.
  */
 import { afterEach, describe, expect, it, vi } from 'vitest'
+import { useState } from 'react'
 import { act, cleanup, fireEvent, render, screen, waitFor, within } from '@testing-library/react'
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query'
 import { MemoryRouter } from 'react-router-dom'
 import App from '../App'
+import ProvisionStage from '../pages/MediaWorkloads/stages/ProvisionStage'
+import { useSetHeaderActionSlotNode } from '../store/headerActionSlot'
 import { useTopbarMessageStore } from '../store/topbarMessage'
+import type { StageActionId } from '../lib/workloadLifecycle'
 import type { CatalogEntry, MediaWorkload, MediaWorkloadsGroupedResponse, UserIdentity } from '../api/types'
 
 function identity(overrides: Partial<UserIdentity> = {}): UserIdentity {
@@ -279,5 +283,85 @@ describe('FIX ROUND P1a: the armed panel is anchored to stay inside the viewport
     // (collapsed to ~0 width) instead of the row's.
     const mountSpan = panel.parentElement as HTMLElement
     expect(mountSpan.className).not.toContain('relative')
+  })
+})
+
+// ---------------------------------------------------------------------------
+// FIX ROUND (P3 round 3, P2-3 — two independent reviewers, same lines): the
+// P1b latch above only covers the PENDING window. On REJECTION,
+// deployMutation.isPending flips false in ProvisionStage's own render
+// before WorkloadDetail (the parent) has re-derived its `actions` prop to
+// include 'deploy' again — that only happens once ProvisionStage's own
+// passive onBusyChange effect fires and the parent re-renders, one commit
+// later. In the render between those two things, the P1b-only latch
+// (keyed to isPending alone) has already released, so the still-armed,
+// now-erroring panel falls back to the page body for exactly that one
+// committed render before snapping back once the parent catches up.
+//
+// Racing a real WorkloadDetail for that one-commit window would mean
+// racing `waitFor`'s poll against a transient frame it could step right
+// over — not a reliable regression guard. This drives ProvisionStage
+// directly instead, with a controlled `actions` prop whose `onBusyChange`
+// deliberately never feeds back into it: the parent's busy-clear simply
+// never arrives. That turns the one-commit race into a PERSISTENT,
+// deterministic condition — if the fix still depends on the parent
+// catching up, this never recovers, no timing required.
+// ---------------------------------------------------------------------------
+
+function ActionSlotProbe() {
+  const setNode = useSetHeaderActionSlotNode()
+  return <span data-testid="action-slot" ref={setNode} />
+}
+
+function ProvisionStageHarness({ workload }: { workload: MediaWorkload }) {
+  const [actions, setActions] = useState<StageActionId[]>(['deploy'])
+  return (
+    <ProvisionStage
+      workload={workload}
+      state="available"
+      actions={actions}
+      // Deliberately a no-op — see the block comment above. A real
+      // WorkloadDetail eventually calls back with `false` and recomputes
+      // `actions` to include 'deploy' again; this harness models that
+      // catch-up NEVER happening.
+      onBusyChange={() => {}}
+      onJobStart={() => setActions((prev) => prev.filter((a) => a !== 'deploy'))}
+    />
+  )
+}
+
+describe('FIX ROUND P2-3: the promoted panel stays in the header through a settled rejection, not just the pending window', () => {
+  it('does not fall back to the page body once the deploy mutation settles to an error, even while the parent still withholds \'deploy\' from actions', async () => {
+    stubFetch([catalogEntry()], () => json({ error: 'reason-required' }, 400))
+    const queryClient = new QueryClient({ defaultOptions: { queries: { retry: false } } })
+    render(
+      <QueryClientProvider client={queryClient}>
+        <MemoryRouter>
+          <ProvisionStageHarness workload={workload(['crosspoint'])} />
+          <ActionSlotProbe />
+        </MemoryRouter>
+      </QueryClientProvider>,
+    )
+
+    const slot = screen.getByTestId('action-slot')
+    fireEvent.click(await within(slot).findByRole('button', { name: /Deploy/ }))
+    const reasonBox = await within(slot).findByPlaceholderText(/Reason \(required/)
+    fireEvent.change(reasonBox, { target: { value: 'scheduled' } })
+    fireEvent.click(within(slot).getByRole('button', { name: 'Confirm deploy' }))
+
+    // The rejection settles — deployMutation.isPending goes false — while
+    // `actions` (this harness's stand-in for the parent) never adds
+    // 'deploy' back. The P1b-only latch, keyed to isPending alone, has
+    // nothing left to hold onto at this point; the fix must still hold the
+    // panel here.
+    expect(await within(slot).findByText(/nothing was changed/)).toBeTruthy()
+    expect(within(slot).getByRole('button', { name: 'Confirm deploy' })).toBeTruthy()
+
+    // And not ALSO duplicated inline in the body — the panel has exactly
+    // one home at a time (this harness renders ProvisionStage directly, not
+    // through the wizard's FlowStep wrapper, so there is no separate
+    // step-card element to scope into — a document-wide count is the
+    // right check here).
+    expect(screen.getAllByPlaceholderText(/Reason \(required/)).toHaveLength(1)
   })
 })

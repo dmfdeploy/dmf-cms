@@ -276,12 +276,24 @@ export default function Topbar() {
 
       {/* Header slot, row 2 (Arc 4 WP-2): workload-detail routes only, a
           single non-wrapping row that scrolls horizontally at narrow
-          widths rather than wrapping to a third line. WP-3 registers a rail
-          MODEL and a primary-action DESCRIPTOR here from WorkloadDetail —
-          this file is the only place that turns either into pixels, via
-          the same LifecycleStrip component the page used to render inline.
-          Reshaping that component's own layout to fit a single row is
-          WP-3's job, not this one's.
+          widths rather than wrapping to a third line. WorkloadDetail/Operate
+          register a rail MODEL here (store/headerSlot.ts) — this file is
+          the only place that turns it into pixels, via the same
+          LifecycleStrip component the page used to render inline. Reshaping
+          that component's own layout to fit a single row is WP-3's job, not
+          this one's.
+
+          FIX ROUND (P3 round 3, P3-6): the promoted primary action is NOT a
+          second thing this file turns into pixels — this paragraph used to
+          say WP-3 "registers a primary-action DESCRIPTOR here" alongside the
+          rail model, describing an architecture that was deleted in the
+          fix-round P2-1 gate (see store/headerSlot.ts's own docstring on
+          why). What actually ships is a portal: the mount span just below
+          publishes a DOM node (store/headerActionSlot.ts), and the owning
+          stage (ProvisionStage.tsx) builds and keeps its own button/
+          ReasonConfirm pixels, then relocates them into that node itself.
+          Topbar never receives a descriptor to render for the action, only
+          a place for someone else's already-built pixels to land.
 
           WP-3 spec B: the scrolling moved from THIS row down onto the rail
           alone (min-w-0 flex-1 overflow-x-auto on the wrapper below), and
