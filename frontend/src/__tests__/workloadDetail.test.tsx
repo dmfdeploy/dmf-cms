@@ -520,9 +520,16 @@ describe('the flow is five steps under a six-stage vocabulary', () => {
     expect(screen.getByRole('link', { name: 'open the monitoring view' })).toBeTruthy()
     expect(screen.queryByText(/could not place this workload/)).toBeNull()
 
-    // Operate is the Control vertical (operator ruling 2026-08-02), not a
-    // lifecycle stage — the panel copy must say so, not the overturned claim.
-    expect(panel.textContent).toContain('Control vertical')
+    // Operate isn't a step in this flow, not a lifecycle stage — the panel
+    // copy must say so, not the overturned "is a lifecycle stage" claim.
+    // Arc 4 WP-3 taxonomy sweep (umbrella #347): the EBU "Control vertical"
+    // naming this used to carry is expert-tier vocabulary that must not
+    // reach the operator at default level (Art. 3) — this default-level
+    // banner has no System details disclosure to hide it behind, so the
+    // fix is dropping the ontology name from the copy entirely, not
+    // relocating it.
+    expect(panel.textContent).not.toContain('vertical')
+    expect(panel.textContent).not.toContain('EBU')
     expect(panel.textContent).not.toContain('is a lifecycle stage')
   })
 })
