@@ -14,6 +14,7 @@ import { cleanup, fireEvent, render, screen, waitFor, within } from '@testing-li
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query'
 import { Link, MemoryRouter, Route, Routes } from 'react-router-dom'
 import WorkloadDetail from '../pages/MediaWorkloads/WorkloadDetail'
+import HeaderSlotProbe from './testUtils/HeaderSlotProbe'
 import type {
   CatalogEntry,
   MediaWorkload,
@@ -114,6 +115,7 @@ function renderAt(initialSlug: string) {
         <Routes>
           <Route path="/media-workloads/:slug" element={<WorkloadDetail />} />
         </Routes>
+        <HeaderSlotProbe />
       </MemoryRouter>
     </QueryClientProvider>,
   )
@@ -170,7 +172,7 @@ describe('a job in flight on one workload does not lock navigation on another (o
     // MOUNT + PENDING: arm and confirm a deploy on A; hold its backend call
     // open so the job stays "in flight" for as long as A's instance exists.
     const provisionA = screen.getByRole('heading', { name: 'Provision', level: 2 }).closest('[data-step-state]') as HTMLElement
-    fireEvent.click(within(provisionA).getByRole('button', { name: /Deploy/ }))
+    fireEvent.click(await within(provisionA).findByRole('button', { name: /Deploy/ }))
     fireEvent.change(within(provisionA).getAllByRole('textbox')[0], { target: { value: 'go' } })
     fireEvent.click(within(provisionA).getByRole('button', { name: /Confirm deploy/ }))
     await waitFor(() => expect(h.deployCalls).toHaveLength(1))
@@ -294,6 +296,7 @@ describe('hash-focus consumption does not bleed from one workload to the next', 
           <Routes>
             <Route path="/media-workloads/:slug" element={<WorkloadDetail />} />
           </Routes>
+          <HeaderSlotProbe />
         </MemoryRouter>
       </QueryClientProvider>,
     )

@@ -21,6 +21,7 @@ import { cleanup, fireEvent, render, screen, waitFor, within } from '@testing-li
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query'
 import { MemoryRouter, Route, Routes } from 'react-router-dom'
 import WorkloadDetail from '../pages/MediaWorkloads/WorkloadDetail'
+import HeaderSlotProbe from './testUtils/HeaderSlotProbe'
 import { useActivityStore } from '../store/activity'
 import type { MediaWorkload, MediaWorkloadsGroupedResponse, UserIdentity } from '../api/types'
 
@@ -54,6 +55,7 @@ function renderDetail() {
         <Routes>
           <Route path="/media-workloads/:slug" element={<WorkloadDetail />} />
         </Routes>
+        <HeaderSlotProbe />
       </MemoryRouter>
     </QueryClientProvider>,
   )
@@ -142,7 +144,7 @@ describe('Finalise & Review: delete permanently drives to a real completion', ()
     renderDetail()
     await screen.findByRole('navigation', { name: 'Media workload lifecycle' })
 
-    fireEvent.click(within(rail()).getByRole('button', { name: 'Finalise & Review' }))
+    fireEvent.click(await waitFor(() => within(rail()).getByRole('button', { name: 'Finalise & Review' })))
     const finalise = stageSection('Finalise & Review')
 
     fireEvent.click(await within(finalise).findByRole('button', { name: '🗑 Delete permanently' }))
@@ -208,7 +210,7 @@ describe('Finalise & Review: delete permanently drives to a real completion', ()
 
     renderDetail()
     await screen.findByRole('navigation', { name: 'Media workload lifecycle' })
-    fireEvent.click(within(rail()).getByRole('button', { name: 'Finalise & Review' }))
+    fireEvent.click(await waitFor(() => within(rail()).getByRole('button', { name: 'Finalise & Review' })))
     const finalise = stageSection('Finalise & Review')
 
     fireEvent.click(await within(finalise).findByRole('button', { name: '🗑 Delete permanently' }))
@@ -292,7 +294,7 @@ describe('Finalise & Review: delete permanently drives to a real completion', ()
 
     const queryClient = renderDetail()
     await screen.findByRole('navigation', { name: 'Media workload lifecycle' })
-    fireEvent.click(within(rail()).getByRole('button', { name: 'Finalise & Review' }))
+    fireEvent.click(await waitFor(() => within(rail()).getByRole('button', { name: 'Finalise & Review' })))
     const finalise = stageSection('Finalise & Review')
     await within(finalise).findByRole('button', { name: '🗑 Delete permanently' })
 

@@ -21,6 +21,7 @@ import { cleanup, fireEvent, render, screen, waitFor, within } from '@testing-li
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query'
 import { MemoryRouter, Route, Routes } from 'react-router-dom'
 import WorkloadDetail from '../pages/MediaWorkloads/WorkloadDetail'
+import HeaderSlotProbe from './testUtils/HeaderSlotProbe'
 import type { CatalogEntry, MediaWorkload, MediaWorkloadsGroupedResponse } from '../api/types'
 
 function catalogEntry(overrides: Partial<CatalogEntry> = {}): CatalogEntry {
@@ -55,6 +56,7 @@ function renderDetail() {
         <Routes>
           <Route path="/media-workloads/:slug" element={<WorkloadDetail />} />
         </Routes>
+        <HeaderSlotProbe />
       </MemoryRouter>
     </QueryClientProvider>,
   )
@@ -124,7 +126,7 @@ describe('Provision: a departed catalog entry does not wedge busy forever', () =
     await screen.findByRole('navigation', { name: 'Media workload lifecycle' })
 
     const provision = stageSection('Provision')
-    const deployButtons = within(provision).getAllByRole('button', { name: /Deploy/ })
+    const deployButtons = await within(provision).findAllByRole('button', { name: /Deploy/ })
     fireEvent.click(deployButtons[0]) // crosspoint is first (declared first in catalog)
     fireEvent.change(within(provision).getAllByRole('textbox')[0], { target: { value: 'go' } })
     fireEvent.click(within(provision).getByRole('button', { name: /Confirm deploy/ }))
@@ -206,7 +208,7 @@ describe('Finalise & Review: a departed catalog entry does not wedge busy foreve
     // lifecycle=operate is off-flow — Finalise & Review is the default
     // wizard selection already.
     const finalise = stageSection('Finalise & Review')
-    const teardownButtons = within(finalise).getAllByRole('button', { name: /Teardown/ })
+    const teardownButtons = await within(finalise).findAllByRole('button', { name: /Teardown/ })
     fireEvent.click(teardownButtons[0]) // crosspoint first
     fireEvent.change(within(finalise).getAllByRole('textbox')[0], { target: { value: 'go' } })
     fireEvent.click(within(finalise).getByRole('button', { name: /Confirm teardown/ }))

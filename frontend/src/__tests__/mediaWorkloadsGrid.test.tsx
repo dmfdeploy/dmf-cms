@@ -15,6 +15,7 @@ import { MemoryRouter, Route, Routes } from 'react-router-dom'
 import MediaWorkloads from '../pages/MediaWorkloads'
 import WorkloadDetail from '../pages/MediaWorkloads/WorkloadDetail'
 import WorkloadOperate from '../pages/MediaWorkloads/Operate'
+import HeaderSlotProbe from './testUtils/HeaderSlotProbe'
 import {
   LIVE_TILE_CAP,
   MODAL_STATUS_POLL_MS,
@@ -217,6 +218,7 @@ function renderPage() {
         <Routes>
           <Route path="/media-workloads/:slug" element={<WorkloadDetail />} />
         </Routes>
+        <HeaderSlotProbe />
       </MemoryRouter>
     </QueryClientProvider>,
   )
@@ -235,6 +237,7 @@ function renderOperatePage(slug = 'test') {
         <Routes>
           <Route path="/media-workloads/:slug/operate" element={<WorkloadOperate />} />
         </Routes>
+        <HeaderSlotProbe />
       </MemoryRouter>
     </QueryClientProvider>,
   )

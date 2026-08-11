@@ -26,6 +26,7 @@ import { cleanup, fireEvent, render, screen, within } from '@testing-library/rea
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query'
 import { MemoryRouter, Route, Routes } from 'react-router-dom'
 import WorkloadDetail from '../pages/MediaWorkloads/WorkloadDetail'
+import HeaderSlotProbe from './testUtils/HeaderSlotProbe'
 import type { MediaWorkload, MediaWorkloadsGroupedResponse } from '../api/types'
 
 vi.mock('../pages/MediaWorkloads/stages/ConfigureStage', () => ({
@@ -79,6 +80,7 @@ function renderDetail() {
         <Routes>
           <Route path="/media-workloads/:slug" element={<WorkloadDetail />} />
         </Routes>
+        <HeaderSlotProbe />
       </MemoryRouter>
     </QueryClientProvider>,
   )

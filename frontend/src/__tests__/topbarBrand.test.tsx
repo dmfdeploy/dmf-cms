@@ -1,7 +1,7 @@
 /**
- * Five Arc 4 WP-2 contracts (umbrella dmfdeploy/dmfdeploy#347) that live in
- * Topbar.tsx/store/headerSlot.ts but aren't covered by nav.test.tsx or
- * topbarMessage.test.tsx:
+ * Six Arc 4 WP-2/WP-3 contracts (umbrella dmfdeploy/dmfdeploy#347) that
+ * live in Topbar.tsx/store/headerSlot.ts but aren't covered by
+ * nav.test.tsx or topbarMessage.test.tsx:
  *
  * 1. Exactly one accessible brand name at a time — the wordmark (Workspace
  *    only) and the logo glyph never both carry the "dmfdeploy" name.
@@ -18,11 +18,16 @@
  *    @ts-expect-error-pinned, and the reason renders as visible text, not
  *    a hover-only title.
  * 5. classifyWorkloadForHeaderSlot takes the workload's raw
- *    WorkloadLifecycleInput, not a FlowState (fix round 4 — round 3's
- *    factory took FlowState directly, so a hand-built FlowState could
- *    still reach a branded model without ever calling classifyWorkloadFlow;
- *    the brand pinned the ceremony, not the provenance). Every fixture in
- *    this file now builds its rail through the real classifier.
+ *    WorkloadLifecycleInput, not a FlowState (fix round 4).
+ * 6. Classification is a two-phase call — classifyWorkloadForHeaderSlot
+ *    (input -> ClassifiedFlow) then buildHeaderSlotRail (ClassifiedFlow +
+ *    extras -> HeaderSlotRailModel) — split for WP-3 (a caller needs the
+ *    classifier's own steps/current/offFlow to compute its selection
+ *    before it can build a rail), and buildHeaderSlotRail's first
+ *    argument is exactly as unforgeable as round 4's single-call
+ *    factory was: a plain FlowState-shaped object does not typecheck
+ *    there either. Every fixture in this file builds its rail through
+ *    both real calls.
  */
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import { cleanup, render, screen, within } from '@testing-library/react'
@@ -34,6 +39,8 @@ import * as headerSlotModule from '../store/headerSlot'
 import {
   useRegisterHeaderSlot,
   classifyWorkloadForHeaderSlot,
+  buildHeaderSlotRail,
+  type ClassifiedFlow,
   type HeaderSlotContent,
   type HeaderSlotRailModel,
   type HeaderSlotPrimaryAction,
@@ -85,21 +92,18 @@ const NOOP_EXTRAS = {
   onSelect: () => {},
 }
 
-/** Builds a rail model the only sanctioned way — through
- *  classifyWorkloadForHeaderSlot, fed a real WorkloadLifecycleInput, never
- *  as a hand-built object literal (see the unforgeability describe block
- *  below for what happens when a test tries that anyway). */
-function railModel(overrides: { activeStep?: FlowStepId; lifecycle?: WorkloadLifecycle } = {}): HeaderSlotRailModel {
-  const { rail } = classifyWorkloadForHeaderSlot(
-    { lifecycle: overrides.lifecycle ?? 'provision' },
-    { activeStep: overrides.activeStep ?? 'design', ...NOOP_EXTRAS },
-  )
-  return rail
+/** Builds a rail model the only sanctioned way — classifyWorkloadForHeaderSlot
+ *  then buildHeaderSlotRail, fed a real WorkloadLifecycleInput, never a
+ *  hand-built object literal (see the unforgeability describe block below
+ *  for what happens when a test tries that anyway). */
+function railModel(overrides: { activeChip?: FlowStepId | 'operate'; lifecycle?: WorkloadLifecycle } = {}): HeaderSlotRailModel {
+  const flow = classifyWorkloadForHeaderSlot({ lifecycle: overrides.lifecycle ?? 'provision' })
+  return buildHeaderSlotRail(flow, { activeChip: overrides.activeChip ?? 'design', ...NOOP_EXTRAS })
 }
 
 /** The only sanctioned way to register slot content — mirrors how a real
- *  caller (WP-3's WorkloadDetail) uses the hook, rather than reaching into
- *  store internals. */
+ *  caller (WorkloadDetail/Operate) uses the hook, rather than reaching
+ *  into store internals. */
 function SlotRegistrar({ content }: { content: HeaderSlotContent | null }) {
   useRegisterHeaderSlot(content)
   return null
@@ -151,19 +155,24 @@ describe('the header slot module surface enforces its guarantees, not just claim
   it('does not export a raw store setter or the store hook itself', () => {
     // A caller with only these exports cannot register a rail computed any
     // way other than through classifyWorkloadForHeaderSlot +
-    // useRegisterHeaderSlot — there is no setHeaderSlot / useHeaderSlotStore
-    // to reach around it.
+    // buildHeaderSlotRail + useRegisterHeaderSlot — there is no
+    // setHeaderSlot / useHeaderSlotStore to reach around it.
     expect('useHeaderSlotStore' in headerSlotModule).toBe(false)
     expect('setHeaderSlot' in headerSlotModule).toBe(false)
     const exported = Object.keys(headerSlotModule).sort()
-    expect(exported).toEqual(['classifyWorkloadForHeaderSlot', 'useHeaderSlotContent', 'useRegisterHeaderSlot'])
+    expect(exported).toEqual([
+      'buildHeaderSlotRail',
+      'classifyWorkloadForHeaderSlot',
+      'useHeaderSlotContent',
+      'useRegisterHeaderSlot',
+    ])
   })
 })
 
-describe('the rail model is unforgeable — only classifyWorkloadForHeaderSlot can produce one', () => {
+describe('the rail model is unforgeable — only buildHeaderSlotRail can produce one', () => {
   it('a hand-built object matching every PUBLIC field does not typecheck as HeaderSlotRailModel', () => {
     // @ts-expect-error — HeaderSlotRailModel carries a module-private brand
-    // that only classifyWorkloadForHeaderSlot can attach. This object is
+    // that only buildHeaderSlotRail can attach. This object is
     // structurally complete for every public field, yet must still fail to
     // typecheck; if this stops erroring, the brand has regressed to a
     // plain structural interface. Enforced by `npm run build`'s tsc pass —
@@ -171,7 +180,7 @@ describe('the rail model is unforgeable — only classifyWorkloadForHeaderSlot c
     // not by vitest, which strips types without checking them.
     const forged: HeaderSlotRailModel = {
       steps: OPEN_STEPS,
-      activeStep: 'design',
+      activeChip: 'design',
       current: null,
       offFlow: false,
       lockedReasons: NO_LOCKED_REASONS,
@@ -179,32 +188,29 @@ describe('the rail model is unforgeable — only classifyWorkloadForHeaderSlot c
       jobInFlight: false,
       onSelect: () => {},
     }
-    expect(forged.activeStep).toBe('design')
+    expect(forged.activeChip).toBe('design')
   })
 
-  it('a FlowState-shaped object does not typecheck as the classifier input — only a real WorkloadLifecycleInput does', () => {
-    // classifyWorkloadForHeaderSlot's first parameter is
-    // WorkloadLifecycleInput (lifecycle, launching, ...), not FlowState
-    // (steps, current, offFlow, ...) — the classifier's own OUTPUT shape.
-    // Round 3's factory took FlowState directly, so a caller could
-    // hand-build one and skip classifyWorkloadFlow entirely; this closes
-    // that gap by making the classifier's real input the only thing that
-    // typechecks here, not data shaped like what it returns. Declared
-    // separately (rather than inline) so the @ts-expect-error below sits
-    // on the single line that actually carries the error — TypeScript
-    // anchors a multi-line object literal's excess-property diagnostic to
-    // the specific property line, not the call's opening line.
+  it('a hand-built object matching FlowState does not typecheck as ClassifiedFlow — buildHeaderSlotRail\'s own input is just as unforgeable as the single-call factory round 4 pinned', () => {
+    // classifyWorkloadForHeaderSlot is the only function that can produce a
+    // ClassifiedFlow; buildHeaderSlotRail accepts ONLY that branded type,
+    // not a plain FlowState. Splitting classification into two calls for
+    // WP-3 does not reopen round 4's gap: a hand-built FlowState still
+    // cannot reach a rail model, it just fails one call earlier now.
     const flowShaped: FlowState = { current: 'configure', offFlow: false, undetermined: false, steps: OPEN_STEPS }
-    // @ts-expect-error — see above: flowShaped is FlowState, not WorkloadLifecycleInput.
-    const { rail } = classifyWorkloadForHeaderSlot(flowShaped, { activeStep: 'configure', ...NOOP_EXTRAS })
+    // @ts-expect-error — flowShaped is FlowState, not ClassifiedFlow.
+    const rail = buildHeaderSlotRail(flowShaped, { activeChip: 'configure', ...NOOP_EXTRAS })
     expect(rail).toBeTruthy()
   })
 
   it('classifies via the real classifyWorkloadFlow — matches its own direct output for the same input', () => {
     const input: WorkloadLifecycleInput = { lifecycle: 'configure' }
     const direct = classifyWorkloadFlow(input)
-    const { flow, rail } = classifyWorkloadForHeaderSlot(input, { activeStep: 'configure', ...NOOP_EXTRAS })
-    expect(flow).toEqual(direct)
+    const flow: ClassifiedFlow = classifyWorkloadForHeaderSlot(input)
+    const rail = buildHeaderSlotRail(flow, { activeChip: 'configure', ...NOOP_EXTRAS })
+    expect(flow.steps).toEqual(direct.steps)
+    expect(flow.current).toBe(direct.current)
+    expect(flow.offFlow).toBe(direct.offFlow)
     expect(rail.steps).toEqual(direct.steps)
     expect(rail.current).toBe(direct.current)
     expect(rail.offFlow).toBe(direct.offFlow)
@@ -251,7 +257,7 @@ describe('the rail is rendered from the registered MODEL, not an injected node',
   it('renders the real LifecycleStrip chips from rail data, and the primary action from its descriptor', () => {
     renderTopbarAt('/media-workloads/studio-a', {
       slug: 'studio-a',
-      rail: railModel({ activeStep: 'configure', lifecycle: 'configure' }),
+      rail: railModel({ activeChip: 'configure', lifecycle: 'configure' }),
       primaryAction: { label: 'Deploy', onClick: () => {} },
     })
     const row = screen.getByTestId('header-slot-row')
