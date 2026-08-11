@@ -25,6 +25,7 @@ import { MemoryRouter, Route, Routes } from 'react-router-dom'
 import CreateWorkload from '../pages/MediaWorkloads/CreateWorkload'
 import WorkloadDetail from '../pages/MediaWorkloads/WorkloadDetail'
 import { readLaunchState } from '../pages/MediaWorkloads/WorkloadMaterializing'
+import HeaderSlotProbe from './testUtils/HeaderSlotProbe'
 import type { CatalogEntry, MediaWorkload } from '../api/types'
 
 // ---- fixtures ---------------------------------------------------------
@@ -172,6 +173,7 @@ function renderCreate() {
           <Route path="/media-workloads/new" element={<CreateWorkload />} />
           <Route path="/media-workloads/:slug" element={<WorkloadDetail />} />
         </Routes>
+        <HeaderSlotProbe />
       </MemoryRouter>
     </QueryClientProvider>,
   )
