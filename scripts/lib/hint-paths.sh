@@ -7,8 +7,9 @@
 # passed while the real assignments were broken. A copy of the logic proves
 # nothing about the logic.
 #
-# Contract: define CMS_HINT and ENV_HINT, both shell-quoted for copy-paste, and
-# NEVER fail. These feed a cosmetic hint printed after the real work; under
+# Contract: define CMS_HINT and ENV_HINT and NEVER fail. A RESOLVED path is
+# shell-quoted so it stays runnable when the checkout contains spaces; the
+# dmf-env fallback is deliberately an honest placeholder, not a runnable path. These feed a cosmetic hint printed after the real work; under
 # `set -u` an unset variable here aborted an already-successful build and, in
 # release.sh, a release that had already synced, committed, tagged and built.
 #
