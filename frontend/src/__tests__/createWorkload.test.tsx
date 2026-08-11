@@ -202,6 +202,36 @@ afterEach(() => {
   vi.unstubAllGlobals()
 })
 
+// ---- taxonomy stays out of default level -------------------------------
+
+describe('EBU taxonomy on the draft template picker', () => {
+  it('keeps layer/vertical/function-type/lifecycle-owner behind a closed System details disclosure', async () => {
+    // Arc 4 WP-3 (umbrella #347): same contract as the real workload's
+    // Design step (workloadDetail.test.tsx) — see that test's own comment
+    // for what a jsdom-based test can and cannot prove about a closed
+    // <details>'s accessibility. This pins the draft's own TemplatePicker,
+    // which renders the identical disclosure independently.
+    mkFetch({
+      catalog: [
+        catalogEntry({
+          ebu_layer: 5,
+          ebu_vertical: 'orchestration',
+          ebu_media_function_type: 'crosspoint',
+          ebu_lifecycle_owner: 'platform',
+        }),
+      ],
+    })
+    renderCreate()
+    await screen.findByText('MXL Viewer (3-pod)')
+
+    const disclosure = screen.getByText('System details').closest('details') as HTMLDetailsElement
+    expect(disclosure, 'System details must be a native <details> disclosure').toBeTruthy()
+    expect(disclosure.open, 'closed by default').toBe(false)
+    expect(within(disclosure).getByText(/EBU layer 5/)).toBeTruthy()
+    expect(screen.getByText('System details').tagName).toBe('SUMMARY')
+  })
+})
+
 // ---- the gate: only-then progression -----------------------------------
 
 describe('the draft gate', () => {
