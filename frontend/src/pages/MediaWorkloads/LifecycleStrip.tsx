@@ -1,36 +1,69 @@
+import { useState } from 'react'
 import { Link } from 'react-router-dom'
 import { FLOW_STEPS, type FlowStepId, type FlowStepState } from '../../lib/workloadFlow'
-import { STAGE_FILL, CONTROL_FILL } from '../../lib/stagePalette'
 
 /**
- * The wizard rail (umbrella #347 WO-D1, operator direction 2026-08-02:
- * "the EBU-colored rail as the prominent navigation spine"). Replaces the
- * S1/Arc-B vocabulary strip's role: instead of a read-only chip row plus a
- * separate numbered-step list below it, the five orchestration chips ARE the
- * wizard's step selector — clicking one selects it, exactly one is mounted
- * below (FlowStep.tsx).
+ * The wizard rail (umbrella #347 WO-D1, operator direction 2026-08-02).
+ * Instead of a read-only chip row plus a separate numbered-step list below
+ * it, the five orchestration chips ARE the wizard's step selector —
+ * clicking one selects it, exactly one is mounted below (FlowStep.tsx).
  *
  * Per the operator's 2026-08-02 ruling on the EBU Facility Orchestration
  * Model graphic, Operate is still not a sixth step of the orchestration
  * flow — it sits in the Control vertical, set apart under its own group
  * label and rendered as a real route link, never a wizard step.
  *
- * COLOUR IS STAGE IDENTITY, NEVER STATE. Each of the five chips carries a
- * fixed EBU-mapping colour regardless of open/complete/locked/current — the
- * hard gate is "never colour alone" (Constitution Art. 11), not "no colour
- * ever": state is carried by the icon + text label + (for locked) a dashed
- * border, layered on top of the constant identity fill. The fill values
- * themselves (Arc 4 WP-2) live as tokens in index.css, turned into class
- * names by lib/stagePalette.ts — this file only consumes STAGE_FILL /
- * CONTROL_FILL, it does not own the hex values anymore.
+ * ARC 4 WP-3: LIVES IN THE HEADER SLOT NOW, A SINGLE NON-WRAPPING ROW
+ * (umbrella #347). This is a real information-architecture change, not a
+ * recolour — the previous version stacked a state word, and conditionally
+ * a "Current position" caption, a "Selected" caption, a locked-reason
+ * sentence, or a job-in-flight sentence, underneath every chip. None of
+ * that fits a single line, so:
+ *   - every chip is one line: icon + label + state word, inline;
+ *   - the "Selected" caption is GONE — redundant now that exactly one
+ *     step's content is mounted below (FlowStep.tsx): what's selected is
+ *     self-evident from the page, not from the rail;
+ *   - the workload's actual POSITION still gets a same-line marker
+ *     (PositionGlyph + "Position", appended to whichever chip it is) even
+ *     when a DIFFERENT step is selected — dropping this would lose real
+ *     information in exactly the case it matters (reviewing Design while
+ *     the workload sits at Configure), which the old stacked caption
+ *     always showed regardless of selection;
+ *   - a locked step's reason moves behind a small, keyboard/tap-operable
+ *     disclosure (LockedReasonToggle below) instead of a permanent
+ *     caption — the same "tappable info affordance, not hover-only"
+ *     pattern already used for System details elsewhere in this codebase;
+ *   - job-in-flight state collapses from one repeated sentence under every
+ *     non-locked chip to ONE shared note in the row.
+ *
+ * ARC 4 WP-2/rail-treatment ruling (umbrella #347, operator decision
+ * 2026-08-11, issue #347 comment "Arc 4 — rail treatment ruling"):
+ * COLOUR NOW TRACKS SELECTION, NOT STAGE IDENTITY. The six EBU stage hues
+ * (lib/stagePalette.ts) are retired as chip fills on the demo path — the
+ * Constitution already adopts ISA-101 (§5, Art. 4: grayscale-normal,
+ * colour = abnormal), and six saturated hues on the NORMAL path spent the
+ * whole colour budget for no work the stage names weren't already doing
+ * (measured: stage hues sit within ~1.1:1 of the semantic status colours
+ * in greyscale). This softens the 2026-08-02 "EBU-coloured rail" direction
+ * further than the earlier Arc 4 ruling did — stated here per that
+ * ruling's own requirement, not left to read as drift.
+ *   - inactive chip: muted text, no fill (7.08:1)
+ *   - the SELECTED chip: inverted — dark text on bright neutral `#e8e8ea`
+ *     (16.17:1), i.e. `bg-text text-bg`
+ *   - cyan is NOT used here — it is the action accent, and the promoted
+ *     primary action sits in this same row; cyan meaning both "where you
+ *     are" and "the thing to click" would make the action ambiguous
+ *     exactly where it matters most on camera
+ * The six tokens stay defined in index.css/lib/stagePalette.ts — unused by
+ * this file now, on purpose (reversibility: restoring stage colour is one
+ * class string, not a re-plumb). Do not delete them.
  *
  * SELECTION AND POSITION ARE TWO DIFFERENT FACTS, deliberately never
- * conflated onto one signal. `aria-pressed` + a focus-style outline mark
- * which chip is SELECTED (mounted below); a separate "Current position" text
- * + icon mark which chip is the backend-derived POSITION — the wizard can
- * have the operator reviewing Design while the workload's position is
- * Configure, and the rail has to say both without one overloading the
- * other.
+ * conflated onto one signal — `aria-pressed` marks SELECTED (mounted
+ * below); the Position marker (icon + text, described above) marks the
+ * backend-derived POSITION. A workload can sit at Configure while the
+ * operator reviews Design, and the rail says both without one overloading
+ * the other.
  */
 
 const STEP_LABEL: Record<FlowStepId, string> = {
@@ -96,7 +129,7 @@ function StateGlyph({ state }: { state: FlowStepState }) {
   }
 }
 
-/** The same "current position" glyph used inline, for the caption beneath. */
+/** The same "current position" glyph used inline, next to the Position word. */
 function PositionGlyph() {
   return (
     <svg className="h-3 w-3 shrink-0" viewBox="0 0 24 24" fill="none" aria-hidden="true">
@@ -108,9 +141,41 @@ function PositionGlyph() {
   )
 }
 
+/**
+ * A locked chip's reason, behind a small keyboard/tap-operable toggle — not
+ * a `title=` tooltip (hover-only, fails Art. 11), and not a permanent
+ * caption (does not fit a single-line row). Own local state, since
+ * LifecycleStrip itself has none: each locked chip's disclosure is
+ * independent.
+ */
+function LockedReasonToggle({ label, reason }: { label: string; reason: string }) {
+  const [open, setOpen] = useState(false)
+  return (
+    <span className="relative shrink-0">
+      <button
+        type="button"
+        className="flex h-5 w-5 shrink-0 items-center justify-center rounded-full border border-white/20 text-2xs text-muted"
+        aria-expanded={open}
+        aria-label={`Why ${label} is locked`}
+        onClick={() => setOpen((v) => !v)}
+      >
+        i
+      </button>
+      {open && (
+        <span
+          role="note"
+          className="absolute left-0 top-full z-10 mt-1 block w-48 rounded-lg border border-border bg-panel p-2 text-left text-2xs text-muted shadow-lg"
+        >
+          {reason}
+        </span>
+      )}
+    </span>
+  )
+}
+
 export default function LifecycleStrip({
   steps,
-  activeStep,
+  activeChip,
   current,
   offFlow,
   lockedReasons,
@@ -120,8 +185,9 @@ export default function LifecycleStrip({
   slug,
 }: {
   steps: Record<FlowStepId, FlowStepState>
-  /** The wizard's mounted step — drives the selection outline + aria-pressed. */
-  activeStep: FlowStepId
+  /** Which chip reads as selected — one of the five steps, `'operate'`, or
+   *  none. Drives the inverted fill + `aria-pressed`. */
+  activeChip: FlowStepId | 'operate' | null
   /** The workload's backend-derived position, or null. */
   current: FlowStepId | null
   /** The workload's position is Operate — the Control chip carries it instead. */
@@ -138,38 +204,44 @@ export default function LifecycleStrip({
     : ''
 
   return (
-    <nav aria-label="Media workload lifecycle" className="mt-6 flex flex-wrap items-start gap-x-3 gap-y-3">
-      <ol className="flex flex-wrap items-start gap-x-3 gap-y-3">
+    <nav aria-label="Media workload lifecycle" className="flex flex-nowrap items-center gap-2">
+      <ol className="flex flex-nowrap items-center gap-2">
         {FLOW_STEPS.map((id) => {
           const state = steps[id]
           const locked = state === 'locked'
           const isPosition = id === current
-          const isSelected = id === activeStep
+          const isSelected = id === activeChip
           const interactive = !jobInFlight && !locked
 
           const chipClass = [
-            'flex items-center gap-2 rounded-lg border px-3 py-2 transition-shadow',
-            STAGE_FILL[id],
-            locked ? 'border-dashed border-white/40 opacity-60' : 'border-transparent',
+            'flex items-center gap-1.5 whitespace-nowrap rounded-lg border px-2.5 py-1.5 transition-shadow',
+            isSelected ? 'bg-text text-bg' : 'text-muted',
+            locked ? 'border-dashed border-white/30 opacity-70' : 'border-transparent',
             isSelected ? 'ring-2 ring-white ring-offset-2 ring-offset-bg' : '',
           ].join(' ')
 
           const inner = (
             <>
-              <svg className="h-4 w-4 shrink-0" viewBox="0 0 24 24" fill="none" aria-hidden="true">
+              <svg className="h-3.5 w-3.5 shrink-0" viewBox="0 0 24 24" fill="none" aria-hidden="true">
                 <StateGlyph state={state} />
               </svg>
-              <span className="flex flex-col items-start leading-tight">
-                <span className="text-xs font-semibold">{STEP_LABEL[id]}</span>
-                <span className="text-2xs uppercase tracking-wide opacity-80">
-                  {jobInFlight ? 'Waiting' : STATE_TEXT[state]}
+              <span className="text-xs font-semibold">
+                {STEP_LABEL[id]}
+                <span className="ml-1 font-normal opacity-70">
+                  · {jobInFlight ? 'Waiting' : STATE_TEXT[state]}
                 </span>
               </span>
+              {isPosition && (
+                <span className="ml-0.5 flex items-center gap-0.5 opacity-80">
+                  <PositionGlyph />
+                  <span className="text-2xs">Position</span>
+                </span>
+              )}
             </>
           )
 
           return (
-            <li key={id} className="flex flex-col items-center gap-1">
+            <li key={id} className="flex shrink-0 items-center gap-1">
               {interactive ? (
                 <button
                   type="button"
@@ -193,76 +265,49 @@ export default function LifecycleStrip({
                   {inner}
                 </div>
               )}
-              {isPosition && (
-                <span className="flex items-center gap-1 text-2xs text-muted">
-                  <PositionGlyph />
-                  Current position
-                </span>
-              )}
-              {/* GATE-D1 acceptance note 8: rendered unconditionally, not just
-                  inside the interactive branch — aria-pressed lives only on
-                  the <button> variant (a plain <div> has no toggle
-                  semantics to hang it on), so without this TEXT marker the
-                  selected step's own indication would silently vanish the
-                  moment a job in flight demotes every chip to inert
-                  <div>s. Current-position's marker already had this
-                  property; selection needed the same one. */}
-              {isSelected && (
-                <span className="text-2xs text-muted">Selected</span>
-              )}
-              {locked && (
-                <span className="max-w-[9rem] text-center text-2xs text-muted">
-                  {lockedReasons[id]}
-                </span>
-              )}
-              {jobInFlight && !locked && (
-                <span className="max-w-[9rem] text-center text-2xs text-muted">{jobReason}</span>
-              )}
+              {locked && <LockedReasonToggle label={STEP_LABEL[id]} reason={lockedReasons[id]} />}
             </li>
           )
         })}
       </ol>
 
+      {/* Job-in-flight: ONE shared note, not a sentence repeated under every
+          chip — the old per-chip repetition said the identical thing N
+          times. */}
+      {jobInFlight && (
+        <span role="status" className="shrink-0 whitespace-nowrap text-2xs text-muted">
+          {jobReason}
+        </span>
+      )}
+
       {/* GATE-D1 P1.2: Control/Operate is NOT a sixth <li> in the
           orchestration <ol> above — an ordinal list item there would make it
           read as a sixth step of the SAME sequence, exactly the claim spec B
           and the operator's 2026-08-02 ruling rule out. It is a sibling
-          labelled group instead, visually adjacent (the divider is now on
-          this group, not inside the list) but structurally outside the
-          ordered list entirely. */}
-      <div
-        role="group"
-        aria-label="Control"
-        className="flex flex-col items-center gap-1 border-l border-white/10 pl-3"
-      >
+          labelled group instead, visually adjacent but structurally outside
+          the ordered list entirely. */}
+      <div role="group" aria-label="Control" className="flex shrink-0 items-center gap-1.5 border-l border-white/10 pl-2">
         <span className="text-2xs uppercase tracking-wide text-muted">Control</span>
         {!jobInFlight ? (
           <Link
             to={`/media-workloads/${encodeURIComponent(slug)}/operate`}
-            className={`rounded-lg px-3 py-2 text-xs font-semibold ${CONTROL_FILL} ${
-              offFlow ? 'ring-2 ring-white ring-offset-2 ring-offset-bg' : ''
+            className={`whitespace-nowrap rounded-lg px-2.5 py-1.5 text-xs font-semibold ${
+              activeChip === 'operate' ? 'bg-text text-bg ring-2 ring-white ring-offset-2 ring-offset-bg' : 'text-muted'
             }`}
             aria-current={offFlow ? 'step' : undefined}
-            title="Operate sits in the Control vertical — open its surface"
           >
             Operate
           </Link>
         ) : (
-          <div
-            className={`rounded-lg px-3 py-2 text-xs font-semibold ${CONTROL_FILL}`}
-            title="Operate sits in the Control vertical — open its surface"
-          >
+          <div className={`whitespace-nowrap rounded-lg px-2.5 py-1.5 text-xs font-semibold ${activeChip === 'operate' ? 'bg-text text-bg' : 'text-muted'}`}>
             Operate
           </div>
         )}
         {offFlow && (
-          <span className="flex items-center gap-1 text-2xs text-muted">
+          <span className="flex items-center gap-0.5 whitespace-nowrap text-2xs text-muted opacity-80">
             <PositionGlyph />
-            Current position
+            Position
           </span>
-        )}
-        {jobInFlight && (
-          <span className="max-w-[9rem] text-center text-2xs text-muted">{jobReason}</span>
         )}
       </div>
     </nav>

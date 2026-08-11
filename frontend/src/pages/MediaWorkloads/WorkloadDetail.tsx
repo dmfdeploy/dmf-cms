@@ -4,9 +4,9 @@ import { useCatalog, useCurrentUser, useMediaWorkloadsGrouped } from '../../api/
 import { stageActions, type WorkloadLifecycleInput } from '../../lib/workloadLifecycle'
 import { roleAtLeast } from '../../lib/roles'
 import { useTopbarMessageStore } from '../../store/topbarMessage'
+import { classifyWorkloadForHeaderSlot, buildHeaderSlotRail, useRegisterHeaderSlot } from '../../store/headerSlot'
 import {
   FLOW_STEPS,
-  classifyWorkloadFlow,
   isStepOpenable,
   lifecycleBadge,
   type FlowStepId,
@@ -14,7 +14,6 @@ import {
 } from '../../lib/workloadFlow'
 import type { MediaWorkload, SwitchSourceResult } from '../../api/types'
 import FlowStep from './FlowStep'
-import LifecycleStrip from './LifecycleStrip'
 import WorkloadMaterializing, { readLaunchState } from './WorkloadMaterializing'
 import DesignStage from './stages/DesignStage'
 import PlanStage from './stages/PlanStage'
@@ -50,10 +49,17 @@ import FinaliseStage from './stages/FinaliseStage'
  *    place (the same invariant Arc B pinned, now enforced one level up).
  *
  * 2. THE RAIL IS THE SELECTOR. LifecycleStrip.tsx's five orchestration
- *    chips are now the wizard's navigation, coloured by EBU stage identity
- *    (never state) with the selected chip carrying its own outline distinct
- *    from the workload's actual backend-derived position. Operate remains
- *    outside the flow, in the Control group, as a route link.
+ *    chips are the wizard's navigation, with the selected chip carrying its
+ *    own inverted fill distinct from the workload's actual backend-derived
+ *    position (its own same-line marker). Operate remains outside the
+ *    flow, in the Control group, as a route link. Arc 4 WP-3 (umbrella
+ *    #347) moved the rail itself out of this page's render tree into the
+ *    header slot — this page still owns and derives every fact it needs
+ *    (steps/current/offFlow/selection/locked reasons/job state), it just
+ *    registers that into store/headerSlot.ts via useRegisterHeaderSlot
+ *    instead of rendering <LifecycleStrip> inline. Colour is no longer
+ *    EBU stage identity either — see LifecycleStrip.tsx's own docstring
+ *    for the rail-treatment ruling.
  *
  * 3. A JOB OWNS ITS PANEL. Firing a mutation synchronously marks its owning
  *    step AND flips the corresponding busy flag (`startJob`, called from the
@@ -84,7 +90,7 @@ const STEP_LABEL: Record<FlowStepId, string> = {
  * the workload at all, because nothing earlier gates them; their reason says
  * so rather than pretending to a predecessor that did not run.
  */
-const LOCKED_REASON: Record<FlowStepId, string> = {
+export const LOCKED_REASON: Record<FlowStepId, string> = {
   design: 'This step opens once the workload can be read again.',
   plan: 'This step opens once the workload can be read again.',
   provision: 'This step opens once the workload can be read again.',
@@ -315,7 +321,8 @@ function WorkloadWizard({
     // workload, not a separate lookup.
     isPurgeableEntity: workload.slug !== 'unassigned',
   }
-  const { steps, current, offFlow, undetermined } = classifyWorkloadFlow(input)
+  const flow = classifyWorkloadForHeaderSlot(input)
+  const { steps, current, offFlow, undetermined } = flow
   const badge = lifecycleBadge(input)
 
   // A fragment aimed at a step selects+focuses that step on arrival. The
@@ -389,6 +396,25 @@ function WorkloadWizard({
     if (jobInFlight || steps[step] === 'locked') return
     setSelectedStep(step)
   }
+
+  // Arc 4 WP-3: the rail moved out of this page's own render tree into the
+  // header slot (umbrella #347). This is the ONLY place that mints it —
+  // buildHeaderSlotRail's own type makes that true, not just this comment
+  // (store/headerSlot.ts). Registered with the wizard's own selection
+  // (activeChip) so the rail's "selected" chip always agrees with what
+  // FlowStep mounts below; `current`/`offFlow` come straight from `flow`,
+  // the same classifyWorkloadFlow output this page renders everything else
+  // from — no second derivation.
+  useRegisterHeaderSlot({
+    slug: workload.slug,
+    rail: buildHeaderSlotRail(flow, {
+      activeChip: activeStep,
+      lockedReasons: LOCKED_REASON,
+      jobOwnerLabel,
+      jobInFlight,
+      onSelect: selectStep,
+    }),
+  })
 
   // Called synchronously from a stage's own click handler, in the same event
   // that fires its mutation — see the file docstring's point 3. Sets the
@@ -480,17 +506,10 @@ function WorkloadWizard({
         </span>
       </div>
 
-      <LifecycleStrip
-        steps={steps}
-        activeStep={activeStep}
-        current={current}
-        offFlow={offFlow}
-        lockedReasons={LOCKED_REASON}
-        jobOwnerLabel={jobOwnerLabel}
-        jobInFlight={jobInFlight}
-        onSelect={selectStep}
-        slug={workload.slug}
-      />
+      {/* The rail itself now lives in the header slot (Topbar), registered
+          above via useRegisterHeaderSlot — see that call's own comment.
+          This page renders nothing in its place; the header row is present
+          or absent by route, not by anything here. */}
 
       {/* Two different reasons no step is current. The page must not blur
           them into one shrug: one is the console failing to read the
