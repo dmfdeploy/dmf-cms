@@ -2,6 +2,7 @@ import { afterEach, describe, expect, it } from 'vitest'
 import { cleanup, render, screen, within } from '@testing-library/react'
 import { MemoryRouter } from 'react-router-dom'
 import LifecycleStrip from '../pages/MediaWorkloads/LifecycleStrip'
+import { STAGE_FILL, CONTROL_FILL } from '../lib/stagePalette'
 import type { FlowStepId, FlowStepState } from '../lib/workloadFlow'
 
 /**
@@ -201,6 +202,60 @@ describe('backend position and wizard selection are each their own text+icon mar
 
     const operate = screen.getByRole('link', { name: 'Operate' })
     expect(within(operate.parentElement as HTMLElement).getByText('Current position')).toBeTruthy()
+  })
+})
+
+// Arc 1 gate's noted debt (umbrella #347): "lifecycleStrip.test.tsx has no
+// literal EBU color-fill assertion — mutating a fill leaves the suite
+// green; fills verified correct at source by the gate." The Arc 4 WP-2
+// relocation (fills moved from local bg-[#hex] literals to lib/
+// stagePalette.ts + index.css tokens) is exactly the kind of change that
+// noted gap was warning about — a shifted digit in the token file would
+// not show up in a whole-page screenshot diff. This closes the gap at the
+// class-name level: it cannot see the resolved pixel colour (jsdom does no
+// CSS), so it is not a substitute for the browser-level computed-style
+// check, but it does pin each chip to the exact stagePalette entry.
+describe('every stage chip and Operate use their own stagePalette entry, not a sibling\'s', () => {
+  it('assigns STAGE_FILL[id] to each of the five chips', () => {
+    const steps: Record<FlowStepId, FlowStepState> = {
+      design: 'open',
+      plan: 'open',
+      provision: 'open',
+      configure: 'open',
+      finalise: 'open',
+    }
+    renderRail({ steps, activeStep: 'design', current: null })
+
+    const labels: FlowStepId[] = ['design', 'plan', 'provision', 'configure', 'finalise']
+    for (const id of labels) {
+      const el = chip(LabelFor(id))
+      for (const cls of STAGE_FILL[id].split(' ')) {
+        expect(el.className, `${id} missing ${cls}`).toContain(cls)
+      }
+      // No cross-contamination: none of the other four stages' classes leak in.
+      for (const otherId of labels) {
+        if (otherId === id) continue
+        for (const cls of STAGE_FILL[otherId].split(' ')) {
+          expect(el.className, `${id} wrongly carries ${otherId}'s ${cls}`).not.toContain(cls)
+        }
+      }
+    }
+  })
+
+  it('assigns CONTROL_FILL to Operate, distinct from every stage fill', () => {
+    const steps: Record<FlowStepId, FlowStepState> = {
+      design: 'complete',
+      plan: 'complete',
+      provision: 'complete',
+      configure: 'complete',
+      finalise: 'open',
+    }
+    renderRail({ steps, activeStep: 'finalise', current: null, offFlow: true })
+
+    const operate = screen.getByRole('link', { name: 'Operate' })
+    for (const cls of CONTROL_FILL.split(' ')) {
+      expect(operate.className).toContain(cls)
+    }
   })
 })
 
