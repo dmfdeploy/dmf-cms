@@ -114,6 +114,33 @@ describe('locked state carries a lock icon, "Locked" text, and a dashed-border s
     expect(screen.getByText('provision locked reason')).toBeTruthy()
     expect(toggle.getAttribute('aria-expanded')).toBe('true')
   })
+
+  // FIX ROUND (WP-3 spec B gate, P2-5): a locked chip's own opacity used to
+  // stack on top of the inner state-word span's identical opacity — two
+  // multipliers compounding well under the 4.5:1 AA floor for text
+  // (measured: ~3.96:1 from the chip's own opacity alone, ~2.50:1 once the
+  // inner span's stacks on it). jsdom cannot compute an actual contrast
+  // ratio, so this pins the structural fact the fix rests on: a locked
+  // chip's OWN opacity is gone, leaving it at the same muted-text treatment
+  // every inactive chip already uses — the inner state-word span's own
+  // opacity-70 is unchanged (that one was never the compounding half).
+  it('does not dim a locked chip a second time on top of the state word\'s own opacity', () => {
+    const steps: Record<FlowStepId, FlowStepState> = {
+      design: 'complete',
+      plan: 'complete',
+      provision: 'locked',
+      configure: 'locked',
+      finalise: 'locked',
+    }
+    renderRail({ steps, activeChip: 'design', current: null })
+
+    const provision = chip('Provision')
+    expect(provision.className).not.toMatch(/\bopacity-\d+\b/)
+    // The dashed border + lock glyph + "Locked" text stay as the designed,
+    // non-colour cue — this fix removes the SECOND opacity multiplier, not
+    // the chip's other distinguishing treatment.
+    expect(provision.className).toContain('border-dashed')
+  })
 })
 
 describe('a job in flight overrides every non-locked chip\'s text to "Waiting", not just its colour', () => {
@@ -275,5 +302,92 @@ describe('Control/Operate is structurally NOT a sixth item of the orchestration 
     // sixth ordinal item wearing a divider.
     expect(list.contains(operate)).toBe(false)
     expect(operate.closest('[role="group"]')?.getAttribute('aria-label')).toBe('Control')
+  })
+})
+
+// ---------------------------------------------------------------------------
+// FIX ROUND (WP-3 spec B gate, P3-6): a job-in-flight chip can still be the
+// selected one, and before this fix nothing but its fill colour said so —
+// every non-locked chip's text collapses to the identical "· Waiting" during
+// a job, so a screen-reader/colour-blind operator had no way to tell the
+// chip they're actually on apart from a merely-suppressed sibling.
+// ---------------------------------------------------------------------------
+
+describe('a job-in-flight chip that is also the SELECTED one still carries that in the accessibility tree', () => {
+  it('exposes aria-pressed on the selected chip during a job, and omits it on an unselected sibling', () => {
+    const steps: Record<FlowStepId, FlowStepState> = {
+      design: 'complete',
+      plan: 'complete',
+      provision: 'current',
+      configure: 'locked',
+      finalise: 'locked',
+    }
+    renderRail({ steps, activeChip: 'provision', current: 'provision', jobInFlight: true })
+
+    const provision = chip('Provision')
+    // Still inert — this must NOT reintroduce a button role (the whole
+    // rest of this suite's "job in flight -> nothing is reachable" pins
+    // rely on that absence).
+    expect(provision.closest('li')?.querySelector('[role="button"]')).toBeNull()
+    expect(provision.getAttribute('aria-pressed')).toBe('true')
+
+    // Design is complete, not selected, also inert during the job — it
+    // gets the explicit false, same as the interactive button variant
+    // already sets for every unselected chip, not an absent attribute.
+    const design = chip('Design')
+    expect(design.getAttribute('aria-pressed')).toBe('false')
+  })
+
+  it('never sets aria-pressed on a locked chip — it is never the selected one', () => {
+    const steps: Record<FlowStepId, FlowStepState> = {
+      design: 'complete',
+      plan: 'complete',
+      provision: 'locked',
+      configure: 'locked',
+      finalise: 'locked',
+    }
+    renderRail({ steps, activeChip: 'design', current: null, jobInFlight: false })
+    expect(chip('Provision').getAttribute('aria-pressed')).toBeNull()
+  })
+})
+
+describe('the Operate link\'s aria-current tracks SELECTION, not just backend POSITION', () => {
+  it('carries aria-current when Operate is the selected chip, even for a workload not actually at Operate', () => {
+    // offFlow: false — the workload's own position is NOT Operate — but
+    // activeChip: 'operate' — the operator is looking at /operate anyway
+    // (reachable by direct navigation; Operate.tsx always passes
+    // activeChip: 'operate' regardless of position). Before this fix,
+    // aria-current was keyed to offFlow alone, so this exact, reachable
+    // case rendered the inverted "selected" fill with NO aria-current at
+    // all.
+    const steps: Record<FlowStepId, FlowStepState> = {
+      design: 'complete',
+      plan: 'complete',
+      provision: 'current',
+      configure: 'locked',
+      finalise: 'locked',
+    }
+    renderRail({ steps, activeChip: 'operate', current: 'provision', offFlow: false })
+
+    const operate = screen.getByRole('link', { name: 'Operate' })
+    expect(operate.getAttribute('aria-current')).toBe('page')
+    expect(operate.className).toContain('bg-text')
+  })
+
+  it('carries no aria-current when a flow chip, not Operate, is selected — even if the workload IS at Operate', () => {
+    const steps: Record<FlowStepId, FlowStepState> = {
+      design: 'complete',
+      plan: 'complete',
+      provision: 'complete',
+      configure: 'complete',
+      finalise: 'open',
+    }
+    renderRail({ steps, activeChip: 'design', current: null, offFlow: true })
+
+    const operate = screen.getByRole('link', { name: 'Operate' })
+    expect(operate.getAttribute('aria-current')).toBeNull()
+    // The POSITION fact survives independently — the same-line "Position"
+    // badge, unconditional on offFlow, not on aria-current.
+    expect(within(operate.closest('[role="group"]') as HTMLElement).getByText('Position')).toBeTruthy()
   })
 })
