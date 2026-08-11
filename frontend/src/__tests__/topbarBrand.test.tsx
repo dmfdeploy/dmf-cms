@@ -1,22 +1,28 @@
 /**
- * Two Arc 4 WP-2 contracts (umbrella dmfdeploy/dmfdeploy#347) that live in
- * Topbar.tsx but aren't covered by nav.test.tsx or topbarMessage.test.tsx:
+ * Three Arc 4 WP-2 contracts (umbrella dmfdeploy/dmfdeploy#347) that live in
+ * Topbar.tsx/store/headerSlot.ts but aren't covered by nav.test.tsx or
+ * topbarMessage.test.tsx:
  *
  * 1. Exactly one accessible brand name at a time — the wordmark (Workspace
  *    only) and the logo glyph never both carry the "dmfdeploy" name.
  * 2. The header slot is genuinely ROUTE-scoped, not merely
  *    content-presence-gated: registering content while on a non-workload
- *    route (or under a mismatched slug) must never render row 2. WP-2
- *    registers nothing in production, so this drives the store directly —
- *    the same contract WP-3's real registration will rely on.
+ *    route (or under a mismatched slug) must never render row 2.
+ * 3. The module surface enforces "data in, Topbar renders" rather than
+ *    merely claiming it (fix round 2, umbrella #347): no raw store setter
+ *    is reachable from outside store/headerSlot.ts, and the only way to
+ *    register content is useRegisterHeaderSlot with the typed rail MODEL —
+ *    there is no way to hand Topbar a pre-rendered node instead.
  */
 import { afterEach, describe, expect, it, vi } from 'vitest'
-import { act, cleanup, render, screen } from '@testing-library/react'
+import { cleanup, render, screen, within } from '@testing-library/react'
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query'
 import { MemoryRouter } from 'react-router-dom'
 import Topbar from '../components/Topbar'
 import { useAuthStore } from '../store/auth'
-import { useHeaderSlotStore } from '../store/headerSlot'
+import * as headerSlotModule from '../store/headerSlot'
+import { useRegisterHeaderSlot, type HeaderSlotContent, type HeaderSlotRailModel } from '../store/headerSlot'
+import type { FlowStepId, FlowStepState } from '../lib/workloadFlow'
 import type { UserIdentity } from '../api/types'
 
 function identity(overrides: Partial<UserIdentity> = {}): UserIdentity {
@@ -38,7 +44,45 @@ function json(body: unknown, status = 200) {
   return new Response(JSON.stringify(body), { status, headers: { 'Content-Type': 'application/json' } })
 }
 
-function renderTopbarAt(path: string) {
+const OPEN_STEPS: Record<FlowStepId, FlowStepState> = {
+  design: 'open',
+  plan: 'open',
+  provision: 'open',
+  configure: 'open',
+  finalise: 'open',
+}
+
+const NO_LOCKED_REASONS: Record<FlowStepId, string> = {
+  design: '',
+  plan: '',
+  provision: '',
+  configure: '',
+  finalise: '',
+}
+
+function railModel(overrides: Partial<HeaderSlotRailModel> = {}): HeaderSlotRailModel {
+  return {
+    steps: OPEN_STEPS,
+    activeStep: 'design',
+    current: null,
+    offFlow: false,
+    lockedReasons: NO_LOCKED_REASONS,
+    jobOwnerLabel: null,
+    jobInFlight: false,
+    onSelect: () => {},
+    ...overrides,
+  }
+}
+
+/** The only sanctioned way to register slot content — mirrors how a real
+ *  caller (WP-3's WorkloadDetail) uses the hook, rather than reaching into
+ *  store internals. */
+function SlotRegistrar({ content }: { content: HeaderSlotContent | null }) {
+  useRegisterHeaderSlot(content)
+  return null
+}
+
+function renderTopbarAt(path: string, slotContent: HeaderSlotContent | null = null) {
   useAuthStore.getState().setUser(identity())
   vi.stubGlobal('fetch', vi.fn(async () => json({})))
   const queryClient = new QueryClient({ defaultOptions: { queries: { retry: false } } })
@@ -46,17 +90,20 @@ function renderTopbarAt(path: string) {
     <QueryClientProvider client={queryClient}>
       <MemoryRouter initialEntries={[path]}>
         <Topbar />
+        <SlotRegistrar content={slotContent} />
       </MemoryRouter>
     </QueryClientProvider>,
   )
 }
 
 afterEach(() => {
+  // Unmounting SlotRegistrar runs useRegisterHeaderSlot's cleanup, which
+  // clears the store itself — no manual store reset needed (and none is
+  // possible from outside the module; see the module-surface tests below).
   cleanup()
   vi.restoreAllMocks()
   vi.unstubAllGlobals()
   useAuthStore.getState().setUser(null)
-  useHeaderSlotStore.setState({ content: null })
 })
 
 describe('exactly one accessible brand name at a time', () => {
@@ -77,6 +124,18 @@ describe('exactly one accessible brand name at a time', () => {
   })
 })
 
+describe('the header slot module surface enforces its guarantees, not just claims them', () => {
+  it('does not export a raw store setter or the store hook itself', () => {
+    // A caller with only these exports cannot register a rail computed any
+    // way other than through useRegisterHeaderSlot's typed HeaderSlotContent
+    // — there is no setHeaderSlot / useHeaderSlotStore to reach around it.
+    expect('useHeaderSlotStore' in headerSlotModule).toBe(false)
+    expect('setHeaderSlot' in headerSlotModule).toBe(false)
+    const exported = Object.keys(headerSlotModule).sort()
+    expect(exported).toEqual(['useHeaderSlotContent', 'useRegisterHeaderSlot'])
+  })
+})
+
 describe('the header slot is absent on every non-workload-detail route', () => {
   it.each(['/', '/facilities', '/facilities/site-1', '/media-workloads', '/media-workloads/new', '/admin'])(
     'renders no header-slot-row at %s',
@@ -89,40 +148,47 @@ describe('the header slot is absent on every non-workload-detail route', () => {
 
 describe('the header slot is genuinely route-scoped, not just content-presence-gated', () => {
   it('registering content while on a non-workload route never renders it', () => {
-    renderTopbarAt('/')
-    act(() => {
-      useHeaderSlotStore.getState().setHeaderSlot({ slug: 'studio-a', rail: <div>Rail</div> })
-    })
+    renderTopbarAt('/', { slug: 'studio-a', rail: railModel() })
     expect(screen.queryByTestId('header-slot-row')).toBeNull()
   })
 
   it('registering content under a slug that does not match the URL never renders it', () => {
-    renderTopbarAt('/media-workloads/studio-a')
-    act(() => {
-      useHeaderSlotStore.getState().setHeaderSlot({ slug: 'a-different-workload', rail: <div>Rail</div> })
-    })
+    renderTopbarAt('/media-workloads/studio-a', { slug: 'a-different-workload', rail: railModel() })
     expect(screen.queryByTestId('header-slot-row')).toBeNull()
   })
 
-  it('renders the registered rail and primary action on the matching workload-detail route', () => {
-    renderTopbarAt('/media-workloads/studio-a')
-    act(() => {
-      useHeaderSlotStore.getState().setHeaderSlot({
-        slug: 'studio-a',
-        rail: <div data-testid="fake-rail">Rail</div>,
-        primaryAction: <button type="button">Deploy</button>,
-      })
+  it('also renders on the /operate child route for the same slug', () => {
+    renderTopbarAt('/media-workloads/studio-a/operate', { slug: 'studio-a', rail: railModel() })
+    expect(screen.getByTestId('header-slot-row')).toBeTruthy()
+  })
+})
+
+describe('the rail is rendered from the registered MODEL, not an injected node', () => {
+  it('renders the real LifecycleStrip chips from rail data, and the primary action from its descriptor', () => {
+    renderTopbarAt('/media-workloads/studio-a', {
+      slug: 'studio-a',
+      rail: railModel({ activeStep: 'configure', current: 'configure' }),
+      primaryAction: { label: 'Deploy', onClick: () => {} },
     })
     const row = screen.getByTestId('header-slot-row')
-    expect(row.querySelector('[data-testid="fake-rail"]')).toBeTruthy()
-    expect(screen.getByRole('button', { name: 'Deploy' })).toBeTruthy()
+    // The five real orchestration chips + Operate, rendered by Topbar from
+    // the model — a caller never supplied this markup itself.
+    for (const label of ['Design', 'Plan', 'Provision', 'Configure', 'Finalise & Review']) {
+      expect(within(row).getByLabelText(label), `${label} chip missing`).toBeTruthy()
+    }
+    expect(within(row).getByRole('link', { name: 'Operate' })).toBeTruthy()
+    // Topbar owns the button markup — the caller supplied only intent.
+    expect(within(row).getByRole('button', { name: 'Deploy' })).toBeTruthy()
   })
 
-  it('also renders on the /operate child route for the same slug', () => {
-    renderTopbarAt('/media-workloads/studio-a/operate')
-    act(() => {
-      useHeaderSlotStore.getState().setHeaderSlot({ slug: 'studio-a', rail: <div>Rail</div> })
+  it('the primary-action button is disabled with a stated reason when the descriptor says so', () => {
+    renderTopbarAt('/media-workloads/studio-a', {
+      slug: 'studio-a',
+      rail: railModel(),
+      primaryAction: { label: 'Deploy', onClick: () => {}, disabled: true, disabledReason: 'A job is already running.' },
     })
-    expect(screen.getByTestId('header-slot-row')).toBeTruthy()
+    const button = screen.getByRole('button', { name: 'Deploy' })
+    expect(button.hasAttribute('disabled')).toBe(true)
+    expect(button.getAttribute('title')).toBe('A job is already running.')
   })
 })
