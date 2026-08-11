@@ -68,12 +68,15 @@ afterEach(() => {
 })
 
 describe('route migration (IA §9)', () => {
-  it('serves Workspace at /', async () => {
+  it('serves Workspace at / with an empty breadcrumb', async () => {
     renderAt('/')
-    // The retired per-page hero heading is gone (umbrella #347 WO-D1 spec
-    // C) — the topbar breadcrumb is the page-identity surface now.
+    // Arc 4 WP-2 operator ruling (umbrella #347): the seed "Workspace"
+    // crumb is retired entirely — at root the trail renders no crumbs and
+    // no stray separator. Home stays reachable via the sidebar; the
+    // topbar wordmark (asserted in topbarBrand.test.tsx) carries page
+    // identity here instead of the old per-page hero or this crumb.
     const breadcrumb = await screen.findByRole('navigation', { name: 'Breadcrumb' })
-    expect(within(breadcrumb).getByText('Workspace')).toBeTruthy()
+    expect(within(breadcrumb).queryAllByRole('listitem')).toHaveLength(0)
     expect(screen.getByTestId('location').textContent).toBe('/')
   })
 
