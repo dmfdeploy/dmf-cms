@@ -284,6 +284,55 @@ describe('Catalog: a refused teardown stays legible at the point of action', () 
   })
 })
 
+// FIX ROUND (P3-7, sub-claim 2): the describe block above only ever drove
+// Catalog's TEARDOWN control through ReasonConfirm's onConfirm; DEPLOY has
+// its own separate onConfirm closure in EntryCard (workload extraField,
+// different mutation) and was never exercised here, so a regression to the
+// pre-#386 unconditional `onDeploy(...); setArming(null)` shape on the
+// deploy path specifically would have shipped this whole file green.
+describe('Catalog: a refused deploy stays legible at the point of action', () => {
+  function renderCatalog() {
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(async (input: RequestInfo | URL) => {
+        const url = (typeof input === 'string' ? input : (input as Request).url).toString()
+        if (url.endsWith('/api/me')) return json(identity())
+        // Default catalogEntry() lifecycle is 'bootstrapped' with a
+        // configure_awx_job_template set, so Deploy (not Teardown) is the
+        // enabled control here — the deliberate mirror of the teardown
+        // fixture above, which uses lifecycle: 'active' for the same reason.
+        if (url.endsWith('/api/catalog')) return json({ entries: [catalogEntry()] })
+        if (url.endsWith('/deploy')) return refused()
+        return json({})
+      }),
+    )
+    const queryClient = new QueryClient({ defaultOptions: { queries: { retry: false } } })
+    render(
+      <QueryClientProvider client={queryClient}>
+        <MemoryRouter>
+          <Catalog />
+        </MemoryRouter>
+      </QueryClientProvider>,
+    )
+  }
+
+  it('keeps the confirm panel mounted with the error visible after Confirm deploy is refused', async () => {
+    renderCatalog()
+    fireEvent.click(await screen.findByRole('button', { name: /Deploy/ }))
+    fireEvent.change(await screen.findByPlaceholderText(/Reason \(required/), { target: { value: 'scheduled' } })
+    fireEvent.click(screen.getByRole('button', { name: 'Confirm deploy' }))
+
+    // GATE-B P1 Art. 8 copy, not silence.
+    expect(await screen.findByText(/nothing was changed/)).toBeTruthy()
+
+    // Still armed: Confirm deploy and the reason input are both still
+    // reachable, proving `arming` never flipped to null on the rejection —
+    // exactly the #386 shape, now pinned for the deploy path too.
+    expect(screen.getByRole('button', { name: 'Confirm deploy' })).toBeTruthy()
+    expect(screen.getByPlaceholderText(/Reason \(required/)).toBeTruthy()
+  })
+})
+
 // ---------------------------------------------------------------------------
 // Activity — Jobs lane workflow launch
 // ---------------------------------------------------------------------------

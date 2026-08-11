@@ -167,13 +167,27 @@ const useHeaderSlotStore = create<HeaderSlotState>((set) => ({
  * useLayoutEffect, not useEffect: the registering page and the slot's
  * consumer (Topbar) are separate subtrees now — the rail no longer
  * commits in the SAME render pass as the rest of the page the way it did
- * when LifecycleStrip rendered inline. A layout effect's setState cascades
- * synchronously, before the browser (or, in tests, a MutationObserver-based
- * wait) gets a chance to observe an in-between commit that has the page's
- * other content but not yet the rail — a passive effect's cascade is not
- * guaranteed to land in that same synchronous window. This is a purely
- * client-side SPA (no SSR), so useLayoutEffect's client-only nature costs
- * nothing here.
+ * when LifecycleStrip rendered inline. In a real browser, a layout
+ * effect's setState cascades synchronously before paint, so there is no
+ * frame where the page's other content is visible but the rail isn't; a
+ * passive effect's cascade is only guaranteed to land before the NEXT
+ * paint, which leaves a real (if usually brief) in-between frame.
+ *
+ * FIX ROUND (P3-7): that real-browser guarantee is NOT currently pinned by
+ * any test in this suite, and the claim that it was has been made and
+ * shown false twice now — aliasing this import to useEffect leaves
+ * railRouteContract.test.tsx, topbarBrand.test.tsx, workloadDetail.test.tsx
+ * and workloadOperate.test.tsx (74 tests) fully green. That is not a gap in
+ * those tests' coverage of THEIR OWN contracts; it is Testing Library's
+ * act() intentionally flushing passive effects synchronously as part of
+ * settling a render/fireEvent/waitFor, specifically so tests don't have to
+ * care about this distinction — which means jsdom+RTL cannot observe the
+ * one frame this hook exists to prevent, by design of the tool, not by
+ * omission here. No test in this file's own suite claims otherwise as of
+ * this fix. useLayoutEffect stays because it is still the correct choice
+ * for actual browser paint timing (and costs nothing — this is a
+ * purely client-side SPA, no SSR) — kept on that engineering merit alone,
+ * not on any test-enforced guarantee.
  */
 export function useRegisterHeaderSlot(content: HeaderSlotContent | null) {
   const setHeaderSlot = useHeaderSlotStore((s) => s.setHeaderSlot)
