@@ -2,21 +2,37 @@
 <html lang="en" class="dark">
   <head>
     <meta charset="UTF-8" />
-    <link rel="icon" type="image/svg+xml" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><text y='75' font-size='75' font-weight='bold' fill='%237ec8a5'>D</text></svg>" />
+    <link rel="icon" type="image/svg+xml" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><text y='75' font-size='75' font-weight='bold' fill='%237dd3fc'>D</text></svg>" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
     <title>dmfdeploy</title>
     <style>
-      :root {
-        --bg: #0f1720;
-        --panel: #1c2835;
-        --accent: #7ec8a5;
-        --warning: #efc15a;
-        --muted: #9fb0c1;
-        --text: #e7eef7;
+      /* Boot styles only — everything else is owned by src/index.css's @theme.
+         This block exists for the pre-hydration frame: without it the browser
+         paints white before the bundle loads, which on a dark console reads as
+         a flash. It therefore duplicates exactly TWO values and no more.
+
+         KEEP IN SYNC with --color-bg / --color-text in src/index.css. A full
+         palette used to live here (--bg #0f1720, --panel #1c2835, --accent
+         #7ec8a5, ...) long after those values stopped matching the tokens; it
+         was unreferenced by the app and survived only because nothing rendered
+         it visibly — until the ground moved to near-black and 699px of the old
+         navy appeared below the app at 1080p. Do not reintroduce a palette here.
+
+         The height chain is load-bearing, not cosmetic: Shell is `h-full`, which
+         resolves against its parent, so without 100% all the way up from <html>
+         the app collapses to content height and the boot background shows
+         through underneath it. */
+      html,
+      body,
+      #root {
+        height: 100%;
       }
       html {
-        background-color: var(--bg);
-        color: var(--text);
+        background-color: #0a0a0b;
+        color: #e8e8ea;
+      }
+      body {
+        margin: 0;
       }
     </style>
   </head>
