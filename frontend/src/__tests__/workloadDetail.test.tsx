@@ -1285,6 +1285,43 @@ describe('delete-permanently gate: authorization (umbrella dmfdeploy/dmfdeploy#3
     await waitFor(() => expect(queryClient.getQueryState(['user'])?.fetchStatus).toBe('idle'))
     expect(screen.queryByRole('button', { name: '🗑 Delete permanently' })).toBeNull()
   })
+
+  // umbrella #378b fix round 2: the REJECTED fix for the test above was
+  // staleTime: 30_000 on useCurrentUser() — it doesn't remove the duplicate
+  // ['user'] subscriber (FinaliseStage used to call useCurrentUser() itself,
+  // purely for audit fields), it only POSTPONES the mount-triggered refetch
+  // until the cache is older than the staleTime window. That is worse than
+  // no fix: a deterministic bug becomes an intermittent one, and it would
+  // bounce the operator off Finalise & Review on literally every real-world
+  // demo (which takes well over 30s to reach that step). The real fix is
+  // ONE subscriber (WorkloadWizard's own userQuery, threaded down as a
+  // prop) — this test AGES the cache well past any such staleTime window
+  // before the first Finalise navigation specifically so it discriminates
+  // "no duplicate subscriber" from "duplicate subscriber, not stale yet":
+  // without the aging step, a postponed-not-removed bug would pass this
+  // test by coincidence, right up until it demo'd badly on camera.
+  it('never issues a second /api/me read on the FIRST navigation to Finalise, even against a long-aged cache — no bounce to Provision', async () => {
+    const h = mkFetch({
+      workload: purgeEligibleWorkload(),
+      user: { role: 'operator', real_role: 'operator' },
+    })
+    const queryClient = renderDetail()
+    await findRail()
+    await waitFor(() => expect(h.calls.me).toBe(1))
+
+    // Age the cached identity to 2 minutes old — well past the 30s the
+    // rejected fix used.
+    queryClient.setQueryData(['user'], (prev: unknown) => prev, { updatedAt: Date.now() - 120_000 })
+
+    // First-ever navigation to Finalise & Review. Deliberately synchronous
+    // assertions (getByRole, not findByRole/await): a bounce back to
+    // Provision happens within the SAME click's synchronous re-render (as
+    // observed reproducing the rejected fix's failure), so a findBy's own
+    // polling window would let this test pass by accident on a slow retry.
+    const finaliseSection = selectStep('Finalise & Review')
+    expect(within(finaliseSection).getByRole('button', { name: '🗑 Delete permanently' })).toBeTruthy()
+    expect(h.calls.me).toBe(1)
+  })
 })
 
 describe('delete-permanently gate: entity identity (umbrella dmfdeploy/dmfdeploy#378c)', () => {

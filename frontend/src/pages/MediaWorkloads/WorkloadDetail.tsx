@@ -449,6 +449,11 @@ function WorkloadWizard({
         onBusyChange={setTearingDown}
         lastSwitchResult={lastSwitchResult}
         onJobStart={() => startJob('finalise')}
+        // umbrella #378 fix round 2: threaded from the SAME userQuery this
+        // component already reads for purgeAuthorized, rather than
+        // FinaliseStage subscribing to useCurrentUser() itself — see that
+        // prop's own docstring for why a second subscriber is the bug.
+        user={userQuery.data}
       />
     ),
   }

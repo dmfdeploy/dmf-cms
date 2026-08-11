@@ -3,14 +3,13 @@ import { useQueryClient } from '@tanstack/react-query'
 import {
   isOperation,
   useCatalog,
-  useCurrentUser,
   useOperationStatus,
   usePurgeWorkload,
   useTeardownCatalog,
 } from '../../../api/hooks'
 import { useActivityStore } from '../../../store/activity'
 import ReasonConfirm from '../../../components/ReasonConfirm'
-import type { CatalogEntry, MediaWorkload, Operation, SwitchSourceResult } from '../../../api/types'
+import type { CatalogEntry, MediaWorkload, Operation, SwitchSourceResult, UserIdentity } from '../../../api/types'
 import type { StageActionId, StageState } from '../../../lib/workloadLifecycle'
 import StageCard from './StageCard'
 import { JobStatusLine, OperationStatusLine } from './JobProgress'
@@ -65,6 +64,7 @@ export default function FinaliseStage({
   onBusyChange,
   lastSwitchResult,
   onJobStart,
+  user,
 }: {
   workload: MediaWorkload
   state: StageState
@@ -76,9 +76,21 @@ export default function FinaliseStage({
    * — see ConfigureStage's identical note (umbrella #347 WO-D1 spec A).
    */
   onJobStart: () => void
+  /**
+   * Audit identity for the actor/role fields below — umbrella #378 fix
+   * round 2: this used to be this component's OWN useCurrentUser() call,
+   * but that made FinaliseStage a SECOND subscriber to the ['user'] query,
+   * first mounting only when the operator navigates here — which, once
+   * WorkloadWizard started gating the purge affordance on that query's own
+   * isFetching (378b), meant simply arriving at this stage could trigger a
+   * background identity refetch that withdrew the very control the operator
+   * just navigated to use. WorkloadWizard already holds the identical read
+   * for that gate; threaded through here instead of a second subscription,
+   * same discipline as membersDataTrustworthy above it.
+   */
+  user: UserIdentity | undefined
 }) {
   const { data: catalogData, isLoading: catalogLoading } = useCatalog()
-  const { data: user } = useCurrentUser()
   const teardownMutation = useTeardownCatalog()
   const purgeMutation = usePurgeWorkload()
   const recordAwxWrite = useActivityStore((s) => s.recordAwxWrite)

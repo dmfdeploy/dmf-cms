@@ -21,6 +21,7 @@ import { cleanup, fireEvent, render, screen, waitFor, within } from '@testing-li
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query'
 import { MemoryRouter, Route, Routes } from 'react-router-dom'
 import WorkloadDetail from '../pages/MediaWorkloads/WorkloadDetail'
+import { useActivityStore } from '../store/activity'
 import type { MediaWorkload, MediaWorkloadsGroupedResponse, UserIdentity } from '../api/types'
 
 function json(body: unknown, status = 200) {
@@ -152,6 +153,17 @@ describe('Finalise & Review: delete permanently drives to a real completion', ()
     fireEvent.click(within(finalise).getByRole('button', { name: 'Delete permanently' }))
 
     await waitFor(() => expect(purgeCalls).toBe(1))
+
+    // umbrella #378 fix round 2: actor/role for the audit record now come
+    // from a prop threaded down from WorkloadWizard's own userQuery, not
+    // FinaliseStage's own (now-removed) useCurrentUser() subscription —
+    // this is the one thing that move could silently get wrong (an
+    // 'unknown'/'unknown' record instead of the real actor), and the whole
+    // point of these fields is accountability, so it gets its own assertion
+    // rather than riding along implicitly.
+    const purgeRecord = useActivityStore.getState().records.find((r) => r.request_id === 'req-purge-1')
+    expect(purgeRecord?.actor).toBe('ops')
+    expect(purgeRecord?.role).toBe('operator')
 
     // Confirmed-absent provenance renders, sourced from the terminal
     // Operation's own purge_verified_at — never fabricated locally.
