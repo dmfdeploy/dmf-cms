@@ -60,11 +60,22 @@ import { FLOW_STEPS, type FlowStepId, type FlowStepState } from '../../lib/workl
  * class string, not a re-plumb). Do not delete them.
  *
  * SELECTION AND POSITION ARE TWO DIFFERENT FACTS, deliberately never
- * conflated onto one signal — `aria-pressed` marks SELECTED (mounted
- * below); the Position marker (icon + text, described above) marks the
- * backend-derived POSITION. A workload can sit at Configure while the
- * operator reviews Design, and the rail says both without one overloading
- * the other.
+ * conflated onto one signal. On the five orchestration chips: `aria-pressed`
+ * marks SELECTED (mounted below, on the interactive `<button>` variant, and
+ * — fix round P3-6 — on a job-in-flight chip's own inert div too, since busy
+ * is not the same fact as locked and a busy chip CAN still be the selected
+ * one; that div deliberately carries no role="button", both because it
+ * genuinely isn't one and because this suite's own "job in flight -> no
+ * button reachable" tests rely on that absence); `aria-current="step"` marks the
+ * backend-derived POSITION, and the same-line Position marker (icon + text,
+ * described above) restates it visibly. On the Operate LINK specifically
+ * (fix round P3-6): it carries no aria-pressed at all — a nav Link isn't a
+ * toggle — so its own `aria-current` is repurposed to carry SELECTION
+ * (`activeChip === 'operate'`) instead of position, matching the inverted
+ * fill it renders on exactly that condition; POSITION there is still the
+ * separate, unconditional "Position" badge, never aria-current. A workload
+ * can sit at Configure while the operator reviews Design, and the rail says
+ * both without one overloading the other.
  */
 
 const STEP_LABEL: Record<FlowStepId, string> = {
@@ -259,10 +270,21 @@ export default function LifecycleStrip({
           const isSelected = id === activeChip
           const interactive = !jobInFlight && !locked
 
+          // FIX ROUND (WP-3 spec B gate, P2-5): the locked chip's own
+          // opacity-70 used to sit on top of the SAME opacity-70 the inner
+          // state-word span below already carries — two multipliers
+          // compounding on the label AND the state word, well under the
+          // 4.5:1 AA floor for text (measured: 7.08:1 muted-on-bg -> ~3.96:1
+          // from this chip's own opacity alone, ~2.50:1 once the inner
+          // span's opacity stacks on top). Locked chips read at the SAME
+          // muted-text contrast every other inactive chip already does now
+          // — the dashed border + lock glyph + "Locked" state word are the
+          // designed cue (Art. 11: colour/opacity is never the only
+          // signal), not a further-dimmed copy of it.
           const chipClass = [
             'flex items-center gap-1.5 whitespace-nowrap rounded-lg border px-2.5 py-1.5 transition-shadow',
             isSelected ? 'bg-text text-bg' : 'text-muted',
-            locked ? 'border-dashed border-white/30 opacity-70' : 'border-transparent',
+            locked ? 'border-dashed border-white/30' : 'border-transparent',
             isSelected ? 'ring-2 ring-white ring-offset-2 ring-offset-bg' : '',
           ].join(' ')
 
@@ -307,6 +329,27 @@ export default function LifecycleStrip({
                   className={chipClass}
                   aria-label={STEP_LABEL[id]}
                   aria-current={isPosition ? 'step' : undefined}
+                  // FIX ROUND (WP-3 spec B gate, P3-6): a job-in-flight chip
+                  // can still be the SELECTED one (the operator is looking
+                  // at Provision when Provision's own job starts), and
+                  // nothing besides the fill colour said so before this —
+                  // every non-locked chip's text collapses to the identical
+                  // "· Waiting" during a job, so a colour-blind or
+                  // screen-reader operator had no way to tell the chip
+                  // they're actually on apart from a merely-suppressed
+                  // sibling (Art. 11: colour is never the only signal).
+                  // aria-pressed WITHOUT role="button" is deliberate, not an
+                  // oversight: this branch only exists because
+                  // `interactive = !jobInFlight && !locked`, and every
+                  // OTHER test in this suite that proves a job-in-flight
+                  // chip is inert does so by asserting no button role is
+                  // reachable here (queryByRole('button', ...) === null) —
+                  // adding role="button" would satisfy this fix while
+                  // quietly breaking that much wider invariant. A locked
+                  // step is never selected (isStepOpenable excludes it, and
+                  // the sibling "locked chip is inert" test above pins
+                  // exactly that), so this never fires for the locked case.
+                  aria-pressed={jobInFlight ? isSelected : undefined}
                 >
                   {inner}
                 </div>
@@ -340,7 +383,22 @@ export default function LifecycleStrip({
             className={`whitespace-nowrap rounded-lg px-2.5 py-1.5 text-xs font-semibold ${
               activeChip === 'operate' ? 'bg-text text-bg ring-2 ring-white ring-offset-2 ring-offset-bg' : 'text-muted'
             }`}
-            aria-current={offFlow ? 'step' : undefined}
+            // FIX ROUND (WP-3 spec B gate, P3-6): keyed to SELECTION
+            // (activeChip — is the operator looking at Operate right now),
+            // not to POSITION (offFlow). Those are the same two axes the
+            // five orchestration chips already keep apart via aria-pressed
+            // (selection) vs. aria-current="step" (position) — this link
+            // has no aria-pressed (a nav Link isn't a toggle), so
+            // aria-current is the one signal it has, and it needs to carry
+            // SELECTION to match the inverted fill it already renders on
+            // /operate. Before this fix, visiting /operate directly for a
+            // workload not actually AT Operate (offFlow false, activeChip
+            // 'operate') left this link visually inverted with NO
+            // aria-current at all — the POSITION fact still renders
+            // separately below (the "Position" badge), unconditionally on
+            // offFlow, so nothing is lost by no longer overloading this
+            // attribute with it.
+            aria-current={activeChip === 'operate' ? 'page' : undefined}
           >
             Operate
           </Link>
