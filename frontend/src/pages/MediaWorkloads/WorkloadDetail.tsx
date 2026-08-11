@@ -1,7 +1,8 @@
 import { useEffect, useRef, useState, type ReactNode } from 'react'
 import { Link, useLocation, useParams } from 'react-router-dom'
-import { useCatalog, useMediaWorkloadsGrouped } from '../../api/hooks'
+import { useCatalog, useCurrentUser, useMediaWorkloadsGrouped } from '../../api/hooks'
 import { stageActions, type WorkloadLifecycleInput } from '../../lib/workloadLifecycle'
+import { roleAtLeast } from '../../lib/roles'
 import { useTopbarMessageStore } from '../../store/topbarMessage'
 import {
   FLOW_STEPS,
@@ -202,7 +203,14 @@ export default function WorkloadDetail() {
     <WorkloadWizard
       key={workload.slug}
       workload={workload}
-      membersDataTrustworthy={!isError && !isFetching}
+      // umbrella #378a: !isError && !isFetching alone proved the READ
+      // succeeded, not that it was COMPLETE — the grouped endpoint can
+      // return HTTP 200 with degraded: true (members excluded from this
+      // payload, per media_workloads.py's own definition), and an excluded
+      // invalid-multiple member can share this workload's tag. Trust now
+      // additionally requires the endpoint to report itself configured and
+      // not degraded.
+      membersDataTrustworthy={!isError && !isFetching && data?.configured === true && data?.degraded !== true}
     />
   )
 }
@@ -234,6 +242,11 @@ function WorkloadWizard({
 }) {
   const { hash } = useLocation()
   const { data: catalogData, isLoading: catalogLoading } = useCatalog()
+  // umbrella #378b: the SAME effective-role read FinaliseStage already uses
+  // for audit fields (user?.role — already view-as-resolved by /api/me, see
+  // Topbar.tsx's identical use of the field), threaded into the affordance
+  // gate rather than a second auth read.
+  const { data: user } = useCurrentUser()
 
   const [launching, setLaunching] = useState(false)
   const [switching, setSwitching] = useState(false)
@@ -281,6 +294,15 @@ function WorkloadWizard({
       workload.instances.every((i) => i.requested_state === 'bootstrapped'),
     anyMemberObservedRunning: workload.instances.some((i) => i.observed_state === 'running'),
     membersDataTrustworthy,
+    // umbrella #378b: fail-closed while /api/me is still loading — user is
+    // undefined until useCurrentUser() resolves, and roleAtLeast(undefined,
+    // ...) is false, same as every other gate here.
+    purgeAuthorized: roleAtLeast(user?.role, 'operator'),
+    // umbrella #378c: the backend's synthetic "unassigned" bucket rides
+    // through this same workload prop (a real workloads[] entry with slug
+    // 'unassigned'), so the entity-identity gate is a plain fact about the
+    // workload, not a separate lookup.
+    isPurgeableEntity: workload.slug !== 'unassigned',
   }
   const { steps, current, offFlow, undetermined } = classifyWorkloadFlow(input)
   const badge = lifecycleBadge(input)
