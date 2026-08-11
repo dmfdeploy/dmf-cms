@@ -33,6 +33,7 @@ import type {
   MediaWorkload,
   MediaWorkloadInstance,
   MediaWorkloadsGroupedResponse,
+  UserIdentity,
 } from '../api/types'
 
 // ---- fixtures ---------------------------------------------------------
@@ -104,6 +105,20 @@ function viewerWorkload(overrides: Partial<MediaWorkload> = {}): MediaWorkload {
   })
 }
 
+// umbrella dmfdeploy/dmfdeploy#378: the shape the precedent test at
+// "renders the desired-state clear control on Provision..." already
+// establishes as delete-permanently-eligible on member state alone — every
+// member bootstrapped (nothing cleared to run), none observed running. The
+// three gate tests below start from this and violate exactly one further
+// fact each.
+function purgeEligibleWorkload(overrides: Partial<MediaWorkload> = {}): MediaWorkload {
+  return workload({
+    lifecycle: 'provision',
+    instances: [instance({ requested_state: 'bootstrapped', observed_state: 'unknown' })],
+    ...overrides,
+  })
+}
+
 function freshTopology(overrides: Record<string, unknown> = {}) {
   return {
     receiver_instance: 'viewer-1',
@@ -127,6 +142,10 @@ function json(body: unknown, status = 200) {
 
 interface FetchOpts {
   workload?: MediaWorkload
+  /** Overrides merged onto the default /api/me identity (umbrella #378). */
+  user?: Partial<UserIdentity>
+  /** Overrides merged onto the grouped response's top-level fields. */
+  grouped?: Partial<Pick<MediaWorkloadsGroupedResponse, 'configured' | 'degraded'>>
   catalog?: CatalogEntry[]
   topology?: Record<string, unknown>
   /** Per-instance HTTP status for the topology read, for the 404 path. */
@@ -154,6 +173,7 @@ function mkFetch(opts: FetchOpts = {}) {
   const groupedResponse: MediaWorkloadsGroupedResponse = {
     configured: true,
     degraded: false,
+    ...opts.grouped,
     scope: [],
     get workloads() { return [wl] },
     invalid_instances: [],
@@ -188,6 +208,7 @@ function mkFetch(opts: FetchOpts = {}) {
         groups: [],
         awx_configured: true,
         authentik_configured: true,
+        ...opts.user,
       })
     }
     if (url.endsWith('/api/catalog')) return json({ entries: catalog })
@@ -1104,5 +1125,99 @@ describe('failure and loop-closure are visible and atomic', () => {
     await waitFor(() =>
       expect(within(stageSection('Provision')).queryByRole('button', { name: /Deploy/ })).not.toBeNull(),
     )
+  })
+})
+
+// ---------------------------------------------------------------------------
+// GATE-378: three orthogonal gates on delete-permanently, none of which
+// stageActions('finalise')'s pre-existing member-state checks cover. All
+// three fixtures below are otherwise-eligible per purgeEligibleWorkload
+// (lifecycle=provision, every member bootstrapped, none observed running —
+// the exact shape the "renders the desired-state clear control on
+// Provision..." test above proves is legitimately offered) and violate
+// exactly one further fact. Since delete-permanently is the ONLY action
+// stageActions() can offer at Finalise while lifecycle=provision, withdrawing
+// it also drops the whole step to 'locked' (nothing else makes it openable)
+// — so the discriminator is the rail losing its Finalise button and stating
+// the lock reason, not a stage-local "not offered" paragraph the wizard
+// never mounts in this position. Precedent: "locked steps are always prose
+// in the rail, never a control" above pins the identical shape for the
+// pre-existing gates.
+// ---------------------------------------------------------------------------
+
+describe('delete-permanently gate: completeness (umbrella dmfdeploy/dmfdeploy#378a)', () => {
+  it('withholds the affordance when the grouped read reports degraded, even for an otherwise-eligible workload', async () => {
+    // The bug this guards: !isError && !isFetching is true here (the query
+    // succeeded and isn't in flight) — only the widened check catches that
+    // the payload itself declared members excluded.
+    mkFetch({ workload: purgeEligibleWorkload(), grouped: { degraded: true } })
+    renderDetail()
+    const strip = await findRail()
+
+    expect(within(strip).queryByRole('button', { name: 'Finalise & Review' })).toBeNull()
+    expect(within(strip).getByText(/nothing to tear down/)).toBeTruthy()
+    expect(screen.queryByRole('button', { name: '🗑 Delete permanently' })).toBeNull()
+  })
+
+  it('still offers it when the read is fresh, error-free, configured, and not degraded', async () => {
+    // The positive control: same eligible workload, degraded left at its
+    // mkFetch default (false) — proves the test above fails for the stated
+    // reason, not because purgeEligibleWorkload stopped being eligible.
+    mkFetch({ workload: purgeEligibleWorkload() })
+    renderDetail()
+    await findRail()
+    const finaliseSection = selectStep('Finalise & Review')
+    expect(within(finaliseSection).getByRole('button', { name: '🗑 Delete permanently' })).toBeTruthy()
+  })
+})
+
+describe('delete-permanently gate: authorization (umbrella dmfdeploy/dmfdeploy#378b)', () => {
+  it('withholds it from a viewer inside media-engineers — the grouped read admits them, the purge endpoint does not', async () => {
+    mkFetch({
+      workload: purgeEligibleWorkload(),
+      user: { role: 'viewer', real_role: 'viewer', groups: ['media-engineers'] },
+    })
+    renderDetail()
+    const strip = await findRail()
+
+    expect(within(strip).queryByRole('button', { name: 'Finalise & Review' })).toBeNull()
+    expect(screen.queryByRole('button', { name: '🗑 Delete permanently' })).toBeNull()
+  })
+
+  it('withholds it from an admin viewing as viewer — the EFFECTIVE role gates, not the real one', async () => {
+    mkFetch({
+      workload: purgeEligibleWorkload(),
+      user: { role: 'viewer', real_role: 'admin', view_as_active: true },
+    })
+    renderDetail()
+    const strip = await findRail()
+
+    expect(within(strip).queryByRole('button', { name: 'Finalise & Review' })).toBeNull()
+    expect(screen.queryByRole('button', { name: '🗑 Delete permanently' })).toBeNull()
+  })
+
+  it('offers it to operator, engineer, and admin once every other gate passes', async () => {
+    for (const role of ['operator', 'engineer', 'admin'] as const) {
+      cleanup()
+      mkFetch({ workload: purgeEligibleWorkload(), user: { role, real_role: role } })
+      renderDetail()
+      await findRail()
+      const finaliseSection = selectStep('Finalise & Review')
+      expect(
+        within(finaliseSection).getByRole('button', { name: '🗑 Delete permanently' }),
+        `role=${role}`,
+      ).toBeTruthy()
+    }
+  })
+})
+
+describe('delete-permanently gate: entity identity (umbrella dmfdeploy/dmfdeploy#378c)', () => {
+  it('never renders the affordance for the synthetic unassigned bucket', async () => {
+    mkFetch({ workload: purgeEligibleWorkload({ slug: 'unassigned', name: 'Unassigned' }) })
+    renderDetail('unassigned')
+    const strip = await findRail()
+
+    expect(within(strip).queryByRole('button', { name: 'Finalise & Review' })).toBeNull()
+    expect(screen.queryByRole('button', { name: '🗑 Delete permanently' })).toBeNull()
   })
 })

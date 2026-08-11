@@ -257,6 +257,12 @@ describe('delete-permanently (umbrella #347): member-state gated, mutually exclu
     allMembersBootstrapped: true,
     anyMemberObservedRunning: false,
     membersDataTrustworthy: true,
+    // umbrella #378: the two authorization/identity gates default to
+    // satisfied here so this describe block keeps pinning ONLY the
+    // member-state facts it names — their own gates get their own block
+    // below.
+    purgeAuthorized: true,
+    isPurgeableEntity: true,
   }
 
   it('is offered at Finalise when every member is bootstrapped, none observed running, and the read is trustworthy', () => {
@@ -301,5 +307,56 @@ describe('delete-permanently (umbrella #347): member-state gated, mutually exclu
     // silently qualify — this is the discriminator for "fail-closed
     // defaults" versus a mutant that defaults any of the three to true.
     expect(stageActions('finalise', { lifecycle: 'provision' })).toEqual([])
+  })
+})
+
+describe('delete-permanently authorization + entity identity (umbrella dmfdeploy/dmfdeploy#378)', () => {
+  const eligible = {
+    lifecycle: 'provision' as const,
+    allMembersBootstrapped: true,
+    anyMemberObservedRunning: false,
+    membersDataTrustworthy: true,
+    purgeAuthorized: true,
+    isPurgeableEntity: true,
+  }
+
+  it('is offered when authorized and the entity is purgeable, alongside the pre-existing member-state gates', () => {
+    expect(stageActions('finalise', eligible)).toEqual(['delete-permanently'])
+  })
+
+  it('withdraws it when the effective role does not meet the purge endpoint\'s own floor (378b)', () => {
+    // Discriminates: flips ONLY purgeAuthorized; a mutant that drops this
+    // gate from the && chain would still offer delete-permanently here even
+    // though the acting role could not use it (e.g. a viewer admitted via
+    // the grouped read's wider media-engineers-group OR-gate).
+    expect(stageActions('finalise', { ...eligible, purgeAuthorized: false })).toEqual([])
+    expect(stageActions('finalise', { ...eligible, purgeAuthorized: undefined })).toEqual([])
+  })
+
+  it('withdraws it for the synthetic unassigned bucket, which the backend refuses as not-purgeable (378c)', () => {
+    // Discriminates: flips ONLY isPurgeableEntity; a mutant that drops this
+    // gate would offer delete-permanently on the "Unassigned" workloads[]
+    // entry, contradicting UnassignedDisposalNote's whole premise.
+    expect(stageActions('finalise', { ...eligible, isPurgeableEntity: false })).toEqual([])
+    expect(stageActions('finalise', { ...eligible, isPurgeableEntity: undefined })).toEqual([])
+  })
+
+  it('is absent by default when either new field is simply omitted (fail-closed, not opt-out)', () => {
+    expect(stageActions('finalise', {
+      lifecycle: 'provision',
+      allMembersBootstrapped: true,
+      anyMemberObservedRunning: false,
+      membersDataTrustworthy: true,
+      isPurgeableEntity: true,
+      // purgeAuthorized omitted
+    })).toEqual([])
+    expect(stageActions('finalise', {
+      lifecycle: 'provision',
+      allMembersBootstrapped: true,
+      anyMemberObservedRunning: false,
+      membersDataTrustworthy: true,
+      purgeAuthorized: true,
+      // isPurgeableEntity omitted
+    })).toEqual([])
   })
 })

@@ -21,10 +21,28 @@ import { cleanup, fireEvent, render, screen, waitFor, within } from '@testing-li
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query'
 import { MemoryRouter, Route, Routes } from 'react-router-dom'
 import WorkloadDetail from '../pages/MediaWorkloads/WorkloadDetail'
-import type { MediaWorkload, MediaWorkloadsGroupedResponse } from '../api/types'
+import type { MediaWorkload, MediaWorkloadsGroupedResponse, UserIdentity } from '../api/types'
 
 function json(body: unknown, status = 200) {
   return new Response(JSON.stringify(body), { status, headers: { 'Content-Type': 'application/json' } })
+}
+
+// umbrella dmfdeploy/dmfdeploy#378b: every scenario here is about the
+// MEMBER-STATE gates (this file's whole point, per the docstring above), so
+// the acting user is a role the purge endpoint's own floor
+// (_require_min_role(request, "operator")) accepts — the authorization gate
+// itself is pinned separately in workloadDetail.test.tsx and
+// workloadLifecycle.test.ts.
+const OPERATOR: UserIdentity = {
+  subject: 'ops',
+  display_name: 'Ops',
+  email: 'ops@dmf.example.com',
+  role: 'operator',
+  real_role: 'operator',
+  view_as_active: false,
+  groups: [],
+  awx_configured: true,
+  authentik_configured: true,
 }
 
 function renderDetail() {
@@ -94,6 +112,7 @@ describe('Finalise & Review: delete permanently drives to a real completion', ()
       'fetch',
       vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
         const url = (typeof input === 'string' ? input : (input as Request).url).toString()
+        if (url.endsWith('/api/me')) return json(OPERATOR)
         if (url.endsWith('/api/catalog')) return json({ entries: [] })
         if (url.endsWith('/api/media-workloads/grouped')) return json(grouped)
         if (url.match(/\/api\/media-workloads\/studio-a\/purge$/)) {
@@ -155,6 +174,7 @@ describe('Finalise & Review: delete permanently drives to a real completion', ()
       'fetch',
       vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
         const url = (typeof input === 'string' ? input : (input as Request).url).toString()
+        if (url.endsWith('/api/me')) return json(OPERATOR)
         if (url.endsWith('/api/catalog')) return json({ entries: [] })
         if (url.endsWith('/api/media-workloads/grouped')) return json(grouped)
         if (url.match(/\/api\/media-workloads\/studio-a\/purge$/) && (init?.method ?? 'GET') === 'POST') {
@@ -207,6 +227,7 @@ describe('Finalise & Review: delete permanently drives to a real completion', ()
       'fetch',
       vi.fn(async (input: RequestInfo | URL) => {
         const url = (typeof input === 'string' ? input : (input as Request).url).toString()
+        if (url.endsWith('/api/me')) return json(OPERATOR)
         if (url.endsWith('/api/catalog')) return json({ entries: [] })
         if (url.endsWith('/api/media-workloads/grouped')) return json(groupedRunning)
         return json({})
@@ -242,6 +263,7 @@ describe('Finalise & Review: delete permanently drives to a real completion', ()
       'fetch',
       vi.fn(async (input: RequestInfo | URL) => {
         const url = (typeof input === 'string' ? input : (input as Request).url).toString()
+        if (url.endsWith('/api/me')) return json(OPERATOR)
         if (url.endsWith('/api/catalog')) return json({ entries: [] })
         if (url.endsWith('/api/media-workloads/grouped')) {
           fetchCount += 1

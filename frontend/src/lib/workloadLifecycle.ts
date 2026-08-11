@@ -151,15 +151,43 @@ export interface WorkloadLifecycleInput {
   /** At least one member's observed state is `running` right now. */
   anyMemberObservedRunning?: boolean
   /**
-   * The member-state read this input was built from is fresh and error-free
-   * (`!isError && !isFetching` on the grouped query, umbrella #343's
-   * discipline: a failed or in-flight refetch retains the PREVIOUS
-   * payload, so `data` alone cannot prove the snapshot is current — a
-   * stale snapshot must never be allowed to offer a destructive action).
-   * Fail-closed like every other field here: absent/false withholds
-   * `delete-permanently` regardless of what the other two claim.
+   * The member-state read this input was built from is fresh, error-free,
+   * AND complete (umbrella #378a widens umbrella #343's original
+   * `!isError && !isFetching`): the grouped endpoint can return HTTP 200
+   * with `degraded: true`, which server-side means `len(invalid_instances)
+   * > 0` — members were EXCLUDED from this payload. An excluded
+   * invalid-multiple member can share this workload's tag, so a query that
+   * succeeded and is not fetching can still be reporting an incomplete
+   * `workloads` array. Callers must additionally require
+   * `data.configured === true && data.degraded !== true` before setting
+   * this true. Fail-closed like every other field here: absent/false
+   * withholds `delete-permanently` regardless of what the other fields
+   * claim.
    */
   membersDataTrustworthy?: boolean
+  /**
+   * The EFFECTIVE role (view-as-resolved — the auth store's `role` field,
+   * never `real_role`) meets the purge endpoint's own authorization floor,
+   * `_require_min_role(request, "operator")` (umbrella #378b). The grouped
+   * read's own eligibility is WIDER than the write it is guarding —
+   * engineer/admin OR anyone in the `media-engineers` group — so a viewer
+   * inside that group can read this workload without being allowed to purge
+   * it. This is affordance control only; the server remains the actual
+   * authorization boundary. Fail-closed: absent/false withholds
+   * `delete-permanently`.
+   */
+  purgeAuthorized?: boolean
+  /**
+   * This workload's slug identifies a real, purgeable entity — false for
+   * the backend's synthetic `unassigned` bucket (umbrella #378c). That
+   * bucket is emitted as a real `workloads[]` entry (display name
+   * "Unassigned") so `/media-workloads/unassigned` resolves and renders the
+   * full wizard, but the purge endpoint refuses that slug as
+   * not-purgeable — offering the control there would contradict
+   * UnassignedDisposalNote, whose whole point is that no such control
+   * exists. Fail-closed: absent/false withholds `delete-permanently`.
+   */
+  isPurgeableEntity?: boolean
 }
 
 export interface LifecycleState {
@@ -223,7 +251,15 @@ export function stageActions(
       // delete-permanently and tear-down are mutually exclusive by
       // construction, never offered together.
       if (running(input)) return ['tear-down']
-      return input.allMembersBootstrapped && !input.anyMemberObservedRunning && input.membersDataTrustworthy
+      // umbrella #378: completeness, authorization and entity identity join
+      // the original member-state gates here — ONE derivation, so a stage
+      // component reading `actions` can never disagree with the rail's own
+      // openable/locked classification (both consume this same list).
+      return input.allMembersBootstrapped &&
+        !input.anyMemberObservedRunning &&
+        input.membersDataTrustworthy &&
+        input.purgeAuthorized &&
+        input.isPurgeableEntity
         ? ['delete-permanently']
         : []
     // Design, Plan and Operate carry no action BY DESIGN. Design/Plan are
