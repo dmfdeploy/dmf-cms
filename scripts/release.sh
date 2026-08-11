@@ -24,6 +24,12 @@
 set -euo pipefail
 
 REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+
+# Next-steps hint paths — see scripts/lib/hint-paths.sh for the contract and
+# for why this is shared rather than inlined in each script (dmfdeploy#338).
+# shellcheck source=scripts/lib/hint-paths.sh
+source "$REPO_ROOT/scripts/lib/hint-paths.sh"
+dmf_hint_paths "$REPO_ROOT"
 cd "$REPO_ROOT"
 
 usage() {
@@ -139,13 +145,13 @@ see STATUS.md in the umbrella repo.
        git push origin v$NEW
 
   2. Publish image to GHCR (canonical public source):
-       cd $DMFDEPLOY_UMBRELLA/dmf-cms
+       cd $CMS_HINT
        # macOS Keychain (token never typed):
        security find-generic-password -s "ghcr.io" -a "<github-username>" -w \\
          | GHCR_USER="<github-username>" scripts/publish-to-ghcr.sh
 
   3. Mirror GHCR → cluster-internal Zot (playbook 630):
-       cd $DMFDEPLOY_UMBRELLA/dmf-env
+       cd $ENV_HINT
        bin/run-playbook.sh <env-name> \\
          ../dmf-infra/k3s-lab-bootstrap/playbooks/630-zot-seed-platform.yml
 
@@ -154,7 +160,7 @@ see STATUS.md in the umbrella repo.
          ../dmf-infra/k3s-lab-bootstrap/playbooks/650-dmf-cms.yml
 
   5. Verify rollout matches local VERSION:
-       cd $DMFDEPLOY_UMBRELLA/dmf-cms
+       cd $CMS_HINT
        scripts/verify-cluster.sh
 
   6. Smoke test:

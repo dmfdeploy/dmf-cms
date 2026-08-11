@@ -125,18 +125,24 @@ echo "════════════════════════�
 echo "  BUILD COMPLETE: $IMAGE_TAG"
 echo "═══════════════════════════════════════════════════"
 echo ""
+# Next-steps hint paths — see scripts/lib/hint-paths.sh for the contract and
+# for why this is shared rather than inlined in each script (dmfdeploy#338).
+# shellcheck source=scripts/lib/hint-paths.sh
+source "$REPO_ROOT/scripts/lib/hint-paths.sh"
+dmf_hint_paths "$REPO_ROOT"
+
 echo "The image is local only. To publish + deploy (ADR-0025 GHCR-canonical flow)."
 echo "Substitute <env-name> with the current Hetzner test env id — see STATUS.md."
 echo "  1. Publish to GHCR:"
-echo "       cd $DMFDEPLOY_UMBRELLA/dmf-cms"
+echo "       cd $CMS_HINT"
 echo "       security find-generic-password -s 'ghcr.io' -a '<github-username>' -w \\"
 echo "         | GHCR_USER='<github-username>' scripts/publish-to-ghcr.sh"
 echo "  2. Mirror GHCR → Zot (playbook 630):"
-echo "       cd $DMFDEPLOY_UMBRELLA/dmf-env"
+echo "       cd $ENV_HINT"
 echo "       bin/run-playbook.sh <env-name> \\"
 echo "         ../dmf-infra/k3s-lab-bootstrap/playbooks/630-zot-seed-platform.yml"
 echo "  3. Helm-deploy (playbook 650):"
 echo "       bin/run-playbook.sh <env-name> \\"
 echo "         ../dmf-infra/k3s-lab-bootstrap/playbooks/650-dmf-cms.yml"
 echo "  4. Verify:"
-echo "       cd $DMFDEPLOY_UMBRELLA/dmf-cms && scripts/verify-cluster.sh"
+echo "       cd $CMS_HINT && scripts/verify-cluster.sh"

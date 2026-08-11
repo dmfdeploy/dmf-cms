@@ -31,8 +31,41 @@ set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 REPO_ROOT="$(cd "$SCRIPT_DIR/.." && pwd)"
-# scripts/ → dmf-cms/ → dmfdeploy/
-UMBRELLA_DIR="$(cd "$REPO_ROOT/.." && pwd)"
+# Resolve the umbrella repo.
+#
+# The layout has been SIBLING-canonical since 2026-06-11 (ADR-0001, amended):
+# dmf-cms and dmfdeploy sit side by side under a common parent. The old comment
+# here ("scripts/ -> dmf-cms/ -> dmfdeploy/") described the RETIRED nested
+# layout, and the `$REPO_ROOT/..` it produced resolves to the parent-of-all-repos
+# in the current one -- a directory with no bin/, so the exec below died with a
+# file-not-found on every release from a sibling checkout (dmfdeploy#338).
+#
+# Order: an explicit override, then sibling, then the nested fallback. Each
+# candidate must actually carry the helper we are about to exec, so a wrong
+# guess fails here with a clear message rather than at exec time.
+resolve_umbrella_dir() {
+  local candidate
+  for candidate in "${DMFDEPLOY_UMBRELLA:-}" "$REPO_ROOT/../dmfdeploy" "$REPO_ROOT/.."; do
+    [[ -n "$candidate" ]] || continue
+    if [[ -f "$candidate/bin/publish-image-to-ghcr.sh" ]]; then
+      (cd "$candidate" && pwd)
+      return 0
+    fi
+  done
+  return 1
+}
+
+if ! UMBRELLA_DIR="$(resolve_umbrella_dir)"; then
+  cat >&2 <<'NOUMBRELLA'
+ERROR: could not locate the dmfdeploy umbrella repo.
+
+Looked for bin/publish-image-to-ghcr.sh under, in order:
+  $DMFDEPLOY_UMBRELLA (if set), ../dmfdeploy (sibling layout), .. (nested layout)
+
+Clone the umbrella beside this repo, or set DMFDEPLOY_UMBRELLA to its path.
+NOUMBRELLA
+  exit 1
+fi
 
 GHCR_NAMESPACE="${GHCR_NAMESPACE:-dmfdeploy}"
 SOURCE_REGISTRY="${SOURCE_REGISTRY:-registry.dmf.example.com}"
