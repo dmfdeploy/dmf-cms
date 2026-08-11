@@ -297,6 +297,7 @@ describe('the draft flow', () => {
       hasName: false,
       hasTemplate: false,
       hasFacility: false,
+      facilityConfirmed: false,
     })
     expect(current).toBe('design')
     expect(steps.design).toBe('current')
@@ -309,6 +310,7 @@ describe('the draft flow', () => {
       hasName: false,
       hasTemplate: true,
       hasFacility: true,
+      facilityConfirmed: true,
     })
     expect(current).toBe('design')
     expect(steps.design).toBe('current')
@@ -320,6 +322,7 @@ describe('the draft flow', () => {
       hasName: true,
       hasTemplate: true,
       hasFacility: false,
+      facilityConfirmed: false,
     })
     expect(current).toBe('plan')
     expect(steps.design).toBe('complete')
@@ -327,20 +330,67 @@ describe('the draft flow', () => {
     expect(steps.provision).toBe('locked')
   })
 
-  it('opens Provision only after the facility is assigned', () => {
-    const { steps, current } = classifyDraftFlow({
-      hasName: true,
-      hasTemplate: true,
-      hasFacility: true,
+  // WP-3 spec D — the placement CONFIRMATION gate.
+  describe('Provision opens only once the facility is BOTH resolved and confirmed', () => {
+    it('stays locked while the facility is resolved but not yet acknowledged', () => {
+      const { steps, current } = classifyDraftFlow({
+        hasName: true,
+        hasTemplate: true,
+        hasFacility: true,
+        facilityConfirmed: false,
+      })
+      expect(current).toBe('plan')
+      expect(steps.plan).toBe('current')
+      expect(steps.provision).toBe('locked')
     })
-    expect(current).toBe('provision')
-    expect(steps.provision).toBe('current')
+
+    it('opens once the operator has confirmed the resolved facility', () => {
+      const { steps, current } = classifyDraftFlow({
+        hasName: true,
+        hasTemplate: true,
+        hasFacility: true,
+        facilityConfirmed: true,
+      })
+      expect(current).toBe('provision')
+      expect(steps.plan).toBe('complete')
+      expect(steps.provision).toBe('current')
+    })
+
+    // GATE ONLY IN THE EXACTLY-ONE-FACILITY CASE: a stray facilityConfirmed
+    // must never fake a facility that was never actually resolved — the
+    // zero/multiple-facility honest non-answers stay exactly as they were,
+    // ungated, regardless of what this flag happens to hold.
+    it('a stray facilityConfirmed cannot open Provision with zero facilities resolved', () => {
+      const { steps, current } = classifyDraftFlow({
+        hasName: true,
+        hasTemplate: true,
+        hasFacility: false,
+        facilityConfirmed: true,
+      })
+      expect(current).toBe('plan')
+      expect(steps.plan).toBe('current')
+      expect(steps.provision).toBe('locked')
+    })
+
+    it('a stray facilityConfirmed cannot open Provision with more than one facility resolved', () => {
+      // hasFacility is already false in this case (PlanAssignment's own
+      // "N facilities registered" branch never resolves it to true) — this
+      // pins that classifyDraftFlow agrees, not a second source of truth.
+      const { steps, current } = classifyDraftFlow({
+        hasName: true,
+        hasTemplate: true,
+        hasFacility: false,
+        facilityConfirmed: true,
+      })
+      expect(current).toBe('plan')
+      expect(steps.provision).toBe('locked')
+    })
   })
 
   it('keeps Configure and Finalise locked throughout — nothing runs yet', () => {
     for (const draft of [
-      { hasName: false, hasTemplate: false, hasFacility: false },
-      { hasName: true, hasTemplate: true, hasFacility: true },
+      { hasName: false, hasTemplate: false, hasFacility: false, facilityConfirmed: false },
+      { hasName: true, hasTemplate: true, hasFacility: true, facilityConfirmed: true },
     ]) {
       const { steps } = classifyDraftFlow(draft)
       expect(steps.configure).toBe('locked')

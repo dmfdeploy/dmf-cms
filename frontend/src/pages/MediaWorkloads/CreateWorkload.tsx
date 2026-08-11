@@ -114,6 +114,11 @@ export default function CreateWorkload() {
   // so their edit is never clobbered by a later keystroke in the name field.
   const [slugTouched, setSlugTouched] = useState(false)
   const [selectedKey, setSelectedKey] = useState<string | null>(null)
+  // WP-3 spec D: the placement CONFIRMATION gate — the operator's explicit
+  // acknowledgement of the resolved facility, distinct from the facility
+  // simply having resolved. See DraftProgress.facilityConfirmed and
+  // PlanAssignment for the full rationale.
+  const [facilityConfirmed, setFacilityConfirmed] = useState(false)
   const [arming, setArming] = useState(false)
   // A failed deploy has TWO distinguishable outcomes and the console must
   // not flatten them (GATE-B P1). See handleProvisionConfirm for why.
@@ -142,6 +147,10 @@ export default function CreateWorkload() {
     // exactly one site counts, the same honest-non-answer rule PlanStage
     // already applies to the real workload's Plan stage.
     hasFacility: !facilityLoading && !facilityFailed && sites.length === 1,
+    // WP-3 spec D: the resolved-vs-acknowledged split lives here, one level
+    // up from the raw read — classifyDraftFlow decides what it means for
+    // the flow, this component only reports the operator's own action.
+    facilityConfirmed,
   }
   const flow = classifyDraftFlow(draft)
 
@@ -280,7 +289,13 @@ export default function CreateWorkload() {
               />
             )}
             {id === 'plan' && (
-              <PlanAssignment loading={facilityLoading} failed={facilityFailed} sites={sites} />
+              <PlanAssignment
+                loading={facilityLoading}
+                failed={facilityFailed}
+                sites={sites}
+                confirmed={facilityConfirmed}
+                onConfirm={() => setFacilityConfirmed(true)}
+              />
             )}
             {id === 'provision' && (
               <ProvisionSection
@@ -438,16 +453,36 @@ function TemplatePicker({
  * sites are both designed non-answers (Art. 1: a rail that guesses which
  * facility a draft belongs to is worse than one that says it can't tell) —
  * deliberately not a picker, because federation is an explicit v0.1
- * non-goal and there is nothing to choose between yet.
+ * non-goal and there is nothing to choose between yet. GATE ONLY IN THE
+ * EXACTLY-ONE-FACILITY CASE (WP-3 spec D): both non-answer branches below
+ * are untouched by the placement confirmation gate — there is nothing to
+ * confirm when the console cannot even say which single facility this is.
+ *
+ * WP-3 spec D adds the CONFIRMATION itself, in the one branch that resolves
+ * to something concrete: the operator must explicitly acknowledge the
+ * resolved placement before Provision opens (classifyDraftFlow's
+ * facilityConfirmed) — not because the fact is in doubt, but because
+ * Provision is consequential and "the console already knew this" should
+ * not be the operator's first read of it. It is a CONFIRMATION, not a
+ * CHOICE: there is no workload-to-facility relationship anywhere in the
+ * backend (nothing in media_workloads.py ties a workload to a site, and
+ * the AWX launcher takes no site field), so a dropdown here would write to
+ * nothing. The copy states a true fact and implies nothing more — "will
+ * run on", never "select" or "assign".
  */
 function PlanAssignment({
   loading,
   failed,
   sites,
+  confirmed,
+  onConfirm,
 }: {
   loading: boolean
   failed: boolean
   sites: FacilitySummary['sites']
+  /** The operator has acknowledged the resolved placement below. */
+  confirmed: boolean
+  onConfirm: () => void
 }) {
   if (loading) return <p className="text-muted">Loading facility assignment…</p>
   if (failed) return <p className="text-amber-200/80">Facility inventory is unreachable right now.</p>
@@ -467,11 +502,23 @@ function PlanAssignment({
     )
   }
   const site = sites[0]
+  if (confirmed) {
+    return (
+      <p className="text-text">
+        <span aria-hidden="true">✓</span> Confirmed — this workload will run on{' '}
+        <span className="font-medium">{site.name}</span>.
+      </p>
+    )
+  }
   return (
-    <p className="text-text">
-      This platform runs one facility, so the workload is assigned to it:{' '}
-      <span className="font-medium">{site.name}</span>.
-    </p>
+    <div>
+      <p className="text-text">
+        This workload will run on <span className="font-medium">{site.name}</span>.
+      </p>
+      <button type="button" className="btn btn-secondary btn-sm mt-2" onClick={onConfirm}>
+        Confirm placement
+      </button>
+    </div>
   )
 }
 
