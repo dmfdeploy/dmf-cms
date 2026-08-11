@@ -158,30 +158,52 @@ export default function HistoryLane() {
         <div className="divide-y divide-panel">
           {isLoading ? (
             <div className="px-6 py-8 text-center text-muted text-sm">Loading commits...</div>
-          ) : (commits.data?.repos?.length ?? 0) === 0 ? (
-            <div className="px-6 py-8 text-center text-muted text-sm">
-              {forgejoEmptyCopy(commitsPhase, 'commits')}
-            </div>
           ) : (
-            commits.data?.repos?.map((repo: typeof commits.data.repos[0]) => (
-              <div key={repo.name}>
-                <div className="px-6 py-3 bg-panel/30 font-semibold text-sm">{repo.name}</div>
-                {repo.commits.slice(0, 5).map((commit: typeof repo.commits[0]) => (
-                  <div key={commit.sha_short} className="px-6 py-3 hover:bg-panel/30 transition text-xs border-b border-panel/50 last:border-b-0">
-                    <div className="flex items-start justify-between gap-4">
-                      <div className="flex-1 min-w-0">
-                        <p className="font-mono text-muted text-xs">{commit.sha_short}</p>
-                        <p className="truncate mt-1">{commit.message}</p>
-                        <p className="text-muted mt-1">{commit.author}</p>
-                      </div>
-                      <div className="text-right text-muted shrink-0">
-                        {commit.date && new Date(commit.date).toLocaleDateString()}
-                      </div>
-                    </div>
+            <>
+              {/* fix-round P1-2 (PR #81, second pass): rendered whenever the
+                  phase is 'partial', INDEPENDENT of emptiness — the earlier
+                  version only ever called forgejoEmptyCopy inside the
+                  length===0 branch, so a partial read that still retained
+                  rows (the common case: some repos succeeded) rendered
+                  those rows with no incompleteness notice at all, looking
+                  exactly as authoritative as a fully successful read. */}
+              {commitsPhase === 'partial' && (
+                <div className="px-6 py-2 text-xs text-amber-300 bg-amber-500/10">
+                  {forgejoEmptyCopy('partial', 'commits')}
+                </div>
+              )}
+              {(commits.data?.repos?.length ?? 0) === 0 ? (
+                // The partial banner above already said "may be
+                // incomplete" — a second, generic "no recent commits" would
+                // contradict it (this repo list isn't confirmed empty, it's
+                // unconfirmed).
+                commitsPhase !== 'partial' && (
+                  <div className="px-6 py-8 text-center text-muted text-sm">
+                    {forgejoEmptyCopy(commitsPhase, 'commits')}
                   </div>
-                ))}
-              </div>
-            ))
+                )
+              ) : (
+                commits.data?.repos?.map((repo: typeof commits.data.repos[0]) => (
+                  <div key={repo.name}>
+                    <div className="px-6 py-3 bg-panel/30 font-semibold text-sm">{repo.name}</div>
+                    {repo.commits.slice(0, 5).map((commit: typeof repo.commits[0]) => (
+                      <div key={commit.sha_short} className="px-6 py-3 hover:bg-panel/30 transition text-xs border-b border-panel/50 last:border-b-0">
+                        <div className="flex items-start justify-between gap-4">
+                          <div className="flex-1 min-w-0">
+                            <p className="font-mono text-muted text-xs">{commit.sha_short}</p>
+                            <p className="truncate mt-1">{commit.message}</p>
+                            <p className="text-muted mt-1">{commit.author}</p>
+                          </div>
+                          <div className="text-right text-muted shrink-0">
+                            {commit.date && new Date(commit.date).toLocaleDateString()}
+                          </div>
+                        </div>
+                      </div>
+                    ))}
+                  </div>
+                ))
+              )}
+            </>
           )}
         </div>
       </div>
@@ -197,36 +219,48 @@ export default function HistoryLane() {
         <div className="divide-y divide-panel">
           {isLoading ? (
             <div className="px-6 py-8 text-center text-muted text-sm">Loading PRs...</div>
-          ) : (pulls.data?.pulls?.length ?? 0) === 0 ? (
-            <div className="px-6 py-8 text-center text-muted text-sm">
-              {forgejoEmptyCopy(pullsPhase, 'pull requests')}
-            </div>
           ) : (
-            pulls.data?.pulls?.map((pr: typeof pulls.data.pulls[0]) => (
-              <div key={`${pr.repo}#${pr.number}`} className="px-6 py-4 hover:bg-panel/30 transition">
-                <div className="flex items-start justify-between gap-4">
-                  <div className="flex-1 min-w-0">
-                    <div className="flex items-center gap-2 mb-2">
-                      <span className={`inline-block w-2 h-2 rounded-full ${
-                        pr.state === 'open' ? 'bg-green-500' : 'bg-purple-500'
-                      }`}></span>
-                      <h3 className="font-semibold text-sm truncate">{pr.title}</h3>
-                    </div>
-                    <p className="text-xs text-muted">
-                      {pr.repo} #{pr.number} by {pr.author}
-                    </p>
-                  </div>
-                  <a
-                    href={pr.url}
-                    target="_blank"
-                    rel="noopener noreferrer"
-                    className="text-blue-500 hover:text-blue-400 shrink-0"
-                  >
-                    <ExternalLink className="w-4 h-4" />
-                  </a>
+            <>
+              {/* Same fix as Recent Commits above — see its comment. */}
+              {pullsPhase === 'partial' && (
+                <div className="px-6 py-2 text-xs text-amber-300 bg-amber-500/10">
+                  {forgejoEmptyCopy('partial', 'pull requests')}
                 </div>
-              </div>
-            ))
+              )}
+              {(pulls.data?.pulls?.length ?? 0) === 0 ? (
+                pullsPhase !== 'partial' && (
+                  <div className="px-6 py-8 text-center text-muted text-sm">
+                    {forgejoEmptyCopy(pullsPhase, 'pull requests')}
+                  </div>
+                )
+              ) : (
+                pulls.data?.pulls?.map((pr: typeof pulls.data.pulls[0]) => (
+                  <div key={`${pr.repo}#${pr.number}`} className="px-6 py-4 hover:bg-panel/30 transition">
+                    <div className="flex items-start justify-between gap-4">
+                      <div className="flex-1 min-w-0">
+                        <div className="flex items-center gap-2 mb-2">
+                          <span className={`inline-block w-2 h-2 rounded-full ${
+                            pr.state === 'open' ? 'bg-green-500' : 'bg-purple-500'
+                          }`}></span>
+                          <h3 className="font-semibold text-sm truncate">{pr.title}</h3>
+                        </div>
+                        <p className="text-xs text-muted">
+                          {pr.repo} #{pr.number} by {pr.author}
+                        </p>
+                      </div>
+                      <a
+                        href={pr.url}
+                        target="_blank"
+                        rel="noopener noreferrer"
+                        className="text-blue-500 hover:text-blue-400 shrink-0"
+                      >
+                        <ExternalLink className="w-4 h-4" />
+                      </a>
+                    </div>
+                  </div>
+                ))
+              )}
+            </>
           )}
         </div>
       </div>

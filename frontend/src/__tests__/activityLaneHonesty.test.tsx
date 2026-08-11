@@ -145,22 +145,62 @@ describe('History lane: Forgejo commits/pulls degraded-read honesty', () => {
     expect(screen.getByText('No recent pull requests')).toBeTruthy()
   })
 
-  it('a partial read (some repos unreadable) names itself distinctly, never "No recent ..."', async () => {
+  // fix-round P1-2 (PR #81, second pass): the first pass only ever called
+  // forgejoEmptyCopy INSIDE the length===0 branch, so a partial read that
+  // still retained rows (the common case — some repos succeeded) rendered
+  // those rows with no incompleteness notice at all, looking exactly as
+  // authoritative as a fully successful read. The earlier version of this
+  // test made BOTH panels partial at once and only checked the repo header,
+  // which is what let it pass without ever exercising the commits panel's
+  // own partial notice — split into two, one per panel, each asserting the
+  // notice renders ALONGSIDE real retained rows, not just in its absence.
+  it('a partial commits read shows retained rows AND a visible incompleteness notice', async () => {
     mkFetch({
       commits: {
         repos: [{ name: 'dmfdeploy/dmf-cms', commits: [] }],
         reason: 'forgejo-partial',
       },
-      pulls: { pulls: [], reason: 'forgejo-partial' },
+      pulls: { pulls: [], reason: '' },
     })
     renderWithQuery(<HistoryLane />)
 
-    // Commits has a retained row (renders the repo, not the empty copy).
     expect(await screen.findByText('dmfdeploy/dmf-cms')).toBeTruthy()
-    // Pulls is empty even on the successful side — the partial-specific copy.
-    expect(await screen.findByText(/Some repositories could not be read/)).toBeTruthy()
+    expect(
+      await screen.findByText('Some repositories could not be read — recent commits may be incomplete. Retrying automatically.'),
+    ).toBeTruthy()
+  })
+
+  it('a partial pulls read shows retained rows AND a visible incompleteness notice', async () => {
+    mkFetch({
+      commits: { repos: [], reason: '' },
+      pulls: {
+        pulls: [{ repo: 'dmfdeploy/dmf-cms', number: 1, title: 't', state: 'open', author: 'a', created: '', url: '' }],
+        reason: 'forgejo-partial',
+      },
+    })
+    renderWithQuery(<HistoryLane />)
+
+    expect(await screen.findByText('t')).toBeTruthy()
+    expect(
+      await screen.findByText(
+        'Some repositories could not be read — recent pull requests may be incomplete. Retrying automatically.',
+      ),
+    ).toBeTruthy()
     expect(screen.queryByText('No pull requests')).toBeNull()
     expect(screen.queryByText('No recent pull requests')).toBeNull()
+  })
+
+  it('a partial-but-empty read shows the incompleteness notice alone, never a contradicting "No recent ..."', async () => {
+    mkFetch({
+      commits: { repos: [], reason: 'forgejo-partial' },
+      pulls: { pulls: [], reason: '' },
+    })
+    renderWithQuery(<HistoryLane />)
+
+    expect(
+      await screen.findByText('Some repositories could not be read — recent commits may be incomplete. Retrying automatically.'),
+    ).toBeTruthy()
+    expect(screen.queryByText('No recent commits')).toBeNull()
   })
 
   // fix-round P2-3: a settled failed refetch must win over TanStack Query's

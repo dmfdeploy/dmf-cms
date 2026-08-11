@@ -242,3 +242,29 @@ def test_pulls_mixed_success_is_partial_and_keeps_the_successful_rows(monkeypatc
     assert body["reason"] == "forgejo-partial"
     assert [p["repo"] for p in body["pulls"]] == ["dmfdeploy/dmf-cms"]
     assert sum("dmfdeploy/dmfdeploy" in r.message for r in caplog.records) >= 1
+
+
+# fix-round P2 (PR #81, second pass): pulls aggregation used to choose
+# forgejo-partial vs forgejo-unreachable off `all_pulls` truthiness (item
+# COUNT), not off how many repos were actually READ. A repo can be
+# successfully read and legitimately return zero PRs, contributing no items
+# — so one empty-but-successful repo plus one failed repo produced
+# `forgejo-unreachable`, misreporting a partially-successful read as a
+# total failure. This is the case the mixed-success test above cannot see,
+# because its successful repo happens to return one PR.
+def test_pulls_one_empty_success_plus_one_failure_is_partial_not_unreachable(monkeypatch, caplog):
+    monkeypatch.setattr(main_module.forgejo, "list_repos", lambda **kwargs: _TWO_REPOS)
+
+    def _list_pulls(*, owner, repo, **kwargs):
+        if repo == "dmf-cms":
+            return []  # successfully read, genuinely zero PRs
+        raise RuntimeError("boom")
+
+    monkeypatch.setattr(main_module.forgejo, "list_pulls", _list_pulls)
+    with caplog.at_level("WARNING"):
+        body = _client().get("/api/changes/pulls").json()
+
+    assert body["pulls"] == []
+    # The dmf-cms repo WAS reachable — this must not read as total failure.
+    assert body["reason"] == "forgejo-partial"
+    assert sum("dmfdeploy/dmfdeploy" in r.message for r in caplog.records) >= 1
