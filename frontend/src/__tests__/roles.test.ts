@@ -22,8 +22,19 @@ describe('roleAtLeast', () => {
     expect(roleAtLeast('viewer', 'operator')).toBe(false)
   })
 
-  it('fails closed on an absent or unrecognised role, never defaulting to pass', () => {
+  it('fails closed on an absent role, never defaulting to pass', () => {
     expect(roleAtLeast(undefined, 'operator')).toBe(false)
     expect(roleAtLeast(null, 'operator')).toBe(false)
+  })
+
+  it('fails closed on a role string outside the ladder entirely — ROLE_RANK has no entry to fall back on', () => {
+    // The API surface types `role` as ConsoleRole, but nothing validates
+    // UserIdentity at runtime, so an unexpected server-sent string is
+    // genuinely reachable here, not just a type-system hole. Pinned
+    // separately from the undefined/null case above: a lookup miss on an
+    // unrecognised key returns undefined, and `undefined >= ROLE_RANK[min]`
+    // is false, but that's ROLE_RANK's OWN behaviour, not a redundant re-run
+    // of the absent-role branch.
+    expect(roleAtLeast('superuser' as never, 'operator')).toBe(false)
   })
 })

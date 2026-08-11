@@ -44,6 +44,22 @@ export function useCurrentUser() {
     queryKey: ['user'],
     queryFn: () => apiCall<UserIdentity>('/api/me'),
     retry: false,
+    // umbrella #378b fix round: WorkloadDetail.tsx's purge-authorization gate
+    // now reads this query's own isFetching (fail-closed during ANY identity
+    // refetch — #343's discipline for member data, applied to identity).
+    // Without a staleTime, default staleTime:0 means every NEW observer
+    // mounting for this already-cached query (e.g. FinaliseStage's own
+    // useCurrentUser() call, first mounted only when the operator navigates
+    // there) triggers its own background refetch-on-mount — which would
+    // withdraw the delete-permanently control on ordinary navigation, not
+    // just on a genuine view-as switch. 30s matches this file's own slow-
+    // changing-resource idiom (useFacilitySummary, useAdminGroups): identity
+    // does not change on its own, only via an explicit view-as/logout, and
+    // useSetViewAs()/useClearViewAs() already force a refetch regardless of
+    // staleTime via their own unfiltered invalidateQueries() call — this
+    // value only suppresses the SPURIOUS mount-triggered refetch, it never
+    // masks a real one.
+    staleTime: 30_000,
   })
 }
 

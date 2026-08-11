@@ -245,8 +245,9 @@ function WorkloadWizard({
   // umbrella #378b: the SAME effective-role read FinaliseStage already uses
   // for audit fields (user?.role — already view-as-resolved by /api/me, see
   // Topbar.tsx's identical use of the field), threaded into the affordance
-  // gate rather than a second auth read.
-  const { data: user } = useCurrentUser()
+  // gate rather than a second auth read. Kept as the whole query result, not
+  // just `data` — see purgeAuthorized below for why.
+  const userQuery = useCurrentUser()
 
   const [launching, setLaunching] = useState(false)
   const [switching, setSwitching] = useState(false)
@@ -294,10 +295,20 @@ function WorkloadWizard({
       workload.instances.every((i) => i.requested_state === 'bootstrapped'),
     anyMemberObservedRunning: workload.instances.some((i) => i.observed_state === 'running'),
     membersDataTrustworthy,
-    // umbrella #378b: fail-closed while /api/me is still loading — user is
-    // undefined until useCurrentUser() resolves, and roleAtLeast(undefined,
-    // ...) is false, same as every other gate here.
-    purgeAuthorized: roleAtLeast(user?.role, 'operator'),
+    // umbrella #378b (fix round): fail-closed on IDENTITY FRESHNESS, not just
+    // on the role value — mirrors membersDataTrustworthy's own discipline
+    // (#343) for the exact same reason. TanStack Query retains the PREVIOUS
+    // /api/me payload while a refetch is in flight and after one fails, so
+    // `userQuery.data` alone can't prove the role is current. This is
+    // reachable, not theoretical: useSetViewAs() invalidates every query
+    // (including ['user']) with no queryKey filter, so an admin switching
+    // view-as to viewer re-fetches /api/me while the stale admin payload is
+    // still what `data` holds — without this clause the control would stay
+    // armed for the acting role mid-switch, and (useCurrentUser is declared
+    // retry: false) indefinitely if that refetch then fails. Absent/loading/
+    // fetching/errored all withhold, same as every other gate here.
+    purgeAuthorized:
+      !userQuery.isFetching && !userQuery.isError && roleAtLeast(userQuery.data?.role, 'operator'),
     // umbrella #378c: the backend's synthetic "unassigned" bucket rides
     // through this same workload prop (a real workloads[] entry with slug
     // 'unassigned'), so the entity-identity gate is a plain fact about the

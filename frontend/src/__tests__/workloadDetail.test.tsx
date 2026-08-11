@@ -166,6 +166,21 @@ interface FetchOpts {
   /** Gate grouped reads after the Nth call, to test the slow-refetch race. */
   groupedDelayAfter?: number
   groupedGate?: Promise<unknown>
+  /**
+   * Gate /api/me reads while armed (umbrella #378b fix round) — a FLAG
+   * rather than a call-count threshold (unlike groupedDelayAfter/
+   * groupedGate above) because useCurrentUser() is called from more than
+   * one mounted component (WorkloadWizard, FinaliseStage, ProvisionStage)
+   * and react-query's default staleTime:0 means the FIRST navigation to a
+   * step that mounts a second caller triggers its own incidental
+   * refetch-on-mount — a real, harmless background refetch this test must
+   * let settle before arming the gate, not a call index it can predict.
+   * When the held read resolves, `meRejectFlag.current` (checked at that
+   * moment) decides whether it throws.
+   */
+  meHoldFlag?: { current: boolean }
+  meGate?: Promise<unknown>
+  meRejectFlag?: { current: boolean }
 }
 
 function mkFetch(opts: FetchOpts = {}) {
@@ -185,6 +200,7 @@ function mkFetch(opts: FetchOpts = {}) {
     switch: [] as Array<{ url: string; init?: RequestInit }>,
     clear: [] as Array<{ url: string; init?: RequestInit }>,
     grouped: 0,
+    me: 0,
   }
 
   let releaseSwitch: (() => void) | undefined
@@ -198,6 +214,11 @@ function mkFetch(opts: FetchOpts = {}) {
     const url = (typeof input === 'string' ? input : (input as Request).url).toString()
 
     if (url.endsWith('/api/me')) {
+      calls.me += 1
+      if (opts.meHoldFlag?.current && opts.meGate) {
+        await opts.meGate
+        if (opts.meRejectFlag?.current) throw new Error('identity refetch failed')
+      }
       return json({
         subject: 'ops',
         display_name: 'Ops',
@@ -298,6 +319,9 @@ function renderDetail(slug = 'studio-a') {
       </MemoryRouter>
     </QueryClientProvider>,
   )
+  // Returned so a test can drive a background refetch itself (umbrella
+  // #378b fix round) — every other caller in this file already ignores it.
+  return queryClient
 }
 
 /** Waits for the wizard to finish loading — the rail only mounts once the
@@ -1208,6 +1232,58 @@ describe('delete-permanently gate: authorization (umbrella dmfdeploy/dmfdeploy#3
         `role=${role}`,
       ).toBeTruthy()
     }
+  })
+
+  // umbrella #378b fix round: !isError && !isFetching is #343's discipline
+  // for membersDataTrustworthy — TanStack Query retains the PREVIOUS payload
+  // during a refetch and after a failed one, so `data` alone never proves
+  // freshness. Reachable via useSetViewAs(), which invalidates every query
+  // (no queryKey filter) including ['user'] — an admin switching view-as to
+  // viewer re-fetches /api/me while the stale admin payload still `data`.
+  it('withdraws the affordance during an identity refetch, and keeps it withdrawn after that refetch fails', async () => {
+    let releaseMe: (() => void) | undefined
+    const meGate = new Promise<void>((resolve) => { releaseMe = resolve })
+    const meHoldFlag = { current: false }
+    const meRejectFlag = { current: false }
+    const h = mkFetch({
+      workload: purgeEligibleWorkload(),
+      user: { role: 'operator', real_role: 'operator' },
+      meGate,
+      meHoldFlag,
+      meRejectFlag,
+    })
+
+    const queryClient = renderDetail()
+    await findRail()
+    const finaliseSection = selectStep('Finalise & Review')
+    await within(finaliseSection).findByRole('button', { name: '🗑 Delete permanently' })
+    const meCallsBeforeInvalidate = h.calls.me
+
+    // NOW arm the gate, then trigger the same shape useSetViewAs() does:
+    // invalidate everything, no queryKey filter.
+    meHoldFlag.current = true
+    meRejectFlag.current = true
+    void queryClient.invalidateQueries()
+
+    await waitFor(() => expect(h.calls.me).toBeGreaterThan(meCallsBeforeInvalidate))
+    // Same structural shape as the 378a/b/c gate tests above: delete-
+    // permanently is the ONLY action stageActions() can offer at Finalise
+    // while lifecycle=provision, so withdrawing it (here: the identity read
+    // going untrustworthy mid-refetch) drops the WHOLE step to locked and
+    // the wizard's own selection ladder bounces the operator back to
+    // Provision (the backend position) — the rail losing its Finalise
+    // button is the discriminator, not a stage-local absence.
+    await waitFor(() =>
+      expect(within(rail()).queryByRole('button', { name: 'Finalise & Review' })).toBeNull(),
+    )
+    expect(screen.queryByRole('button', { name: '🗑 Delete permanently' })).toBeNull()
+
+    // Release the held read — it throws (meRejectFlag was set before the
+    // release). The control must stay withdrawn, never re-arm off the
+    // stale-but-still-authorized payload react-query kept around.
+    releaseMe?.()
+    await waitFor(() => expect(queryClient.getQueryState(['user'])?.fetchStatus).toBe('idle'))
+    expect(screen.queryByRole('button', { name: '🗑 Delete permanently' })).toBeNull()
   })
 })
 
