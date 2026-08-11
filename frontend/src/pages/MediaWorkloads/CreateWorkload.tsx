@@ -1,4 +1,4 @@
-import { useState } from 'react'
+import { useEffect, useState } from 'react'
 import { useNavigate } from 'react-router-dom'
 import { isOperation, useCatalog, useDeployCatalog, useFacilitySummary } from '../../api/hooks'
 import type { CatalogEntry, FacilitySummary } from '../../api/types'
@@ -6,7 +6,8 @@ import { classifyDraftFlow, FLOW_STEPS, type DraftProgress, type FlowStepId } fr
 import { isValidWorkloadSlug } from '../../lib/workloadSlug'
 import { APIError } from '../../api/client'
 import ReasonConfirm from '../../components/ReasonConfirm'
-import DraftFlowStep from './DraftFlowStep'
+import FlowStep from './FlowStep'
+import { useDraftWorkloadStore } from '../../store/draftWorkload'
 
 /**
  * Create Media Workload — the draft leg of the guided sequential flow
@@ -18,9 +19,9 @@ import DraftFlowStep from './DraftFlowStep'
  * carried there by the deploy seam this page already reuses
  * (POST /api/catalog/{key}/deploy, extra_vars.workload_slug). There is no
  * create endpoint and this page adds none. So the studio name, the chosen
- * template and the resolved facility live in plain React state until
- * Provision fires — at which point the deploy is ACCEPTED, and the page
- * hands off to the real (backend-driven) detail route CARRYING THAT LAUNCH.
+ * template and the resolved facility live in browser state until Provision
+ * fires — at which point the deploy is ACCEPTED, and the page hands off to
+ * the real (backend-driven) detail route CARRYING THAT LAUNCH.
  *
  * Acceptance is not existence, and the difference is a page state rather
  * than a nuance: the workload begins to exist only when the launcher stamps
@@ -31,17 +32,42 @@ import DraftFlowStep from './DraftFlowStep'
  * The cost of that is real and stated where the operator can see it, next
  * to the field that starts the draft: refresh this tab before Provision and
  * the draft is gone. That is a designed limit, not a bug to route around —
- * localStorage/sessionStorage persistence would be new state tracking this
- * arc doesn't call for, and would trade an honest "you'll lose this" for a
- * silent maybe-still-there that is worse when it's wrong.
+ * localStorage/sessionStorage persistence would trade an honest "you'll
+ * lose this" for a silent maybe-still-there that is worse when it's wrong
+ * (see store/draftWorkload.ts's own docstring for the full reasoning).
  *
  * THE GATE ITSELF IS NOT THIS FILE'S TO OWN. lib/workloadFlow.ts's
  * classifyDraftFlow() is the only place "what unlocks next" is decided; this
- * component only turns the operator's inputs into the three booleans that
- * function reads (hasName, hasTemplate, hasFacility) and renders whatever it
- * returns. Configure and Finalise & Review are never reachable from here —
- * classifyDraftFlow locks them for the whole draft, because nothing has run
- * yet to configure or tear down.
+ * component only turns the operator's inputs into the booleans that
+ * function reads (hasName, hasTemplate, hasFacility, facilityConfirmed) and
+ * renders whatever it returns. Configure and Finalise & Review never carry
+ * an action from here — classifyDraftFlow locks them for the whole draft,
+ * because nothing has run yet to configure or tear down.
+ *
+ * WP-3 spec C — THE WIZARD. This used to stack all five DraftFlowStep
+ * accordion panels on one page, each independently foldable. That is
+ * retired in favour of the exact one-step-at-a-time shape WorkloadDetail's
+ * own wizard already uses (WO-D1): FlowStep.tsx, REUSED HERE UNCHANGED, and
+ * a local selectedStep + Previous/Next, mirroring WorkloadWizard's own
+ * pattern in WorkloadDetail.tsx. Studio name + slug become their own FIRST
+ * step, "Identity" — deliberately NOT one of FlowStep's five numbered,
+ * coloured lifecycle stages (the canonical lifecycle has six stages and the
+ * orchestration rail shows five; an identity step is neither), so it gets
+ * its own small, distinctly-chromed panel (IdentityStep below) rather than
+ * being pushed through FlowStep.tsx.
+ *
+ * Next/Previous through Design → Finalise & Review is UNCONDITIONAL (a
+ * plain index walk), never gated on lock state — the same reason
+ * FlowStep.tsx already supports mounting a locked step at all: it renders
+ * ONLY that step's stated reason then, never its children, so nothing
+ * actionable is ever reachable early. This is deliberate, not an oversight:
+ * gating Next on lock state would make Configure's and Finalise & Review's
+ * OWN DISTINCT locked reasons unreachable in a single-mount wizard (there is
+ * no rail here — see railRouteContract.test.tsx's own pin that the rail is
+ * absent on this route — so a locked step's reason has nowhere else to
+ * live). Identity's own Next is the one gate: advancing past it before the
+ * name resolves to a valid slug would let Design mount with nothing for the
+ * eventual deploy to carry.
  */
 
 const FLOW_STEP_LABELS: Record<FlowStepId, string> = {
@@ -83,7 +109,9 @@ const REFUSAL_COPY: Record<number, string> = {
 // Only Plan and Provision ever render a locked step in the draft (Design
 // starts current and only ever completes); Configure/Finalise are locked
 // for the draft's entire life. Design needs no entry here — FlowStep's own
-// fallback text is never reached for it.
+// fallback text is never reached for it. Kept BYTE FOR BYTE from the
+// pre-wizard version (WP-3 spec C: "do not merge those sentences") — the
+// wizard changes WHERE these render, never their wording.
 const LOCKED_REASON: Partial<Record<FlowStepId, string>> = {
   plan: 'This step opens once Design is complete: a studio name that resolves to a valid workload identity, and a chosen template.',
   provision: 'This step opens once Plan is complete: this platform must resolve to exactly one facility first.',
@@ -91,37 +119,47 @@ const LOCKED_REASON: Partial<Record<FlowStepId, string>> = {
   finalise: 'Locked for the whole draft — nothing has been provisioned yet, so there is nothing to finalise or tear down.',
 }
 
-/**
- * Turn a human studio name into the slug the backend will actually record.
- * Mirrors, rather than replaces, WORKLOAD_SLUG_RE (workloadSlug.ts): this
- * only proposes a candidate for the operator to accept or edit — the single
- * validity check that decides whether it is USABLE stays isValidWorkloadSlug,
- * called at the one call site below.
- */
-function deriveSlug(name: string): string {
-  let candidate = name.toLowerCase().replace(/[\s_]+/g, '-').replace(/[^a-z0-9-]/g, '')
-  candidate = candidate.replace(/^-+/, '').replace(/-+$/, '')
-  if (candidate.length > 40) candidate = candidate.slice(0, 40).replace(/-+$/, '')
-  return candidate
-}
+/** The wizard's own step vocabulary: Identity, then the five orchestration
+ *  stages. Identity is deliberately not a FlowStepId — see the file
+ *  docstring for why it must not read as a sixth lifecycle stage. */
+type DraftWizardStep = 'identity' | FlowStepId
+const DRAFT_WIZARD_STEPS: DraftWizardStep[] = ['identity', ...FLOW_STEPS]
 
 export default function CreateWorkload() {
   const navigate = useNavigate()
 
-  const [studioName, setStudioName] = useState('')
-  const [slug, setSlug] = useState('')
-  // Latches true the first time the operator edits the slug field directly,
-  // so their edit is never clobbered by a later keystroke in the name field.
-  const [slugTouched, setSlugTouched] = useState(false)
-  const [selectedKey, setSelectedKey] = useState<string | null>(null)
-  // WP-3 spec D: the placement CONFIRMATION gate — the operator's explicit
-  // acknowledgement of the resolved facility, distinct from the facility
-  // simply having resolved. See DraftProgress.facilityConfirmed and
-  // PlanAssignment for the full rationale.
-  const [facilityConfirmed, setFacilityConfirmed] = useState(false)
+  // WP-3 spec C: the draft's DATA lives in a non-persisted, tab-lifetime
+  // store (store/draftWorkload.ts) — not this component's own useState —
+  // so it survives navigating to another page and back, which the wizard
+  // makes a reachable path for the first time (Identity/Design/Plan are
+  // real destinations now, not sections of one scrolled page). It must NOT
+  // survive a reload; see that store's own docstring for why sessionStorage
+  // would be the wrong tool here, not just an unused one.
+  const {
+    studioName,
+    slug,
+    selectedKey,
+    facilityConfirmed,
+    setStudioName,
+    setSlug,
+    setSelectedKey,
+    setFacilityConfirmed,
+    reset: resetDraft,
+  } = useDraftWorkloadStore()
+
+  // The wizard's own presentation state — never persisted, and never
+  // derived from FlowStepState (same discipline as WorkloadWizard's
+  // selectedStep in WorkloadDetail.tsx). Re-settles fresh on every mount
+  // (see the effect below), so navigating away and back always lands the
+  // operator back on the step their SAVED DATA implies, not wherever they
+  // happened to leave the wizard visually.
+  const [selectedStep, setSelectedStep] = useState<DraftWizardStep | null>(null)
   const [arming, setArming] = useState(false)
   // A failed deploy has TWO distinguishable outcomes and the console must
-  // not flatten them (GATE-B P1). See handleProvisionConfirm for why.
+  // not flatten them (GATE-B P1). See handleProvisionConfirm for why. Local
+  // and unpersisted — an in-flight arm/outcome is transient UI state, not
+  // part of the draft itself (unlike the name/template/facility fields
+  // above, which the operator would otherwise have to redo).
   const [deployOutcome, setDeployOutcome] = useState<DeployOutcome | null>(null)
 
   const {
@@ -154,14 +192,40 @@ export default function CreateWorkload() {
   }
   const flow = classifyDraftFlow(draft)
 
+  // React's sanctioned "derived state" pattern (same as WorkloadWizard's
+  // identical effect in WorkloadDetail.tsx): persist the computed default
+  // into state once, on mount (or after a Start Over resets selectedStep to
+  // null) — but never again once the operator has an explicit selection, so
+  // a facility query settling a moment later doesn't fight their own
+  // navigation. See the file docstring for why Next is unconditional rather
+  // than re-deriving this on every render instead.
+  // flow.current is typed FlowStepId | null on the shared FlowState shape
+  // (the real, backend-driven flow can genuinely have no current step) —
+  // classifyDraftFlow itself never actually returns null for it, so the
+  // fallback below is defensive typing, not a reachable branch in practice.
+  const defaultStep: DraftWizardStep = draft.hasName && flow.current ? flow.current : 'identity'
+  useEffect(() => {
+    if (selectedStep === null) setSelectedStep(defaultStep)
+  }, [defaultStep, selectedStep])
+  const activeStep = selectedStep ?? defaultStep
+
+  const activeIndex = DRAFT_WIZARD_STEPS.indexOf(activeStep)
+  const prevStep = activeIndex > 0 ? DRAFT_WIZARD_STEPS[activeIndex - 1] : null
+  const nextStep = activeIndex < DRAFT_WIZARD_STEPS.length - 1 ? DRAFT_WIZARD_STEPS[activeIndex + 1] : null
+
   function handleNameChange(value: string) {
     setStudioName(value)
-    if (!slugTouched) setSlug(deriveSlug(value))
   }
 
   function handleSlugChange(value: string) {
-    setSlugTouched(true)
     setSlug(value)
+  }
+
+  function handleStartOver() {
+    resetDraft()
+    setArming(false)
+    setDeployOutcome(null)
+    setSelectedStep(null)
   }
 
   async function handleProvisionConfirm(reason: string) {
@@ -179,6 +243,11 @@ export default function CreateWorkload() {
       // returned — and the destination renders the materializing story until
       // the record appears. Navigating bare would land the operator on
       // "Workload not found" for the workload they just created.
+      //
+      // WP-3 spec C: the draft's job is done — it becomes the real workload
+      // this navigation is carrying, so its browser-local state is cleared
+      // rather than left to greet the operator's next visit to /new.
+      resetDraft()
       navigate(`/media-workloads/${encodeURIComponent(trimmedSlug)}`, {
         state: {
           launch: isOperation(result)
@@ -210,9 +279,146 @@ export default function CreateWorkload() {
     }
   }
 
+  const previousReason = prevStep === null ? 'This is the first step.' : ''
+  const nextReason = nextStep === null ? 'This is the last step.' : ''
+
+  let stepBody: React.ReactNode
+  if (activeStep === 'identity') {
+    stepBody = (
+      <IdentityStep
+        studioName={studioName}
+        slug={slug}
+        trimmedSlug={trimmedSlug}
+        slugValid={slugValid}
+        onNameChange={handleNameChange}
+        onSlugChange={handleSlugChange}
+        canAdvance={draft.hasName}
+        onNext={() => nextStep && setSelectedStep(nextStep)}
+      />
+    )
+  } else {
+    const stepId = activeStep
+    const index = FLOW_STEPS.indexOf(stepId)
+    stepBody = (
+      <FlowStep
+        anchorId={stepId}
+        number={index + 1}
+        label={FLOW_STEP_LABELS[stepId]}
+        state={flow.steps[stepId]}
+        isCurrentPosition={stepId === flow.current}
+        lockedReason={LOCKED_REASON[stepId]}
+        canPrevious={prevStep !== null}
+        canNext={nextStep !== null}
+        onPrevious={() => prevStep && setSelectedStep(prevStep)}
+        onNext={() => nextStep && setSelectedStep(nextStep)}
+        previousReason={previousReason}
+        nextReason={nextReason}
+      >
+        {stepId === 'design' && (
+          <TemplatePicker
+            entries={entries}
+            loading={catalogLoading}
+            failed={catalogFailed}
+            selectedKey={selectedKey}
+            onSelect={setSelectedKey}
+          />
+        )}
+        {stepId === 'plan' && (
+          <PlanAssignment
+            loading={facilityLoading}
+            failed={facilityFailed}
+            sites={sites}
+            confirmed={facilityConfirmed}
+            onConfirm={() => setFacilityConfirmed(true)}
+          />
+        )}
+        {stepId === 'provision' && (
+          <ProvisionSection
+            entry={selectedEntry}
+            // The read's outcome, not just its payload — see
+            // ProvisionSection's `blocked`. react-query keeps the last
+            // good entries alongside isError, so without this the step
+            // would go on acting from a catalog it knows it cannot read.
+            catalogFailed={catalogFailed}
+            catalogFetching={catalogFetching}
+            slug={trimmedSlug}
+            arming={arming}
+            pending={deployMutation.isPending}
+            outcome={deployOutcome}
+            onArm={() => {
+              setDeployOutcome(null)
+              setArming(true)
+            }}
+            onCancel={() => setArming(false)}
+            onConfirm={handleProvisionConfirm}
+          />
+        )}
+        {/* Configure and Finalise & Review carry no content branch here —
+            classifyDraftFlow locks them for the whole draft (LOCKED_REASON
+            above), and FlowStep renders only that reason for a locked step,
+            never its children. Anything written here would be dead code
+            standing in for the (already honest) lockedReason. */}
+      </FlowStep>
+    )
+  }
+
   return (
     <div className="flex-1 overflow-y-auto p-6">
-      <div className="panel mt-6 p-4">
+      <div className="flex items-center justify-between gap-3">
+        <p className="text-sm text-muted">
+          Studio identity, template, and facility placement for a workload that does not exist
+          yet — Provision is what creates it.
+        </p>
+        {/* Explicit, low-stakes reset (WP-3 spec C): this is browser-local
+            draft state, not a recorded write, so it needs no ReasonConfirm
+            audit trail — the same reasoning that keeps a per-panel Cancel
+            unconfirmed elsewhere on this page. Always reachable, not just
+            from Identity, so an operator who changed their mind on Plan or
+            Provision doesn't have to step backward through every step to
+            abandon the draft. */}
+        <button type="button" className="shrink-0 text-sm text-muted hover:text-text hover:underline" onClick={handleStartOver}>
+          Start over
+        </button>
+      </div>
+
+      <div className="mt-4">{stepBody}</div>
+    </div>
+  )
+}
+
+/**
+ * Identity — studio name + the workload identity it resolves to. The
+ * wizard's first step, and deliberately NOT one of FlowStep's five
+ * numbered, coloured lifecycle stages (WP-3 spec C — see the file
+ * docstring): no step number, no lifecycle state badge, a plainly
+ * different chrome so it never reads as a sixth stage of a canonically
+ * six-stage, five-rail-chip model.
+ */
+function IdentityStep({
+  studioName,
+  slug,
+  trimmedSlug,
+  slugValid,
+  onNameChange,
+  onSlugChange,
+  canAdvance,
+  onNext,
+}: {
+  studioName: string
+  slug: string
+  trimmedSlug: string
+  slugValid: boolean
+  onNameChange: (value: string) => void
+  onSlugChange: (value: string) => void
+  canAdvance: boolean
+  onNext: () => void
+}) {
+  return (
+    <section className="panel border border-white/10" aria-label="Identity">
+      <div className="flex items-center justify-between gap-3 border-b border-white/10 px-4 py-3">
+        <h2 className="text-base font-semibold">Identity</h2>
+      </div>
+      <div className="p-4 text-sm">
         <label htmlFor="studio-name" className="block text-xs uppercase tracking-wide text-muted">
           Studio name
         </label>
@@ -222,7 +428,7 @@ export default function CreateWorkload() {
           className="mt-1 w-full rounded border border-white/10 bg-black/20 p-2 text-sm text-text"
           placeholder="e.g. Studio A"
           value={studioName}
-          onChange={(e) => handleNameChange(e.target.value)}
+          onChange={(e) => onNameChange(e.target.value)}
         />
 
         <label htmlFor="workload-slug" className="mt-3 block text-xs uppercase tracking-wide text-muted">
@@ -239,7 +445,7 @@ export default function CreateWorkload() {
             type="text"
             className="w-full rounded border border-white/10 bg-black/20 p-2 font-mono text-sm text-text"
             value={slug}
-            onChange={(e) => handleSlugChange(e.target.value)}
+            onChange={(e) => onSlugChange(e.target.value)}
           />
         </div>
         {trimmedSlug !== '' && !slugValid && (
@@ -254,79 +460,19 @@ export default function CreateWorkload() {
           the tab before then loses it, and nothing about it is recorded anywhere until then.
         </p>
       </div>
-
-      <div className="mt-4 space-y-4">
-        {FLOW_STEPS.map((id, index) => (
-          <DraftFlowStep
-            key={id}
-            number={index + 1}
-            label={FLOW_STEP_LABELS[id]}
-            state={flow.steps[id]}
-            // The draft's position step is pinned open. classifyDraftFlow
-            // never reports a draft step as `open` (a draft bears no backend
-            // affordance), so here `current` and the position always
-            // coincide — the prop is still passed explicitly rather than
-            // left to DraftFlowStep to infer, matching the same disclosure
-            // rule the deployed workload's own flow used before it became a
-            // wizard (umbrella #347 WO-D1).
-            pinned={id === flow.current}
-            lockedReason={LOCKED_REASON[id]}
-            summary={
-              id === 'design' && selectedEntry
-                ? selectedEntry.display_name
-                : id === 'plan' && draft.hasFacility
-                  ? sites[0]?.name
-                  : undefined
-            }
-          >
-            {id === 'design' && (
-              <TemplatePicker
-                entries={entries}
-                loading={catalogLoading}
-                failed={catalogFailed}
-                selectedKey={selectedKey}
-                onSelect={setSelectedKey}
-              />
-            )}
-            {id === 'plan' && (
-              <PlanAssignment
-                loading={facilityLoading}
-                failed={facilityFailed}
-                sites={sites}
-                confirmed={facilityConfirmed}
-                onConfirm={() => setFacilityConfirmed(true)}
-              />
-            )}
-            {id === 'provision' && (
-              <ProvisionSection
-                entry={selectedEntry}
-                // The read's outcome, not just its payload — see
-                // ProvisionSection's `blocked`. react-query keeps the last
-                // good entries alongside isError, so without this the step
-                // would go on acting from a catalog it knows it cannot read.
-                catalogFailed={catalogFailed}
-                catalogFetching={catalogFetching}
-                slug={trimmedSlug}
-                arming={arming}
-                pending={deployMutation.isPending}
-                outcome={deployOutcome}
-                onArm={() => {
-                  setDeployOutcome(null)
-                  setArming(true)
-                }}
-                onCancel={() => setArming(false)}
-                onConfirm={handleProvisionConfirm}
-              />
-            )}
-            {/* Configure and Finalise & Review never open in a draft — see
-                LOCKED_REASON above — so there is deliberately no content
-                branch for them here. DraftFlowStep does not render children
-                for a locked step at all, so anything written here would be
-                dead code standing in for the (already honest) lockedReason. */}
-          </DraftFlowStep>
-        ))}
+      <div className="flex items-center justify-between gap-3 border-t border-white/10 px-4 py-3 text-xs">
+        <span className="text-muted">This is the first step.</span>
+        {canAdvance ? (
+          <button type="button" className="btn btn-secondary btn-sm" onClick={onNext}>
+            Next →
+          </button>
+        ) : (
+          <span className="text-muted">
+            Enter a studio name that resolves to a valid workload identity to continue.
+          </span>
+        )}
       </div>
-    </div>
+    </section>
   )
 }
 
