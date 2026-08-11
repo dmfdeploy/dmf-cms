@@ -14,7 +14,7 @@
  * wording.
  */
 import { afterEach, describe, expect, it, vi } from 'vitest'
-import { cleanup, render, screen } from '@testing-library/react'
+import { act, cleanup, render, screen } from '@testing-library/react'
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query'
 import { MemoryRouter, Route, Routes } from 'react-router-dom'
 import Facility from '../pages/Facility'
@@ -52,6 +52,7 @@ afterEach(() => {
   cleanup()
   vi.unstubAllGlobals()
   vi.restoreAllMocks()
+  vi.useRealTimers()
 })
 
 // ---------------------------------------------------------------------------
@@ -405,9 +406,107 @@ describe('Facility Detail — media workloads count panel honesty (umbrella #385
       },
     })
     expect(await screen.findByText('Media workloads')).toBeTruthy()
-    // Same reason-copy mapper the rest of this page already uses.
-    expect(await screen.findByText(/cannot be read right now/)).toBeTruthy()
+    // fix-round P2-4 (PR #81): this used to pipe MediaWorkloads' own
+    // "netbox-unreachable" token through Facility's OWN reason vocabulary
+    // (facilityReasonCopy), which does not define it (its nearest entry is
+    // the differently-spelled "netbox-unreadable") and fell through to a
+    // generic "this section cannot be read" that named neither the failed
+    // source nor gave a next step. Now shares degradedReasonCopy with
+    // MediaWorkloads/index.tsx so the two surfaces can't disagree.
+    expect(await screen.findByText(/isn.t responding right now/)).toBeTruthy()
     expect(screen.queryByText(/0 media workload/)).toBeNull()
+  })
+
+  // fix-round P1-1 (PR #81): same shape as MediaWorkloads/index.tsx's own
+  // pin — `workloads: []` with `invalid_instances` non-empty PROVES an
+  // instance exists (excluded, not absent). "0 media workloads provisioned"
+  // is exactly the false-absence claim hard gate 1 forbids.
+  it('a degraded read with no reason token (invalid-instances-only) never states a fabricated zero count', async () => {
+    renderDetail('dmf-lab', {
+      '/api/facility/dmf-lab/detail': detailPayload(),
+      '/api/media-workloads/grouped': {
+        configured: true,
+        degraded: true,
+        scope: [],
+        workloads: [],
+        invalid_instances: [
+          {
+            instance: 'bad-svc',
+            function_key: 'mxl-videotestsrc',
+            workload_assignment: 'invalid-multiple',
+            conflicting_workloads: ['alpha', 'beta'],
+          },
+        ],
+      },
+    })
+    expect(await screen.findByText('Media workloads')).toBeTruthy()
+    expect(await screen.findByText(/This count is incomplete/)).toBeTruthy()
+    expect(screen.queryByText(/0 media workload/)).toBeNull()
+    // NetBox WAS reachable — must not borrow the unreachable-specific copy.
+    expect(screen.queryByText(/isn.t responding right now/)).toBeNull()
+  })
+
+  // fix-round P2-3 (PR #81): a settled failed refetch must win over stale
+  // retained data — hold-then-reject, not first-load (see the matching pin
+  // in mediaWorkloadsGrid.test.tsx for the full reasoning). Fake timers so
+  // the 15s refetchInterval (api/hooks.ts's useMediaWorkloadsGrouped) can be
+  // advanced deterministically; settle() + getBy*, never findBy* under fake
+  // timers (findBy* waits on real timers and would hang).
+  it('a settled failed refetch overrides a retained honest zero — never re-states it', async () => {
+    vi.useFakeTimers()
+    let calls = 0
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(async (input: RequestInfo | URL) => {
+        const url = (typeof input === 'string' ? input : (input as Request).url).toString()
+        if (url.endsWith('/api/facility/dmf-lab/detail')) {
+          return new Response(JSON.stringify(detailPayload()), { status: 200 })
+        }
+        if (url.endsWith('/api/media-workloads/grouped')) {
+          calls += 1
+          if (calls === 1) {
+            return new Response(
+              JSON.stringify({ configured: true, degraded: false, scope: [], workloads: [], invalid_instances: [] }),
+              { status: 200 },
+            )
+          }
+          return new Response('boom', { status: 500 })
+        }
+        throw new Error(`unrouted fetch in test: ${url}`)
+      }),
+    )
+    renderWithQuery(
+      <MemoryRouter initialEntries={['/facilities/dmf-lab']}>
+        <Routes>
+          <Route path="/facilities/:site" element={<FacilityDetail />} />
+        </Routes>
+      </MemoryRouter>,
+    )
+
+    // First (successful, genuinely empty) read settles.
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(60)
+    })
+    expect(
+      screen.getByText(
+        (_, el) => el?.tagName === 'P' && /0 media workloads provisioned on this facility\./.test(el.textContent ?? ''),
+      ),
+    ).toBeTruthy()
+
+    // Advance past the 15s poll interval so the background refetch fires
+    // and rejects, while the old (empty, non-degraded) data stays retained.
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(15_100)
+    })
+
+    expect(
+      screen.getByText('Cannot confirm the media workload count — the last read attempt failed. Retrying automatically.'),
+    ).toBeTruthy()
+    expect(
+      screen.queryByText(
+        (_, el) => el?.tagName === 'P' && /0 media workloads provisioned on this facility\./.test(el.textContent ?? ''),
+      ),
+    ).toBeNull()
   })
 
   it('a genuinely successful read with zero workloads still states the honest zero', async () => {

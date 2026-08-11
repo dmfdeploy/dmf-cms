@@ -85,19 +85,42 @@ const BADGE_TITLE: Record<LifecycleBadge['grammar'], (label: string) => string> 
  * things. The raw token still exists for anyone who wants it, behind a
  * details disclosure below, same convention as this page's own EBU-jargon
  * treatment in Catalog's EntryCard.
+ *
+ * Shared with Facility Detail's media-workloads count panel (fix-round
+ * P2-4) — that panel reads the SAME grouped endpoint and was piping these
+ * exact tokens through ITS OWN reason vocabulary (facilityReasonCopy),
+ * which does not define them (its nearest entry is the differently-spelled
+ * "netbox-unreadable") and so fell through to a generic "this section
+ * cannot be read" that named neither the failed source nor gave a next
+ * step. One mapper, imported by both call sites, so they can't disagree
+ * about what these tokens mean again.
  */
-function degradedReasonCopy(reason: string | undefined): string {
+export function degradedReasonCopy(reason: string | undefined): string {
   switch (reason) {
     case 'netbox-not-configured':
       return "The facility inventory system isn't connected in this environment. The console cannot tell you what Media Function instances exist. Ask an administrator to configure the connection."
     case 'netbox-unreachable':
-      return "The facility inventory system isn't responding right now. The console cannot tell you what Media Function instances exist. This is usually temporary — retrying automatically."
+      return "The facility inventory system isn't responding right now. The console cannot tell you what Media Function instances exist. This is usually temporary — retrying automatically. If it continues, contact your systems engineer."
     case 'netbox-error':
       return 'The facility inventory system returned an unexpected error. The console cannot tell you what Media Function instances exist. If this continues, contact your systems engineer.'
     default:
-      return 'The facility inventory system could not be read. The console cannot tell you what Media Function instances exist.'
+      // Art. 8: an unrecognised/absent token is OUR gap, not the operator's
+      // vocabulary — still owes a next step, not just a shrug.
+      return 'The facility inventory system could not be read for an unstated reason. The console cannot tell you what Media Function instances exist. If this continues, contact your systems engineer.'
   }
 }
+
+/**
+ * Reachable-but-incomplete copy for the one `degraded` cause that is NOT a
+ * failed read: NetBox answered fine, but one or more instances carry more
+ * than one `workload:*` tag and were excluded from every group rather than
+ * guessed into one (media_workloads.py's own contract). Distinct from
+ * `degradedReasonCopy` above on purpose — conflating "could not read" with
+ * "read fine, some rows excluded" would blame the wrong thing (Art. 8: what
+ * happened has to be the true cause).
+ */
+const INCOMPLETE_INVALID_TAGS_COPY =
+  'This list is incomplete — every recorded instance has a conflicting workload assignment and none could be grouped here (see Invalid workload assignments below). This is not the same as no instances existing.'
 
 /**
  * The instance whose preview represents the workload on its tile: the first
@@ -110,7 +133,7 @@ function representativeInstance(wl: MediaWorkload): MediaWorkloadInstance | null
 }
 
 export default function MediaWorkloads() {
-  const { data, isLoading, error } = useMediaWorkloadsGrouped()
+  const { data, isLoading, error, isError } = useMediaWorkloadsGrouped()
   const visible = useDocumentVisible()
   const reducedMotion = usePrefersReducedMotion()
 
@@ -146,13 +169,26 @@ export default function MediaWorkloads() {
   const unassignedWorkload = workloads.find((wl) => wl.slug === 'unassigned') ?? null
 
   // A `reason` token is only ever set on the fail-hard paths (not-configured,
-  // unreachable, error) — the OTHER way `degraded` can be true, invalid
-  // workload:* tags on an otherwise-successful read, carries no `reason` at
-  // all and still has a real (possibly empty) `workloads` array. Only the
-  // former means the source of truth could not be read at all, so only the
-  // former licenses "cannot enumerate" copy (hard gate 1: an empty result
-  // from an incomplete read is not evidence of absence).
+  // unreachable, error) — for the BANNER, which names one specific failed
+  // source. The generic `error != null` banner just below already covers a
+  // failed *console* fetch (isError) with its own honest, non-overclaiming
+  // text, so this stays reason-scoped rather than duplicating that banner.
   const sourceUnreachable = Boolean(data?.degraded && data?.reason)
+  // fix-round P1-1: `degraded` is the COMPLETENESS gate on its own — the
+  // OTHER way it can be true, invalid workload:* tags excluding members from
+  // `workloads` on an otherwise-successful read, carries no `reason` token
+  // but is EQUALLY not evidence of absence (media_workloads.py: excluded,
+  // not absent — those instances are real, just unresolvable to one group).
+  // `reason` only ever selects WHICH honest explanation to show, never
+  // whether one is owed.
+  //
+  // fix-round P2-3: `isError` extends the same gate to a SETTLED failed
+  // refetch. TanStack Query retains the last-good `data` across a failed
+  // background refetch, so `data?.degraded` alone would silently fall back
+  // to a stale, previously-honest `false` and re-license an absence claim
+  // the CURRENT read never established. A settled error always wins here,
+  // regardless of what's retained.
+  const cannotClaimNone = Boolean(isError || data?.degraded)
 
   return (
     <div className="flex-1 overflow-y-auto p-6">
@@ -203,8 +239,12 @@ export default function MediaWorkloads() {
 
           {workloads.length === 0 ? (
             <div className="panel mt-4 py-10 text-center text-sm text-muted">
-              {sourceUnreachable
+              {isError
+                ? 'Cannot confirm there are no Media Function instances — the last read attempt failed. Retrying automatically.'
+                : sourceUnreachable
                 ? 'Cannot confirm there are no Media Function instances — the source of truth is unreachable.'
+                : cannotClaimNone
+                ? INCOMPLETE_INVALID_TAGS_COPY
                 : 'No Media Function instances in your scope.'}
             </div>
           ) : (

@@ -154,3 +154,91 @@ def test_reachable_forgejo_with_no_repos_is_a_genuine_empty(monkeypatch):
     monkeypatch.setattr(main_module.forgejo, "list_repos", lambda **kwargs: [])
     assert _client().get("/api/changes/commits").json() == {"repos": [], "reason": ""}
     assert _client().get("/api/changes/pulls").json() == {"pulls": [], "reason": ""}
+
+
+# ---------------------------------------------------------------------------
+# fix-round P1-2 (PR #81): the per-repo commits/pulls call used to be wrapped
+# in its own bare `except Exception: pass` — a failure there was invisible
+# to BOTH the UI (this handler still answered `reason: ""` as long as
+# `list_repos` itself succeeded, which the widget reads as "genuinely
+# empty") AND to monitoring (no log line at all). Both tests below fail
+# against the pre-fix-round head: it returns `{"repos": [], "reason": ""}` /
+# `{"pulls": [], "reason": ""}` off a fully-failed read, and logs nothing.
+# ---------------------------------------------------------------------------
+
+_TWO_REPOS = [
+    {"full_name": "dmfdeploy/dmf-cms", "name": "dmf-cms"},
+    {"full_name": "dmfdeploy/dmfdeploy", "name": "dmfdeploy"},
+]
+
+
+def test_commits_all_repos_fail_is_unreachable_never_a_silent_empty(monkeypatch, caplog):
+    monkeypatch.setattr(main_module.forgejo, "list_repos", lambda **kwargs: _TWO_REPOS)
+    monkeypatch.setattr(main_module.forgejo, "list_commits", _raise(RuntimeError("boom")))
+    with caplog.at_level("WARNING"):
+        body = _client().get("/api/changes/commits").json()
+    assert body == {"repos": [], "reason": "forgejo-unreachable"}
+    # Previously invisible to monitoring: every failed repo now logs.
+    assert sum("dmf-cms" in r.message for r in caplog.records) >= 1
+    assert sum("dmfdeploy" in r.message for r in caplog.records) >= 1
+
+
+def test_pulls_all_repos_fail_is_unreachable_never_a_silent_empty(monkeypatch, caplog):
+    monkeypatch.setattr(main_module.forgejo, "list_repos", lambda **kwargs: _TWO_REPOS)
+    monkeypatch.setattr(main_module.forgejo, "list_pulls", _raise(RuntimeError("boom")))
+    with caplog.at_level("WARNING"):
+        body = _client().get("/api/changes/pulls").json()
+    assert body == {"pulls": [], "reason": "forgejo-unreachable"}
+    assert sum("dmf-cms" in r.message for r in caplog.records) >= 1
+
+
+def test_commits_mixed_success_is_partial_and_keeps_the_successful_rows(monkeypatch, caplog):
+    monkeypatch.setattr(main_module.forgejo, "list_repos", lambda **kwargs: _TWO_REPOS)
+
+    def _list_commits(*, owner, repo, **kwargs):
+        if repo == "dmf-cms":
+            return [
+                {
+                    "sha": "abc1234567",
+                    "commit": {"message": "fix: x", "author": {"name": "a", "date": "2026-08-01T00:00:00Z"}},
+                    "html_url": "http://forgejo.test/x",
+                }
+            ]
+        raise RuntimeError("boom")
+
+    monkeypatch.setattr(main_module.forgejo, "list_commits", _list_commits)
+    with caplog.at_level("WARNING"):
+        body = _client().get("/api/changes/commits").json()
+
+    # Partial, not "": the aggregate is honest that one repo's rows are
+    # missing, while the successful repo's real rows are still shown —
+    # dropping them entirely would be worse than incomplete-but-labelled.
+    assert body["reason"] == "forgejo-partial"
+    assert [r["name"] for r in body["repos"]] == ["dmfdeploy/dmf-cms"]
+    assert sum("dmfdeploy/dmfdeploy" in r.message for r in caplog.records) >= 1
+
+
+def test_pulls_mixed_success_is_partial_and_keeps_the_successful_rows(monkeypatch, caplog):
+    monkeypatch.setattr(main_module.forgejo, "list_repos", lambda **kwargs: _TWO_REPOS)
+
+    def _list_pulls(*, owner, repo, **kwargs):
+        if repo == "dmf-cms":
+            return [
+                {
+                    "number": 1,
+                    "title": "t",
+                    "state": "open",
+                    "user": {"login": "a"},
+                    "created_at": "2026-08-01T00:00:00Z",
+                    "html_url": "http://forgejo.test/pr/1",
+                }
+            ]
+        raise RuntimeError("boom")
+
+    monkeypatch.setattr(main_module.forgejo, "list_pulls", _list_pulls)
+    with caplog.at_level("WARNING"):
+        body = _client().get("/api/changes/pulls").json()
+
+    assert body["reason"] == "forgejo-partial"
+    assert [p["repo"] for p in body["pulls"]] == ["dmfdeploy/dmf-cms"]
+    assert sum("dmfdeploy/dmfdeploy" in r.message for r in caplog.records) >= 1

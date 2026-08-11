@@ -91,8 +91,10 @@ export type ForgejoPhase =
   | 'loading'
   | 'ok'
   | 'unreachable'
+  | 'partial' // some repos read, some failed — rows shown are real but incomplete
   | 'unconfigured'
-  | 'error' // the console's own API call failed (react-query isError)
+  | 'error' // the console's own API call failed, OR the payload's reason
+            // token could not be trusted as authorizing "ok" (fix-round P3-5)
 
 export interface ForgejoQueryLike {
   isLoading: boolean
@@ -102,14 +104,30 @@ export interface ForgejoQueryLike {
 
 export function classifyForgejo(q: ForgejoQueryLike): ForgejoPhase {
   if (q.isLoading && !q.data) return 'loading'
-  if (q.isError && !q.data) return 'error'
+  // fix-round P2-3: a SETTLED failed refetch wins even when TanStack Query
+  // has retained a prior successful `data` (it does, by default, across a
+  // failed background refetch) — checking `isError` only when `!q.data` let
+  // a stale, previously-honest reason token re-authorize an "ok"/"genuinely
+  // empty" read the CURRENT fetch never established. Same defect class,
+  // same fix as MediaWorkloads/index.tsx's `cannotClaimNone`.
+  if (q.isError) return 'error'
   switch (q.data?.reason) {
     case 'forgejo-unreachable':
       return 'unreachable'
+    case 'forgejo-partial':
+      return 'partial'
     case 'forgejo-unconfigured':
       return 'unconfigured'
-    default:
+    case '':
       return 'ok'
+    default:
+      // fix-round P3-5: `apiCall`'s generic return type is a compile-time
+      // cast, not runtime validation — an absent, malformed, or
+      // newly-added-but-unhandled token must NOT fail OPEN into 'ok'
+      // (which forgejoEmptyCopy below reads as "Forgejo answered, this is
+      // genuinely empty"). Only an EXACT "" authorises that claim; every
+      // other shape is non-authoritative and must fail closed.
+      return 'error'
   }
 }
 
@@ -120,8 +138,12 @@ export function forgejoEmptyCopy(phase: ForgejoPhase, kind: string): string {
   switch (phase) {
     case 'unreachable':
       return `Source control is unreachable — recent ${kind} cannot be read right now. Retrying automatically.`
+    case 'partial':
+      return `Some repositories could not be read — recent ${kind} may be incomplete. Retrying automatically.`
     case 'unconfigured':
-      return 'Source control is not configured in this environment.'
+      // Art. 8 next-step (fix-round P2-4): naming the fact alone left the
+      // operator with nothing to do about it.
+      return 'Source control is not configured in this environment — an administrator can connect it to show recent commits and pull requests here.'
     case 'error':
       return `Recent ${kind} could not be loaded. Retrying automatically.`
     default:
