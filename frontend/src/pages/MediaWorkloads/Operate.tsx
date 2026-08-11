@@ -1,9 +1,14 @@
 import { useCallback, useMemo, useState, useEffect } from 'react'
 import { Link, useNavigate, useParams } from 'react-router-dom'
-import { useCatalog, useMediaWorkloadsGrouped, useInstanceTopology } from '../../api/hooks'
+import { useCatalog, useCurrentUser, useMediaWorkloadsGrouped, useInstanceTopology } from '../../api/hooks'
 import type { MediaWorkloadInstance } from '../../api/types'
 import { classifyWorkloadForHeaderSlot, buildHeaderSlotRail, useRegisterHeaderSlot } from '../../store/headerSlot'
-import type { WorkloadLifecycleInput } from '../../lib/workloadLifecycle'
+import {
+  buildWorkloadLifecycleInput,
+  isGroupedReadTrustworthy,
+  isPurgeAuthorized,
+  type WorkloadLifecycleInput,
+} from '../../lib/workloadLifecycle'
 import type { FlowStepId } from '../../lib/workloadFlow'
 import { LOCKED_REASON } from './WorkloadDetail'
 import WorkloadTile from './WorkloadTile'
@@ -61,8 +66,18 @@ import { LIVE_TILE_CAP, useDocumentVisible, usePrefersReducedMotion } from './li
 // uncertainty the console presented as settled).
 export default function WorkloadOperate() {
   const { slug } = useParams<{ slug: string }>()
-  const { data, isLoading, error } = useMediaWorkloadsGrouped()
+  const { data, isLoading, error, isError, isFetching } = useMediaWorkloadsGrouped()
   const { data: catalogData } = useCatalog()
+  // FIX ROUND (WP-3 spec B gate, P2-3): this page used to build its rail
+  // input with only two of the eight WorkloadLifecycleInput fields set —
+  // allMembersBootstrapped/anyMemberObservedRunning/membersDataTrustworthy/
+  // purgeAuthorized/isPurgeableEntity were all silently absent, which
+  // stageActions() reads as false/withheld regardless of what the workload
+  // actually is. A purge-eligible, Finalise-open workload on WorkloadDetail
+  // could read as Finalise-locked here — two derivations of the SAME
+  // workload disagreeing. useCurrentUser() is the identical read
+  // WorkloadDetail already holds for the same purpose (umbrella #378b).
+  const userQuery = useCurrentUser()
   const [openInstance, setOpenInstance] = useState<MediaWorkloadInstance | null>(null)
   const navigate = useNavigate()
 
@@ -91,13 +106,24 @@ export default function WorkloadOperate() {
   // all happen in an outer wrapper that owns no hooks of its own, this page
   // has no such split.
   const workloadForRail = data?.workloads.find((w) => w.slug === slug)
+  // Built through the SAME shared constructor WorkloadDetail.tsx uses —
+  // see that file's identical comment on its own `input` for what this
+  // fixes and why. No job-state flags: Operate runs no jobs of its own
+  // (the file docstring's "WHY IT CARRIES NO ACTION OF ITS OWN").
   const railInput: WorkloadLifecycleInput | null = workloadForRail
-    ? {
-        lifecycle: workloadForRail.lifecycle,
-        hasBootstrappedMembers: workloadForRail.instances.some(
-          (i) => !i.reconcile_pending && i.requested_state === 'bootstrapped',
-        ),
-      }
+    ? buildWorkloadLifecycleInput(workloadForRail, {
+        membersDataTrustworthy: isGroupedReadTrustworthy({
+          isError,
+          isFetching,
+          configured: data?.configured,
+          degraded: data?.degraded,
+        }),
+        purgeAuthorized: isPurgeAuthorized({
+          isFetching: userQuery.isFetching,
+          isError: userQuery.isError,
+          role: userQuery.data?.role,
+        }),
+      })
     : null
   useRegisterHeaderSlot(
     railInput && workloadForRail

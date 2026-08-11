@@ -34,6 +34,14 @@
 // reads inventory intent plus observed runtime, and it NEVER infers Finalise
 // from absence. Running jobs are this module's own overlay, and Finalise
 // becomes active only from an OBSERVED teardown — never from emptiness.
+//
+// buildWorkloadLifecycleInput (below) imports roleAtLeast from ./roles — a
+// sibling lib/ module, not api/types.ts, so this does not reopen the
+// "pure over the console's existing truth" discipline roles.ts's own
+// docstring describes: both modules independently redeclare the narrow
+// shapes they read off api/types rather than importing them, but nothing
+// stops one lib/ module from depending on another.
+import { roleAtLeast, type ConsoleRole } from './roles'
 
 export type StageId =
   | 'design'
@@ -338,4 +346,90 @@ export function classifyWorkloadLifecycle(
   if (active) states[active] = 'active'
 
   return { active, states }
+}
+
+/**
+ * The ONE constructor every route rendering a workload's rail must use to
+ * turn a MediaWorkload into a WorkloadLifecycleInput (fix round, umbrella
+ * #347 WP-3 spec B gate, P2-3). Before this existed, WorkloadDetail.tsx and
+ * Operate.tsx each hand-built this object, and they had drifted: Operate's
+ * copy set only `lifecycle` and `hasBootstrappedMembers`, leaving
+ * `allMembersBootstrapped`/`anyMemberObservedRunning`/
+ * `membersDataTrustworthy`/`purgeAuthorized`/`isPurgeableEntity` all absent
+ * — which stageActions() reads as false/withheld for every one of them,
+ * regardless of what the workload actually is. A workload WorkloadDetail
+ * correctly read as Finalise-open and purge-eligible would read as
+ * Finalise-locked on /operate: two derivations of the SAME workload
+ * disagreeing, exactly what this module's own docstring says a single
+ * classifier exists to prevent (see the file docstring, above).
+ *
+ * Job-state flags (`launching`/`switching`/`tearingDown`) are the one
+ * legitimately route-specific input — Operate runs no jobs of its own and
+ * always passes none. `membersDataTrustworthy`/`purgeAuthorized` are taken
+ * PRE-COMPUTED, not as raw query objects — isGroupedReadTrustworthy/
+ * isPurgeAuthorized below are the shared formulas both routes call, so the
+ * two callers can never compute those facts differently either, while each
+ * still owns threading its own query results through (WorkloadDetail
+ * already computed membersDataTrustworthy once in its outer component and
+ * threads it down — this preserves that shape rather than forcing every
+ * caller through a wider raw-query parameter).
+ */
+export function buildWorkloadLifecycleInput(
+  workload: {
+    slug: string
+    lifecycle: WorkloadLifecycle
+    instances: { reconcile_pending: boolean; requested_state: string; observed_state: string }[]
+  },
+  facts: {
+    launching?: boolean
+    switching?: boolean
+    tearingDown?: boolean
+    membersDataTrustworthy: boolean
+    purgeAuthorized: boolean
+  },
+): WorkloadLifecycleInput {
+  return {
+    lifecycle: workload.lifecycle,
+    launching: facts.launching,
+    switching: facts.switching,
+    tearingDown: facts.tearingDown,
+    hasBootstrappedMembers: workload.instances.some(
+      (i) => !i.reconcile_pending && i.requested_state === 'bootstrapped',
+    ),
+    allMembersBootstrapped:
+      workload.instances.length > 0 && workload.instances.every((i) => i.requested_state === 'bootstrapped'),
+    anyMemberObservedRunning: workload.instances.some((i) => i.observed_state === 'running'),
+    membersDataTrustworthy: facts.membersDataTrustworthy,
+    purgeAuthorized: facts.purgeAuthorized,
+    isPurgeableEntity: workload.slug !== 'unassigned',
+  }
+}
+
+/**
+ * umbrella #378a: a grouped-inventory read is trustworthy for member-state
+ * affordance gating only when it is fresh, error-free, AND complete — the
+ * grouped endpoint can return HTTP 200 with `degraded: true` (members
+ * EXCLUDED from the payload), so success-and-not-fetching alone is not
+ * enough. The ONE formula both WorkloadDetail and Operate call now, so a
+ * caller cannot compute this differently by forgetting one of the four
+ * conditions the way Operate's own copy previously omitted the whole thing.
+ */
+export function isGroupedReadTrustworthy(read: {
+  isError: boolean
+  isFetching: boolean
+  configured?: boolean
+  degraded?: boolean
+}): boolean {
+  return !read.isError && !read.isFetching && read.configured === true && read.degraded !== true
+}
+
+/**
+ * umbrella #378b: fail-closed on IDENTITY FRESHNESS, not just the role
+ * value — TanStack Query retains the PREVIOUS /api/me payload while a
+ * refetch is in flight and after one fails, so `data?.role` alone cannot
+ * prove the role is CURRENT. The ONE formula every purge-gating caller
+ * calls now.
+ */
+export function isPurgeAuthorized(read: { isFetching: boolean; isError: boolean; role?: ConsoleRole | null }): boolean {
+  return !read.isFetching && !read.isError && roleAtLeast(read.role, 'operator')
 }

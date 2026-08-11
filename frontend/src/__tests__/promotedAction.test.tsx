@@ -74,7 +74,7 @@ function workload(functionKeys: string[] = ['crosspoint']): MediaWorkload {
   }
 }
 
-function stubFetch(entries: CatalogEntry[], deployHandler?: () => Response) {
+function stubFetch(entries: CatalogEntry[], deployHandler?: () => Response | Promise<Response>) {
   const grouped: MediaWorkloadsGroupedResponse = {
     configured: true,
     degraded: false,
@@ -188,5 +188,96 @@ describe('the promoted control carries the WHOLE loop, including persistent fail
       useTopbarMessageStore.setState({ message: null })
     })
     expect(within(header).getByText(/nothing was changed/)).toBeTruthy()
+  })
+})
+
+// ---------------------------------------------------------------------------
+// FIX ROUND (gate CHANGES-NEEDED, P1): the promoted panel was invisible when
+// armed and fell back into the page body while pending. Two distinct bugs,
+// two distinct tests below.
+// ---------------------------------------------------------------------------
+
+describe('FIX ROUND P1b: the promoted control stays in the header WHILE the write is pending', () => {
+  it('does not fall back into the page body between Confirm and the mutation settling', async () => {
+    // A HELD promise, not a same-tick rejection: the earlier version of
+    // this suite's "carries the WHOLE loop" test above used a deploy
+    // handler that rejects essentially synchronously, so by the time its
+    // `await within(header).findByText(...)` ran, `busy` had already
+    // flipped back to false and the panel had already re-settled into the
+    // header on its own — the test never actually observed the PENDING
+    // window where eligibleDeployEntries computes to [] purely because
+    // THIS entry's own onJobStart just fired. Gating the response open is
+    // what makes "still pending" an OBSERVED state rather than a timing
+    // accident this suite was accidentally too fast to catch.
+    let releaseDeploy: (() => void) | null = null
+    const gate = new Promise<void>((resolve) => {
+      releaseDeploy = resolve
+    })
+    stubFetch([catalogEntry()], async () => {
+      await gate
+      return json({ error: 'reason-required' }, 400)
+    })
+    renderAppAt('/media-workloads/studio-a')
+
+    await screen.findByRole('navigation', { name: 'Media workload lifecycle' })
+    const header = headerRow()
+
+    fireEvent.click(await within(header).findByRole('button', { name: /Deploy/ }))
+    const reasonBox = await within(header).findByPlaceholderText(/Reason \(required/)
+    fireEvent.change(reasonBox, { target: { value: 'scheduled' } })
+    fireEvent.click(within(header).getByRole('button', { name: 'Confirm deploy' }))
+
+    // Mid-flight: the mutation is deliberately held open, so `busy` is true
+    // right now purely because of THIS entry's own deploy — not a
+    // different entry's, not clear-for-deployment's. The panel (and its
+    // Confirm button, now showing the pending label) must still be inside
+    // the header, and must NOT have re-appeared in the page body.
+    await waitFor(() => {
+      expect(within(header).getByRole('button', { name: 'Launching…' })).toBeTruthy()
+    })
+    const provision = provisionSection()
+    expect(within(provision).queryByPlaceholderText(/Reason \(required/)).toBeNull()
+    expect(within(provision).queryByRole('button', { name: 'Launching…' })).toBeNull()
+
+    // And it settles cleanly: the latch releases once the write is no
+    // longer this entry's own pending mutation, and the (now failed, per
+    // B2) outcome still renders in the SAME header popover.
+    releaseDeploy!()
+    await waitFor(() => expect(within(header).getByText(/nothing was changed/)).toBeTruthy())
+  })
+})
+
+describe('FIX ROUND P1a: the armed panel is anchored to stay inside the viewport', () => {
+  it('positions relative to the header row, not to its own mount span (which collapses to zero width when its only child is the out-of-flow panel)', async () => {
+    stubFetch([catalogEntry()])
+    renderAppAt('/media-workloads/studio-a')
+
+    await screen.findByRole('navigation', { name: 'Media workload lifecycle' })
+    const header = headerRow()
+
+    // jsdom does not compute real layout, so this cannot assert an actual
+    // bounding box — see the fix commit message for a real-browser
+    // (dev-login seam) geometry check confirming the on-screen result.
+    // What jsdom CAN prove, and what the actual bug was: the panel's
+    // POSITIONING ANCESTOR. `right-4`/`top-full` are meaningless unless
+    // resolved against a containing block with real width — that has to be
+    // the row itself (`relative` here now), not the tiny mount span (which
+    // must NOT be `relative`, or the panel would silently re-adopt it as
+    // its containing block again).
+    expect(header.className).toContain('relative')
+
+    fireEvent.click(await within(header).findByRole('button', { name: /Deploy/ }))
+    const panel = (await within(header).findByPlaceholderText(/Reason \(required/)).closest(
+      'div.absolute',
+    ) as HTMLElement
+    expect(panel, 'the armed panel must be the element carrying the positioning classes').toBeTruthy()
+    expect(panel.className).toContain('right-4')
+    expect(panel.className).not.toContain('left-0')
+
+    // The mount span itself — the panel's DOM parent — must not carry its
+    // own `relative`, or CSS would resolve `right-4` against ITS box
+    // (collapsed to ~0 width) instead of the row's.
+    const mountSpan = panel.parentElement as HTMLElement
+    expect(mountSpan.className).not.toContain('relative')
   })
 })
