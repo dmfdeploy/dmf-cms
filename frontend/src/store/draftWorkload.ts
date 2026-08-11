@@ -33,13 +33,27 @@ export interface DraftWorkloadState {
    *  directly, so a later keystroke in the name field never clobbers it. */
   slugTouched: boolean
   selectedKey: string | null
-  /** WP-3 spec D: the operator's own acknowledgement of the resolved
-   *  placement — see lib/workloadFlow.ts's DraftProgress.facilityConfirmed. */
-  facilityConfirmed: boolean
+  /**
+   * WP-3 spec D fix round (P2-4): the IDENTITY of the facility the
+   * operator actually confirmed — its name, the exact string the
+   * confirmation copy showed them — NOT a bare boolean. A boolean alone
+   * cannot tell "confirmed dmf-lab" apart from "confirmed SOME facility,
+   * possibly a different one the underlying single-site read has since
+   * started returning": facility/summary is a live read on a periodic
+   * refresh, and a mutation-tested repro (createWorkload.test.tsx) showed
+   * confirming dmf-lab, then a refresh returning a different single site,
+   * still rendered "Confirmed — this workload will run on <new site>" with
+   * no button — asserting the operator confirmed a placement they never
+   * saw. CreateWorkload.tsx derives the actual `facilityConfirmed` boolean
+   * classifyDraftFlow reads by comparing this to the CURRENTLY resolved
+   * single site's own name; a mismatch (or a site count that stopped being
+   * exactly one) reads as unconfirmed, not as a stale "yes" carried over.
+   */
+  confirmedFacilityName: string | null
   setStudioName: (value: string) => void
   setSlug: (value: string) => void
   setSelectedKey: (key: string | null) => void
-  setFacilityConfirmed: (confirmed: boolean) => void
+  setConfirmedFacilityName: (name: string | null) => void
   reset: () => void
 }
 
@@ -62,7 +76,7 @@ const INITIAL_DRAFT = {
   slug: '',
   slugTouched: false,
   selectedKey: null as string | null,
-  facilityConfirmed: false,
+  confirmedFacilityName: null as string | null,
 }
 
 export const useDraftWorkloadStore = create<DraftWorkloadState>((set) => ({
@@ -71,6 +85,6 @@ export const useDraftWorkloadStore = create<DraftWorkloadState>((set) => ({
     set((s) => ({ studioName: value, slug: s.slugTouched ? s.slug : deriveSlug(value) })),
   setSlug: (value) => set({ slug: value, slugTouched: true }),
   setSelectedKey: (key) => set({ selectedKey: key }),
-  setFacilityConfirmed: (confirmed) => set({ facilityConfirmed: confirmed }),
+  setConfirmedFacilityName: (name) => set({ confirmedFacilityName: name }),
   reset: () => set({ ...INITIAL_DRAFT }),
 }))
