@@ -4,6 +4,17 @@
  * MSW-free, a fresh react-query QueryClient per render, fetch stubbed via
  * vi.stubGlobal.
  *
+ * WP-3 spec C: this page is now a ONE-STEP-AT-A-TIME WIZARD (Identity, then
+ * Design/Plan/Provision/Configure/Finalise & Review through FlowStep.tsx),
+ * not the old all-five-panels accordion. Only the step the operator has
+ * navigated to is ever mounted, so every test below that needs a later
+ * step's DOM must walk there first via the Next/Previous chrome (clickNext/
+ * clickPrevious below) — see CreateWorkload.tsx's own file docstring for
+ * why Design → Finalise & Review's Next/Previous are an UNCONDITIONAL index
+ * walk, never gated on lock state: a locked step is still reachable by
+ * navigating to it, only its own action is withheld (it renders its stated
+ * reason instead of its children).
+ *
  * What must hold, and why each is its own test rather than one giant one:
  *   - the gate: Plan/Provision stay locked until Design/Plan complete, and
  *     the flow never contradicts lib/workloadFlow.ts's own ladder;
@@ -16,7 +27,10 @@
  *   - a failed deploy leaves a STANDING failure on the Provision step
  *     (Art. 2/8), not a toast that could vanish before it's read;
  *   - the draft-loss limit is stated in the rendered output, not just in a
- *     comment only a developer will ever read.
+ *     comment only a developer will ever read;
+ *   - the draft's DATA (not the wizard's own navigation position) survives
+ *     navigating away and back within the tab, via a non-persisted store,
+ *     and is architecturally incapable of surviving a reload.
  */
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import { cleanup, fireEvent, render, screen, waitFor, within } from '@testing-library/react'
@@ -26,6 +40,7 @@ import CreateWorkload from '../pages/MediaWorkloads/CreateWorkload'
 import WorkloadDetail from '../pages/MediaWorkloads/WorkloadDetail'
 import { readLaunchState } from '../pages/MediaWorkloads/WorkloadMaterializing'
 import HeaderSlotProbe from './testUtils/HeaderSlotProbe'
+import { useDraftWorkloadStore } from '../store/draftWorkload'
 import type { CatalogEntry, MediaWorkload } from '../api/types'
 
 // ---- fixtures ---------------------------------------------------------
@@ -182,9 +197,20 @@ function renderCreate() {
   return queryClient
 }
 
+// Scopes assertions to whichever step's DOM is actually mounted, via its
+// <h2>. The wizard mounts exactly one step at a time (WP-3 spec C), so this
+// only finds a step the test has genuinely navigated to. Matched against
+// EITHER `[data-step-state]` (FlowStep.tsx's own root — Design through
+// Finalise & Review) OR `section` (IdentityStep's own root, which carries
+// no data-step-state of its own: it is deliberately NOT one of FlowStep's
+// five numbered, coloured lifecycle stages — see CreateWorkload.tsx's file
+// docstring). `.closest()` with a selector list returns the nearest
+// ancestor matching either half, so one helper covers both step shapes —
+// the same fix workloadDetailStageWedge.test.tsx's `stageSection()` already
+// applies for the real wizard's FlowStep-only case.
 function stepSection(label: string): HTMLElement {
   const heading = screen.getByRole('heading', { name: label, level: 2 })
-  return heading.closest('section') as HTMLElement
+  return heading.closest('[data-step-state], section') as HTMLElement
 }
 
 async function chooseTemplate() {
@@ -196,10 +222,60 @@ function typeStudioName(value: string) {
   fireEvent.change(screen.getByLabelText('Studio name'), { target: { value } })
 }
 
+// ---- wizard navigation helpers -----------------------------------------
+//
+// Only one step's content is ever mounted (WP-3 spec C), so reaching a
+// later step means clicking through it, not just querying for it. `findBy`
+// rather than `getBy` because Identity's own Next only appears once its own
+// gate (a valid name) is satisfied, and some callers fire this in the same
+// tick as the keystroke that makes it true.
+
+async function clickNext() {
+  fireEvent.click(await screen.findByRole('button', { name: /Next/ }))
+}
+
+async function clickPrevious() {
+  fireEvent.click(await screen.findByRole('button', { name: /Previous/ }))
+}
+
+/**
+ * Types a valid studio name on Identity and clicks past the wizard's ONE
+ * structural gate (CreateWorkload.tsx's file docstring: "Identity's own
+ * Next is the one gate"), landing on Design. Every step after Design is
+ * reached by chaining further clickNext() calls from there — Design →
+ * Finalise & Review's own Next never re-checks lock state.
+ */
+async function reachDesign(name = 'Studio A') {
+  typeStudioName(name)
+  await clickNext()
+  return stepSection('Design')
+}
+
+/**
+ * True when every button inside `section` is the wizard's own Previous/Next
+ * chrome — i.e. the step itself offers no action of its own. Named rather
+ * than asserting zero buttons outright, because FlowStep's Previous/Next
+ * controls are UNCONDITIONAL and live in the same container as a step's
+ * (locked-or-not) content, so a locked step still has buttons in it now —
+ * just none that DO anything. Mirrors the identical discipline
+ * workloadDetail.test.tsx's Design-step assertion already uses for the real
+ * wizard's own nav chrome.
+ */
+function onlyNavButtons(section: HTMLElement): boolean {
+  return within(section)
+    .queryAllByRole('button')
+    .every((b) => b.textContent === '← Previous' || b.textContent === 'Next →')
+}
+
 afterEach(() => {
   cleanup()
   vi.restoreAllMocks()
   vi.unstubAllGlobals()
+  // The draft store is a module-level Zustand singleton (store/draftWorkload.ts
+  // has no persist middleware, but it is still one instance shared by every
+  // test in this file) — without an explicit reset, a name typed in one test
+  // would still be sitting there when the next test renders the page fresh.
+  useDraftWorkloadStore.getState().reset()
 })
 
 // ---- taxonomy stays out of default level -------------------------------
@@ -222,6 +298,8 @@ describe('EBU taxonomy on the draft template picker', () => {
       ],
     })
     renderCreate()
+    await screen.findByRole('heading', { name: 'Identity' })
+    await reachDesign()
     await screen.findByText('MXL Viewer (3-pod)')
 
     const disclosure = screen.getByText('System details').closest('details') as HTMLDetailsElement
@@ -238,23 +316,33 @@ describe('the draft gate', () => {
   it('locks Plan and Provision until a valid name and a template are both chosen', async () => {
     mkFetch()
     renderCreate()
-    await screen.findByRole('heading', { name: 'Design' })
+    await screen.findByRole('heading', { name: 'Identity' })
 
-    // Nothing chosen yet: Plan and Provision are locked, and locked means no
-    // control is reachable inside them at all.
+    // Identity's own Next is the wizard's ONE structural gate (file
+    // docstring): a valid name is required just to LEAVE Identity, so the
+    // pre-wizard "nothing chosen at all" reading of Plan/Provision can no
+    // longer be produced — Design/Plan/Provision are simply unreachable
+    // before the name resolves. What survives, and still proves the AND,
+    // is that a name ALONE is not enough: with no template chosen, Plan and
+    // Provision — read by navigating to them, since a locked step is still
+    // reachable and only its controls are withheld — both name the same
+    // "Design is complete" reason, and offer nothing but the wizard's own
+    // nav chrome.
+    typeStudioName('Studio A')
+    await clickNext() // Identity → Design
+    await clickNext() // Design → Plan (unconditional; Design isn't "done")
     expect(within(stepSection('Plan')).getByText(/This step opens once Design is complete/)).toBeTruthy()
-    expect(within(stepSection('Plan')).queryByRole('button')).toBeNull()
+    expect(onlyNavButtons(stepSection('Plan'))).toBe(true)
+    await clickNext() // Plan → Provision
     expect(
       within(stepSection('Provision')).getByText(/This step opens once Plan is complete/),
     ).toBeTruthy()
 
-    // A template alone isn't enough — the name still gates Design.
+    // Choosing the template completes Design; Plan opens.
+    await clickPrevious() // Provision → Plan
+    await clickPrevious() // Plan → Design
     await chooseTemplate()
-    expect(within(stepSection('Plan')).getByText(/This step opens once Design is complete/)).toBeTruthy()
-
-    // Completing the name too opens Plan; Provision still waits on Plan's
-    // facility resolution actually landing (async facility fetch).
-    typeStudioName('Studio A')
+    await clickNext() // Design → Plan
     await waitFor(() =>
       expect(within(stepSection('Plan')).queryByText(/This step opens once Design is complete/)).toBeNull(),
     )
@@ -267,14 +355,16 @@ describe('the draft gate', () => {
     it('stays locked once the facility resolves, before the operator confirms it', async () => {
       mkFetch()
       renderCreate()
-      await screen.findByRole('heading', { name: 'Design' })
+      await screen.findByRole('heading', { name: 'Identity' })
 
+      await reachDesign()
       await chooseTemplate()
-      typeStudioName('Studio A')
+      await clickNext() // Design → Plan
 
       // The facility itself is readable — a true fact, not "select"/
       // "assign" — but Provision has not opened on that alone.
       await within(stepSection('Plan')).findByText(/This workload will run on/)
+      await clickNext() // Plan → Provision
       expect(
         within(stepSection('Provision')).getByText(/This step opens once Plan is complete/),
       ).toBeTruthy()
@@ -283,24 +373,28 @@ describe('the draft gate', () => {
     it('opens once the operator clicks Confirm placement', async () => {
       mkFetch()
       renderCreate()
-      await screen.findByRole('heading', { name: 'Design' })
+      await screen.findByRole('heading', { name: 'Identity' })
 
+      await reachDesign()
       await chooseTemplate()
-      typeStudioName('Studio A')
+      await clickNext() // Design → Plan
 
       fireEvent.click(await within(stepSection('Plan')).findByRole('button', { name: 'Confirm placement' }))
+      await clickNext() // Plan → Provision
 
-      await waitFor(() =>
-        expect(within(stepSection('Provision')).queryByText(/This step opens once Plan is complete/)).toBeNull(),
-      )
+      expect(within(stepSection('Provision')).queryByText(/This step opens once Plan is complete/)).toBeNull()
       expect(
         within(stepSection('Provision')).getByRole('button', { name: '▶ Provision now' }),
       ).toBeTruthy()
 
-      // Plan is now `complete` — reviewable but folded by default, same as
-      // any other completed draft step. The confirmation itself reads back
-      // as settled, not as a control still waiting to be pressed again.
-      fireEvent.click(within(stepSection('Plan')).getByRole('button', { name: 'Review' }))
+      // Plan is now `complete` — reviewable, not folded: the wizard has no
+      // fold/expand state to re-open (FlowStep.tsx mounts exactly one
+      // step's content regardless of completion, unlike the old
+      // accordion's per-panel Review/Hide toggle — see FlowStep.tsx's own
+      // docstring). Navigating back is how the operator, and this test,
+      // reads it: the confirmation itself reads back as a settled fact, not
+      // as a control still waiting to be pressed again.
+      await clickPrevious() // Provision → Plan
       expect(within(stepSection('Plan')).getByText(/Confirmed — this workload will run on/)).toBeTruthy()
       expect(within(stepSection('Plan')).queryByRole('button', { name: 'Confirm placement' })).toBeNull()
     })
@@ -312,13 +406,15 @@ describe('the draft gate', () => {
   it('gives an honest non-answer instead of a picker when zero facilities are registered, and Provision stays locked', async () => {
     mkFetch({ facilitySites: [] })
     renderCreate()
-    await screen.findByRole('heading', { name: 'Design' })
+    await screen.findByRole('heading', { name: 'Identity' })
 
+    await reachDesign()
     await chooseTemplate()
-    typeStudioName('Studio A')
+    await clickNext() // Design → Plan
 
     await within(stepSection('Plan')).findByText(/can't be shown/)
     expect(within(stepSection('Plan')).queryByRole('button', { name: 'Confirm placement' })).toBeNull()
+    await clickNext() // Plan → Provision
     expect(
       within(stepSection('Provision')).getByText(/This step opens once Plan is complete/),
     ).toBeTruthy()
@@ -332,13 +428,15 @@ describe('the draft gate', () => {
       ],
     })
     renderCreate()
-    await screen.findByRole('heading', { name: 'Design' })
+    await screen.findByRole('heading', { name: 'Identity' })
 
+    await reachDesign()
     await chooseTemplate()
-    typeStudioName('Studio A')
+    await clickNext() // Design → Plan
 
     await within(stepSection('Plan')).findByText(/2 facilities are registered/)
     expect(within(stepSection('Plan')).queryByRole('button', { name: 'Confirm placement' })).toBeNull()
+    await clickNext() // Plan → Provision
     expect(
       within(stepSection('Provision')).getByText(/This step opens once Plan is complete/),
     ).toBeTruthy()
@@ -347,21 +445,25 @@ describe('the draft gate', () => {
   it('Configure and Finalise & Review are locked throughout, with a stated plain-words reason', async () => {
     mkFetch()
     renderCreate()
-    await screen.findByRole('heading', { name: 'Design' })
+    await screen.findByRole('heading', { name: 'Identity' })
 
+    await reachDesign()
     await chooseTemplate()
-    typeStudioName('Studio A')
+    await clickNext() // Design → Plan
     fireEvent.click(await within(stepSection('Plan')).findByRole('button', { name: 'Confirm placement' }))
-    await waitFor(() =>
-      expect(within(stepSection('Provision')).queryByText(/This step opens once Plan is complete/)).toBeNull(),
-    )
-
-    expect(within(stepSection('Configure')).getByText(/nothing has been provisioned yet/)).toBeTruthy()
-    expect(within(stepSection('Configure')).queryByRole('button')).toBeNull()
+    await clickNext() // Plan → Provision
+    await clickNext() // Provision → Configure
+    expect(within(stepSection('Configure')).getByText(/nothing to configure/)).toBeTruthy()
+    expect(onlyNavButtons(stepSection('Configure'))).toBe(true)
+    await clickNext() // Configure → Finalise & Review
+    // Distinct wording from Configure's own reason (CreateWorkload.tsx's own
+    // comment: "do not merge those sentences") — matched narrowly enough
+    // that these two assertions cannot both pass against a single, merged
+    // "nothing has been provisioned yet" sentence used for both steps.
     expect(
-      within(stepSection('Finalise & Review')).getByText(/nothing has been provisioned yet/),
+      within(stepSection('Finalise & Review')).getByText(/nothing to finalise or tear down/),
     ).toBeTruthy()
-    expect(within(stepSection('Finalise & Review')).queryByRole('button')).toBeNull()
+    expect(onlyNavButtons(stepSection('Finalise & Review'))).toBe(true)
   })
 })
 
@@ -371,7 +473,7 @@ describe('studio name → shown workload identity', () => {
   it('derives and displays the slug that will actually be recorded as the operator types', async () => {
     mkFetch()
     renderCreate()
-    await screen.findByRole('heading', { name: 'Design' })
+    await screen.findByRole('heading', { name: 'Identity' })
 
     typeStudioName('Studio A')
     const slugField = screen.getByLabelText('Workload identity') as HTMLInputElement
@@ -381,7 +483,7 @@ describe('studio name → shown workload identity', () => {
   it('lets the operator edit the slug directly without the name field clobbering it', async () => {
     mkFetch()
     renderCreate()
-    await screen.findByRole('heading', { name: 'Design' })
+    await screen.findByRole('heading', { name: 'Identity' })
 
     typeStudioName('Studio A')
     const slugField = screen.getByLabelText('Workload identity') as HTMLInputElement
@@ -391,24 +493,36 @@ describe('studio name → shown workload identity', () => {
     expect(slugField.value).toBe('custom-slug')
   })
 
-  it('renders the designed invalid-slug state and does not complete Design', async () => {
+  it('renders the designed invalid-slug state, and blocks advancing past Identity entirely', async () => {
+    // Reinterpreted for the wizard (was: "does not complete Design"). Under
+    // the accordion, an invalid slug meant Design silently failed to
+    // complete while its own panel stayed visible. Under the wizard,
+    // Identity's own Next is gated on `hasName` (IdentityStep's
+    // `canAdvance` prop) — with an invalid slug there is no Next BUTTON at
+    // all, only the inert reason naming what's missing (CreateWorkload.tsx's
+    // file docstring: "advancing past it before the name resolves to a
+    // valid slug would let Design mount with nothing for the eventual
+    // deploy to carry"). So Design isn't reachable to "not complete" — the
+    // stronger, structural fact is that it can't be reached in the first
+    // place, and that is what this now proves.
     mkFetch()
     renderCreate()
-    await screen.findByRole('heading', { name: 'Design' })
+    await screen.findByRole('heading', { name: 'Identity' })
 
     const slugField = screen.getByLabelText('Workload identity')
     fireEvent.change(slugField, { target: { value: 'Not Valid!' } })
-    await chooseTemplate()
 
     expect(screen.getByText(/lowercase letters, digits and hyphens/)).toBeTruthy()
-    // Design cannot be "done" on an invalid slug: Plan stays locked.
-    expect(within(stepSection('Plan')).getByText(/This step opens once Design is complete/)).toBeTruthy()
+    expect(screen.queryByRole('button', { name: /Next/ })).toBeNull()
+    expect(
+      screen.getByText(/Enter a studio name that resolves to a valid workload identity/),
+    ).toBeTruthy()
   })
 
   it('states the draft-loss limit near the name field', async () => {
     mkFetch()
     renderCreate()
-    await screen.findByRole('heading', { name: 'Design' })
+    await screen.findByRole('heading', { name: 'Identity' })
     expect(
       screen.getByText(/refreshing or closing the tab before then loses it/),
     ).toBeTruthy()
@@ -421,16 +535,15 @@ describe('studio name → shown workload identity', () => {
 // and the journey tests below so both start from an identical state rather
 // than two setups that can drift apart.
 async function reachProvision() {
+  await reachDesign()
   await chooseTemplate()
-  typeStudioName('Studio A')
+  await clickNext() // Design → Plan
   // WP-3 spec D: the facility resolving is no longer enough on its own —
   // Provision opens only once the operator confirms the resolved
   // placement (see "Provision opens only once the resolved facility is
   // confirmed" above for the gate itself, tested in isolation).
   fireEvent.click(await within(stepSection('Plan')).findByRole('button', { name: 'Confirm placement' }))
-  await waitFor(() =>
-    expect(within(stepSection('Provision')).queryByText(/This step opens once Plan is complete/)).toBeNull(),
-  )
+  await clickNext() // Plan → Provision
   return stepSection('Provision')
 }
 
@@ -438,7 +551,7 @@ describe('Provision: the deploy POST', () => {
   it('carries both the mandatory reason and the workload slug, then navigates to the real workload route', async () => {
     const { deploy } = mkFetch()
     renderCreate()
-    await screen.findByRole('heading', { name: 'Design' })
+    await screen.findByRole('heading', { name: 'Identity' })
     const provision = await reachProvision()
 
     fireEvent.click(within(provision).getByRole('button', { name: '▶ Provision now' }))
@@ -466,7 +579,7 @@ describe('Provision: the deploy POST', () => {
   it('leaves a persistent, non-vanishing failure on the step when the deploy fails', async () => {
     mkFetch({ deployStatus: 500 })
     renderCreate()
-    await screen.findByRole('heading', { name: 'Design' })
+    await screen.findByRole('heading', { name: 'Identity' })
     const provision = await reachProvision()
 
     fireEvent.click(within(provision).getByRole('button', { name: '▶ Provision now' }))
@@ -488,10 +601,13 @@ describe('Provision: the deploy POST', () => {
     // stub route element, which means it kept passing after the stub was
     // removed and would have kept passing if the page HAD navigated.
     expect(screen.queryByText('Deploy accepted.')).toBeNull()
-    // Still on Create, not materializing: the studio-name field is unique to
-    // this page's own form (the retired per-page hero heading it used to
-    // assert against is gone — umbrella #347 WO-D1 spec C).
-    expect(screen.getByLabelText('Studio name')).toBeTruthy()
+    // Still on Create, not materializing — and still on the Provision step
+    // specifically, since a failure never navigates away, so Identity's own
+    // fields aren't mounted here to check any more (WP-3 spec C: only one
+    // step is ever mounted). "Start over" is the page-level control that
+    // IS always present regardless of step, and unique to CreateWorkload —
+    // the retired per-page hero heading the old assertion named is gone.
+    expect(screen.getByRole('button', { name: 'Start over' })).toBeTruthy()
   })
 })
 
@@ -519,7 +635,8 @@ describe('a template already deployed on this facility', () => {
   it('is marked in the picker instead of being offered', async () => {
     mkFetch({ catalog: [catalogEntry(ACTIVE)] })
     renderCreate()
-    const design = stepSection('Design')
+    await screen.findByRole('heading', { name: 'Identity' })
+    const design = await reachDesign()
 
     expect(await within(design).findByText('Already deployed')).toBeTruthy()
     // Not offered, and not offered-then-disabled: no dead control at all.
@@ -535,11 +652,14 @@ describe('a template already deployed on this facility', () => {
     // gate holds Plan (and behind it Provision) shut. Without it, the click
     // lands, Design completes, and the flow walks straight to the duplicate
     // deploy — which is why this loops over the offers instead of asserting
-    // their absence.
+    // their absence. Plan and Provision are still NAVIGABLE (the wizard's
+    // Next is an unconditional index walk), which is exactly why this
+    // checks their content rather than their reachability — see
+    // onlyNavButtons's own doc comment.
     mkFetch({ catalog: [catalogEntry(ACTIVE)] })
     renderCreate()
-    await screen.findByRole('heading', { name: 'Design' })
-    typeStudioName('Studio A')
+    await screen.findByRole('heading', { name: 'Identity' })
+    await reachDesign()
 
     const design = stepSection('Design')
     for (const offer of within(design).queryAllByRole('button', { name: 'Use this template' })) {
@@ -548,8 +668,10 @@ describe('a template already deployed on this facility', () => {
 
     // hasName && hasTemplate are both synchronous, so Plan would have
     // unlocked by now if the click had been allowed to land.
+    await clickNext() // Design → Plan
     expect(within(stepSection('Plan')).getByText(/This step opens once Design is complete/)).toBeTruthy()
-    expect(within(stepSection('Provision')).queryByRole('button')).toBeNull()
+    await clickNext() // Plan → Provision
+    expect(onlyNavButtons(stepSection('Provision'))).toBe(true)
   })
 
   it('withdraws the Provision action if the template goes active after it was chosen', async () => {
@@ -559,7 +681,7 @@ describe('a template already deployed on this facility', () => {
     // button aimed at a duplicate deploy.
     const h = mkFetch({ catalog: [catalogEntry({ key: 'mxl-viewer', lifecycle: 'bootstrapped' })] })
     const queryClient = renderCreate()
-    await screen.findByRole('heading', { name: 'Design' })
+    await screen.findByRole('heading', { name: 'Identity' })
     const provision = await reachProvision()
     // Precondition: it really was offered a moment ago, so what follows is a
     // withdrawal and not a test that never had anything to withdraw.
@@ -584,7 +706,7 @@ describe('a template already deployed on this facility', () => {
     // the defect in the first place.
     const h = mkFetch({ catalog: [catalogEntry({ key: 'mxl-viewer', lifecycle: 'bootstrapped' })] })
     const queryClient = renderCreate()
-    await screen.findByRole('heading', { name: 'Design' })
+    await screen.findByRole('heading', { name: 'Identity' })
     const provision = await reachProvision()
     fireEvent.click(within(provision).getByRole('button', { name: '▶ Provision now' }))
     fireEvent.change(
@@ -619,7 +741,7 @@ describe('a template already deployed on this facility', () => {
   it('withholds provisioning while the catalog read is failing, and fires no deploy', async () => {
     const h = mkFetch({ catalog: [catalogEntry({ key: 'mxl-viewer', lifecycle: 'bootstrapped' })] })
     const queryClient = renderCreate()
-    await screen.findByRole('heading', { name: 'Design' })
+    await screen.findByRole('heading', { name: 'Identity' })
     const provision = await reachProvision()
     fireEvent.click(within(provision).getByRole('button', { name: '▶ Provision now' }))
     fireEvent.change(
@@ -668,9 +790,9 @@ describe('a template already deployed on this facility', () => {
     // identical claim the Provision step had to have corrected twice.
     mkFetch({ catalogStatus: 500 })
     renderCreate()
-    await screen.findByRole('heading', { name: 'Design' })
+    await screen.findByRole('heading', { name: 'Identity' })
+    const design = await reachDesign()
 
-    const design = stepSection('Design')
     await waitFor(() => expect(design.textContent).toMatch(/couldn't be read right now/))
     expect(design.textContent).not.toMatch(/Retrying automatically/)
     expect(design.textContent).toMatch(/Reload the page/)
@@ -685,7 +807,7 @@ describe('a template already deployed on this facility', () => {
     let release: (() => void) | null = null
     const h = mkFetch({ catalog: [catalogEntry({ key: 'mxl-viewer', lifecycle: 'bootstrapped' })] })
     const queryClient = renderCreate()
-    await screen.findByRole('heading', { name: 'Design' })
+    await screen.findByRole('heading', { name: 'Identity' })
     const provision = await reachProvision()
     fireEvent.click(within(provision).getByRole('button', { name: '▶ Provision now' }))
     fireEvent.change(
@@ -732,7 +854,7 @@ describe('a template already deployed on this facility', () => {
     // the claim distinguishes them — which is the whole point.
     const h = mkFetch({ catalog: [catalogEntry({ key: 'mxl-viewer', lifecycle: 'bootstrapped' })] })
     const queryClient = renderCreate()
-    await screen.findByRole('heading', { name: 'Design' })
+    await screen.findByRole('heading', { name: 'Identity' })
     await reachProvision()
 
     // Last GOOD read says active — the console may say so while it can see.
@@ -760,7 +882,7 @@ describe('a template already deployed on this facility', () => {
     // would be satisfied by a permanent refusal.
     const h = mkFetch({ catalog: [catalogEntry({ key: 'mxl-viewer', lifecycle: 'bootstrapped' })] })
     const queryClient = renderCreate()
-    await screen.findByRole('heading', { name: 'Design' })
+    await screen.findByRole('heading', { name: 'Identity' })
     await reachProvision()
 
     h.setCatalogStatus(500)
@@ -786,10 +908,18 @@ describe('a template already deployed on this facility', () => {
     it(`still offers a "${lifecycle}" template, in the picker and at Provision`, async () => {
       mkFetch({ catalog: [catalogEntry({ key: 'mxl-viewer', lifecycle })] })
       renderCreate()
-      await screen.findByRole('heading', { name: 'Design' })
+      await screen.findByRole('heading', { name: 'Identity' })
 
-      expect(within(stepSection('Design')).queryByText('Already deployed')).toBeNull()
-      const provision = await reachProvision()
+      // Checked mid-sequence, on Design, rather than via reachProvision()
+      // outright: that helper starts back at Identity, and we need the
+      // "not marked" assertion to run while Design is actually mounted.
+      const design = await reachDesign()
+      expect(within(design).queryByText('Already deployed')).toBeNull()
+      await chooseTemplate()
+      await clickNext() // Design → Plan
+      fireEvent.click(await within(stepSection('Plan')).findByRole('button', { name: 'Confirm placement' }))
+      await clickNext() // Plan → Provision
+      const provision = stepSection('Provision')
       expect(within(provision).getByRole('button', { name: '▶ Provision now' })).toBeTruthy()
       expect(within(provision).queryByText(/nothing here to launch/)).toBeNull()
     })
@@ -805,7 +935,8 @@ describe('a template already deployed on this facility', () => {
       ],
     })
     renderCreate()
-    const design = stepSection('Design')
+    await screen.findByRole('heading', { name: 'Identity' })
+    const design = await reachDesign()
 
     expect(await within(design).findByText('Already deployed')).toBeTruthy()
     // Exactly one entry is still selectable — the one that isn't deployed.
@@ -842,7 +973,7 @@ describe('a template already deployed on this facility', () => {
  */
 async function armAndConfirm() {
   renderCreate()
-  await screen.findByRole('heading', { name: 'Design' })
+  await screen.findByRole('heading', { name: 'Identity' })
   const provision = await reachProvision()
   fireEvent.click(within(provision).getByRole('button', { name: '▶ Provision now' }))
   fireEvent.change(
@@ -1036,6 +1167,148 @@ describe('an outcome the console never learned is never reported as "nothing hap
     await waitFor(() => expect(provision.textContent).toMatch(/nothing was created/))
     expect(provision.textContent).toMatch(/already in flight/)
     expect(provision.textContent).not.toMatch(/Outcome unknown/)
+  })
+})
+
+// ---------------------------------------------------------------------------
+// WP-3 spec C acceptance: the draft survives navigating away and back within
+// the tab (a non-persisted store the wizard makes newly reachable), and is
+// architecturally incapable of surviving a reload — the trade
+// store/draftWorkload.ts's own docstring states, and the copy pinned above
+// (see "states the draft-loss limit near the name field") states to the
+// operator. These pin the acceptance criterion itself, distinct from the
+// copy that describes it.
+// ---------------------------------------------------------------------------
+
+describe('the draft survives the tab, not the browser', () => {
+  it('navigate away and back — draft preserved', async () => {
+    mkFetch()
+    const queryClient = new QueryClient({ defaultOptions: { queries: { retry: false } } })
+    function renderAt(path: string) {
+      return render(
+        <QueryClientProvider client={queryClient}>
+          <MemoryRouter initialEntries={[path]}>
+            <Routes>
+              <Route path="/media-workloads" element={<div>Media Workloads (stand-in)</div>} />
+              <Route path="/media-workloads/new" element={<CreateWorkload />} />
+            </Routes>
+          </MemoryRouter>
+        </QueryClientProvider>,
+      )
+    }
+
+    let mounted = renderAt('/media-workloads/new')
+    await screen.findByRole('heading', { name: 'Identity' })
+    typeStudioName('Studio A')
+    expect((screen.getByLabelText('Workload identity') as HTMLInputElement).value).toBe('studio-a')
+
+    // "Navigate away": CreateWorkload's own presentation state (selectedStep)
+    // is explicitly NOT what this proves — it resets to null on every mount
+    // by design (CreateWorkload.tsx's own comment on selectedStep). What
+    // must survive is the DRAFT DATA, which lives outside the component tree
+    // entirely, in useDraftWorkloadStore. Unmounting the routed tree and
+    // mounting a different route is the faithful jsdom analogue of an in-app
+    // route change: React tears the page down exactly as the router would on
+    // a real navigation, while the module-level store singleton — never
+    // touched by that teardown — is not.
+    mounted.unmount()
+    mounted = renderAt('/media-workloads')
+    expect(screen.getByText('Media Workloads (stand-in)')).toBeTruthy()
+    mounted.unmount()
+
+    mounted = renderAt('/media-workloads/new')
+    // The remounted wizard's own default-step derivation (CreateWorkload.tsx:
+    // `defaultStep = draft.hasName && flow.current ? flow.current : 'identity'`)
+    // lands on DESIGN here, not Identity — the preserved name is still a
+    // valid slug, so the wizard picks up exactly where the progress it can
+    // read left off, rather than making the operator re-walk a step they
+    // already finished. That is a STRONGER form of "preserved" than the
+    // fields alone, so it is asserted rather than routed around.
+    await screen.findByRole('heading', { name: 'Design' })
+    await clickPrevious() // Design → Identity, to read the preserved fields
+    // Read through the rendered DOM, not the store directly — this is what
+    // the operator actually sees on returning to the page.
+    expect((screen.getByLabelText('Studio name') as HTMLInputElement).value).toBe('Studio A')
+    expect((screen.getByLabelText('Workload identity') as HTMLInputElement).value).toBe('studio-a')
+  })
+
+  it('reload — draft GONE: no persist middleware ever writes it to storage', async () => {
+    // A genuine reload is not reproducible inside jsdom without literally
+    // restarting the module registry (the store singleton, like every other
+    // module, is cached for the life of the test file). A same-process
+    // remount — which the test above deliberately relies on, to prove the
+    // OPPOSITE property — would prove nothing here: the store survives a
+    // remount whether or not persistence exists, so it cannot discriminate
+    // "gone on reload" from "misleadingly still there", which is exactly the
+    // failure mode store/draftWorkload.ts's own docstring warns a persisted
+    // store would produce.
+    //
+    // What CAN be proven in-process, and is the actual acceptance criterion
+    // ("NO persist middleware, deliberately"), is architectural: does
+    // anything the draft's own setters do write through to storage that
+    // would outlive a real reload? zustand's `persist` middleware, if it
+    // were ever wired back in, calls localStorage.setItem/sessionStorage.
+    // setItem on every tracked state change — so driving every field the
+    // draft has (name, slug, template, facility confirmation) and finding
+    // both storages exactly as they started is a direct, code-path-level
+    // proof of "no persist middleware", not an inference from a remount
+    // that can't tell the difference.
+    mkFetch()
+    renderCreate()
+    await screen.findByRole('heading', { name: 'Identity' })
+
+    const localBefore = window.localStorage.length
+    const sessionBefore = window.sessionStorage.length
+
+    await reachProvision()
+
+    expect(window.localStorage.length).toBe(localBefore)
+    expect(window.sessionStorage.length).toBe(sessionBefore)
+  })
+
+  it('Start over clears the draft', async () => {
+    mkFetch()
+    renderCreate()
+    await screen.findByRole('heading', { name: 'Identity' })
+    await reachDesign()
+    await chooseTemplate()
+
+    fireEvent.click(screen.getByRole('button', { name: 'Start over' }))
+
+    // Start over resets BOTH the draft store's data and the wizard's own
+    // navigation position back to Identity (CreateWorkload.tsx's own
+    // handleStartOver) — landing anywhere else would show a step whose
+    // content had silently emptied out from under the operator instead of a
+    // plain, legible reset.
+    await screen.findByRole('heading', { name: 'Identity' })
+    expect((screen.getByLabelText('Studio name') as HTMLInputElement).value).toBe('')
+    expect((screen.getByLabelText('Workload identity') as HTMLInputElement).value).toBe('')
+  })
+
+  it('a successful provision clears the draft', async () => {
+    mkFetch()
+    renderCreate()
+    await screen.findByRole('heading', { name: 'Identity' })
+    const provision = await reachProvision()
+
+    fireEvent.click(within(provision).getByRole('button', { name: '▶ Provision now' }))
+    fireEvent.change(
+      within(provision).getByPlaceholderText('Reason (required, recorded in the audit trail)'),
+      { target: { value: 'demo launch' } },
+    )
+    fireEvent.click(within(provision).getByRole('button', { name: 'Confirm provision' }))
+
+    // handleProvisionConfirm's resetDraft() runs before the navigation that
+    // carries the launch, so pinned directly on the store rather than
+    // through the DOM: by the time the operator can see anything, the page
+    // has already navigated away from Create entirely (see "the destination
+    // never denies a just-launched workload" above for what renders there
+    // instead).
+    await screen.findByText('Deploy accepted.')
+    expect(useDraftWorkloadStore.getState().studioName).toBe('')
+    expect(useDraftWorkloadStore.getState().slug).toBe('')
+    expect(useDraftWorkloadStore.getState().selectedKey).toBeNull()
+    expect(useDraftWorkloadStore.getState().facilityConfirmed).toBe(false)
   })
 })
 
