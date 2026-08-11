@@ -2,9 +2,10 @@ import { useState } from 'react'
 import { Link, useLocation } from 'react-router-dom'
 import { useAuthStore } from '../store/auth'
 import { useTopbarMessageStore } from '../store/topbarMessage'
-import { useHeaderSlotStore } from '../store/headerSlot'
+import { useHeaderSlotContent } from '../store/headerSlot'
 import { useSetViewAs, useClearViewAs, useFacilityDetail, useMediaWorkloadsGrouped } from '../api/hooks'
 import NotificationBell from './NotificationBell'
+import LifecycleStrip from '../pages/MediaWorkloads/LifecycleStrip'
 import logoSvg from '../assets/dmfdeploy-icon-white.svg'
 
 /**
@@ -119,7 +120,7 @@ export default function Topbar() {
   const { pathname } = useLocation()
   const { crumbs, workloadSlug } = useBreadcrumbTrail(pathname)
   const transientMessage = useTopbarMessageStore((s) => s.message)
-  const slotContent = useHeaderSlotStore((s) => s.content)
+  const slotContent = useHeaderSlotContent()
 
   if (!user) return null
 
@@ -273,16 +274,29 @@ export default function Topbar() {
 
       {/* Header slot, row 2 (Arc 4 WP-2): workload-detail routes only, a
           single non-wrapping row that scrolls horizontally at narrow
-          widths rather than wrapping to a third line. WP-3 registers the
-          lifecycle rail and the current step's promoted action here from
-          WorkloadDetail — this file only renders whatever it is given. */}
+          widths rather than wrapping to a third line. WP-3 registers a rail
+          MODEL and a primary-action DESCRIPTOR here from WorkloadDetail —
+          this file is the only place that turns either into pixels, via
+          the same LifecycleStrip component the page used to render inline.
+          Reshaping that component's own layout to fit a single row is
+          WP-3's job, not this one's. */}
       {showSlotRow && slotContent && (
         <div
           data-testid="header-slot-row"
           className="flex flex-nowrap items-center gap-3 overflow-x-auto border-b border-border px-4 py-2"
         >
-          {slotContent.rail}
-          {slotContent.primaryAction}
+          <LifecycleStrip {...slotContent.rail} slug={slotContent.slug} />
+          {slotContent.primaryAction && (
+            <button
+              type="button"
+              className="btn btn-primary text-xs whitespace-nowrap shrink-0 disabled:opacity-50 disabled:cursor-not-allowed"
+              onClick={slotContent.primaryAction.onClick}
+              disabled={slotContent.primaryAction.disabled}
+              title={slotContent.primaryAction.disabledReason}
+            >
+              {slotContent.primaryAction.label}
+            </button>
+          )}
         </div>
       )}
     </header>
