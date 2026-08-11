@@ -368,6 +368,11 @@ export interface RepoCommits {
 
 export interface ChangesCommitsResponse {
   repos: RepoCommits[]
+  // Fail-soft reason token, same contract as AdminJobsResponse.reason:
+  // "" means Forgejo answered and `repos` is authoritative; a non-empty
+  // token names why it could not (see lib/changesState.ts's classifier).
+  // Optional so older payloads (and fixtures) classify as ok.
+  reason?: '' | 'forgejo-unconfigured' | 'forgejo-unreachable'
 }
 
 export interface PullEntry {
@@ -382,6 +387,8 @@ export interface PullEntry {
 
 export interface ChangesPullsResponse {
   pulls: PullEntry[]
+  // Same fail-soft contract as ChangesCommitsResponse.reason.
+  reason?: '' | 'forgejo-unconfigured' | 'forgejo-unreachable'
 }
 
 // ------------------------------------------------------------------

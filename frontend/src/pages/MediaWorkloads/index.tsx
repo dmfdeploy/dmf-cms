@@ -78,6 +78,28 @@ const BADGE_TITLE: Record<LifecycleBadge['grammar'], (label: string) => string> 
 }
 
 /**
+ * Reason-token -> operator-language copy (Art. 3: plain words, system jargon
+ * hidden at default; Art. 8: what happened, what it means for the facility,
+ * what to do next). The degraded banner used to print the raw backend token
+ * verbatim ("netbox-not-configured") — a code says none of those three
+ * things. The raw token still exists for anyone who wants it, behind a
+ * details disclosure below, same convention as this page's own EBU-jargon
+ * treatment in Catalog's EntryCard.
+ */
+function degradedReasonCopy(reason: string | undefined): string {
+  switch (reason) {
+    case 'netbox-not-configured':
+      return "The facility inventory system isn't connected in this environment. The console cannot tell you what Media Function instances exist. Ask an administrator to configure the connection."
+    case 'netbox-unreachable':
+      return "The facility inventory system isn't responding right now. The console cannot tell you what Media Function instances exist. This is usually temporary — retrying automatically."
+    case 'netbox-error':
+      return 'The facility inventory system returned an unexpected error. The console cannot tell you what Media Function instances exist. If this continues, contact your systems engineer.'
+    default:
+      return 'The facility inventory system could not be read. The console cannot tell you what Media Function instances exist.'
+  }
+}
+
+/**
  * The instance whose preview represents the workload on its tile: the first
  * live-view-capable one in deterministic order, so an unchanged poll never
  * swaps which instance the tile is showing.
@@ -123,6 +145,15 @@ export default function MediaWorkloads() {
   // exactly which workload that is.
   const unassignedWorkload = workloads.find((wl) => wl.slug === 'unassigned') ?? null
 
+  // A `reason` token is only ever set on the fail-hard paths (not-configured,
+  // unreachable, error) — the OTHER way `degraded` can be true, invalid
+  // workload:* tags on an otherwise-successful read, carries no `reason` at
+  // all and still has a real (possibly empty) `workloads` array. Only the
+  // former means the source of truth could not be read at all, so only the
+  // former licenses "cannot enumerate" copy (hard gate 1: an empty result
+  // from an incomplete read is not evidence of absence).
+  const sourceUnreachable = Boolean(data?.degraded && data?.reason)
+
   return (
     <div className="flex-1 overflow-y-auto p-6">
       <div className="flex items-start justify-end gap-4">
@@ -150,10 +181,15 @@ export default function MediaWorkloads() {
         </div>
       )}
 
-      {!isLoading && data?.configured && data.degraded && (!data.workloads || data.workloads.length === 0) && (
+      {!isLoading && sourceUnreachable && (!data?.workloads || data.workloads.length === 0) && (
         <div className="panel mt-6 border border-amber-500/20 bg-amber-500/10 px-4 py-3 text-sm text-amber-200">
-          Inventory is degraded ({data.reason ?? 'unknown reason'}) — the source
-          of truth is unreachable.
+          <p>{degradedReasonCopy(data?.reason)}</p>
+          <details className="mt-1 text-xs text-amber-200/70">
+            <summary className="cursor-pointer select-none opacity-80 hover:opacity-100">
+              System details
+            </summary>
+            <p className="mt-1 pl-4 font-mono">{data?.reason}</p>
+          </details>
         </div>
       )}
 
@@ -167,7 +203,9 @@ export default function MediaWorkloads() {
 
           {workloads.length === 0 ? (
             <div className="panel mt-4 py-10 text-center text-sm text-muted">
-              No Media Function instances in your scope.
+              {sourceUnreachable
+                ? 'Cannot confirm there are no Media Function instances — the source of truth is unreachable.'
+                : 'No Media Function instances in your scope.'}
             </div>
           ) : (
             <div className="mt-4 grid grid-cols-1 gap-4 sm:grid-cols-2 xl:grid-cols-3">

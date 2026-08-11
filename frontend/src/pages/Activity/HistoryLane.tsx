@@ -2,7 +2,7 @@ import { useChangesJobs, useChangesCommits, useChangesPulls } from '@/api/hooks'
 import { GitCommit, GitPullRequest, MousePointerClick, Zap, ExternalLink } from 'lucide-react'
 import { useActivityStore, type ConsoleActionType } from '../../store/activity'
 import { describeJob, jobOutcome } from '../../lib/labels'
-import { classifyChanges, changesEmptyCopy } from '../../lib/changesState'
+import { classifyChanges, changesEmptyCopy, classifyForgejo, forgejoEmptyCopy } from '../../lib/changesState'
 
 // Human title per console-originated action (#185 WP-E: AWX writes join the
 // clear record in this lane).
@@ -37,6 +37,10 @@ export default function HistoryLane() {
   // Same classifier as the Workspace RecentChanges widget — one endpoint,
   // one set of designed states (Art. 1).
   const jobsState = classifyChanges(jobs)
+  // Same classifier the jobs panel above uses, applied to Forgejo's two
+  // sibling reads (hard gate 1: an empty/failed read is not "zero commits").
+  const commitsPhase = classifyForgejo(commits)
+  const pullsPhase = classifyForgejo(pulls)
 
   const isLoading = jobs.isLoading || commits.isLoading || pulls.isLoading
 
@@ -154,8 +158,10 @@ export default function HistoryLane() {
         <div className="divide-y divide-panel">
           {isLoading ? (
             <div className="px-6 py-8 text-center text-muted text-sm">Loading commits...</div>
-          ) : commits.data?.repos?.length === 0 ? (
-            <div className="px-6 py-8 text-center text-muted text-sm">No recent commits</div>
+          ) : (commits.data?.repos?.length ?? 0) === 0 ? (
+            <div className="px-6 py-8 text-center text-muted text-sm">
+              {forgejoEmptyCopy(commitsPhase, 'commits')}
+            </div>
           ) : (
             commits.data?.repos?.map((repo: typeof commits.data.repos[0]) => (
               <div key={repo.name}>
@@ -191,8 +197,10 @@ export default function HistoryLane() {
         <div className="divide-y divide-panel">
           {isLoading ? (
             <div className="px-6 py-8 text-center text-muted text-sm">Loading PRs...</div>
-          ) : pulls.data?.pulls?.length === 0 ? (
-            <div className="px-6 py-8 text-center text-muted text-sm">No pull requests</div>
+          ) : (pulls.data?.pulls?.length ?? 0) === 0 ? (
+            <div className="px-6 py-8 text-center text-muted text-sm">
+              {forgejoEmptyCopy(pullsPhase, 'pull requests')}
+            </div>
           ) : (
             pulls.data?.pulls?.map((pr: typeof pulls.data.pulls[0]) => (
               <div key={`${pr.repo}#${pr.number}`} className="px-6 py-4 hover:bg-panel/30 transition">

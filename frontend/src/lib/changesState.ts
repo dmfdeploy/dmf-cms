@@ -1,4 +1,4 @@
-import type { AdminJobsResponse } from '../api/types'
+import type { AdminJobsResponse, ChangesCommitsResponse, ChangesPullsResponse } from '../api/types'
 
 // Single source of truth for the "recent changes" degraded states, shared by
 // the Workspace RecentChanges widget and the Activity → History jobs lane so
@@ -74,5 +74,57 @@ export function changesEmptyCopy(phase: ChangesPhase): string {
       return 'Recent changes could not be loaded. Retrying automatically.'
     default:
       return 'No recent changes recorded'
+  }
+}
+
+// ------------------------------------------------------------------
+// Forgejo (commits / pull requests) — same fail-soft shape as the jobs
+// classifier above, sharing it between the Activity → History lane's two
+// Forgejo panels so they can't drift from one another (Art. 1). Both
+// endpoints used to answer "not configured" with a bare empty array
+// (indistinguishable from Forgejo genuinely having nothing) and a real
+// failure with a raw 500 leaking the exception string — the exact Art. 8
+// worked example in the Constitution. See api_changes_commits's docstring.
+// ------------------------------------------------------------------
+
+export type ForgejoPhase =
+  | 'loading'
+  | 'ok'
+  | 'unreachable'
+  | 'unconfigured'
+  | 'error' // the console's own API call failed (react-query isError)
+
+export interface ForgejoQueryLike {
+  isLoading: boolean
+  isError: boolean
+  data?: Pick<ChangesCommitsResponse | ChangesPullsResponse, 'reason'>
+}
+
+export function classifyForgejo(q: ForgejoQueryLike): ForgejoPhase {
+  if (q.isLoading && !q.data) return 'loading'
+  if (q.isError && !q.data) return 'error'
+  switch (q.data?.reason) {
+    case 'forgejo-unreachable':
+      return 'unreachable'
+    case 'forgejo-unconfigured':
+      return 'unconfigured'
+    default:
+      return 'ok'
+  }
+}
+
+// `kind` names what's missing/failed in plain language ("commits",
+// "pull requests") so one function serves both panels without either
+// claiming the other's noun.
+export function forgejoEmptyCopy(phase: ForgejoPhase, kind: string): string {
+  switch (phase) {
+    case 'unreachable':
+      return `Source control is unreachable — recent ${kind} cannot be read right now. Retrying automatically.`
+    case 'unconfigured':
+      return 'Source control is not configured in this environment.'
+    case 'error':
+      return `Recent ${kind} could not be loaded. Retrying automatically.`
+    default:
+      return `No recent ${kind}`
   }
 }

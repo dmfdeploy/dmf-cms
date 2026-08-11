@@ -1112,6 +1112,91 @@ describe('Unassigned group disposal explanation (umbrella #285 addendum)', () =>
   })
 })
 
+// umbrella #385 (hard gate 1): the empty state used to gate on
+// `workloads.length === 0` alone, with no check of `data.degraded` — so an
+// unreachable NetBox (empty payload BY CONSTRUCTION) rendered "No Media
+// Function instances in your scope.", stating as fact something the read
+// never established. These pin the fix: a `reason`-carrying degraded read
+// gets honest "cannot enumerate" copy instead, and the raw reason token
+// never appears outside a details disclosure.
+describe('degraded-read honesty (hard gate 1, umbrella #385)', () => {
+  function mkDegradedFetch(body: Record<string, unknown>) {
+    const fetchMock = vi.fn(async (input: RequestInfo | URL) => {
+      const url = (typeof input === 'string' ? input : (input as Request).url).toString()
+      if (url.endsWith('/api/catalog')) return json({ entries: [catalogEntry()] })
+      if (url.endsWith('/api/media-workloads/grouped')) return json(body)
+      return json({})
+    })
+    vi.stubGlobal('fetch', fetchMock)
+    return { fetchMock }
+  }
+
+  it.each([
+    ['netbox-not-configured', /isn.t connected in this environment/],
+    ['netbox-unreachable', /isn.t responding right now/],
+    ['netbox-error', /returned an unexpected error/],
+  ])('reason=%s: the empty state says it cannot enumerate, never "none"', async (reason, bannerText) => {
+    mkDegradedFetch({
+      configured: true,
+      degraded: true,
+      reason,
+      scope: [],
+      workloads: [],
+      invalid_instances: [],
+    })
+    renderListPage()
+
+    // The panel below must not contradict the banner above by claiming zero.
+    expect(
+      await screen.findByText(
+        'Cannot confirm there are no Media Function instances — the source of truth is unreachable.',
+      ),
+    ).toBeTruthy()
+    expect(screen.queryByText('No Media Function instances in your scope.')).toBeNull()
+
+    // The banner speaks plainly (Art. 8) — never the bare reason token as
+    // the visible explanation.
+    expect(await screen.findByText(bannerText)).toBeTruthy()
+    expect(screen.queryByText(reason, { selector: 'p:not(.font-mono)' })).toBeNull()
+
+    // The raw token still exists, but only inside a details disclosure
+    // (Art. 3: system jargon hidden at default, reachable at expert).
+    const summary = screen.getByText('System details')
+    expect(summary.closest('details')).toBeTruthy()
+    expect(within(summary.closest('details') as HTMLElement).getByText(reason)).toBeTruthy()
+  })
+
+  it('a degraded read with no reason token (invalid-instances-only) keeps the ordinary empty copy', async () => {
+    // NetBox answered fine here — every instance just collided on workload
+    // tags, so `reason` is never set on this path (see media_workloads.py's
+    // list_workloads_grouped). This must NOT read as "source unreachable".
+    mkDegradedFetch({
+      configured: true,
+      degraded: true,
+      scope: [],
+      workloads: [],
+      invalid_instances: [
+        {
+          instance: 'bad-svc',
+          function_key: 'mxl-videotestsrc',
+          workload_assignment: 'invalid-multiple',
+          conflicting_workloads: ['alpha', 'beta'],
+        },
+      ],
+    })
+    renderListPage()
+
+    expect(await screen.findByText('No Media Function instances in your scope.')).toBeTruthy()
+    expect(
+      screen.queryByText(
+        'Cannot confirm there are no Media Function instances — the source of truth is unreachable.',
+      ),
+    ).toBeNull()
+    // No unreachable banner either — NetBox was reachable.
+    expect(screen.queryByText(/source of truth is unreachable/)).toBeNull()
+  })
+})
+
 describe('bounds are universal, including the fallback panel (GATE-S1-RV)', () => {
   it('does not poll the legacy aggregate while the tab is hidden', async () => {
     // The live_view=false fallback was the last unbounded 200ms poller. It

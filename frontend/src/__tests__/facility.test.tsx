@@ -387,6 +387,69 @@ describe('Facility Detail page states', () => {
   })
 })
 
+// umbrella #385 (hard gate 1, sweep): the media-workloads count line reused
+// the SAME shape the Media Workloads list page was fixed for — an empty
+// `workloads` array from a degraded (source-unreachable) read is not
+// evidence of a zero count, and the panel must not state one.
+describe('Facility Detail — media workloads count panel honesty (umbrella #385)', () => {
+  it('a degraded, reason-carrying read never states a fabricated zero count', async () => {
+    renderDetail('dmf-lab', {
+      '/api/facility/dmf-lab/detail': detailPayload(),
+      '/api/media-workloads/grouped': {
+        configured: true,
+        degraded: true,
+        reason: 'netbox-unreachable',
+        scope: [],
+        workloads: [],
+        invalid_instances: [],
+      },
+    })
+    expect(await screen.findByText('Media workloads')).toBeTruthy()
+    // Same reason-copy mapper the rest of this page already uses.
+    expect(await screen.findByText(/cannot be read right now/)).toBeTruthy()
+    expect(screen.queryByText(/0 media workload/)).toBeNull()
+  })
+
+  it('a genuinely successful read with zero workloads still states the honest zero', async () => {
+    renderDetail('dmf-lab', {
+      '/api/facility/dmf-lab/detail': detailPayload(),
+      '/api/media-workloads/grouped': {
+        configured: true,
+        degraded: false,
+        scope: [],
+        workloads: [],
+        invalid_instances: [],
+      },
+    })
+    expect(
+      await screen.findByText(
+        (_, el) => el?.tagName === 'P' && /0 media workloads provisioned on this facility\./.test(el.textContent ?? ''),
+      ),
+    ).toBeTruthy()
+  })
+
+  it('renders the real count when the read succeeds', async () => {
+    renderDetail('dmf-lab', {
+      '/api/facility/dmf-lab/detail': detailPayload(),
+      '/api/media-workloads/grouped': {
+        configured: true,
+        degraded: false,
+        scope: [],
+        workloads: [
+          { slug: 'a', name: 'a', lifecycle: 'operate', health: 'ok', instances: [], functions: [] },
+          { slug: 'b', name: 'b', lifecycle: 'operate', health: 'ok', instances: [], functions: [] },
+        ],
+        invalid_instances: [],
+      },
+    })
+    expect(
+      await screen.findByText(
+        (_, el) => el?.tagName === 'P' && /2 media workloads provisioned on this facility\./.test(el.textContent ?? ''),
+      ),
+    ).toBeTruthy()
+  })
+})
+
 // GATE-S1-RV2 P2: a degradation reason nothing renders is a reason that does
 // not exist. Both halves asserted, so the banner cannot become unconditional.
 describe('partial NetBox data is stated, not swallowed', () => {

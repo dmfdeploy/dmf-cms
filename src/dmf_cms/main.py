@@ -3952,10 +3952,23 @@ def create_app(settings: Settings | None = None, contract: AppContract | None = 
 
     @app.get("/api/changes/commits")
     async def api_changes_commits(request: Request):
+        """Recent commits, fail-soft (same contract as /api/changes/jobs).
+
+        This endpoint used to answer a genuine failure with a raw 500 whose
+        body was the stringified exception — literally the UX Constitution's
+        own Art. 8 worked example (`"Failed to fetch commits: slice(None, 5,
+        None)"`). It also answered "not configured" with a bare
+        ``{"repos": []}``, indistinguishable from Forgejo having genuinely
+        answered with zero commits. Both are hard-gate-1/8 violations of the
+        same shape the History lane's jobs panel was already fixed for
+        (dmfdeploy/dmfdeploy#285); this closes the gap for its two sibling
+        panels. Every outcome is now a 200 carrying an explicit ``reason``
+        token, rendered by ``lib/changesState.ts``'s ``classifyForgejo``.
+        """
         if not _require_user(request):
             return JSONResponse({"error": "unauthorized"}, status_code=401)
         if not settings.forgejo.configured:
-            return JSONResponse({"repos": []})
+            return JSONResponse({"repos": [], "reason": "forgejo-unconfigured"})
         try:
             repos = forgejo.list_repos(
                 api_url=settings.forgejo.api_url,
@@ -3994,16 +4007,18 @@ def create_app(settings: Settings | None = None, contract: AppContract | None = 
                 except Exception:
                     pass
 
-            return JSONResponse({"repos": repos_commits})
+            return JSONResponse({"repos": repos_commits, "reason": ""})
         except Exception as exc:
-            return JSONResponse({"error": f"Failed to fetch commits: {exc}"}, status_code=500)
+            logger.warning("recent changes: Forgejo commits fetch failed: %s", exc)
+            return JSONResponse({"repos": [], "reason": "forgejo-unreachable"})
 
     @app.get("/api/changes/pulls")
     async def api_changes_pulls(request: Request):
+        """Recent pull requests, fail-soft — see api_changes_commits for why."""
         if not _require_user(request):
             return JSONResponse({"error": "unauthorized"}, status_code=401)
         if not settings.forgejo.configured:
-            return JSONResponse({"pulls": []})
+            return JSONResponse({"pulls": [], "reason": "forgejo-unconfigured"})
         try:
             repos = forgejo.list_repos(
                 api_url=settings.forgejo.api_url,
@@ -4039,9 +4054,10 @@ def create_app(settings: Settings | None = None, contract: AppContract | None = 
                 except Exception:
                     pass
 
-            return JSONResponse({"pulls": all_pulls})
+            return JSONResponse({"pulls": all_pulls, "reason": ""})
         except Exception as exc:
-            return JSONResponse({"error": f"Failed to fetch pulls: {exc}"}, status_code=500)
+            logger.warning("recent changes: Forgejo pulls fetch failed: %s", exc)
+            return JSONResponse({"pulls": [], "reason": "forgejo-unreachable"})
 
     # ------------------------------------------------------------------
     # Catalog endpoints — YAML catalog + NetBox tag join + AWX drive
