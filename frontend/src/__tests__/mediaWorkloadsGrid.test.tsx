@@ -12,7 +12,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { act, cleanup, render, screen, fireEvent, within } from '@testing-library/react'
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query'
 import { MemoryRouter, Route, Routes } from 'react-router-dom'
-import MediaWorkloads from '../pages/MediaWorkloads'
+import MediaWorkloads, { degradedReasonCopy } from '../pages/MediaWorkloads'
 import WorkloadDetail from '../pages/MediaWorkloads/WorkloadDetail'
 import WorkloadOperate from '../pages/MediaWorkloads/Operate'
 import HeaderSlotProbe from './testUtils/HeaderSlotProbe'
@@ -1119,6 +1119,21 @@ describe('Unassigned group disposal explanation (umbrella #285 addendum)', () =>
 // never established. These pin the fix: a `reason`-carrying degraded read
 // gets honest "cannot enumerate" copy instead, and the raw reason token
 // never appears outside a details disclosure.
+// fix-round P2-4 (PR #81): the unknown-token fallback used to name what
+// happened with no next step at all — a shrug, not Art. 8 content.
+describe('degradedReasonCopy', () => {
+  it('the unknown/absent-token fallback still states a next step', () => {
+    expect(degradedReasonCopy(undefined)).toMatch(/contact your systems engineer/)
+    expect(degradedReasonCopy('some-newly-added-token')).toMatch(/contact your systems engineer/)
+  })
+
+  it('never leaks a raw reason token as prose for any known case', () => {
+    expect(degradedReasonCopy('netbox-not-configured')).not.toContain('netbox-not-configured')
+    expect(degradedReasonCopy('netbox-unreachable')).not.toContain('netbox-unreachable')
+    expect(degradedReasonCopy('netbox-error')).not.toContain('netbox-error')
+  })
+})
+
 describe('degraded-read honesty (hard gate 1, umbrella #385)', () => {
   function mkDegradedFetch(body: Record<string, unknown>) {
     const fetchMock = vi.fn(async (input: RequestInfo | URL) => {
@@ -1166,10 +1181,17 @@ describe('degraded-read honesty (hard gate 1, umbrella #385)', () => {
     expect(within(summary.closest('details') as HTMLElement).getByText(reason)).toBeTruthy()
   })
 
-  it('a degraded read with no reason token (invalid-instances-only) keeps the ordinary empty copy', async () => {
-    // NetBox answered fine here — every instance just collided on workload
-    // tags, so `reason` is never set on this path (see media_workloads.py's
-    // list_workloads_grouped). This must NOT read as "source unreachable".
+  // fix-round P1-1 (PR #81): this test used to assert the exact defect hard
+  // gate 1 exists to catch. `workloads: []` with `invalid_instances:
+  // [bad-svc]` is a payload that PROVES at least one Media Function
+  // instance exists — media_workloads.py excludes an invalid-multiple
+  // instance from every group, it does not make it not exist. "No Media
+  // Function instances in your scope." is therefore a false claim here,
+  // exactly as false as the reason-carrying cases above — it must say the
+  // list is incomplete, never that it is empty. Distinct copy from the
+  // unreachable cases on purpose: NetBox DID answer here, so the same
+  // "source of truth is unreachable" text would misname the cause.
+  it('a degraded read with no reason token (invalid-instances-only): incomplete, never "none" and never "unreachable"', async () => {
     mkDegradedFetch({
       configured: true,
       degraded: true,
@@ -1186,14 +1208,69 @@ describe('degraded-read honesty (hard gate 1, umbrella #385)', () => {
     })
     renderListPage()
 
-    expect(await screen.findByText('No Media Function instances in your scope.')).toBeTruthy()
+    expect(
+      await screen.findByText(/This list is incomplete — every recorded instance has a conflicting workload assignment/),
+    ).toBeTruthy()
+    expect(screen.queryByText('No Media Function instances in your scope.')).toBeNull()
+    // NetBox WAS reachable here — the unreachable-specific copy must not
+    // appear, or the operator is pointed at the wrong cause entirely.
+    expect(screen.queryByText(/source of truth is unreachable/)).toBeNull()
     expect(
       screen.queryByText(
         'Cannot confirm there are no Media Function instances — the source of truth is unreachable.',
       ),
     ).toBeNull()
-    // No unreachable banner either — NetBox was reachable.
-    expect(screen.queryByText(/source of truth is unreachable/)).toBeNull()
+  })
+
+  // fix-round P2-3 (PR #81): TanStack Query RETAINS the last-good `data`
+  // across a failed background refetch — `isLoading`/`isFetching` settle
+  // back to false and `data` keeps its prior (honest, at-the-time) value
+  // while `isError` flips true. Without an explicit isError check, the
+  // empty-state text would keep reading the STALE `degraded: false` and
+  // re-license "No Media Function instances" off a read that just failed.
+  // Hold-then-reject, not first-load: the first fetch must succeed (so
+  // there is real retained data to go stale) before the second one rejects.
+  it('a settled failed refetch overrides retained "genuinely empty" data — never re-claims "none"', async () => {
+    vi.useFakeTimers()
+    let calls = 0
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(async (input: RequestInfo | URL) => {
+        const url = (typeof input === 'string' ? input : (input as Request).url).toString()
+        if (url.endsWith('/api/catalog')) return json({ entries: [catalogEntry()] })
+        if (url.endsWith('/api/media-workloads/grouped')) {
+          calls += 1
+          if (calls === 1) {
+            // First read: genuinely empty and NOT degraded — a real,
+            // honest "nothing here yet".
+            return json({ configured: true, degraded: false, scope: [], workloads: [], invalid_instances: [] })
+          }
+          // Every subsequent poll fails outright.
+          return new Response('boom', { status: 500 })
+        }
+        return json({})
+      }),
+    )
+    renderListPage()
+
+    // First (successful, genuinely empty) render settles. Fake timers are
+    // active, so this is settle() + getBy*, never findBy* (findBy* waits on
+    // REAL timers, which never advance here and would hang — see this
+    // file's other describes for the same discipline).
+    await settle()
+    expect(screen.getByText('No Media Function instances in your scope.')).toBeTruthy()
+
+    // Advance past the 15s poll interval so react-query's background
+    // refetch fires and rejects, while the old (empty, non-degraded) data
+    // stays retained.
+    await settle(15_100)
+
+    expect(
+      screen.getByText(
+        'Cannot confirm there are no Media Function instances — the last read attempt failed. Retrying automatically.',
+      ),
+    ).toBeTruthy()
+    expect(screen.queryByText('No Media Function instances in your scope.')).toBeNull()
   })
 })
 

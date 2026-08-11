@@ -372,7 +372,7 @@ export interface ChangesCommitsResponse {
   // "" means Forgejo answered and `repos` is authoritative; a non-empty
   // token names why it could not (see lib/changesState.ts's classifier).
   // Optional so older payloads (and fixtures) classify as ok.
-  reason?: '' | 'forgejo-unconfigured' | 'forgejo-unreachable'
+  reason?: '' | 'forgejo-unconfigured' | 'forgejo-unreachable' | 'forgejo-partial'
 }
 
 export interface PullEntry {
@@ -388,7 +388,7 @@ export interface PullEntry {
 export interface ChangesPullsResponse {
   pulls: PullEntry[]
   // Same fail-soft contract as ChangesCommitsResponse.reason.
-  reason?: '' | 'forgejo-unconfigured' | 'forgejo-unreachable'
+  reason?: '' | 'forgejo-unconfigured' | 'forgejo-unreachable' | 'forgejo-partial'
 }
 
 // ------------------------------------------------------------------

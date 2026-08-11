@@ -3964,6 +3964,19 @@ def create_app(settings: Settings | None = None, contract: AppContract | None = 
         (dmfdeploy/dmfdeploy#285); this closes the gap for its two sibling
         panels. Every outcome is now a 200 carrying an explicit ``reason``
         token, rendered by ``lib/changesState.ts``'s ``classifyForgejo``.
+
+        fix-round P1-2 (PR #81): the per-repo ``list_commits`` call was
+        wrapped in its own ``except Exception: pass`` — a failure there was
+        invisible both to the UI (this handler still returned ``reason: ""``
+        as long as ``list_repos`` itself succeeded) AND to monitoring (no
+        log line at all). A repo whose commits call fails is now tracked and
+        logged, not silently skipped, and the aggregate ``reason`` reflects
+        it: ``""`` only when every repo's commits were read; ``"forgejo-
+        partial"`` when some succeeded and some failed (the returned rows
+        are real, just incomplete); ``"forgejo-unreachable"`` when every
+        repo failed (indistinguishable from the source being unreachable, as
+        far as this read is concerned) — same token ``list_repos`` itself
+        raising already uses, so the UI needs exactly one case for it.
         """
         if not _require_user(request):
             return JSONResponse({"error": "unauthorized"}, status_code=401)
@@ -3976,6 +3989,7 @@ def create_app(settings: Settings | None = None, contract: AppContract | None = 
             )
 
             repos_commits = []
+            failed_repos = 0
             for repo in repos[:5]:
                 full_name = repo.get("full_name", "")
                 parts = full_name.split("/")
@@ -4004,17 +4018,28 @@ def create_app(settings: Settings | None = None, contract: AppContract | None = 
                             for c in commits
                         ],
                     })
-                except Exception:
-                    pass
+                except Exception as exc:
+                    failed_repos += 1
+                    logger.warning(
+                        "recent changes: Forgejo commits fetch failed for %s: %s", full_name, exc
+                    )
 
-            return JSONResponse({"repos": repos_commits, "reason": ""})
+            if failed_repos == 0:
+                reason = ""
+            elif repos_commits:
+                reason = "forgejo-partial"
+            else:
+                reason = "forgejo-unreachable"
+            return JSONResponse({"repos": repos_commits, "reason": reason})
         except Exception as exc:
             logger.warning("recent changes: Forgejo commits fetch failed: %s", exc)
             return JSONResponse({"repos": [], "reason": "forgejo-unreachable"})
 
     @app.get("/api/changes/pulls")
     async def api_changes_pulls(request: Request):
-        """Recent pull requests, fail-soft — see api_changes_commits for why."""
+        """Recent pull requests, fail-soft — see api_changes_commits for why,
+        including the fix-round P1-2 per-repo failure tracking (same
+        ``""``/``"forgejo-partial"``/``"forgejo-unreachable"`` ladder)."""
         if not _require_user(request):
             return JSONResponse({"error": "unauthorized"}, status_code=401)
         if not settings.forgejo.configured:
@@ -4026,6 +4051,7 @@ def create_app(settings: Settings | None = None, contract: AppContract | None = 
             )
 
             all_pulls = []
+            failed_repos = 0
             for repo in repos[:5]:
                 full_name = repo.get("full_name", "")
                 parts = full_name.split("/")
@@ -4051,10 +4077,19 @@ def create_app(settings: Settings | None = None, contract: AppContract | None = 
                             "created": pr.get("created_at", ""),
                             "url": pr.get("html_url", ""),
                         })
-                except Exception:
-                    pass
+                except Exception as exc:
+                    failed_repos += 1
+                    logger.warning(
+                        "recent changes: Forgejo pulls fetch failed for %s: %s", full_name, exc
+                    )
 
-            return JSONResponse({"pulls": all_pulls, "reason": ""})
+            if failed_repos == 0:
+                reason = ""
+            elif all_pulls:
+                reason = "forgejo-partial"
+            else:
+                reason = "forgejo-unreachable"
+            return JSONResponse({"pulls": all_pulls, "reason": reason})
         except Exception as exc:
             logger.warning("recent changes: Forgejo pulls fetch failed: %s", exc)
             return JSONResponse({"pulls": [], "reason": "forgejo-unreachable"})

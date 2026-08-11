@@ -1,6 +1,7 @@
 import { useParams, Link } from 'react-router-dom'
 import { useFacilityDetail, useMediaWorkloadsGrouped } from '@/api/hooks'
 import type { FacilityDetailResponse } from '@/api/types'
+import { degradedReasonCopy } from '@/pages/MediaWorkloads'
 
 // Facility Detail (S1, #285): node/service/storage/capacity truth for the
 // one facility this console operates, read entirely through the console's
@@ -391,7 +392,19 @@ function WorkloadCountPanel() {
   // Reuses the existing media-workloads inventory verbatim — this page
   // never re-derives that count (a second, divergent count would be a
   // trust hazard, not a convenience).
-  const { data, isLoading } = useMediaWorkloadsGrouped()
+  const { data, isLoading, isError } = useMediaWorkloadsGrouped()
+  // fix-round P1-1 (umbrella #385 PR #81): `degraded` is the completeness
+  // gate on its own, `reason` only selects which explanation — see
+  // MediaWorkloads/index.tsx's `degradedReasonCopy` docstring for the full
+  // reasoning. This panel only withholds the NUMBER when workloads is empty
+  // by construction (a non-zero grouped-workload count stays honest even
+  // when other, unrelated instances were excluded for conflicting tags —
+  // each surviving workload's own `instances` already excludes them).
+  //
+  // fix-round P2-3: `isError` wins regardless of retained data, same as
+  // MediaWorkloads/index.tsx — a settled failed refetch must not let a
+  // stale, previously-honest `degraded: false` re-license this count.
+  const countUnreliable = Boolean(isError || (data?.degraded && data?.workloads.length === 0))
   return (
     <div className="panel mb-6">
       <div className="px-6 py-4 border-b border-panel flex items-center justify-between">
@@ -403,19 +416,29 @@ function WorkloadCountPanel() {
       <div className="px-6 py-6">
         {isLoading && !data ? (
           <p className="text-sm text-muted">Loading…</p>
-        ) : !data || !data.configured ? (
+        ) : !data ? (
+          // Settled error, nothing ever retained — distinct from "not
+          // configured" below, which is a real, known environment fact this
+          // is not (fix-round P2-4: this used to fall into the "not
+          // configured" branch's default text, misstating a read failure as
+          // a configuration gap).
           <p className="text-sm text-muted">
-            {data?.reason
+            Cannot confirm the media workload count — this could not be read. Retrying automatically.
+          </p>
+        ) : !data.configured ? (
+          <p className="text-sm text-muted">
+            {data.reason
               ? facilityReasonCopy(data.reason) || 'Media workloads are not configured for this environment.'
               : 'Media workloads are not configured for this environment.'}
           </p>
-        ) : data.degraded && data.reason ? (
-          // Same shape as Media Workloads' own degraded banner (hard gate 1):
-          // a `reason` token here means the read failed outright, so
-          // `workloads` is empty by construction — an empty array is not
-          // evidence there are zero workloads, and this count must not claim
-          // otherwise.
-          <p className="text-sm text-muted">{facilityReasonCopy(data.reason)}</p>
+        ) : countUnreliable ? (
+          <p className="text-sm text-muted">
+            {isError
+              ? 'Cannot confirm the media workload count — the last read attempt failed. Retrying automatically.'
+              : data.reason
+                ? degradedReasonCopy(data.reason)
+                : 'This count is incomplete — every recorded instance has a conflicting workload assignment and none could be grouped (see Media Workloads for details).'}
+          </p>
         ) : (
           <p className="text-sm text-text">
             <span className="font-mono">{data.workloads.length}</span> media workload
