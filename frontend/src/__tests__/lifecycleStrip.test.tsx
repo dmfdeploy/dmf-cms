@@ -115,7 +115,7 @@ describe('locked state carries a lock icon, "Locked" text, and a dashed-border s
     expect(toggle.getAttribute('aria-expanded')).toBe('true')
   })
 
-  it('does not dim a locked chip a second time on top of the state word\'s own opacity', () => {
+  it('carries no opacity utility on the chip container itself', () => {
     const steps: Record<FlowStepId, FlowStepState> = {
       design: 'complete',
       plan: 'complete',
@@ -126,10 +126,13 @@ describe('locked state carries a lock icon, "Locked" text, and a dashed-border s
     renderRail({ steps, activeChip: 'design', current: null })
 
     const provision = chip('Provision')
+    // Structural only — proves the CONTAINER carries no opacity-N class,
+    // nothing about the actual composited contrast that would result
+    // (including from any opacity elsewhere in the chip's own subtree). The
+    // test below is the one that pins the real number.
     expect(provision.className).not.toMatch(/\bopacity-\d+\b/)
     // The dashed border + lock glyph + "Locked" text stay as the designed,
-    // non-colour cue — this fix removes the SECOND opacity multiplier, not
-    // the chip's other distinguishing treatment.
+    // non-colour cue.
     expect(provision.className).toContain('border-dashed')
   })
 
@@ -140,12 +143,12 @@ describe('locked state carries a lock icon, "Locked" text, and a dashed-border s
   // here used to claim that span "was never the compounding half" and was
   // therefore fine; that was true of round 2's specific defect and false of
   // AA. This test computes the actual WCAG contrast ratio the state word's
-  // rendered className composites to against the real design tokens
-  // (src/index.css --color-muted / --color-bg — jsdom does not resolve CSS
-  // custom properties or paint anything, so the token values are mirrored
-  // here rather than read from a stylesheet) and pins that value, not the
-  // presence or absence of any one class — so a *different* opacity
-  // utility landing on this span in a future round still gets caught.
+  // rendered className composites to against MIRRORED design tokens (see
+  // the constants below — this does not read src/index.css or resolve real
+  // CSS opacity/colour syntax, it hardcodes the two values that file
+  // currently defines) and pins that value, not the presence or absence of
+  // any one class — so a *different* opacity utility landing on this span
+  // in a future round still gets caught.
   it('the state word text composites to at least the 4.5:1 AA floor at its actual rendered opacity', () => {
     const steps: Record<FlowStepId, FlowStepState> = {
       design: 'complete',

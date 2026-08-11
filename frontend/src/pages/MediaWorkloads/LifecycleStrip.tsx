@@ -65,10 +65,12 @@ import { FLOW_STEPS, type FlowStepId, type FlowStepState } from '../../lib/workl
  * job-in-flight chip is not a button (busy is not the same fact as locked,
  * and a busy chip CAN still be the selected one) — round P3-6 first tried
  * putting `aria-pressed` on that chip's own inert `<div>` too, but WAI-ARIA
- * 1.2 only defines `aria-pressed` for `role="button"` and its descendants,
- * so a user agent is not required to expose it there; corrected (P3 round
- * 3) to a visually-hidden "Selected" text node instead, reachable text
- * rather than a state attribute with nothing to attach it to. That div still
+ * 1.2 defines `aria-pressed` only for the element that itself carries
+ * `role="button"` — this div neither carries that role nor inherits the
+ * permission from being near one, so a user agent is not required to
+ * expose it there; corrected (P3 round 3) to a visually-hidden "Selected"
+ * text node instead, reachable text rather than a state attribute with
+ * nothing to attach it to. That div still
  * deliberately carries no role="button", both because it genuinely isn't
  * one and because this suite's own "job in flight -> no button reachable"
  * tests rely on that absence. `aria-current="step"` marks the backend-derived
@@ -264,7 +266,12 @@ export default function LifecycleStrip({
 }: {
   steps: Record<FlowStepId, FlowStepState>
   /** Which chip reads as selected — one of the five steps, `'operate'`, or
-   *  none. Drives the inverted fill + `aria-pressed`. */
+   *  none. Always drives the inverted fill. The accessible signal on top of
+   *  that varies by branch (P3 round 3): `aria-pressed` on the interactive
+   *  `<button>` variant, a visually-hidden "Selected" text node on a
+   *  job-in-flight chip's inert `<div>` (aria-pressed is not valid there —
+   *  see the busy-branch comment below), and `aria-current` on the Operate
+   *  `<Link>` (not a toggle, so no aria-pressed at all). */
   activeChip: FlowStepId | 'operate' | null
   /** The workload's backend-derived position, or null. */
   current: FlowStepId | null
@@ -366,11 +373,13 @@ export default function LifecycleStrip({
                       tell the chip they're actually on apart from a
                       merely-suppressed sibling (Art. 11: colour is never the
                       only signal). The first fix put aria-pressed on this
-                      div — WAI-ARIA 1.2 defines aria-pressed only for
-                      role="button" (and its button-like descendants), so a
-                      user agent is not required to expose it here at all;
-                      the test that "proved" it only checked DOM spelling,
-                      not an exposed accessibility property. Reachable text
+                      div — WAI-ARIA 1.2 defines aria-pressed only for the
+                      element that itself carries role="button"; this div
+                      neither carries that role nor inherits the permission
+                      from being near one, so a user agent is not required
+                      to expose it here at all — the test that "proved" it
+                      only checked DOM spelling, not an exposed accessibility
+                      property. Reachable text
                       is the actual fix — a visually-hidden "Selected" node,
                       same pattern as any other sr-only label in this
                       codebase, with no role/state attribute riding on an
@@ -419,10 +428,14 @@ export default function LifecycleStrip({
             // FIX ROUND (WP-3 spec B gate, P3-6): keyed to SELECTION
             // (activeChip — is the operator looking at Operate right now),
             // not to POSITION (offFlow). Those are the same two axes the
-            // five orchestration chips already keep apart via aria-pressed
-            // (selection) vs. aria-current="step" (position) — this link
-            // has no aria-pressed (a nav Link isn't a toggle), so
-            // aria-current is the one signal it has, and it needs to carry
+            // five orchestration chips' INTERACTIVE (button) variant keeps
+            // apart via aria-pressed (selection) vs. aria-current="step"
+            // (position) — the busy variant instead uses a visually-hidden
+            // "Selected" text node (see that branch's own comment above),
+            // so this is no longer true of all five chips universally, only
+            // of the button case. This link has no aria-pressed (a nav Link
+            // isn't a toggle), so aria-current is the one signal it has,
+            // and it needs to carry
             // SELECTION to match the inverted fill it already renders on
             // /operate. Before this fix, visiting /operate directly for a
             // workload not actually AT Operate (offFlow false, activeChip
