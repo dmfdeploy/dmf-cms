@@ -60,13 +60,40 @@ def test_cms_hint_points_at_a_directory_that_holds_the_publish_script() -> None:
     )
 
 
-def test_hints_are_shell_quoted_for_copy_paste() -> None:
-    """A path containing spaces must still produce a runnable `cd`."""
-    r = _source_and_run('dmf_hint_paths "/tmp/dir with spaces"; printf %s "$CMS_HINT"')
-    assert r.returncode == 0, r.stderr
-    assert " " not in r.stdout or "\\" in r.stdout or r.stdout.startswith(("'", '"')), (
-        f"CMS_HINT {r.stdout!r} is not shell-safe"
-    )
+def test_both_emitted_hints_cd_successfully_from_a_path_containing_spaces(tmp_path) -> None:
+    """Both hints must be runnable, not merely quote-shaped.
+
+    Builds a real layout under a parent whose name contains spaces, with
+    sibling `dmf-cms` and `dmf-env/bin/run-playbook.sh`, then executes an actual
+    `cd` with each emitted token and compares `pwd`.
+
+    The previous version of this test never created the dmf-env marker, so
+    ENV_HINT took the placeholder branch and only CMS_HINT was ever inspected —
+    removing `printf %q` from the real ENV_HINT assignment left it green. It
+    also accepted any output containing a backslash or starting with a quote,
+    which is a heuristic about shape rather than proof that the token parses.
+    """
+    workspace = tmp_path / "work space with spaces"
+    cms = workspace / "dmf-cms"
+    (cms / "scripts").mkdir(parents=True)
+    env_bin = workspace / "dmf-env" / "bin"
+    env_bin.mkdir(parents=True)
+    (env_bin / "run-playbook.sh").write_text("#!/usr/bin/env bash\n")
+
+    for var, expected in (("CMS_HINT", cms), ("ENV_HINT", workspace / "dmf-env")):
+        r = subprocess.run(
+            ["bash", "-c",
+             "set -euo pipefail\nunset DMFDEPLOY_UMBRELLA\n"
+             f'source "{LIB}"\n'
+             f'dmf_hint_paths "{cms}"\n'
+             f'eval "cd ${var}"\n'
+             "pwd"],
+            capture_output=True, text=True,
+        )
+        assert r.returncode == 0, f"cd with {var} failed: {r.stderr}"
+        assert Path(r.stdout.strip()).resolve() == expected.resolve(), (
+            f"{var} cd landed in {r.stdout.strip()!r}, expected {expected}"
+        )
 
 
 def test_no_script_derives_a_component_path_from_the_umbrella() -> None:
