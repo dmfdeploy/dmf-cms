@@ -242,4 +242,103 @@ describe('History lane: Forgejo commits/pulls degraded-read honesty', () => {
     expect(screen.getByText('Recent commits could not be loaded. Retrying automatically.')).toBeTruthy()
     expect(screen.queryByText('No recent commits')).toBeNull()
   })
+
+  // fix-round 3 (PR #81): the empty-only hold-then-reject test above passed
+  // even before this round's fix, because an EMPTY retained payload already
+  // fell through to the (correct) empty-branch copy. The actual gap the
+  // reviewer found only shows with NON-EMPTY retained rows: the commits/
+  // pulls panels only ever showed a notice for the 'partial' phase, so a
+  // settled failed refetch that retained real rows rendered them with NO
+  // notice at all — indistinguishable from a fully current, successful
+  // read. Both panels covered here, each seeding one real row before the
+  // refetch that rejects.
+  it('a settled failed refetch keeps retained COMMIT rows visible but adds a notice — never silently current', async () => {
+    vi.useFakeTimers()
+    let calls = 0
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(async (input: RequestInfo | URL) => {
+        const url = (typeof input === 'string' ? input : (input as Request).url).toString()
+        if (url.endsWith('/api/changes/jobs')) return json({ jobs: [], reason: 'awx-unconfigured' })
+        if (url.endsWith('/api/changes/pulls')) return json({ pulls: [], reason: '' })
+        if (url.endsWith('/api/changes/commits')) {
+          calls += 1
+          if (calls === 1) {
+            return json({
+              repos: [
+                {
+                  name: 'dmfdeploy/dmf-cms',
+                  commits: [
+                    { sha_short: 'abc1234', message: 'fix: x', author: 'a', date: '2026-08-01T00:00:00Z', url: '' },
+                  ],
+                },
+              ],
+              reason: '',
+            })
+          }
+          return new Response('boom', { status: 500 })
+        }
+        return json({})
+      }),
+    )
+    renderWithQuery(<HistoryLane />)
+
+    // First (successful, non-empty) read settles — the row is present with
+    // no notice, a genuinely current read.
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(60)
+    })
+    expect(screen.getByText('dmfdeploy/dmf-cms')).toBeTruthy()
+    expect(screen.queryByText(/could not be loaded/)).toBeNull()
+
+    // The background refetch fires and rejects; TanStack Query retains the
+    // prior successful `data` (isLoading settles false, the row stays).
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(30_100)
+    })
+
+    // The retained row is STILL shown (Art. 5: the screen stays still) —
+    // but it must now be qualified: the read that would have confirmed it
+    // failed, and that must be visible alongside it, not silently absent.
+    expect(screen.getByText('dmfdeploy/dmf-cms')).toBeTruthy()
+    expect(screen.getByText('Recent commits could not be loaded. Retrying automatically.')).toBeTruthy()
+  })
+
+  it('a settled failed refetch keeps retained PULL ROWS visible but adds a notice — never silently current', async () => {
+    vi.useFakeTimers()
+    let calls = 0
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(async (input: RequestInfo | URL) => {
+        const url = (typeof input === 'string' ? input : (input as Request).url).toString()
+        if (url.endsWith('/api/changes/jobs')) return json({ jobs: [], reason: 'awx-unconfigured' })
+        if (url.endsWith('/api/changes/commits')) return json({ repos: [], reason: '' })
+        if (url.endsWith('/api/changes/pulls')) {
+          calls += 1
+          if (calls === 1) {
+            return json({
+              pulls: [{ repo: 'dmfdeploy/dmf-cms', number: 1, title: 't', state: 'open', author: 'a', created: '', url: '' }],
+              reason: '',
+            })
+          }
+          return new Response('boom', { status: 500 })
+        }
+        return json({})
+      }),
+    )
+    renderWithQuery(<HistoryLane />)
+
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(60)
+    })
+    expect(screen.getByText('t')).toBeTruthy()
+    expect(screen.queryByText(/could not be loaded/)).toBeNull()
+
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(30_100)
+    })
+
+    expect(screen.getByText('t')).toBeTruthy()
+    expect(screen.getByText('Recent pull requests could not be loaded. Retrying automatically.')).toBeTruthy()
+  })
 })
