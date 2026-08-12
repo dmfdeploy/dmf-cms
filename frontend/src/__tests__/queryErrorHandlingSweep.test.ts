@@ -58,8 +58,30 @@
  *       classifier, spies on the REAL settleQuery (vi.mock + importOriginal,
  *       so it still behaves correctly — this only records calls, it doesn't
  *       replace behavior), calls the classifier with realistic input, and
- *       asserts the spy was actually invoked. Proof of execution, not
- *       another regex. See the "runtime-verify" describe block below.
+ *       asserts the spy was actually invoked.
+ *
+ * fix-round 9 (codex adversarial pass on round 8): "settleQuery was called"
+ * is an IMPLEMENTATION-DETAIL assertion, not a correctness one — codex
+ * proved a classifier can stay "verified" while being actively broken:
+ *   (a) call settleQuery on a HARMLESS non-error COPY of the input, use
+ *       that wrong result — the spy still sees a call, the output is wrong;
+ *   (b) call settleQuery(q) correctly, then DISCARD the result and use an
+ *       unsafe substitute — same: spy sees a call, output is wrong.
+ * Also named: the invocation-spy fixture (FAILED_QUERY_FIXTURE) was
+ * isError:true with data:undefined — never RETAINED data, the exact
+ * dangerous shape this whole arc exists to cover. Fixed with a BLACK-BOX
+ * behavioral check per classifier below (a separate describe block): feed
+ * each one a realistic isError:true + non-empty RETAINED-data input and
+ * assert the OUTPUT reflects correct failed/stale semantics for that
+ * classifier's own contract. There is no "call" to fake around in a
+ * black-box input/output assertion — only a result to get right or wrong.
+ * Verified this closes both demonstrated variants by reproducing them
+ * (a harmless-copy mutation and a discard-and-substitute mutation) against
+ * classifyChanges and confirming the new test fails each, then reverting.
+ * The invocation-spy tests stay too (still a real, non-trivial signal —
+ * "never calls settleQuery at all" is a distinct, cheaper-to-diagnose
+ * failure mode from "calls it but ignores the result") — this round
+ * supplements rather than replaces them.
  */
 /// <reference types="vite/client" />
 import { describe, expect, it, vi } from 'vitest'
@@ -77,9 +99,9 @@ vi.mock('../lib/queryState', async (importOriginal) => {
 })
 
 import { settleQuery } from '../lib/queryState'
-import { classifyChanges, classifyForgejo } from '../lib/changesState'
-import { classifyWorkspaceHealth } from '../lib/workspaceHealth'
-import { classifyFacilityDetail } from '../pages/Facility/Detail'
+import { classifyChanges, classifyForgejo, type ChangesQueryLike, type ForgejoQueryLike } from '../lib/changesState'
+import { classifyWorkspaceHealth, type HealthQueryLike } from '../lib/workspaceHealth'
+import { classifyFacilityDetail, type FacilityDetailQueryLike } from '../pages/Facility/Detail'
 
 // Every .ts/.tsx source file under src, as raw text, keyed by a path
 // relative to src/ (e.g. "pages/Admin.tsx") — eager + raw so this is plain
@@ -308,6 +330,90 @@ describe('regression net: known delegate classifiers actually call settleQuery a
     // by trusting its source text.
     const unregistered = settleQueryTextCandidateNames().filter((n) => !(n in KNOWN_DELEGATES))
     expect(unregistered).toEqual([])
+  })
+})
+
+describe('regression net: known delegate classifiers produce the CORRECT OUTPUT for a failed-with-retained-data input', () => {
+  // fix-round 9 — the direct codex ask: a BLACK-BOX behavioral assertion per
+  // classifier, not "was settleQuery called". Each fixture is isError:true
+  // WITH a realistic, non-empty retained payload — the exact shape a
+  // harmless-copy or discard-and-substitute mutation would get wrong, and
+  // the exact shape every other fix in this arc exists to handle honestly
+  // (Art. 5: the retained data stays visible, Art. 1: it must not be
+  // presented as current). Reason tokens/config flags in each fixture are
+  // deliberately chosen so that if `failed`/`stale` were incorrectly
+  // computed as false, the classifier would resolve to the WRONG, more
+  // permissive phase (e.g. 'ok'/'live' instead of 'error'/stale) — so a
+  // wrong computation is directly observable in the returned phase, not
+  // just in a field that happens not to matter for this input.
+
+  it('classifyChanges: isError wins over an otherwise-ok retained reason, jobs stay visible', () => {
+    const q: ChangesQueryLike = {
+      isLoading: false,
+      isError: true,
+      data: {
+        jobs: [{ id: 1, name: 'media-launch-mxl-videotestsrc', status: 'successful', started: null, finished: null, elapsed: 12, failed: false }],
+        reason: '', // '' alone means "ok" — isError must override this, not the other way round
+      },
+    }
+    const s = classifyChanges(q)
+    expect(s.phase).toBe('error')
+    expect(s.jobs).toHaveLength(1) // Art. 5: retained data still exposed, not suppressed
+  })
+
+  it('classifyForgejo: isError wins over an otherwise-ok retained reason', () => {
+    const q: ForgejoQueryLike = { isLoading: false, isError: true, data: { reason: '' } }
+    expect(classifyForgejo(q)).toBe('error')
+  })
+
+  it('classifyWorkspaceHealth: stale reflects isError even though data is retained, configured, and verified', () => {
+    const q: HealthQueryLike = {
+      isLoading: false,
+      isError: true,
+      data: {
+        configured: true,
+        reachable: true,
+        reason: '',
+        watchdog_firing: true, // would compute verified:true — a wrong `stale` would make isNominal() lie
+        alerts: [
+          {
+            id: 'a1', name: 'HighLatency', state: 'firing', severity: 'warning', instance: 'n1',
+            context: '', summary: '', description: '', runbook_url: '', active_at: '',
+          },
+        ],
+      },
+    }
+    const s = classifyWorkspaceHealth(q)
+    // `phase` alone can't catch a broken `stale` here — data is retained and
+    // configured, so phase is correctly 'live' regardless. `stale` is the
+    // field this classifier exists to get right; assert it directly.
+    expect(s.stale).toBe(true)
+    expect(s.phase).toBe('live')
+    expect(s.alerts).toHaveLength(1) // Art. 5: retained data still exposed
+  })
+
+  it('classifyFacilityDetail: stale reflects isError even though data is retained and configured', () => {
+    const q: FacilityDetailQueryLike = {
+      isLoading: false,
+      isError: true,
+      data: {
+        requested_site: 'dmf-lab',
+        prometheus_configured: true,
+        netbox_configured: true,
+        site: { slug: 'dmf-lab', name: 'DMF Lab', architecture: null, reason: '' },
+        nodes: { reason: '', items: [] },
+        platform_services: { reason: '', items: [] },
+        storage: { reason: '', items: [] },
+        capacity: {
+          reason: '', node_name: 'n1', allocatable_cpu_m: 2000, allocatable_mem_b: 4 * 1024 ** 3,
+          requests_committed_cpu_m: 500, requests_committed_mem_b: 512 * 1024 ** 2, pod_count: 3,
+        },
+      },
+    }
+    const s = classifyFacilityDetail(q)
+    expect(s.phase).toBe('loaded')
+    expect(s.stale).toBe(true)
+    expect(s.data).toBeTruthy() // Art. 5: retained data still exposed
   })
 })
 
