@@ -12,7 +12,7 @@
  * must never say "asleep" (Constitution Art. 1).
  */
 import { afterEach, describe, expect, it, vi } from 'vitest'
-import { cleanup, render, screen } from '@testing-library/react'
+import { act, cleanup, render, screen } from '@testing-library/react'
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query'
 import { MemoryRouter } from 'react-router-dom'
 import RecentChanges from '../pages/Workspace/RecentChanges'
@@ -49,6 +49,7 @@ afterEach(() => {
   cleanup()
   vi.unstubAllGlobals()
   vi.restoreAllMocks()
+  vi.useRealTimers()
 })
 
 describe('classifyChanges', () => {
@@ -148,5 +149,72 @@ describe('RecentChanges widget states', () => {
     expect(await screen.findByText('Recent changes')).toBeTruthy()
     expect(screen.queryByText(/Open Activity/)).toBeNull()
     expect(screen.queryByRole('link', { name: /Activity/ })).toBeNull()
+  })
+
+  // fix-round 4 (PR #81, codex sibling sweep): classifyChanges only treated
+  // isError as authoritative when NO data was ever retained
+  // (`isError && !q.data`). TanStack Query retains the last-good `jobs`
+  // across a failed background refetch — isLoading settles false, isError
+  // flips true, and the retained rows kept rendering with NO notice at
+  // all, presenting last-good data as current after the poll that would
+  // have confirmed it had failed. Hold-then-reject, not first-load: the
+  // first fetch succeeds (real retained data) before the second rejects.
+  it('a settled failed refetch keeps retained jobs visible but adds a notice — never silently current', async () => {
+    vi.useFakeTimers()
+    let calls = 0
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(async () => {
+        calls += 1
+        if (calls === 1) {
+          return new Response(
+            JSON.stringify({
+              jobs: [
+                {
+                  id: 101,
+                  name: 'media-launch-mxl-videotestsrc',
+                  status: 'successful',
+                  started: '2026-08-01T10:00:00Z',
+                  finished: '2026-08-01T10:01:00Z',
+                  elapsed: 60,
+                  failed: false,
+                },
+              ],
+              reason: '',
+            }),
+            { status: 200, headers: { 'Content-Type': 'application/json' } },
+          )
+        }
+        return new Response('boom', { status: 500 })
+      }),
+    )
+    const queryClient = new QueryClient({ defaultOptions: { queries: { retry: false } } })
+    render(
+      <QueryClientProvider client={queryClient}>
+        <MemoryRouter>
+          <RecentChanges />
+        </MemoryRouter>
+      </QueryClientProvider>,
+    )
+
+    // First (successful, non-empty) read settles. Fake timers active, so
+    // settle() + getBy*, never findBy* (findBy* waits on real timers).
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(60)
+    })
+    expect(screen.getByText('media-launch-mxl-videotestsrc')).toBeTruthy()
+    expect(screen.queryByText(/could not be loaded/)).toBeNull()
+
+    // Advance past useChangesJobs' 30s refetchInterval so the background
+    // refetch fires and rejects, while the old (successful, non-empty)
+    // data stays retained.
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(30_100)
+    })
+
+    // Retained job STILL shown (Art. 5: the screen stays still) — but now
+    // qualified by a notice, not silently presented as current.
+    expect(screen.getByText('media-launch-mxl-videotestsrc')).toBeTruthy()
+    expect(screen.getByText('Recent changes could not be loaded. Retrying automatically.')).toBeTruthy()
   })
 })

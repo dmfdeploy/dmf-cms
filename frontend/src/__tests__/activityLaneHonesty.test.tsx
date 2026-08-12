@@ -342,3 +342,58 @@ describe('History lane: Forgejo commits/pulls degraded-read honesty', () => {
     expect(screen.getByText('Recent pull requests could not be loaded. Retrying automatically.')).toBeTruthy()
   })
 })
+
+// fix-round 4 (PR #81, codex sibling sweep): the History lane's OWN Recent
+// Jobs panel shares classifyChanges with the Workspace RecentChanges widget
+// (see recentChanges.test.tsx for the matching pin on that widget) — same
+// gap, same fix: a settled failed refetch used to retain non-empty `jobs`
+// with no notice at all.
+describe('History lane: Recent Jobs panel retained-error honesty', () => {
+  it('a settled failed refetch keeps retained jobs visible but adds a notice — never silently current', async () => {
+    vi.useFakeTimers()
+    let calls = 0
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(async (input: RequestInfo | URL) => {
+        const url = (typeof input === 'string' ? input : (input as Request).url).toString()
+        if (url.endsWith('/api/changes/commits')) return json({ repos: [], reason: '' })
+        if (url.endsWith('/api/changes/pulls')) return json({ pulls: [], reason: '' })
+        if (url.endsWith('/api/changes/jobs')) {
+          calls += 1
+          if (calls === 1) {
+            return json({
+              jobs: [
+                {
+                  id: 101,
+                  name: 'media-launch-mxl-videotestsrc',
+                  status: 'successful',
+                  started: '2026-08-01T10:00:00Z',
+                  finished: '2026-08-01T10:01:00Z',
+                  elapsed: 60,
+                  failed: false,
+                },
+              ],
+              reason: '',
+            })
+          }
+          return new Response('boom', { status: 500 })
+        }
+        return json({})
+      }),
+    )
+    renderWithQuery(<HistoryLane />)
+
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(60)
+    })
+    expect(screen.getByText('media-launch-mxl-videotestsrc')).toBeTruthy()
+    expect(screen.queryByText(/could not be loaded/)).toBeNull()
+
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(30_100)
+    })
+
+    expect(screen.getByText('media-launch-mxl-videotestsrc')).toBeTruthy()
+    expect(screen.getByText('Recent changes could not be loaded. Retrying automatically.')).toBeTruthy()
+  })
+})

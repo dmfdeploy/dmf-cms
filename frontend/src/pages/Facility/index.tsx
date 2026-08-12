@@ -23,7 +23,35 @@ export default function Facility() {
         </div>
       )}
 
-      {!loading && <FacilityEntry data={summary.data} />}
+      {/* fix-round 4 (PR #81, codex sibling sweep): `isError` was ignored
+          entirely — a settled failed read with NO retained data (first
+          load, or a query that never succeeded) fell through
+          FacilityEntry's whole reason ladder to `!site`, which reads
+          "NetBox has no site recorded yet" — a real environment fact this
+          is not; it misstates a read failure as a facility that has never
+          been provisioned. */}
+      {!loading && summary.isError && !summary.data && (
+        <div className="panel py-6 px-6 border-warn/40">
+          <p className="text-sm text-warn">
+            The facility inventory could not be read. Retrying automatically.
+          </p>
+        </div>
+      )}
+
+      {/* A settled failure with RETAINED data (a prior successful read):
+          Art. 5 keeps the tile visible rather than suppressing it, but the
+          read that would have confirmed it's still current just failed —
+          that must be visible too, not silently absent. */}
+      {!loading && summary.isError && summary.data && (
+        <div className="panel py-3 px-6 mb-4 border-warn/40">
+          <p className="text-sm text-warn">
+            The facility inventory could not be refreshed just now — showing the last successful
+            read. Retrying automatically.
+          </p>
+        </div>
+      )}
+
+      {!loading && summary.data && <FacilityEntry data={summary.data} />}
     </div>
   )
 }
