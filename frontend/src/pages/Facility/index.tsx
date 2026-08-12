@@ -1,8 +1,8 @@
-import { Link } from 'react-router-dom'
 import { Building2 } from 'lucide-react'
 import { useFacilitySummary } from '@/api/hooks'
 import { settleQuery } from '@/lib/queryState'
 import PageHeading from '@/components/PageHeading'
+import Tile from '@/components/Tile'
 import { usePageTitle } from '@/hooks/usePageTitle'
 
 // Facilities (S1, #285): a single-facility console has exactly one entry
@@ -152,18 +152,18 @@ function FacilityEntry({ data }: { data: ReturnType<typeof useFacilitySummary>['
           Some NetBox records could not be read — this facility may be incomplete.
         </p>
       )}
-      {/* Same square control-surface tile structure Media Workloads uses
-          (pages/MediaWorkloads/index.tsx), in the same responsive grid, so
-          the streamdeck skin pass hangs one treatment on both single-entry
-          pages instead of two. Structure only: the provider mark is a skin
-          concern AND a data-driven one (envs rotate providers), so the
-          generic building glyph stands in rather than a hardcoded logo. */}
+      {/* Same shared Tile component Media Workloads uses (components/Tile.tsx,
+          umbrella #347 Arc 4 WP-4 — this page's tile and WorkloadEntryTile
+          were already the byte-identical square control-surface structure by
+          deliberate cross-page commitment; Tile.tsx formalizes that sharing
+          instead of two copies drifting independently), in the same
+          responsive grid, so the streamdeck skin pass hangs one treatment on
+          both single-entry pages instead of two. Structure only: the
+          provider mark is a skin concern AND a data-driven one (envs rotate
+          providers), so the generic building glyph stands in rather than a
+          hardcoded logo. */}
       <div className="mt-4 grid grid-cols-1 gap-4 sm:grid-cols-2 xl:grid-cols-3">
-        <Link
-          to={`/facilities/${encodeURIComponent(site.slug)}`}
-          className="card group flex aspect-square flex-col gap-3 overflow-hidden rounded-xl transition hover:border-accent/40 hover:bg-white/5"
-          aria-label={`Open ${site.name} facility detail`}
-        >
+        <Tile to={`/facilities/${encodeURIComponent(site.slug)}`} ariaLabel={`Open ${site.name} facility detail`}>
           <div className="flex aspect-video w-full items-center justify-center rounded-md border border-white/10 bg-black/40">
             <Building2 className="h-8 w-8 text-blue-400" />
           </div>
@@ -173,7 +173,7 @@ function FacilityEntry({ data }: { data: ReturnType<typeof useFacilitySummary>['
               {site.device_count} device{site.device_count === 1 ? '' : 's'} in NetBox
             </p>
           </div>
-        </Link>
+        </Tile>
       </div>
     </>
   )

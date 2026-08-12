@@ -90,6 +90,13 @@ describe('Facilities list (S1, #285)', () => {
   // while Media Workloads rendered square control-surface tiles, so the two
   // single-entry pages the S1 cut created did not look like one console. The
   // skin pass hangs on this structure, so the structure is what is pinned.
+  //
+  // WP-4 (umbrella #347 Arc 4): this tile is now the shared Tile component
+  // (components/Tile.tsx) — aspect-square/card/hover live on Tile's outer,
+  // non-interactive container, a SIBLING of the Link, not the Link's own
+  // class list (so a future actions slot is never nested inside the anchor).
+  // Re-pinned against the element that now actually carries the structural
+  // commitment, rather than weakened or dropped.
   it('renders the facility as a square control-surface tile, not a wide row-card', async () => {
     stubFetch({ '/api/facility/summary': summary() })
     renderWithQuery(
@@ -98,7 +105,8 @@ describe('Facilities list (S1, #285)', () => {
       </MemoryRouter>,
     )
     const link = await screen.findByRole('link', { name: /DMF Lab/ })
-    const className = link.getAttribute('class') ?? ''
+    const container = link.parentElement
+    const className = container?.getAttribute('class') ?? ''
     expect(className).toContain('aspect-square')
     // The row-card affordances are gone, not merely restyled.
     expect(className).not.toContain('items-center justify-between')
@@ -616,6 +624,43 @@ describe('Facility Detail page states', () => {
     expect(screen.getAllByText('(from NetBox)')).toHaveLength(1)
     // The designed cannot-be-read state survives as the final fallback.
     expect(screen.getByText('cannot be read')).toBeTruthy()
+  })
+})
+
+// WP-4 (umbrella #347 Arc 4): the four data-table panels regroup into a
+// 2-row x 2-col grid at the wrapper/layout level only. This is the evidence
+// that claim is true, not just asserted: every panel renders, WorkloadCount
+// stays outside the grid, and every pre-existing assertion in this file
+// (reason banners, empty states, stale handling, above) keeps passing
+// UNMODIFIED — that's what proves the panels' internals are byte-for-byte
+// unchanged, not merely that they still render.
+describe('Facility Detail — panel regroup (WP-4, umbrella #347)', () => {
+  it('renders all four data-table panels inside the grid wrapper, in a 2-col grid', async () => {
+    renderDetail('dmf-lab', { '/api/facility/dmf-lab/detail': detailPayload() })
+    const nodesHeading = await screen.findByRole('heading', { name: 'Nodes', level: 2 })
+    const platformHeading = screen.getByRole('heading', { name: 'Platform services', level: 2 })
+    const storageHeading = screen.getByRole('heading', { name: 'Storage', level: 2 })
+    const capacityHeading = screen.getByRole('heading', { name: 'Capacity', level: 2 })
+
+    // All four panels share the same grid-wrapper ancestor...
+    const grid = nodesHeading.closest('.grid')
+    expect(grid).toBeTruthy()
+    expect(grid?.contains(platformHeading)).toBe(true)
+    expect(grid?.contains(storageHeading)).toBe(true)
+    expect(grid?.contains(capacityHeading)).toBe(true)
+    expect(grid?.className ?? '').toContain('lg:grid-cols-2')
+
+    // ...and WorkloadCountPanel — prose, not a table — is NOT one of the
+    // four grid cells: it renders outside the grid wrapper entirely.
+    const workloadHeading = await screen.findByRole('heading', { name: 'Media workloads', level: 2 })
+    expect(grid?.contains(workloadHeading)).toBe(false)
+  })
+
+  it('PlatformServicesPanel renders with no subtitle; CapacityPanel keeps its subtitle visible', async () => {
+    renderDetail('dmf-lab', { '/api/facility/dmf-lab/detail': detailPayload() })
+    await screen.findByRole('heading', { name: 'Platform services', level: 2 })
+    expect(screen.queryByText(/As-deployed versions read from the containers/)).toBeNull()
+    expect(screen.getByText(/Requests committed is not usage/)).toBeTruthy()
   })
 })
 
