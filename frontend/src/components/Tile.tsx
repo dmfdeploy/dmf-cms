@@ -25,16 +25,46 @@ import { Link } from 'react-router-dom'
  * prop, scoped to one component instance, with no cross-tree registration to
  * guard.
  *
- * All sizing/hover/card styling lives on the outer container, not the Link —
- * `card`, `aspect-square`, the hover treatment — because the container is
- * what a reader perceives as "the tile"; the Link is just the click target
- * wrapping the same visible content each caller always wrapped (Media
- * Workloads: LivePreviewBox, heading, badge row, caption; Facility: an icon
- * box, heading, caption). facility.test.tsx pins the container's
- * `aspect-square` class (a pre-existing structural commitment, re-pinned
- * against the element that now actually carries it) — the rendered pixels
- * and the click/hover surface are identical to each caller's pre-refactor
- * single-`<Link>` shape either way.
+ * CLICK-SURFACE PARITY (lkirc round-4 finding, and the reason for the split
+ * below — read this before changing which element carries which class).
+ * Round-4's FIRST attempt at this component put ALL of `card`'s styling
+ * (background/border/rounded corners/padding/hover) on the OUTER container,
+ * reasoning that the container is what a reader perceives as "the tile".
+ * That was wrong: `card` (index.css) bundles `p-4` (1rem) AND a 1px border,
+ * and the Link — the only element that is actually clickable/keyboard-
+ * focusable — had no compensating padding, margin, or border of its own. The
+ * card's background/border/hover/rounded-corner styling still visually
+ * spanned the FULL padded+bordered box (the outer div's own box), but that
+ * ~17px ring around every tile LOOKED like part of the tile while not being
+ * part of the anchor at all — a real, silent shrink of the click/tap target
+ * versus the pre-refactor single-`<Link>` shape, caught by lkirc's review
+ * (a rendered-layout defect neither codex's review method nor this file's
+ * own render-based tests could catch, since jsdom has no real layout engine
+ * to observe box geometry with — see tile.test.tsx for what IS and isn't
+ * testable here). A `-m-4 p-4` compensating margin on the Link closed the
+ * padding portion of the gap but — verified with a real browser
+ * (getBoundingClientRect against the actual compiled CSS, not reasoned about
+ * in the abstract) — left a 1px-per-side residual from the border, which
+ * still lived on the outer div only.
+ *
+ * The fix that actually closes the WHOLE gap, verified the same way: put
+ * `card` (background/border/padding/rounded corners) AND the hover treatment
+ * back on the Link directly — exactly where they lived pre-refactor — rather
+ * than compensating for their absence with margin arithmetic. The outer
+ * container keeps only what it structurally needs: `aspect-square flex
+ * flex-col` (so the Link, as a `flex-1` child, is stretched to exactly fill
+ * a square derived from the grid cell's width — the SAME sizing pathway the
+ * pre-refactor top-level `<Link aspect-square>` used, just one layer
+ * removed) and `relative group` (the positioning context for `actions`, and
+ * the hook a future hover-reveal treatment on `actions` would need —
+ * `group-hover:` only reaches DESCENDANTS of `.group`, and `actions` is a
+ * SIBLING of the Link, not a descendant of it, so `group` has to live on
+ * their common ancestor for that pattern to ever be reachable; see
+ * Sidebar.tsx's tooltips for the existing `group-hover:` convention this
+ * mirrors). With `card`'s own border/padding back on the Link, the Link's
+ * border-box IS the outer div's border-box — no negative-margin arithmetic
+ * needed at all, and no residual gap of any width, because there's no
+ * second element's box model to reconcile against in the first place.
  *
  * CONTRACT (codex P2-1, dmfdeploy/dmfdeploy#347 WP-4, rounds 1-3): `children`
  * is the tile's non-interactive visible face — it renders INSIDE the primary
@@ -81,8 +111,12 @@ export default function Tile({
   actions?: React.ReactNode
 }) {
   return (
-    <div className="card group relative flex aspect-square flex-col gap-3 overflow-hidden rounded-xl transition hover:border-accent/40 hover:bg-white/5">
-      <Link to={to} aria-label={ariaLabel} className="flex min-h-0 flex-1 flex-col gap-3">
+    <div className="group relative flex aspect-square flex-col">
+      <Link
+        to={to}
+        aria-label={ariaLabel}
+        className="card flex min-h-0 flex-1 flex-col gap-3 overflow-hidden rounded-xl transition hover:border-accent/40 hover:bg-white/5"
+      >
         {children}
       </Link>
       {actions && <div className="absolute right-2 top-2 z-10">{actions}</div>}
