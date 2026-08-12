@@ -10,6 +10,8 @@ import WorkloadTile from './WorkloadTile'
 import InstanceLiveModal from './InstanceLiveModal'
 import { settleQuery } from '../../lib/queryState'
 import { LIVE_TILE_CAP, useDocumentVisible, usePrefersReducedMotion } from './liveView'
+import PageHeading from '../../components/PageHeading'
+import { usePageTitle } from '../../hooks/usePageTitle'
 
 /**
  * Operate — the workload's own monitoring route (umbrella #285, operator
@@ -109,6 +111,9 @@ export default function WorkloadOperate() {
   // all happen in an outer wrapper that owns no hooks of its own, this page
   // has no such split.
   const workloadForRail = data?.workloads.find((w) => w.slug === slug)
+  // Unconditional, ahead of every early return below — same reasoning as
+  // the rail registration two comments up (hooks must run every render).
+  usePageTitle(workloadForRail ? `${workloadForRail.name} — Operate` : slug)
   // Built through the SAME shared constructor WorkloadDetail.tsx uses —
   // see that file's identical comment on its own `input` for what this
   // fixes and why. No job-state flags: Operate runs no jobs of its own
@@ -146,6 +151,12 @@ export default function WorkloadOperate() {
   if (isLoading) {
     return (
       <div className="flex-1 overflow-y-auto p-6">
+        {/* Umbrella #385 finding 5 audit, WP-4 stage 2: this branch had no
+            h1 at all — distinct from the !workload branch below, which
+            already carries its own visible "Workload not found" heading and
+            must not also get this one. Same value usePageTitle above
+            already resolved. */}
+        <PageHeading>{workloadForRail ? `${workloadForRail.name} — Operate` : slug}</PageHeading>
         <p className="text-muted">Loading workload…</p>
       </div>
     )
@@ -154,6 +165,7 @@ export default function WorkloadOperate() {
   if (error != null) {
     return (
       <div className="flex-1 overflow-y-auto p-6">
+        <PageHeading>{workloadForRail ? `${workloadForRail.name} — Operate` : slug}</PageHeading>
         <div className="panel border border-amber-500/20 bg-amber-500/10 px-4 py-3 text-sm text-amber-200">
           This workload could not be loaded right now. Retrying automatically.
         </div>
@@ -164,6 +176,7 @@ export default function WorkloadOperate() {
   if (data && !data.configured) {
     return (
       <div className="flex-1 overflow-y-auto p-6">
+        <PageHeading>{workloadForRail ? `${workloadForRail.name} — Operate` : slug}</PageHeading>
         <div className="panel border border-amber-500/20 bg-amber-500/10 px-4 py-3 text-sm text-amber-200">
           Media Workloads is not configured for this environment.
         </div>
@@ -204,6 +217,7 @@ export default function WorkloadOperate() {
 
   return (
     <div className="flex-1 overflow-y-auto p-6">
+      <PageHeading>{workload.name} — Operate</PageHeading>
       <p className="text-sm text-muted">
         The monitoring surface for this workload — observed running state only. Changes are
         requested at the flow&apos;s own steps, not from here.

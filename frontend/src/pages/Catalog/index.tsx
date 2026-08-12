@@ -14,6 +14,8 @@ import {
   isOperation,
 } from '../../api/hooks'
 import { useActivityStore } from '../../store/activity'
+import PageHeading from '../../components/PageHeading'
+import { usePageTitle } from '../../hooks/usePageTitle'
 
 const lifecycleBadge: Record<string, string> = {
   bootstrapped: 'bg-muted/20 text-muted',
@@ -30,6 +32,7 @@ interface EntryActionState {
 }
 
 export default function Catalog() {
+  usePageTitle('Catalog')
   const queryClient = useQueryClient()
   // fix-round 7 (PR #81, umbrella #385, codex call-site sweep): retrofitted
   // onto settleQuery. This page's OWN bug, distinct from the isError-gating
@@ -126,6 +129,9 @@ export default function Catalog() {
   if (isLoading) {
     return (
       <div className="flex-1 overflow-y-auto p-6">
+        {/* WP-4 stage 2 rebase audit (umbrella #385 finding 5): this branch
+            had no h1 at all. */}
+        <PageHeading>Catalog</PageHeading>
         <div className="panel text-center py-12">
           <p className="text-muted">Loading catalog…</p>
         </div>
@@ -136,6 +142,7 @@ export default function Catalog() {
   if (isError && !catalogData) {
     return (
       <div className="flex-1 overflow-y-auto p-6">
+        <PageHeading>Catalog</PageHeading>
         <div className="panel text-center py-12">
           {/* Art. 8: no stringified exception on an operator surface. This
               page is hidden from the sidebar but still reachable by URL, so
@@ -155,6 +162,7 @@ export default function Catalog() {
 
   return (
     <div className="flex-1 overflow-y-auto p-6">
+      <PageHeading>Catalog</PageHeading>
       {/* A settled failed refetch retains `catalogData` from the earlier
           successful read (Art. 5 — the screen stays still, entries remain
           deployable/tearable-down) — but the CURRENT read did not confirm

@@ -36,7 +36,7 @@ export default function App() {
     return (
       <div className="flex items-center justify-center min-h-screen bg-bg">
         <div className="text-center">
-          <h1 className="text-2xl font-bold text-accent mb-2">dmfdeploy</h1>
+          <h1 className="text-2xl font-bold text-accent mb-2">DMF Console</h1>
           <p className="text-muted">Loading...</p>
         </div>
       </div>
@@ -47,7 +47,7 @@ export default function App() {
     return (
       <div className="flex items-center justify-center min-h-screen bg-bg">
         <div className="text-center">
-          <h1 className="text-2xl font-bold text-accent mb-2">dmfdeploy</h1>
+          <h1 className="text-2xl font-bold text-accent mb-2">DMF Console</h1>
           <p className="text-muted">Redirecting to login...</p>
         </div>
       </div>

@@ -2,6 +2,8 @@ import { Link } from 'react-router-dom'
 import { Building2 } from 'lucide-react'
 import { useFacilitySummary } from '@/api/hooks'
 import { settleQuery } from '@/lib/queryState'
+import PageHeading from '@/components/PageHeading'
+import { usePageTitle } from '@/hooks/usePageTitle'
 
 // Facilities (S1, #285): a single-facility console has exactly one entry
 // here. This page used to render a grid of "sites" (plural) plus a
@@ -13,6 +15,7 @@ import { settleQuery } from '@/lib/queryState'
 // detail page, where live node/service/storage/capacity truth actually
 // lives (pages/Facility/Detail.tsx).
 export default function Facility() {
+  usePageTitle('Facilities')
   // fix-round 6 (PR #81, umbrella #385): retrofitted onto settleQuery — the
   // `.isError`/`.data` field names below are kept via the settled result so
   // every branch reads exactly as it did in fix-round 4.
@@ -21,6 +24,13 @@ export default function Facility() {
 
   return (
     <div className="flex-1 overflow-y-auto p-6">
+      {/* Mounted here, unconditionally, rather than once per FacilityEntry
+          branch below (umbrella #385 finding 5 audit, WP-4 stage 2): the
+          route's identity does not change across its five designed
+          non-answer states plus the happy path, and none of those states
+          renders its own visible h1 — a single mount above the conditional
+          covers all of them instead of six near-duplicate ones. */}
+      <PageHeading>Facilities</PageHeading>
       {loading && (
         <div className="panel text-center py-8">
           <p className="text-muted text-sm">Loading facility inventory…</p>

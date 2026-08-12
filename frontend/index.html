@@ -2,9 +2,23 @@
 <html lang="en" class="dark">
   <head>
     <meta charset="UTF-8" />
-    <link rel="icon" type="image/svg+xml" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><text y='75' font-size='75' font-weight='bold' fill='%237dd3fc'>D</text></svg>" />
+    <!-- The real product mark (umbrella #385 finding 3, second half — the
+         colour half already shipped: the retired green accent was replaced
+         with the palette's cyan). This used to be a letter-'D' data URI
+         invented for the tab, not the actual mark. The ellipse cluster below
+         is the SAME path data as src/assets/dmfdeploy-icon-white.svg (the
+         mark Topbar.tsx renders), reused verbatim rather than redrawn, just
+         re-cropped to its own tight bounding box (that file's viewBox is
+         342x300 to leave room for a wordmark this icon-only variant never
+         uses) and composited onto a #0a0a0b rect — the mark is white-only
+         linework with no background of its own, so without one it is
+         unreadable against light browser-tab chrome. KEEP IN SYNC with the
+         boot background below (html { background-color }) and
+         --color-bg in src/index.css: same "duplicated literal" obligation
+         that block already documents, for the same reason. -->
+    <link rel="icon" type="image/svg+xml" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 256 256'><rect width='256' height='256' fill='%230a0a0b'/><g transform='translate(2.25 19)' fill='%23ffffff'><ellipse cx='101' cy='91' rx='52' ry='39' transform='rotate(-17 101 91)'/><ellipse cx='63' cy='52' rx='24' ry='8.5' transform='rotate(-24 63 52)'/><ellipse cx='146' cy='30' rx='22' ry='8.5' transform='rotate(3 146 30)'/><ellipse cx='190' cy='69' rx='22.5' ry='18' transform='rotate(45 190 69)'/><ellipse cx='166' cy='139' rx='30' ry='18.5' transform='rotate(-35 166 139)'/><ellipse cx='226' cy='139' rx='21' ry='14.5' transform='rotate(-31 226 139)'/><ellipse cx='86' cy='158' rx='26.5' ry='14.5' transform='rotate(-5 86 158)'/><ellipse cx='120' cy='198' rx='20' ry='11.5' transform='rotate(-6 120 198)'/><ellipse cx='37' cy='126' rx='17.5' ry='12' transform='rotate(68 37 126)'/><ellipse cx='26' cy='163' rx='12' ry='8' transform='rotate(67 26 163)'/><ellipse cx='202' cy='27' rx='13.5' ry='8' transform='rotate(22 202 27)'/><ellipse cx='121' cy='11' rx='11' ry='4.5' transform='rotate(-9 121 11)'/><ellipse cx='14' cy='94' rx='9.5' ry='4.8' transform='rotate(116 14 94)'/><ellipse cx='50' cy='39' rx='10' ry='3.8' transform='rotate(144 50 39)'/></g></svg>" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-    <title>dmfdeploy</title>
+    <title>DMF Console</title>
     <style>
       /* Boot styles only — everything else is owned by src/index.css's @theme.
          This block exists for the pre-hydration frame: without it the browser

@@ -3,6 +3,8 @@ import { useFacilityDetail, useMediaWorkloadsGrouped } from '@/api/hooks'
 import type { FacilityDetailResponse } from '@/api/types'
 import { degradedReasonCopy } from '@/pages/MediaWorkloads'
 import { settleQuery } from '@/lib/queryState'
+import PageHeading from '@/components/PageHeading'
+import { usePageTitle } from '@/hooks/usePageTitle'
 
 // Facility Detail (S1, #285): node/service/storage/capacity truth for the
 // one facility this console operates, read entirely through the console's
@@ -121,9 +123,18 @@ export default function FacilityDetail() {
   const { site } = useParams<{ site: string }>()
   const query = useFacilityDetail(site ?? '')
   const state = classifyFacilityDetail(query)
+  // The slug is an honest fallback before the human name loads — same
+  // provenance rule the breadcrumb already applies (Topbar.tsx).
+  usePageTitle(state.data?.site.name ?? site)
 
   return (
     <div className="flex-1 overflow-y-auto p-6">
+      {/* Mounted here, unconditionally, rather than once per phase below
+          (umbrella #385 finding 5 audit, WP-4 stage 2): none of the four
+          phases renders its own visible h1, and the identity value is the
+          same one usePageTitle above already resolved — one mount above the
+          phase switch covers loading/unreadable/unconfigured/loaded alike. */}
+      <PageHeading>{state.data?.site.name ?? site}</PageHeading>
       {state.phase === 'loading' && (
         <div className="panel text-center py-8">
           <p className="text-muted text-sm">Loading facility detail…</p>

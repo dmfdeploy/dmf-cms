@@ -4,6 +4,8 @@ import { useAdminUsers, useAdminGroups, useAdminHealth, useCreatePasskeyInvitati
 import { Users, Bot, Activity } from 'lucide-react'
 import type { AdminUser, PasskeyInvitationResponse } from '@/api/types'
 import { settleQuery } from '@/lib/queryState'
+import PageHeading from '@/components/PageHeading'
+import { usePageTitle } from '@/hooks/usePageTitle'
 
 // A single Users table body. The People / Machine-identities split (ADR-0028
 // C4/D8) renders two of these over the human vs machine partitions rather than
@@ -97,6 +99,7 @@ function UsersTable({ users, isLoading, failed, emptyLabel }: {
 }
 
 export default function Admin() {
+  usePageTitle('Admin')
   // fix-round 5 (PR #81, codex sibling sweep): isError on all three — see
   // UsersTable's own doc comment and the Integration Health / Groups
   // sections below for what each one fixes.
@@ -128,6 +131,7 @@ export default function Admin() {
 
   return (
     <div className="flex-1 overflow-y-auto p-6">
+      <PageHeading>Admin</PageHeading>
       {/* Integration Health */}
       <div className="panel mb-6">
         <div className="px-6 py-4 border-b border-panel">

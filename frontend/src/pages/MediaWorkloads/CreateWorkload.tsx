@@ -8,6 +8,8 @@ import { APIError } from '../../api/client'
 import ReasonConfirm from '../../components/ReasonConfirm'
 import FlowStep from './FlowStep'
 import { useDraftWorkloadStore } from '../../store/draftWorkload'
+import PageHeading from '../../components/PageHeading'
+import { usePageTitle } from '../../hooks/usePageTitle'
 
 /**
  * Create Media Workload — the draft leg of the guided sequential flow
@@ -126,6 +128,7 @@ type DraftWizardStep = 'identity' | FlowStepId
 const DRAFT_WIZARD_STEPS: DraftWizardStep[] = ['identity', ...FLOW_STEPS]
 
 export default function CreateWorkload() {
+  usePageTitle('Create media workload')
   const navigate = useNavigate()
 
   // WP-3 spec C: the draft's DATA lives in a non-persisted, tab-lifetime
@@ -380,6 +383,7 @@ export default function CreateWorkload() {
 
   return (
     <div className="flex-1 overflow-y-auto p-6">
+      <PageHeading>Create media workload</PageHeading>
       <div className="flex flex-wrap items-start justify-between gap-x-3 gap-y-1">
         <p className="text-sm text-muted">
           Studio identity, template, and facility placement for a workload that does not exist

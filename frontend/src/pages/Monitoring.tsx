@@ -1,6 +1,8 @@
 import { useMonitoringMetrics, useMonitoringAlerts, useMonitoringTargets } from '@/api/hooks'
 import { AlertCircle, Activity, Zap, HardDrive } from 'lucide-react'
 import { settleQuery } from '@/lib/queryState'
+import PageHeading from '@/components/PageHeading'
+import { usePageTitle } from '@/hooks/usePageTitle'
 
 // fix-round 5 (PR #81, codex sibling sweep): none of the three reads on this
 // page checked `isError` anywhere. A never-loaded read (isError, no data at
@@ -15,6 +17,7 @@ import { settleQuery } from '@/lib/queryState'
 // failed" (the retained content stays visible — Art. 5, the screen stays
 // still — qualified by a notice rather than silently presented as fresh).
 export default function Monitoring() {
+  usePageTitle('Monitoring')
   // fix-round 6 (PR #81, umbrella #385): retrofitted onto settleQuery —
   // `.data`/`.isError`/`.isLoading` below become `.data`/`.failed`/`.loading`
   // via the settled result; every branch reads exactly as it did in
@@ -36,6 +39,7 @@ export default function Monitoring() {
 
   return (
     <div className="flex-1 overflow-y-auto p-6">
+      <PageHeading>Monitoring</PageHeading>
       {/* Metrics Cards */}
       {metrics.failed && (
         <div className="panel mb-4 py-3 px-6 border-warn/40">
