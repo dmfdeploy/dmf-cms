@@ -703,6 +703,47 @@ describe('Provision: deploy click path', () => {
     expect(await within(provisionSection).findByText('Already deployed.')).toBeTruthy()
     expect(within(provisionSection).queryByRole('button', { name: '▶ Deploy' })).toBeNull()
   })
+
+  // fix-round 5 (PR #81, codex sibling sweep): a failed /api/catalog read
+  // left `entries` empty exactly like a genuinely-empty catalog would, and
+  // this stage announced a confident "No catalog templates matched this
+  // workload's functions" manufactured out of an unhandled error path —
+  // verbatim the failure mode PlanStage.tsx's own docstring names, already
+  // fixed there and in CreateWorkload.tsx's TemplatePicker.
+  it('a failed catalog read names the real cause, never "No catalog templates matched"', async () => {
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(async (input: RequestInfo | URL) => {
+        const url = (typeof input === 'string' ? input : (input as Request).url).toString()
+        if (url.endsWith('/api/catalog')) return new Response('boom', { status: 500 })
+        if (url.endsWith('/api/me')) {
+          return json({
+            subject: 'ops', display_name: 'Ops', email: 'ops@dmf.example.com', role: 'engineer',
+            real_role: 'engineer', view_as_active: false, groups: [], awx_configured: true, authentik_configured: true,
+          })
+        }
+        if (url.endsWith('/api/media-workloads/grouped')) {
+          return json({
+            configured: true,
+            degraded: false,
+            scope: [],
+            workloads: [workload({ lifecycle: 'provision' })],
+            invalid_instances: [],
+          })
+        }
+        return json({})
+      }),
+    )
+    renderDetail()
+    await findRail()
+    const provisionSection = stageSection('Provision')
+    expect(
+      await within(provisionSection).findByText(
+        /The catalog couldn.t be read right now, so this workload's templates can't be listed\. Reload the page to try the read again\./,
+      ),
+    ).toBeTruthy()
+    expect(within(provisionSection).queryByText("No catalog templates matched this workload's functions.")).toBeNull()
+  })
 })
 
 describe('Configure: switch click path', () => {
@@ -802,6 +843,43 @@ describe('Finalise & Review: teardown click path', () => {
     const finaliseSection = await selectStep('Finalise & Review')
     expect(within(finaliseSection).queryByRole('button', { name: '⏏ Teardown' })).toBeNull()
     expect(within(finaliseSection).getByText('Not currently deployed.')).toBeTruthy()
+  })
+
+  // fix-round 5 (PR #81, codex sibling sweep): same fix as Provision's
+  // identical gap above — see that test for the full reasoning.
+  it('a failed catalog read names the real cause, never "No catalog templates matched"', async () => {
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(async (input: RequestInfo | URL) => {
+        const url = (typeof input === 'string' ? input : (input as Request).url).toString()
+        if (url.endsWith('/api/catalog')) return new Response('boom', { status: 500 })
+        if (url.endsWith('/api/me')) {
+          return json({
+            subject: 'ops', display_name: 'Ops', email: 'ops@dmf.example.com', role: 'engineer',
+            real_role: 'engineer', view_as_active: false, groups: [], awx_configured: true, authentik_configured: true,
+          })
+        }
+        if (url.endsWith('/api/media-workloads/grouped')) {
+          return json({
+            configured: true,
+            degraded: false,
+            scope: [],
+            workloads: [workload({ lifecycle: 'operate' })],
+            invalid_instances: [],
+          })
+        }
+        return json({})
+      }),
+    )
+    renderDetail()
+    await findRail()
+    const finaliseSection = await selectStep('Finalise & Review')
+    expect(
+      await within(finaliseSection).findByText(
+        /The catalog couldn.t be read right now, so this workload's templates can't be listed\. Reload the page to try the read again\./,
+      ),
+    ).toBeTruthy()
+    expect(within(finaliseSection).queryByText("No catalog templates matched this workload's functions.")).toBeNull()
   })
 })
 

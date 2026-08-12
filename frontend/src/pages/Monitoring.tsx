@@ -1,6 +1,18 @@
 import { useMonitoringMetrics, useMonitoringAlerts, useMonitoringTargets } from '@/api/hooks'
 import { AlertCircle, Activity, Zap, HardDrive } from 'lucide-react'
 
+// fix-round 5 (PR #81, codex sibling sweep): none of the three reads on this
+// page checked `isError` anywhere. A never-loaded read (isError, no data at
+// all) defaulted every metric to a confident `0%` plus a green "✓ Healthy"
+// badge, and every list to its genuinely-empty copy ("No active alerts",
+// "No scrape targets available") — the exact absence/status claims this
+// whole fix arc exists to stop. A settled failed REFETCH additionally kept
+// rendering retained numbers/rows as current with no notice at all.
+//
+// Each section now distinguishes "no data at all" (an honest placeholder,
+// never a manufactured zero) from "data retained, but the CURRENT read
+// failed" (the retained content stays visible — Art. 5, the screen stays
+// still — qualified by a notice rather than silently presented as fresh).
 export default function Monitoring() {
   const metrics = useMonitoringMetrics()
   const alerts = useMonitoringAlerts()
@@ -9,10 +21,10 @@ export default function Monitoring() {
   const isLoading = metrics.isLoading || alerts.isLoading || targets.isLoading
 
   const metricCards = [
-    { label: 'CPU Usage', value: metrics.data?.cpu_percent ?? 0, unit: '%', icon: Zap, color: 'text-amber-500' },
-    { label: 'Memory Usage', value: metrics.data?.memory_percent ?? 0, unit: '%', icon: Activity, color: 'text-blue-500' },
-    { label: 'Pod Restarts (24h)', value: metrics.data?.pod_restarts_24h ?? 0, unit: '', icon: AlertCircle, color: 'text-red-500' },
-    { label: 'PVC Usage', value: metrics.data?.pvc_usage_percent ?? 0, unit: '%', icon: HardDrive, color: 'text-green-500' },
+    { label: 'CPU Usage', value: metrics.data?.cpu_percent, unit: '%', icon: Zap, color: 'text-amber-500' },
+    { label: 'Memory Usage', value: metrics.data?.memory_percent, unit: '%', icon: Activity, color: 'text-blue-500' },
+    { label: 'Pod Restarts (24h)', value: metrics.data?.pod_restarts_24h, unit: '', icon: AlertCircle, color: 'text-red-500' },
+    { label: 'PVC Usage', value: metrics.data?.pvc_usage_percent, unit: '%', icon: HardDrive, color: 'text-green-500' },
   ]
 
   const activeAlerts = (alerts.data?.alerts ?? []).filter((a: any) => a.state === 'firing')
@@ -20,9 +32,19 @@ export default function Monitoring() {
   return (
     <div className="flex-1 overflow-y-auto p-6">
       {/* Metrics Cards */}
+      {metrics.isError && (
+        <div className="panel mb-4 py-3 px-6 border-warn/40">
+          <p className="text-sm text-warn">
+            {metrics.data
+              ? 'Metrics could not be refreshed just now — showing the last successful read. Retrying automatically.'
+              : 'Metrics could not be read. Retrying automatically.'}
+          </p>
+        </div>
+      )}
       <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-4 mb-6">
-        {metricCards.map((card: typeof metricCards[0]) => {
+        {metricCards.map((card) => {
           const Icon = card.icon
+          const unknown = card.value == null
           return (
             <div key={card.label} className="panel p-4">
               <div className="flex items-start justify-between mb-3">
@@ -30,10 +52,28 @@ export default function Monitoring() {
                 <Icon className={`w-4 h-4 ${card.color}`} />
               </div>
               <div className="text-3xl font-bold">
-                {isLoading ? '-' : `${Math.round(card.value * 10) / 10}${card.unit}`}
+                {isLoading ? '-' : unknown ? '—' : `${Math.round(card.value! * 10) / 10}${card.unit}`}
               </div>
-              <div className={`text-xs mt-2 ${card.value > 80 ? 'text-red-400' : card.value > 60 ? 'text-amber-400' : 'text-green-400'}`}>
-                {card.value > 80 ? '⚠️ High' : card.value > 60 ? '⚡ Elevated' : '✓ Healthy'}
+              <div
+                className={`text-xs mt-2 ${
+                  isLoading || unknown
+                    ? 'text-muted'
+                    : card.value! > 80
+                      ? 'text-red-400'
+                      : card.value! > 60
+                        ? 'text-amber-400'
+                        : 'text-green-400'
+                }`}
+              >
+                {isLoading
+                  ? ''
+                  : unknown
+                    ? 'Cannot confirm'
+                    : card.value! > 80
+                      ? '⚠️ High'
+                      : card.value! > 60
+                        ? '⚡ Elevated'
+                        : '✓ Healthy'}
               </div>
             </div>
           )
@@ -51,19 +91,34 @@ export default function Monitoring() {
         <div className="divide-y divide-panel">
           {isLoading ? (
             <div className="px-6 py-8 text-center text-muted text-sm">Loading alerts...</div>
-          ) : activeAlerts.length === 0 ? (
-            <div className="px-6 py-8 text-center text-muted text-sm">✓ No active alerts</div>
           ) : (
-            activeAlerts.map((alert: typeof activeAlerts[0], i: number) => (
-              <div key={i} className="px-6 py-4 hover:bg-panel/50 transition">
-                <div className="font-semibold text-sm flex items-center gap-2">
-                  <span className="w-2 h-2 rounded-full bg-red-500"></span>
-                  {alert.name}
+            <>
+              {alerts.isError && (
+                <div className="px-6 py-2 text-xs text-amber-300 bg-amber-500/10">
+                  {alerts.data
+                    ? 'Alerts could not be refreshed just now — showing the last successful read. Retrying automatically.'
+                    : 'Alerts could not be read. Retrying automatically.'}
                 </div>
-                {alert.summary && <p className="text-xs text-muted mt-1">{alert.summary}</p>}
-                {alert.activeAt && <p className="text-xs text-muted/50 mt-1">Active: {new Date(alert.activeAt).toLocaleString()}</p>}
-              </div>
-            ))
+              )}
+              {activeAlerts.length === 0 ? (
+                // The notice above already named the cause when errored —
+                // "No active alerts" is a claim only a successful read owns.
+                !alerts.isError && (
+                  <div className="px-6 py-8 text-center text-muted text-sm">✓ No active alerts</div>
+                )
+              ) : (
+                activeAlerts.map((alert: typeof activeAlerts[0], i: number) => (
+                  <div key={i} className="px-6 py-4 hover:bg-panel/50 transition">
+                    <div className="font-semibold text-sm flex items-center gap-2">
+                      <span className="w-2 h-2 rounded-full bg-red-500"></span>
+                      {alert.name}
+                    </div>
+                    {alert.summary && <p className="text-xs text-muted mt-1">{alert.summary}</p>}
+                    {alert.activeAt && <p className="text-xs text-muted/50 mt-1">Active: {new Date(alert.activeAt).toLocaleString()}</p>}
+                  </div>
+                ))
+              )}
+            </>
           )}
         </div>
       </div>
@@ -73,6 +128,13 @@ export default function Monitoring() {
         <div className="px-6 py-4 border-b border-panel">
           <h2 className="text-lg font-semibold">Scrape Targets</h2>
         </div>
+        {targets.isError && (
+          <div className="px-6 py-2 text-xs text-amber-300 bg-amber-500/10 border-b border-panel">
+            {targets.data
+              ? 'Scrape targets could not be refreshed just now — showing the last successful read. Retrying automatically.'
+              : 'Scrape targets could not be read. Retrying automatically.'}
+          </div>
+        )}
         <div className="overflow-x-auto">
           <table className="w-full text-sm">
             <thead className="border-b border-panel bg-panel/30">
@@ -89,9 +151,11 @@ export default function Monitoring() {
                   <td colSpan={4} className="px-6 py-8 text-center text-muted text-sm">Loading targets...</td>
                 </tr>
               ) : targets.data?.targets?.length === 0 ? (
-                <tr>
-                  <td colSpan={4} className="px-6 py-8 text-center text-muted text-sm">No scrape targets available</td>
-                </tr>
+                !targets.isError && (
+                  <tr>
+                    <td colSpan={4} className="px-6 py-8 text-center text-muted text-sm">No scrape targets available</td>
+                  </tr>
+                )
               ) : (
                 targets.data?.targets?.map((target: typeof targets.data.targets[0], i: number) => (
                   <tr key={i} className="hover:bg-panel/30 transition">

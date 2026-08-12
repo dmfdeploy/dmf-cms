@@ -116,3 +116,52 @@ describe('Workspace AdminPanels (post IA cut)', () => {
     expect(calledUrls.some((u) => u.includes('/api/workflows'))).toBe(false)
   })
 })
+
+// fix-round 5 (PR #81, codex sibling sweep): this component is currently
+// unreferenced (see pages/Workspace/index.tsx), but fixed alongside
+// Admin.tsx rather than left as a landmine for a future re-wire — see its
+// own doc comment.
+describe('Workspace AdminPanels — retained-error honesty (fix-round 5)', () => {
+  it('a failed contract/user read never gets stuck on "Loading..." forever', async () => {
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(async (input: RequestInfo | URL) => {
+        const url = (typeof input === 'string' ? input : (input as Request).url).toString()
+        if (url.endsWith('/api/me')) return new Response(JSON.stringify(ADMIN_USER), { status: 200 })
+        if (url.endsWith('/api/contract')) return new Response('boom', { status: 500 })
+        return new Response('{}', { status: 200 })
+      }),
+    )
+    render(
+      <QueryClientProvider client={new QueryClient({ defaultOptions: { queries: { retry: false } } })}>
+        <MemoryRouter>
+          <AdminPanels />
+        </MemoryRouter>
+      </QueryClientProvider>,
+    )
+    expect(await screen.findByText('Could not be read right now. Reload the page to try again.')).toBeTruthy()
+    expect(screen.queryByText('Loading...')).toBeNull()
+  })
+
+  it('a failed health read with no data at all names the real cause, never a bare blank grid', async () => {
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(async (input: RequestInfo | URL) => {
+        const url = (typeof input === 'string' ? input : (input as Request).url).toString()
+        if (url.endsWith('/api/me')) return new Response(JSON.stringify(ADMIN_USER), { status: 200 })
+        if (url.endsWith('/api/contract')) return new Response(JSON.stringify(CONTRACT), { status: 200 })
+        if (url.endsWith('/api/admin/health')) return new Response('boom', { status: 500 })
+        return new Response('{}', { status: 200 })
+      }),
+    )
+    render(
+      <QueryClientProvider client={new QueryClient({ defaultOptions: { queries: { retry: false } } })}>
+        <MemoryRouter>
+          <AdminPanels />
+        </MemoryRouter>
+      </QueryClientProvider>,
+    )
+    expect(await screen.findByText('Integration status could not be read right now. Retrying automatically.')).toBeTruthy()
+    expect(screen.queryByText('Authentik')).toBeNull()
+  })
+})

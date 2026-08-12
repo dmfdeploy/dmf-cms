@@ -10,11 +10,29 @@ import { useAppContract, useCurrentUser, useAdminHealth } from '../../api/hooks'
 // Activity → Jobs lane (pages/Activity/JobsLane.tsx). This component's
 // surviving content is Integration Status + Infrastructure Services only.
 export default function AdminPanels() {
-  const { data: user } = useCurrentUser()
-  const { data: contract } = useAppContract()
-  const { data: healthData, isLoading: healthLoading } = useAdminHealth()
+  // fix-round 5 (PR #81, codex sibling sweep): this component is currently
+  // unreferenced (see pages/Workspace/index.tsx's own comment — re-wiring it
+  // is four edits by that comment), so nothing here is operator-visible
+  // today. Fixed alongside Admin.tsx anyway rather than left as a landmine
+  // for a future re-wire: `!contract || !user` used to be the WHOLE gate on
+  // "Loading..." — a settled failed useAppContract read (retry:false, no
+  // refetchInterval) left this claiming "Loading..." forever, a freshness
+  // claim that would never resolve. IntegrationStatusCard also rendered
+  // Connected/Disconnected + latency/user/template counts from `healthData`
+  // with no isError check at all — same shape as Admin.tsx's own
+  // Integration Health panel.
+  const { data: user, isError: userError } = useCurrentUser()
+  const { data: contract, isError: contractError } = useAppContract()
+  const { data: healthData, isLoading: healthLoading, isError: healthError } = useAdminHealth()
 
   if (!contract || !user) {
+    if (contractError || userError) {
+      return (
+        <p className="text-sm text-warn">
+          Could not be read right now. Reload the page to try again.
+        </p>
+      )
+    }
     return <div className="animate-pulse text-muted">Loading...</div>
   }
 
@@ -23,6 +41,13 @@ export default function AdminPanels() {
       {/* Integration Status Panel */}
       <div className="mb-8">
         <h2 className="text-lg font-semibold text-text mb-4">Integration Status</h2>
+        {healthError && (
+          <div className="mb-4 text-xs text-warn bg-warning/10 rounded px-3 py-2">
+            {healthData
+              ? 'Could not be refreshed just now — showing the last successful read. Retrying automatically.'
+              : 'Integration status could not be read right now. Retrying automatically.'}
+          </div>
+        )}
         {healthLoading ? (
           <div className="panel p-4">
             <div className="animate-pulse text-muted">Loading integration status...</div>

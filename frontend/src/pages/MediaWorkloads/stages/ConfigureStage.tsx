@@ -153,7 +153,14 @@ function InstanceSwitchControl({
     return () => clearInterval(id)
   }, [arming])
 
-  if (!topology.data || !Array.isArray(topology.data.sources)) return null
+  // fix-round 5 (PR #81, codex sibling sweep): consistency touch-up with
+  // Operate.tsx's InstanceActiveSource and DesignStage's InstanceComposition
+  // (both fixed the same way this round). Lower-severity here specifically
+  // because isObservedFresh below already self-fails-closed within 15s
+  // regardless of isError (observed_at goes stale on its own), but the
+  // withdraw-on-error contract should read the same everywhere this
+  // topology shape is consumed.
+  if (topology.isError || !topology.data || !Array.isArray(topology.data.sources)) return null
 
   const { sources, active_source, provenance, observed_at } = topology.data
   const isObservedFresh =

@@ -6,7 +6,7 @@
  * conditions), link to the expert Monitoring page, and carry NO ack.
  */
 import { afterEach, describe, expect, it, vi } from 'vitest'
-import { cleanup, render, screen } from '@testing-library/react'
+import { act, cleanup, render, screen } from '@testing-library/react'
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query'
 import { MemoryRouter } from 'react-router-dom'
 import NotificationBell from '../components/NotificationBell'
@@ -59,6 +59,8 @@ function alert(name: string, severity: string) {
 afterEach(() => {
   cleanup()
   vi.unstubAllGlobals()
+  vi.restoreAllMocks()
+  vi.useRealTimers()
 })
 
 describe('NotificationBell', () => {
@@ -110,5 +112,68 @@ describe('NotificationBell', () => {
     btn.click()
     expect(await screen.findByText(/Monitoring not configured/)).toBeTruthy()
     expect(screen.queryByText('All systems nominal')).toBeNull()
+  })
+
+  // fix-round 5 (PR #81, codex sibling sweep): `state.stale` was already
+  // correctly computed (classifyWorkspaceHealth's `stale = q.isError`,
+  // unconditional) but never consulted for the 'not-configured' phase here
+  // — same gap as HealthCore.tsx (see workspace.test.tsx's matching pin).
+  // Hold-then-reject, not first-load.
+  it('a settled failed refetch after a retained not-configured read adds a staleness notice', async () => {
+    vi.useFakeTimers()
+    let calls = 0
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(async (input: RequestInfo | URL) => {
+        const url = (typeof input === 'string' ? input : (input as Request).url).toString()
+        if (url.endsWith('/api/workspace/health')) {
+          calls += 1
+          if (calls === 1) {
+            return new Response(
+              JSON.stringify({
+                configured: false,
+                reachable: false,
+                reason: 'prometheus-not-configured',
+                watchdog_firing: false,
+                alerts: [],
+              }),
+              { status: 200, headers: { 'Content-Type': 'application/json' } },
+            )
+          }
+          return new Response('boom', { status: 500 })
+        }
+        return new Response('{}', { status: 200, headers: { 'Content-Type': 'application/json' } })
+      }),
+    )
+    const queryClient = new QueryClient({ defaultOptions: { queries: { retry: false } } })
+    render(
+      <QueryClientProvider client={queryClient}>
+        <MemoryRouter>
+          <NotificationBell />
+        </MemoryRouter>
+      </QueryClientProvider>,
+    )
+
+    // First (successful, not-configured) read settles. Fake timers active,
+    // so settle() + getBy*, never findBy* (findBy* waits on real timers).
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(60)
+    })
+    const btn = screen.getByRole('button', { name: 'Monitoring alerts' })
+    act(() => {
+      btn.click()
+    })
+    expect(screen.getByText('Monitoring not configured')).toBeTruthy()
+
+    // Advance past useWorkspaceHealth's 30s refetchInterval so the
+    // background refetch fires and rejects, while the retained (not-
+    // configured) data stays in place.
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(30_100)
+    })
+
+    // Summary line and dropdown body both now acknowledge the failed read.
+    expect(screen.getByText(/Monitoring not configured — unconfirmed just now/)).toBeTruthy()
+    expect(screen.getByText(/could not be confirmed just now/)).toBeTruthy()
   })
 })

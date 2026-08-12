@@ -252,6 +252,28 @@ describe('classifyFacilityDetail', () => {
     }
     expect(classifyFacilityDetail(q).phase).toBe('loaded')
   })
+
+  // fix-round 5 (PR #81, codex sibling sweep): the 'unconfigured' branch
+  // used to hardcode `stale: false`, never consulting `q.isError` — a
+  // settled failed refetch after a retained "unconfigured" read silently
+  // presented that stale config posture as current.
+  it('stale is computed for unconfigured too, not hardcoded false', () => {
+    const q: FacilityDetailQueryLike = {
+      isLoading: false,
+      isError: true,
+      data: detailPayload({ prometheus_configured: false, netbox_configured: false }),
+    }
+    const s = classifyFacilityDetail(q)
+    expect(s.phase).toBe('unconfigured')
+    expect(s.stale).toBe(true)
+  })
+
+  it('loaded also carries stale from isError, with data retained', () => {
+    const q: FacilityDetailQueryLike = { isLoading: false, isError: true, data: detailPayload() }
+    const s = classifyFacilityDetail(q)
+    expect(s.phase).toBe('loaded')
+    expect(s.stale).toBe(true)
+  })
 })
 
 describe('facilityReasonCopy', () => {
@@ -304,6 +326,78 @@ describe('Facility Detail page states', () => {
     // one designed message, not five empty-looking cards.
     expect(screen.queryByText('Nodes')).toBeNull()
     expect(screen.queryByText('Capacity')).toBeNull()
+  })
+
+  // fix-round 5 (PR #81, codex sibling sweep): the 'unconfigured' branch
+  // hardcoded `stale: false` — a settled failed refetch after a retained
+  // "unconfigured" read rendered the same message with no staleness
+  // notice, presenting it as a fresh, current read. Hold-then-reject.
+  it('a settled failed refetch after a retained unconfigured read adds a staleness notice', async () => {
+    vi.useFakeTimers()
+    const unconfiguredPayload = detailPayload({
+      prometheus_configured: false,
+      netbox_configured: false,
+      site: { slug: null, name: null, architecture: null, reason: 'netbox-not-configured' },
+      nodes: { reason: 'prometheus-not-configured', items: [] },
+      platform_services: { reason: 'prometheus-not-configured', items: [] },
+      storage: { reason: 'prometheus-not-configured', items: [] },
+      capacity: {
+        reason: 'prometheus-not-configured',
+        node_name: null,
+        allocatable_cpu_m: null,
+        allocatable_mem_b: null,
+        requests_committed_cpu_m: null,
+        requests_committed_mem_b: null,
+        pod_count: null,
+      },
+    })
+    let calls = 0
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(async (input: RequestInfo | URL) => {
+        const url = (typeof input === 'string' ? input : (input as Request).url).toString()
+        if (url.endsWith('/api/facility/dmf-lab/detail')) {
+          calls += 1
+          if (calls === 1) {
+            return new Response(JSON.stringify(unconfiguredPayload), {
+              status: 200,
+              headers: { 'Content-Type': 'application/json' },
+            })
+          }
+          return new Response('boom', { status: 500 })
+        }
+        if (url.endsWith('/api/media-workloads/grouped')) {
+          return new Response(
+            JSON.stringify({ configured: true, degraded: false, scope: [], workloads: [], invalid_instances: [] }),
+            { status: 200, headers: { 'Content-Type': 'application/json' } },
+          )
+        }
+        throw new Error(`unrouted fetch in test: ${url}`)
+      }),
+    )
+    const queryClient = new QueryClient({ defaultOptions: { queries: { retry: false } } })
+    render(
+      <QueryClientProvider client={queryClient}>
+        <MemoryRouter initialEntries={['/facilities/dmf-lab']}>
+          <Routes>
+            <Route path="/facilities/:site" element={<FacilityDetail />} />
+          </Routes>
+        </MemoryRouter>
+      </QueryClientProvider>,
+    )
+
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(60)
+    })
+    expect(screen.getByText(/Neither monitoring nor NetBox is configured/)).toBeTruthy()
+    expect(screen.queryByText(/could not be confirmed/)).toBeNull()
+
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(60_100)
+    })
+
+    expect(screen.getByText(/Neither monitoring nor NetBox is configured/)).toBeTruthy()
+    expect(screen.getByText(/could not be confirmed just now/)).toBeTruthy()
   })
 
   it('a malformed/unreadable section renders its own honest banner, never a raw error or a fabricated value', async () => {
@@ -687,6 +781,60 @@ describe('Facility Detail — media workloads count panel honesty (umbrella #385
         (_, el) => el?.tagName === 'P' && /0 media workloads provisioned on this facility\./.test(el.textContent ?? ''),
       ),
     ).toBeNull()
+  })
+
+  // fix-round 5 (PR #81, codex sibling sweep): `!data.configured` was
+  // checked BEFORE `isError`, contradicting the panel's own doc comment
+  // ("isError wins regardless of retained data") — a settled failed
+  // refetch that retained a `configured: false` payload silently kept
+  // presenting that stale config posture as current instead of surfacing
+  // the failed read. Hold-then-reject: first read retained is genuinely
+  // not-configured, second read (after isError flips true) must show the
+  // failed-read message, not the stale not-configured message.
+  it('isError wins over a retained not-configured payload too, not just a retained count', async () => {
+    vi.useFakeTimers()
+    let calls = 0
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(async (input: RequestInfo | URL) => {
+        const url = (typeof input === 'string' ? input : (input as Request).url).toString()
+        if (url.endsWith('/api/facility/dmf-lab/detail')) {
+          return new Response(JSON.stringify(detailPayload()), { status: 200 })
+        }
+        if (url.endsWith('/api/media-workloads/grouped')) {
+          calls += 1
+          if (calls === 1) {
+            return new Response(
+              JSON.stringify({ configured: false, reason: '', workloads: [], invalid_instances: [] }),
+              { status: 200 },
+            )
+          }
+          return new Response('boom', { status: 500 })
+        }
+        throw new Error(`unrouted fetch in test: ${url}`)
+      }),
+    )
+    renderWithQuery(
+      <MemoryRouter initialEntries={['/facilities/dmf-lab']}>
+        <Routes>
+          <Route path="/facilities/:site" element={<FacilityDetail />} />
+        </Routes>
+      </MemoryRouter>,
+    )
+
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(60)
+    })
+    expect(screen.getByText('Media workloads are not configured for this environment.')).toBeTruthy()
+
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(15_100)
+    })
+
+    expect(
+      screen.getByText('Cannot confirm the media workload count — the last read attempt failed. Retrying automatically.'),
+    ).toBeTruthy()
+    expect(screen.queryByText('Media workloads are not configured for this environment.')).toBeNull()
   })
 
   it('a genuinely successful read with zero workloads still states the honest zero', async () => {

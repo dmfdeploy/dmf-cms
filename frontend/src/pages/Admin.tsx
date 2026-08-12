@@ -7,13 +7,32 @@ import type { AdminUser, PasskeyInvitationResponse } from '@/api/types'
 // A single Users table body. The People / Machine-identities split (ADR-0028
 // C4/D8) renders two of these over the human vs machine partitions rather than
 // one flat roster, so human and non-human principals never blur together.
-function UsersTable({ users, isLoading, emptyLabel }: {
+//
+// fix-round 5 (PR #81, codex sibling sweep): `failed` is new. `users.length
+// === 0` used to be the WHOLE gate on `emptyLabel` ("No people"/"No machine
+// identities") — a settled failed read (no isError check anywhere in this
+// file) rendered that exact claim, or, with data retained across a failed
+// refetch, kept the roster on screen with no notice that the current read
+// had failed.
+function UsersTable({ users, isLoading, failed, emptyLabel }: {
   users: AdminUser[]
   isLoading: boolean
+  failed: boolean
   emptyLabel: string
 }) {
   return (
     <div className="overflow-x-auto">
+      {failed && (
+        <div className="px-6 py-2 text-xs text-amber-300 bg-amber-500/10 border-b border-panel">
+          {/* useAdminUsers carries no refetchInterval — "Retrying
+              automatically" would be false here, the same correction
+              CreateWorkload.tsx's TemplatePicker already made for
+              useCatalog (also un-polled). */}
+          {users.length > 0
+            ? 'Could not be refreshed just now — showing the last successful read. Reload the page to try again.'
+            : 'Could not be read right now. Reload the page to try again.'}
+        </div>
+      )}
       <table className="w-full text-sm">
         <thead className="border-b border-panel bg-panel/30">
           <tr>
@@ -30,9 +49,13 @@ function UsersTable({ users, isLoading, emptyLabel }: {
               <td colSpan={5} className="px-6 py-8 text-center text-muted text-sm">Loading users...</td>
             </tr>
           ) : users.length === 0 ? (
-            <tr>
-              <td colSpan={5} className="px-6 py-8 text-center text-muted text-sm">{emptyLabel}</td>
-            </tr>
+            // The notice above already named the cause when errored — the
+            // genuine-empty label is a claim only a successful read owns.
+            !failed && (
+              <tr>
+                <td colSpan={5} className="px-6 py-8 text-center text-muted text-sm">{emptyLabel}</td>
+              </tr>
+            )
           ) : (
             users.map((user) => (
               <tr key={user.username} className="hover:bg-panel/30 transition">
@@ -73,6 +96,9 @@ function UsersTable({ users, isLoading, emptyLabel }: {
 }
 
 export default function Admin() {
+  // fix-round 5 (PR #81, codex sibling sweep): isError on all three — see
+  // UsersTable's own doc comment and the Integration Health / Groups
+  // sections below for what each one fixes.
   const users = useAdminUsers()
   const groups = useAdminGroups()
   const health = useAdminHealth()
@@ -107,6 +133,17 @@ export default function Admin() {
           </h2>
         </div>
         <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-4 p-6">
+          {/* fix-round 5: named regardless of whether `health.data` is
+              retained — a Connected/Disconnected dot plus latency is a
+              status-posture claim of exactly the kind classifyWorkspaceHealth
+              exists to prevent from rendering unqualified. */}
+          {health.isError && (
+            <div className="col-span-full text-xs text-amber-300 bg-amber-500/10 rounded px-3 py-2">
+              {health.data
+                ? 'Could not be refreshed just now — showing the last successful read. Retrying automatically.'
+                : 'Integration status could not be read right now. Retrying automatically.'}
+            </div>
+          )}
           {isLoading ? (
             <div className="col-span-full text-center text-muted text-sm">Loading status...</div>
           ) : health.data ? (
@@ -173,7 +210,7 @@ export default function Admin() {
           </div>
         )}
 
-        <UsersTable users={humanUsers} isLoading={isLoading} emptyLabel="No people" />
+        <UsersTable users={humanUsers} isLoading={isLoading} failed={users.isError} emptyLabel="No people" />
       </div>
 
       {/* Machine identities — service / automation principals, kept distinct
@@ -185,7 +222,7 @@ export default function Admin() {
             Machine identities
           </h2>
         </div>
-        <UsersTable users={machineUsers} isLoading={isLoading} emptyLabel="No machine identities" />
+        <UsersTable users={machineUsers} isLoading={isLoading} failed={users.isError} emptyLabel="No machine identities" />
       </div>
 
       {/* Groups Management */}
@@ -197,10 +234,22 @@ export default function Admin() {
           </h2>
         </div>
         <div className="divide-y divide-panel">
+          {/* fix-round 5: named regardless of whether groups are retained —
+              the per-group member COUNT below is exactly the kind of claim
+              from an unconfirmed read hard gate 1 forbids. */}
+          {groups.isError && (
+            <div className="px-6 py-2 text-xs text-amber-300 bg-amber-500/10">
+              {(groups.data?.groups?.length ?? 0) > 0
+                ? 'Could not be refreshed just now — showing the last successful read. Retrying automatically.'
+                : 'Groups could not be read right now. Retrying automatically.'}
+            </div>
+          )}
           {isLoading ? (
             <div className="px-6 py-8 text-center text-muted text-sm">Loading groups...</div>
           ) : groups.data?.groups?.length === 0 ? (
-            <div className="px-6 py-8 text-center text-muted text-sm">No groups</div>
+            !groups.isError && (
+              <div className="px-6 py-8 text-center text-muted text-sm">No groups</div>
+            )
           ) : (
             groups.data?.groups?.map((group: typeof groups.data.groups[0], i: number) => (
               <div key={i} className="px-6 py-4 hover:bg-panel/30 transition">

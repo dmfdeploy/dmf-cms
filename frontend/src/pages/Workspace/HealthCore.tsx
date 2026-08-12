@@ -35,6 +35,19 @@ export default function HealthCore() {
           Monitoring is not configured in this environment, so facility
           health cannot be assessed from here.
         </p>
+        {/* fix-round 5 (PR #81, codex sibling sweep): `state.stale` (backed
+            by classifyWorkspaceHealth's own unconditional `q.isError`) was
+            being COMPUTED correctly but never CONSULTED here — this early
+            return skipped past it entirely, so a failed refetch after a
+            retained "not configured" read silently presented that stale
+            config posture as current. Same shape as Facility/Detail.tsx's
+            two fixes this round; same fix. */}
+        {state.stale && (
+          <p className="text-xs text-warn mt-2">
+            This could not be confirmed just now — showing the last successful read. Retrying
+            automatically.
+          </p>
+        )}
       </div>
     )
   }
