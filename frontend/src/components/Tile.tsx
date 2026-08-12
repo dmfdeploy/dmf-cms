@@ -36,20 +36,31 @@ import { Link } from 'react-router-dom'
  * and the click/hover surface are identical to each caller's pre-refactor
  * single-`<Link>` shape either way.
  *
- * CONTRACT (codex P2-1, dmfdeploy/dmfdeploy#347 WP-4 round 1): `children` is
- * the tile's non-interactive visible face — it renders INSIDE the primary
- * Link, so it must never itself contain an interactive element (a
- * `<button>`, another `<a>`, anything with an interactive role). Anything
- * that needs to be its OWN click/keyboard target belongs in `actions`,
- * which is a true sibling of the Link, never a descendant of it. TypeScript
- * cannot enforce this — `children: React.ReactNode` structurally accepts
- * anything — so the boundary is enforced by test coverage against the two
- * real call sites instead (mediaWorkloadsGrid.test.tsx, facility.test.tsx):
- * both assert their rendered tile's primary link contains no interactive
+ * CONTRACT (codex P2-1, dmfdeploy/dmfdeploy#347 WP-4, rounds 1-3): `children`
+ * is the tile's non-interactive visible face — it renders INSIDE the primary
+ * Link, so it must never itself contain an interactive element. Anything
+ * that needs to be its OWN click/keyboard target belongs in `actions`, which
+ * is a true sibling of the Link, never a descendant of it. TypeScript cannot
+ * enforce this — `children: React.ReactNode` structurally accepts anything —
+ * so the boundary is enforced by test coverage against the two real call
+ * sites instead (mediaWorkloadsGrid.test.tsx, facility.test.tsx): both
+ * assert their rendered tile's primary link contains no interactive
  * descendant, so a future edit to either call site that violates this
  * contract fails CI rather than only failing an isolated Tile.tsx fixture
  * test (tile.test.tsx's own populated-actions case proves the SLOT is safe;
  * it does not and cannot prove a caller keeps `children` clean).
+ *
+ * "Interactive element" here means EXACTLY testUtils/domAssertions.ts's
+ * `assertNoInteractiveDescendant` set — that file is the operative
+ * definition, not a stand-in for an unbounded one. Rounds 1-2 stated this
+ * contract in unbounded language ("anything with an interactive role") while
+ * the enforcement was necessarily bounded, which is what kept generating new
+ * rounds of "but this narrower case slips through" findings against a moving
+ * target. The set is deliberately bounded (documented with its own
+ * rationale, including what's excluded and why, in domAssertions.ts) rather
+ * than an attempt at exhaustive ARIA/HTML coverage; extending it is a
+ * one-line, reviewable change in that one file, not a reason to keep this
+ * comment's wording ahead of what's actually checked.
  */
 export default function Tile({
   to,
@@ -60,8 +71,9 @@ export default function Tile({
   to: string
   ariaLabel: string
   /** The tile's visible face — rendered INSIDE the primary Link, so it must
-   *  be non-interactive (no nested `<button>`/`<a>`/interactive role). Give
-   *  anything that needs its own interactive target to `actions` instead. */
+   *  be non-interactive per testUtils/domAssertions.ts's bounded set (see
+   *  the CONTRACT note above). Give anything that needs its own interactive
+   *  target to `actions` instead. */
   children: React.ReactNode
   /** Optional actions slot, rendered as a SIBLING of the Link, never nested
    *  inside it. Omit (or leave undefined) to render nothing — the "introduce

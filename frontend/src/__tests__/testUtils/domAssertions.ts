@@ -13,15 +13,25 @@ import { expect } from 'vitest'
  * — one definition of "interactive", not two inline copies that could drift
  * apart.
  *
- * The set below is deliberately BOUNDED, not an attempt at exhaustive ARIA
- * coverage (codex's own framing: "bounded and stated beats silently
+ * The set below is deliberately BOUNDED, not an attempt at exhaustive ARIA/
+ * HTML coverage (codex's own framing: "bounded and stated beats silently
  * partial"). Native interactive tags cover everything HTML itself makes
- * focusable/actionable by default; `[tabindex]` catches anything made
- * focusable by hand; the ARIA role list covers the widget roles a future
- * actions-shaped addition to `children` would plausibly reach for. If a
- * future contribution needs a role outside this list, extending the list
- * here is a one-line, reviewable change — not a reason to leave the check
- * narrower than the contract it's supposed to enforce.
+ * focusable/actionable by default; `[tabindex]` and `[contenteditable]`
+ * catch anything made focusable/editable by hand; the ARIA role list covers
+ * the widget roles a future actions-shaped addition to `children` would
+ * plausibly reach for. If a future contribution needs a role or tag outside
+ * this list, extending it here is a one-line, reviewable change — not a
+ * reason to leave the check narrower than what it actually covers.
+ *
+ * Deliberately EXCLUDED, stated rather than silently absent (codex round 3):
+ * `<details>` (its own toggle affordance is `<summary>`, already covered —
+ * `<details>` itself is inert without it), `<iframe>`/`<embed>` (embedded
+ * content; any interactivity lives in a different document, not this DOM),
+ * `<label>` (inert on its own; interactive only via the control it
+ * references, which is itself already covered), `img[usemap]` (inert
+ * without `<area>` children, which are themselves already covered), and
+ * `[role="gridcell"]` (only interactive within an editable grid — context-
+ * dependent, not universally interactive the way the roles below are).
  */
 const INTERACTIVE_TAGS = [
   'button',
@@ -39,21 +49,34 @@ const INTERACTIVE_ARIA_ROLES = [
   'button',
   'link',
   'menuitem',
+  'menuitemcheckbox',
+  'menuitemradio',
   'checkbox',
   'radio',
   'switch',
   'tab',
   'textbox',
+  'searchbox',
   'combobox',
+  'listbox',
   'slider',
   'spinbutton',
+  'scrollbar',
   'option',
+  'treeitem',
 ]
 
 const INTERACTIVE_SELECTOR = [
   ...INTERACTIVE_TAGS,
   '[tabindex]',
-  ...INTERACTIVE_ARIA_ROLES.map((role) => `[role="${role}"]`),
+  // contenteditable="false" explicitly opts OUT of editability — only a
+  // present, non-"false" value (including the bare attribute, whose value
+  // defaults to "true" per the HTML spec) counts as interactive.
+  '[contenteditable]:not([contenteditable="false"])',
+  // `~=` (token match), not `=` (exact match): ARIA permits a space-
+  // separated fallback role list (e.g. role="menuitemcheckbox menuitem"),
+  // and `[role="x"]` would silently miss every one of those.
+  ...INTERACTIVE_ARIA_ROLES.map((role) => `[role~="${role}"]`),
 ].join(', ')
 
 /** Asserts `el` contains no interactive descendant per the bounded set
