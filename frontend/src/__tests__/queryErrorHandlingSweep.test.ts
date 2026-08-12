@@ -1,60 +1,85 @@
 /**
  * Cheap, mechanical regression net for the isError-gating defect shape this
- * whole fix arc (PR #81, umbrella #385, 7 rounds) kept re-discovering by
+ * whole fix arc (PR #81, umbrella #385, 8 rounds) kept re-discovering by
  * hand: a component reads `.data` off a TanStack Query read-hook and never
  * once considers `isError`/`.failed`/settleQuery for THAT SPECIFIC call, so
  * a settled failed refetch with data retained silently re-authorizes an
  * absence/count/status claim the CURRENT read never established.
  *
- * fix-round 7 (codex gate on round 6): the first version of this net was a
+ * DISCLOSED SCOPE — read this before trusting a green run here. This is
+ * regex-over-source-text, not an AST/type checker; every "verify" in this
+ * file means "verify what this specific mechanism can see", not "verify
+ * every consumer everywhere is provably safe". Two hardening rounds
+ * (7 and 8) each closed a real hole codex found by deliberately trying to
+ * defeat it; the shapes below are what survived that adversarial process,
+ * not a completeness guarantee.
+ *
+ *   COVERED:
+ *     - const { data, isError } = useHook()             (own destructure key)
+ *     - const { data, failed } = settleQuery(useHook())  (direct wrap)
+ *     - const q = useHook(); const s = settleQuery(q)    (two-step wrap)
+ *     - const q = useHook(); classifyFoo(q)               (verified delegate —
+ *       see KNOWN_DELEGATES below: RUNTIME-checked, not text-matched)
+ *     - const q = useHook(); q.isError / q.failed / q.isFetching  (direct
+ *       property access on the SAME bound variable)
+ *
+ *   NOT COVERED (round 8, codex adversarial pass — accepted, not fixed):
+ *     - A hook called through an intermediate wrapper function, e.g.
+ *       `function useSettingsUser() { return useCurrentUser() }` then
+ *       `const { data } = useSettingsUser()` — findCallSites only matches
+ *       the RECOGNIZED HOOK NAMES directly after `const <LHS> = `, so a
+ *       renamed indirection is invisible to it. No such wrapper exists
+ *       anywhere in this codebase today (verified by hand) — this is a
+ *       defended-against hypothetical, not an active bug. General wrapper-
+ *       tracing (following an arbitrary function to see what IT calls) is
+ *       real data-flow analysis and was explicitly judged disproportionate
+ *       to build for a regression test in one PR.
+ *
+ * fix-round 7 (codex gate on round 6): the FIRST version of this net was a
  * per-FILE textual heuristic ("does the file mention isError/settleQuery/
- * isFetching ANYWHERE") and codex broke it on the first real attempt —
- * Settings.tsx destructured `{ data: user, isLoading }` (an ALIAS, never
- * the literal token `.data`) with no isError anywhere, and would have kept
- * passing forever if some UNRELATED hook call elsewhere in the same file
- * happened to reference isError (or even just a comment mentioning the
- * word, which is exactly what let HistoryLane.tsx's raw
- * useChangesJobs()/useChangesCommits()/useChangesPulls() bindings slip past
- * the old check — none of the three is ever checked directly in that file
- * at all; only a COMMENT on an unrelated line contains the word "isError").
+ * isFetching ANYWHERE") — defeated on the first real attempt by an aliased
+ * destructure (Settings.tsx: `{ data: user, isLoading }`, no isError) and,
+ * separately, by a comment merely mentioning the word "isError" on an
+ * unrelated line (Activity/HistoryLane.tsx) coincidentally satisfying the
+ * file-wide check. Rebuilt call-site precise: locate each individual
+ * `const <LHS> = useHookName(...)` statement and ask, for THAT call alone,
+ * whether error state reaches it.
  *
- * This version is CALL-SITE precise: it locates each individual
- * `const <LHS> = useHookName(...)` statement and asks, for THAT call alone,
- * whether error state reaches it, via any of three real patterns actually
- * used in this codebase:
- *
- *   1. Direct wrap:     const { data, failed } = settleQuery(useHook())
- *   2. Two-step wrap:   const q = useHook(); const s = settleQuery(q)
- *                       (needed when `.refetch()` off the raw query is also
- *                       used, e.g. ConfigureStage.tsx's switch control)
- *   3. Own destructure: const { data, isError } = useHook()   — checked by
- *      DESTRUCTURE KEY, not by whether the literal string "isError"
- *      appears anywhere in the file
- *   4. Delegation:      const q = useHook(); classifyFoo(q)   — the raw
- *      query object handed to a classifier that is ITSELF verified (by the
- *      same mechanism, recursively) to call settleQuery internally
- *      (lib/changesState.ts's classifyChanges/classifyForgejo, lib/
- *      workspaceHealth.ts's classifyWorkspaceHealth, Facility/Detail.tsx's
- *      classifyFacilityDetail) — a raw property/token check on the
- *      CONSUMING file would never see this; the callee owns the check.
- *
- * Direct property access (`q.isError`) or `q.isFetching` on the SAME bound
- * variable also counts — pre-settleQuery code and WorkloadDetail.tsx's
- * groupedRead (which genuinely needs isFetching, not just settleQuery's
- * failed/loading) both use this shape.
- *
- * This is still NOT an AST-based checker — no scope/type resolution, pure
- * regex over source text, so it can be fooled by sufficiently unusual
- * formatting (a hook call not immediately preceded by `const`, e.g. a
- * reassignment or an inline prop) — those call sites are silently skipped
- * (a false negative, not a false positive), which is an accepted tradeoff
- * for "cheap, mechanical, not full tooling." Every read-hook call in the
- * app today IS one of the four `const`-declared shapes above (verified by
- * running this net and getting zero surprises beyond the one already-known
- * exemption below).
+ * fix-round 8 (codex adversarial pass on round 7): codex defeated the
+ * call-site version twice more —
+ *   (a) an intermediate wrapper function (see NOT COVERED above — accepted);
+ *   (b) DEAD-CODE delegation: `if (false) settleQuery(q)` inside a
+ *       classifier's body still contains the literal text `settleQuery(`,
+ *       so the old "does this function's source TEXT mention settleQuery("
+ *       check called it a verified delegate while the function's REAL
+ *       logic never touched isError at all. A text scan cannot tell live
+ *       code from dead code. Fixed by replacing text-matching with an
+ *       actual RUNTIME check: KNOWN_DELEGATES below imports each real
+ *       classifier, spies on the REAL settleQuery (vi.mock + importOriginal,
+ *       so it still behaves correctly — this only records calls, it doesn't
+ *       replace behavior), calls the classifier with realistic input, and
+ *       asserts the spy was actually invoked. Proof of execution, not
+ *       another regex. See the "runtime-verify" describe block below.
  */
 /// <reference types="vite/client" />
-import { describe, expect, it } from 'vitest'
+import { describe, expect, it, vi } from 'vitest'
+
+// Spies on the REAL settleQuery (vi.fn wraps actual.settleQuery, so it still
+// computes the correct result — this only ALSO records calls). Every module
+// this file imports below that itself imports settleQuery from here shares
+// this one mocked binding, because vi.mock resolves by module path, not by
+// import string. Must be declared before the imports it affects; Vitest
+// hoists vi.mock calls to the top of the file at transform time regardless
+// of source position, but keeping it visually first states the intent.
+vi.mock('../lib/queryState', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('../lib/queryState')>()
+  return { ...actual, settleQuery: vi.fn(actual.settleQuery) }
+})
+
+import { settleQuery } from '../lib/queryState'
+import { classifyChanges, classifyForgejo } from '../lib/changesState'
+import { classifyWorkspaceHealth } from '../lib/workspaceHealth'
+import { classifyFacilityDetail } from '../pages/Facility/Detail'
 
 // Every .ts/.tsx source file under src, as raw text, keyed by a path
 // relative to src/ (e.g. "pages/Admin.tsx") — eager + raw so this is plain
@@ -85,36 +110,99 @@ function readQueryHookNames(): string[] {
   return exportedFunctionsCallingWithin(hooksSrc, 'useQuery(')
 }
 
-/** Every `export function` anywhere in src whose OWN body calls
- *  settleQuery(...) — a classifier a caller can safely DELEGATE a raw
- *  query object to (pattern 4 above), derived the same way as the hook
- *  list rather than hand-maintained. */
-function settleQueryDelegateNames(): string[] {
+/** Every `export function` anywhere in src whose source TEXT mentions
+ *  settleQuery(...) AND whose name fits the delegate calling convention
+ *  pattern 4 actually looks for (`delegateName(someBareQueryVariable)`, a
+ *  PLAIN function call — never JSX, never a hook consumed via its own
+ *  props/args) — a CANDIDATE for delegation, NOT trust by itself (round 8
+ *  proved text presence alone is gameable via dead code). Used only as a
+ *  coverage nudge: see the "every candidate is a registered, runtime-
+ *  verified delegate" test below, which fails loudly if this list ever
+ *  finds a name KNOWN_DELEGATES hasn't accounted for.
+ *
+ *  Excludes React components (PascalCase, e.g. OperationStatusLine) and
+ *  hooks (camelCase starting with `use`, e.g. useLivePreview) by this
+ *  codebase's own established naming convention — both call settleQuery
+ *  for entirely their OWN internal hook usage, never for a caller-supplied
+ *  raw query object, so no consumer file could ever textually delegate to
+ *  them the way pattern 4 checks for (`<Name(` / `use...(` never appears
+ *  as a bare function-call handing off someone else's query variable —
+ *  components are invoked as JSX, hooks take their own config, not a
+ *  QueryLike). Excluding them isn't guessing they're safe — pattern 4's
+ *  OWN regex (`delegateName\(\s*bareVar`) could never match their real
+ *  call shape in the first place, so including them here would only ever
+ *  be a false alarm on this coverage check, never close a real gap. */
+function settleQueryTextCandidateNames(): string[] {
   const names = new Set<string>()
   for (const [globKey, src] of Object.entries(RAW_SOURCES)) {
     if (relPath(globKey) === 'lib/queryState.ts') continue // settleQuery's own definition
-    for (const name of exportedFunctionsCallingWithin(src, 'settleQuery(')) names.add(name)
+    for (const name of exportedFunctionsCallingWithin(src, 'settleQuery(')) {
+      if (/^use[A-Z]/.test(name)) continue // hook
+      if (/^[A-Z]/.test(name)) continue // component
+      names.add(name)
+    }
   }
   return [...names]
 }
 
-/** Crude top-level function splitter: finds `export function NAME(...) {`
- *  and slices from there to the NEXT such match (or EOF) as that
- *  function's "body" — good enough for this file's flat, non-nested export
- *  shape (verified against hooks.ts and every classifier file); does not
- *  handle arbitrarily nested exported functions in general, which is fine
- *  here since a false MISS just means a delegate/hook goes undetected
- *  (caught immediately as a fresh offender, not silently trusted). */
+/** Every `export function NAME(...) { ... }`, body isolated by actual BRACE
+ *  DEPTH (not "until the next match or EOF" — an earlier version of this
+ *  net over-attributed trailing NON-exported code after the last matched
+ *  export in a file to that function's "body", e.g. Facility/Detail.tsx's
+ *  page-local WorkloadCountPanel's settleQuery call falsely counting
+ *  towards facilityReasonCopy, the last `export function` before it).
+ *  Doesn't skip braces inside strings/template-literals/comments — a real
+ *  tokenizer would, but none of this codebase's actual function bodies put
+ *  a brace inside a string in a way that would misdirect this (verified:
+ *  every file here produces the correct attribution), and a full tokenizer
+ *  is exactly the "real engineering effort" this net stays cheap by not
+ *  building. */
 function exportedFunctionsCallingWithin(src: string, needle: string): string[] {
   const fnRe = /export function (\w+)\([^)]*\)[^{]*\{/g
-  const matches = [...src.matchAll(fnRe)]
   const names: string[] = []
-  matches.forEach((m, i) => {
-    const start = m.index! + m[0].length
-    const end = i + 1 < matches.length ? matches[i + 1].index! : src.length
-    if (src.slice(start, end).includes(needle)) names.push(m[1])
-  })
+  let m: RegExpExecArray | null
+  while ((m = fnRe.exec(src))) {
+    const openBrace = m.index + m[0].length - 1 // m[0] ends in the opening `{`
+    const closeBrace = matchingBraceIndex(src, openBrace)
+    const body = src.slice(openBrace + 1, closeBrace)
+    if (body.includes(needle)) names.push(m[1])
+    fnRe.lastIndex = closeBrace + 1 // resume after this function's real end
+  }
   return names
+}
+
+/** Index of the `}` matching the `{` at `src[openIndex]`, by depth count. */
+function matchingBraceIndex(src: string, openIndex: number): number {
+  let depth = 0
+  for (let i = openIndex; i < src.length; i++) {
+    if (src[i] === '{') depth++
+    else if (src[i] === '}') {
+      depth--
+      if (depth === 0) return i
+    }
+  }
+  return src.length
+}
+
+// Realistic "settled, failed, nothing retained" input — every currently
+// registered delegate's QueryLike-shaped sole argument accepts this
+// structurally (data is always optional on that type).
+const FAILED_QUERY_FIXTURE = { isLoading: false, isError: true, data: undefined }
+
+// The delegate REGISTRY — deliberately hand-maintained, unlike the hook
+// list above. Auto-deriving a list to TRUST by scanning source text is
+// exactly what round 8 proved unsound (dead code contains the same tokens
+// as live code); proving a function is safe to delegate to requires
+// actually CALLING it, which requires knowing its real call signature —
+// something only a human adding an entry here can assert honestly. Adding
+// a new delegate classifier means adding it here with a realistic fixture,
+// same discipline as the EXEMPT list below: a deliberate, reviewable
+// addition, never silent, never inferred from text alone.
+const KNOWN_DELEGATES: Record<string, () => unknown> = {
+  classifyChanges: () => classifyChanges(FAILED_QUERY_FIXTURE),
+  classifyForgejo: () => classifyForgejo(FAILED_QUERY_FIXTURE),
+  classifyWorkspaceHealth: () => classifyWorkspaceHealth(FAILED_QUERY_FIXTURE),
+  classifyFacilityDetail: () => classifyFacilityDetail(FAILED_QUERY_FIXTURE),
 }
 
 interface CallSite {
@@ -132,7 +220,7 @@ function findCallSites(src: string, hookNames: string[]): CallSite[] {
   if (hookNames.length === 0) return []
   const alternation = hookNames
     .slice()
-    .sort((a, b) => b.length - a.length) // longer names first — defensive, not load-bearing (see file docstring)
+    .sort((a, b) => b.length - a.length) // longer names first — defensive, not load-bearing
     .map(escapeRe)
     .join('|')
   const re = new RegExp(
@@ -156,8 +244,8 @@ function findCallSites(src: string, hookNames: string[]): CallSite[] {
   return sites
 }
 
-/** Offending call sites in one file — see the file docstring for the four
- *  recognized compliant shapes. */
+/** Offending call sites in one file — see the file-header "COVERED" list
+ *  for the four recognized compliant shapes. */
 function fileOffenses(src: string, hookNames: string[], delegateNames: string[]): string[] {
   const offenses: string[] = []
   for (const site of findCallSites(src, hookNames)) {
@@ -174,18 +262,18 @@ function fileOffenses(src: string, hookNames: string[], delegateNames: string[])
     const v = escapeRe(site.lhs)
     if (new RegExp(String.raw`settleQuery\(\s*${v}\s*\)`).test(src)) continue // pattern 2: two-step wrap
     if (new RegExp(String.raw`\b${v}\.(isError|failed|isFetching)\b`).test(src)) continue // direct property access
-    if (delegateNames.some((d) => new RegExp(String.raw`\b${escapeRe(d)}\(\s*${v}\b`).test(src))) continue // pattern 4
+    if (delegateNames.some((d) => new RegExp(String.raw`\b${escapeRe(d)}\(\s*${v}\b`).test(src))) continue // pattern 4: RUNTIME-verified delegate
     if (!new RegExp(String.raw`\b${v}\.data\b`).test(src)) continue // never reads .data off it — nothing to gate
 
-    offenses.push(`${site.hook}() bound to "${site.lhs}" with no settleQuery(...)/.isError/.failed/.isFetching/known-delegate anywhere`)
+    offenses.push(`${site.hook}() bound to "${site.lhs}" with no settleQuery(...)/.isError/.failed/.isFetching/verified-delegate anywhere`)
   }
   return offenses
 }
 
 // Files verified NOT to need isError-awareness, each with why — checked by
-// hand at the time this net was built (fix-round 6, PR #81) and re-checked
-// under the call-site-precise version (fix-round 7). The bar for adding an
-// entry is a real reason, not a red test.
+// hand at the time this net was built (fix-round 6) and re-checked under
+// every later hardening round. The bar for adding an entry is a real
+// reason, not a red test.
 const EXEMPT: Record<string, string> = {
   'components/Topbar.tsx':
     "Both reads only ever supply an OPTIONAL display name (facility.data?.site.name, workload?.name), " +
@@ -195,21 +283,45 @@ const EXEMPT: Record<string, string> = {
     "stale-presented-as-current claim). There is no absence/count/status claim here for isError to gate — " +
     "this is a real, pre-existing gap in a DIFFERENT sense (a settled failed refetch keeps showing a " +
     "retained name past its own staleness with no notice, same as every OTHER retained-data notice this " +
-    "arc added elsewhere), tracked separately as it touches no code this PR's rounds 1-7 already changed.",
+    "arc added elsewhere), tracked separately as it touches no code this PR's rounds 1-8 already changed.",
 }
 
+describe('regression net: known delegate classifiers actually call settleQuery at runtime', () => {
+  // fix-round 8 — the direct codex ask: proof of EXECUTION, not text
+  // matching. If a classifier is ever refactored to skip settleQuery (dead
+  // code, an early return, a rewritten fast path — any shape), this fails
+  // here, by name, rather than silently letting every caller trusting it
+  // via pattern 4 go unguarded.
+  for (const [name, invoke] of Object.entries(KNOWN_DELEGATES)) {
+    it(`${name} calls settleQuery for a failed input`, () => {
+      vi.mocked(settleQuery).mockClear()
+      invoke()
+      expect(settleQuery).toHaveBeenCalled()
+    })
+  }
+
+  it('every settleQuery-mentioning export function is a registered, runtime-verified delegate', () => {
+    // Coverage nudge, not a trust source (see settleQueryTextCandidateNames'
+    // own doc comment): if this ever finds a name NOT in KNOWN_DELEGATES,
+    // a new classifier was added without being wired into the runtime
+    // check above — fix by adding it there with a realistic fixture, not
+    // by trusting its source text.
+    const unregistered = settleQueryTextCandidateNames().filter((n) => !(n in KNOWN_DELEGATES))
+    expect(unregistered).toEqual([])
+  })
+})
+
 describe('regression net: a read-hook consumer must consider isError for its OWN call site', () => {
-  it('the hook/delegate extraction still finds a plausible number of names (sanity, not a defect check)', () => {
-    // Guards the net itself: if the export shapes this scans for change
-    // enough that the regexes stop matching anything, the real test below
-    // would silently pass with zero call sites checked — fail loudly instead.
+  it('the hook extraction still finds a plausible number of read hooks (sanity, not a defect check)', () => {
+    // Guards the net itself: if hooks.ts's shape changes enough that the
+    // regex stops matching anything, the real test below would silently
+    // pass with zero call sites checked — fail loudly instead.
     expect(readQueryHookNames().length).toBeGreaterThan(10)
-    expect(settleQueryDelegateNames().length).toBeGreaterThanOrEqual(4) // the 4 classifiers, at minimum
   })
 
   it('flags no un-exempted call site that reads a query hook\'s data without considering isError for THAT call', () => {
     const readHooks = readQueryHookNames()
-    const delegates = settleQueryDelegateNames()
+    const delegateNames = Object.keys(KNOWN_DELEGATES)
 
     const offendersByFile: Record<string, string[]> = {}
     for (const [globKey, src] of Object.entries(RAW_SOURCES)) {
@@ -217,7 +329,7 @@ describe('regression net: a read-hook consumer must consider isError for its OWN
       if (rel === 'api/hooks.ts' || rel === 'lib/queryState.ts') continue
       if (rel in EXEMPT) continue
 
-      const offenses = fileOffenses(src, readHooks, delegates)
+      const offenses = fileOffenses(src, readHooks, delegateNames)
       if (offenses.length > 0) offendersByFile[rel] = offenses
     }
 
