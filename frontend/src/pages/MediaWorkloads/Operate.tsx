@@ -8,6 +8,7 @@ import type { FlowStepId } from '../../lib/workloadFlow'
 import { LOCKED_REASON } from './WorkloadDetail'
 import WorkloadTile from './WorkloadTile'
 import InstanceLiveModal from './InstanceLiveModal'
+import { settleQuery } from '../../lib/queryState'
 import { LIVE_TILE_CAP, useDocumentVisible, usePrefersReducedMotion } from './liveView'
 
 /**
@@ -62,7 +63,14 @@ import { LIVE_TILE_CAP, useDocumentVisible, usePrefersReducedMotion } from './li
 export default function WorkloadOperate() {
   const { slug } = useParams<{ slug: string }>()
   const { data, isLoading, error, isError, isFetching } = useMediaWorkloadsGrouped()
-  const { data: catalogData } = useCatalog()
+  // fix-round 7 (PR #81, umbrella #385, codex call-site sweep): retrofitted
+  // onto settleQuery — behavior-preserving (catalogData is only ever read
+  // via `.entries` for the display-name lookup below, which already
+  // degrades to the function key/instance id on a miss for ANY reason, so
+  // there is no absence/count/status claim here for isError to newly gate,
+  // same reasoning as Topbar.tsx's breadcrumb name — but the shared
+  // primitive is still the shape a new consumer should copy).
+  const { data: catalogData } = settleQuery(useCatalog())
   // FIX ROUND (WP-3 spec B gate, P2-3): this page used to build its rail
   // input with only two of the eight WorkloadLifecycleInput fields set —
   // allMembersBootstrapped/anyMemberObservedRunning/membersDataTrustworthy/

@@ -66,7 +66,13 @@ export default function ProvisionStage({
   // docstring names, already fixed there and in CreateWorkload.tsx).
   // fix-round 6 (PR #81, umbrella #385): retrofitted onto settleQuery.
   const { data: catalogData, loading: catalogLoading, failed: catalogFailed } = settleQuery(useCatalog())
-  const { data: user } = useCurrentUser()
+  // fix-round 7 (PR #81, umbrella #385, codex call-site sweep): retrofitted
+  // onto settleQuery — behavior-preserving (user is only ever read via
+  // `?? 'unknown'` audit-trail fallbacks below, which already degrade
+  // honestly for ANY reason `user` is undefined, same reasoning as
+  // Operate.tsx's catalogData — but the shared primitive is still the
+  // shape a new consumer should copy).
+  const { data: user } = settleQuery(useCurrentUser())
   const deployMutation = useDeployCatalog()
   const recordAwxWrite = useActivityStore((s) => s.recordAwxWrite)
   const queryClient = useQueryClient()
