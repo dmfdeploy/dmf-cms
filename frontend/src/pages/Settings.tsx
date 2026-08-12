@@ -3,6 +3,8 @@ import { QRCodeSVG } from 'qrcode.react'
 import { useCurrentUser, useCreatePasskeyInvitation } from '../api/hooks'
 import { APIError } from '../api/client'
 import { settleQuery } from '../lib/queryState'
+import PageHeading from '../components/PageHeading'
+import { usePageTitle } from '../hooks/usePageTitle'
 
 const roleBadgeStyles: Record<string, string> = {
   viewer: 'bg-blue-900/40 text-blue-300',
@@ -12,6 +14,7 @@ const roleBadgeStyles: Record<string, string> = {
 }
 
 export default function Settings() {
+  usePageTitle('Settings')
   // fix-round 7 (PR #81, umbrella #385, codex gate): `!user` alone used to
   // be the WHOLE gate for "Not authenticated" below — that read as true for
   // a genuine 401 (real) AND for any OTHER failed read (a transient 500 or
@@ -54,6 +57,7 @@ export default function Settings() {
   if (isLoading) {
     return (
       <div className="flex-1 overflow-y-auto p-6">
+        <PageHeading>Settings</PageHeading>
         <div className="animate-pulse text-muted">Loading...</div>
       </div>
     )
@@ -62,6 +66,7 @@ export default function Settings() {
   if (!user) {
     return (
       <div className="flex-1 overflow-y-auto p-6">
+        <PageHeading>Settings</PageHeading>
         <p className="text-muted">
           {unauthorized
             ? 'Not authenticated'
@@ -75,6 +80,7 @@ export default function Settings() {
 
   return (
     <div className="flex-1 overflow-y-auto p-6">
+      <PageHeading>Settings</PageHeading>
       <div className="max-w-3xl">
         {/* A settled failed refetch retains `user` from the earlier
             successful read (Art. 5 — the screen stays still) but the CURRENT

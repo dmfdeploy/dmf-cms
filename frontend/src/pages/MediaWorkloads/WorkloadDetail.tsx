@@ -24,6 +24,8 @@ import ProvisionStage from './stages/ProvisionStage'
 import ConfigureStage from './stages/ConfigureStage'
 import FinaliseStage from './stages/FinaliseStage'
 import { settleQuery } from '../../lib/queryState'
+import PageHeading from '../../components/PageHeading'
+import { usePageTitle } from '../../hooks/usePageTitle'
 
 /**
  * Workload detail — the WIZARD (umbrella #347 WO-D1, operator direction
@@ -138,10 +140,19 @@ export default function WorkloadDetail() {
   const { data, isLoading, isError, isFetching, error } = useMediaWorkloadsGrouped()
 
   const workload = data?.workloads.find((w) => w.slug === slug)
+  // Unconditional (hooks must run every render): the slug is an honest
+  // fallback before the workload record resolves, same provenance rule the
+  // breadcrumb already applies (Topbar.tsx's useBreadcrumbTrail).
+  usePageTitle(workload?.name ?? slug)
 
   if (isLoading) {
     return (
       <div className="flex-1 overflow-y-auto p-6">
+        {/* Umbrella #385 finding 5 audit, WP-4 stage 2: this branch had no
+            h1 at all — distinct from the !workload branch below, which
+            already carries its own visible "Workload not found" heading and
+            must not also get this one. */}
+        <PageHeading>{workload?.name ?? slug}</PageHeading>
         <p className="text-muted">Loading workload…</p>
       </div>
     )
@@ -150,6 +161,7 @@ export default function WorkloadDetail() {
   if (error != null) {
     return (
       <div className="flex-1 overflow-y-auto p-6">
+        <PageHeading>{workload?.name ?? slug}</PageHeading>
         <div className="panel border border-amber-500/20 bg-amber-500/10 px-4 py-3 text-sm text-amber-200">
           This workload could not be loaded right now. Retrying automatically.
         </div>
@@ -160,6 +172,7 @@ export default function WorkloadDetail() {
   if (data && !data.configured) {
     return (
       <div className="flex-1 overflow-y-auto p-6">
+        <PageHeading>{workload?.name ?? slug}</PageHeading>
         <div className="panel border border-amber-500/20 bg-amber-500/10 px-4 py-3 text-sm text-amber-200">
           Media Workloads is not configured for this environment.
         </div>
@@ -493,6 +506,7 @@ function WorkloadWizard({
 
   return (
     <div className="flex-1 overflow-y-auto p-6">
+      <PageHeading>{workload.name}</PageHeading>
       {/* The lifecycle badge — resting-grammar label + degraded flag — moved
           here from the retired hero: it is state anchored to the flow
           surface, not page chrome. The workload's display name lives in the

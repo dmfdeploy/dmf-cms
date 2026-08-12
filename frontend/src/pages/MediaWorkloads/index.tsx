@@ -5,6 +5,8 @@ import type { MediaWorkload, MediaWorkloadInstance } from '../../api/types'
 import { lifecycleBadge, type LifecycleBadge } from '../../lib/workloadFlow'
 import { settleQuery } from '../../lib/queryState'
 import LivePreviewBox from './LivePreviewBox'
+import PageHeading from '../../components/PageHeading'
+import { usePageTitle } from '../../hooks/usePageTitle'
 import {
   LIVE_TILE_CAP,
   useDocumentVisible,
@@ -134,6 +136,7 @@ function representativeInstance(wl: MediaWorkload): MediaWorkloadInstance | null
 }
 
 export default function MediaWorkloads() {
+  usePageTitle('Media Workloads')
   // fix-round 6 (PR #81, umbrella #385): retrofitted onto settleQuery — the
   // `isLoading`/`isError` names are kept at the destructure so every branch
   // below reads exactly as it did in fix-round 1-2, only now expressed
@@ -197,6 +200,7 @@ export default function MediaWorkloads() {
 
   return (
     <div className="flex-1 overflow-y-auto p-6">
+      <PageHeading>Media Workloads</PageHeading>
       <div className="flex items-start justify-end gap-4">
         {/* Pulled forward from future scope (umbrella #285 addendum): the
             operator creates a workload by naming a studio and working the

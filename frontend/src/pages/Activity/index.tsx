@@ -3,6 +3,13 @@ import { useCurrentUser } from '../../api/hooks'
 import { settleQuery } from '../../lib/queryState'
 import JobsLane from './JobsLane'
 import HistoryLane from './HistoryLane'
+import PageHeading from '../../components/PageHeading'
+import { usePageTitle } from '../../hooks/usePageTitle'
+
+const LANE_TITLE: Record<'jobs' | 'history', string> = {
+  jobs: 'Activity — Jobs',
+  history: 'Activity — History',
+}
 
 // Activity — one rail, two distinct lanes (IA 2026-06-23 §5, #174 WP3).
 // The merge condition is binding: Jobs ("what is running / launchable")
@@ -21,9 +28,21 @@ export default function Activity() {
   const { data: user, loading: userLoading, failed: userFailed } = settleQuery(useCurrentUser())
   const role = user?.role ?? 'viewer'
   const canUseJobs = !userLoading && role !== 'viewer'
+  // Called ahead of every early return/redirect below (hooks are
+  // unconditional): on the render that is about to redirect, `lane` is not
+  // yet a valid lane, so this briefly falls back to the bare 'Activity'
+  // title until the redirect lands and re-renders with a real lane.
+  usePageTitle(lane === 'jobs' || lane === 'history' ? LANE_TITLE[lane] : 'Activity')
 
   if (userLoading) {
-    return <div className="flex-1 overflow-y-auto p-6 text-sm text-muted">Loading…</div>
+    return (
+      <div className="flex-1 overflow-y-auto p-6 text-sm text-muted">
+        {/* WP-4 stage 2 rebase audit (umbrella #385 finding 5): this branch
+            had no h1 — same gap class fixed on this page's siblings. */}
+        <PageHeading>{lane === 'jobs' || lane === 'history' ? LANE_TITLE[lane] : 'Activity'}</PageHeading>
+        Loading…
+      </div>
+    )
   }
 
   if (!lane) {
@@ -40,6 +59,7 @@ export default function Activity() {
     if (userFailed && !user) {
       return (
         <div className="flex-1 overflow-y-auto p-6 text-sm text-muted">
+          <PageHeading>{LANE_TITLE.jobs}</PageHeading>
           Could not confirm your role, so the Jobs lane can&apos;t be shown right now.{' '}
           <NavLink to="/activity/history" className="text-accent underline">
             Go to History
@@ -58,6 +78,7 @@ export default function Activity() {
 
   return (
     <div className="flex-1 overflow-y-auto p-6">
+      <PageHeading>{LANE_TITLE[lane]}</PageHeading>
       <div className="flex items-center gap-2 mb-6">
         {canUseJobs && (
           <NavLink to="/activity/jobs" className={tabClass}>

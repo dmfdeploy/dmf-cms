@@ -1,5 +1,7 @@
 import HealthCore from './HealthCore'
 import RecentChanges from './RecentChanges'
+import PageHeading from '../../components/PageHeading'
+import { usePageTitle } from '../../hooks/usePageTitle'
 
 // Workspace — the single role-aware home (IA 2026-06-23 §4.1). The pinned
 // core (HealthCore + RecentChanges) is non-removable and identical for
@@ -24,8 +26,10 @@ import RecentChanges from './RecentChanges'
 // no per-role fork left at all. S2 adds an Operate widget here, gated on a
 // provisioned media workload.
 export default function Workspace() {
+  usePageTitle('Workspace')
   return (
     <div className="flex-1 overflow-y-auto p-6">
+      <PageHeading>Workspace</PageHeading>
       <HealthCore />
       <RecentChanges />
     </div>
