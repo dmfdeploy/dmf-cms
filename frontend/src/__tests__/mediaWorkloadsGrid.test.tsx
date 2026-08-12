@@ -16,6 +16,7 @@ import MediaWorkloads, { degradedReasonCopy } from '../pages/MediaWorkloads'
 import WorkloadDetail from '../pages/MediaWorkloads/WorkloadDetail'
 import WorkloadOperate from '../pages/MediaWorkloads/Operate'
 import HeaderSlotProbe from './testUtils/HeaderSlotProbe'
+import { assertNoInteractiveDescendant } from './testUtils/domAssertions'
 import {
   LIVE_TILE_CAP,
   MODAL_STATUS_POLL_MS,
@@ -1049,7 +1050,7 @@ describe('tile lifecycle badge grammar (umbrella #285 addendum)', () => {
   })
 })
 
-// codex P2-1 (umbrella #347 WP-4 round 1): Tile.tsx's `children` prop is
+// codex P2-1 (umbrella #347 WP-4, rounds 1-2): Tile.tsx's `children` prop is
 // typed React.ReactNode, so nothing at the TYPE level stops a caller from
 // putting an interactive element inside it (which WOULD land inside the
 // primary Link — the exact defect Tile exists to prevent for the `actions`
@@ -1057,9 +1058,12 @@ describe('tile lifecycle badge grammar (umbrella #285 addendum)', () => {
 // this real call site keeps `children` clean. This is the call-site-precise
 // regression net instead: render the actual busiest tile (every badge that
 // can appear simultaneously — lifecycle + degraded + reconciling) and assert
-// its primary link has zero interactive descendants.
+// its primary link has zero interactive descendants, via the shared, bounded
+// check (testUtils/domAssertions.ts) — round 1's inline check only rejected
+// button/a/[role="button"], narrower than Tile.tsx's own contract; this uses
+// the same broader definition both real call sites now share.
 describe('Tile: WorkloadEntryTile keeps the primary link free of interactive descendants (codex P2-1)', () => {
-  it("the tile's primary link contains no nested button/link/interactive-role element", async () => {
+  it("the tile's primary link contains no interactive descendant", async () => {
     mkListFetch([
       {
         slug: 'test',
@@ -1078,9 +1082,7 @@ describe('Tile: WorkloadEntryTile keeps the primary link free of interactive des
     expect(within(link).getByText('configured')).toBeTruthy()
     expect(within(link).getByText('degraded')).toBeTruthy()
     expect(within(link).getByText('reconciling')).toBeTruthy()
-    expect(link.querySelector('button')).toBeNull()
-    expect(link.querySelector('a')).toBeNull()
-    expect(link.querySelector('[role="button"]')).toBeNull()
+    assertNoInteractiveDescendant(link)
   })
 })
 
