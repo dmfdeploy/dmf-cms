@@ -93,11 +93,19 @@ describe('Facilities list (S1, #285)', () => {
   // skin pass hangs on this structure, so the structure is what is pinned.
   //
   // WP-4 (umbrella #347 Arc 4): this tile is now the shared Tile component
-  // (components/Tile.tsx) — aspect-square/card/hover live on Tile's outer,
-  // non-interactive container, a SIBLING of the Link, not the Link's own
-  // class list (so a future actions slot is never nested inside the anchor).
-  // Re-pinned against the element that now actually carries the structural
-  // commitment, rather than weakened or dropped.
+  // (components/Tile.tsx). `aspect-square` lives on Tile's outer,
+  // non-interactive container (a SIBLING of the Link, not the Link's own
+  // class list, so a future actions slot is never nested inside the anchor)
+  // — that structural commitment is what's re-pinned here, on the element
+  // that actually carries it, rather than weakened or dropped.
+  //
+  // `card` does NOT live on the container (round-4, lkirc finding): it
+  // lives on the Link itself, exactly as pre-refactor — see Tile.tsx's own
+  // comment for why (a container-side `card` silently shrinks the real
+  // clickable target versus the pre-refactor single-`<Link>` shape, since
+  // only the Link is actually clickable/focusable). Asserted here too, not
+  // just in tile.test.tsx, so this call site can't drift from Tile's actual
+  // contract independently.
   it('renders the facility as a square control-surface tile, not a wide row-card', async () => {
     stubFetch({ '/api/facility/summary': summary() })
     renderWithQuery(
@@ -109,9 +117,14 @@ describe('Facilities list (S1, #285)', () => {
     const container = link.parentElement
     const className = container?.getAttribute('class') ?? ''
     expect(className).toContain('aspect-square')
+    expect(className).not.toContain('card')
     // The row-card affordances are gone, not merely restyled.
     expect(className).not.toContain('items-center justify-between')
     expect(className).not.toContain('panel')
+    // The Link itself carries `card` — the click surface, not just the
+    // visible chrome.
+    const linkClass = link.getAttribute('class') ?? ''
+    expect(linkClass).toContain('card')
   })
 
   // codex P2-1 (umbrella #347 WP-4, rounds 1-2): Tile.tsx's `children` prop
