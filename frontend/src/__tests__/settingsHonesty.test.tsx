@@ -54,7 +54,14 @@ describe('Settings: a genuine 401 reads as "Not authenticated"; any other failur
   })
 
   it('a 500 / transient read failure does NOT claim "Not authenticated" — it says the read failed', async () => {
-    vi.stubGlobal('fetch', vi.fn(async () => new Response('boom', { status: 500 })))
+    // fix-round 8 (codex mutation-test find): a body that fails to parse as
+    // JSON at all (`new Response('boom', { status: 500 })`) throws a plain
+    // SyntaxError out of apiCall — `error instanceof APIError` is ALREADY
+    // false for that reason alone, so this assertion would pass even with
+    // the `.status === 401` check itself removed or mutated. A real,
+    // well-formed 500 (apiCall's normal error shape) is required to
+    // actually exercise that check.
+    vi.stubGlobal('fetch', vi.fn(async () => json({ error: 'boom' }, 500)))
     renderSettings()
     expect(
       await screen.findByText('Your account could not be read right now. Reload the page to try again.'),
@@ -71,7 +78,7 @@ describe('Settings: a settled failed refetch keeps the retained profile visible 
       vi.fn(async () => {
         calls += 1
         if (calls === 1) return json(identity())
-        return new Response('boom', { status: 500 })
+        return json({ error: 'boom' }, 500)
       }),
     )
     const { queryClient } = renderSettings()
