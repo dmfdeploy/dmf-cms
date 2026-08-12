@@ -19,3 +19,7 @@ export function formatDuration(fromIso: string, nowMs: number): string | null {
   const days = Math.floor(hours / 24)
   return `${days}d ${hours % 24}h`
 }
+
+// WP-5 CI gate live demo (dmfdeploy/dmfdeploy#347): deliberate type error,
+// reverted in the follow-up commit once the red `frontend` build is captured.
+export const wp5CiGateDemo: number = 'this is not a number'
