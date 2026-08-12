@@ -45,6 +45,12 @@
 #                         the digest check below — deliberately independent of
 #                         DMF_CMS_REGISTRY, which points at the cluster-local
 #                         Zot mirror, not the GHCR source of truth.
+#   DMF_CMS_IMAGE_ARCH    Platform architecture to verify the digest against
+#                         (default: arm64 — every DMF env today is Hetzner
+#                         CAX21 or the aliyun sandbox lane, both arm64).
+#                         Override if a non-arm64 env is ever added; the
+#                         script does not detect the control node's arch
+#                         for you.
 #
 # What this script checks, in order:
 #   1. The deployment spec's image *tag* matches local VERSION (necessary,
@@ -53,10 +59,17 @@
 #   2. The rollout has completed.
 #   3. The running pod's *resolved* image digest
 #      (.status.containerStatuses[0].imageID — what was actually pulled,
-#      not the requested tag) matches the arm64 platform child digest of
-#      the published GHCR index for that tag. This is the real proof: a
-#      tag match only says the right string was requested.
+#      not the requested tag) matches the DMF_CMS_IMAGE_ARCH platform child
+#      digest of the published GHCR index for that tag. This is the real
+#      proof: a tag match only says the right string was requested.
 #   4. /healthz returns 200.
+#
+# Known limitation: the digest check reads exactly one pod
+# (`.items[0]`) matching the deployment's selector. charts/dmf-cms sets
+# replicaCount: 1 by default, so this is exhaustive for the shipped chart;
+# if an operator ever scales a deployment out by hand, a stale extra
+# replica would not be caught by this check alone — `kubectl get pods -o
+# wide` on the control node is still the authority for that case.
 
 set -euo pipefail
 
@@ -70,6 +83,7 @@ NAMESPACE="${DMF_CMS_NAMESPACE:-dmf-cms}"
 DEPLOYMENT="${DMF_CMS_DEPLOYMENT:-dmf-cms}"
 HEALTHZ_URL="${DMF_CMS_HEALTHZ_URL:-https://console.dmf.example.com/healthz}"
 GHCR_IMAGE="${DMF_CMS_GHCR_IMAGE:-ghcr.io/dmfdeploy/dmf-cms}"
+IMAGE_ARCH="${DMF_CMS_IMAGE_ARCH:-arm64}"
 
 # When DMF_CMS_SSH_KEY is set, pin that identity on every ssh call instead of
 # trusting whatever the agent offers first. Empty array + `set -u` is a
@@ -95,7 +109,7 @@ if [[ -n "${DMF_CMS_SSH_KEY:-}" ]]; then
 else
     echo "SSH identity:     (default agent)"
 fi
-echo "GHCR image:       ${GHCR_IMAGE}:${VERSION}"
+echo "GHCR image:       ${GHCR_IMAGE}:${VERSION} ($IMAGE_ARCH)"
 echo "Healthz URL:      $HEALTHZ_URL"
 echo ""
 
@@ -117,7 +131,7 @@ fi
 echo "✓ image matches (tag)"
 
 # Pod readiness
-ssh "${SSH_KEY_OPTS[@]+"${SSH_KEY_OPTS[@]}"}" "$CONTROL_NODE" \
+ssh "${SSH_KEY_OPTS[@]+"${SSH_KEY_OPTS[@]}"}" -o ConnectTimeout=10 "$CONTROL_NODE" \
     "sudo kubectl --kubeconfig /etc/rancher/k3s/k3s.yaml -n $NAMESPACE rollout status deploy/$DEPLOYMENT --timeout=30s"
 
 # Digest check — the tag match above only proves the right string was
@@ -127,16 +141,41 @@ ssh "${SSH_KEY_OPTS[@]+"${SSH_KEY_OPTS[@]}"}" "$CONTROL_NODE" \
 echo ""
 echo "Digest check..."
 
-POD_SELECTOR_RAW="$(
+# Fetch the deployment's whole spec.selector as JSON and build the label
+# selector locally with python3, rather than trying to iterate the
+# matchLabels map inside the remote jsonpath expression itself. kubectl's
+# `-o jsonpath` dialect does NOT support Go-template map destructuring
+# (`{range $k,$v := ...}` is go-template syntax, not jsonpath — it fails
+# every time with "unrecognized character in action: U+002C ','").
+# Fetching the object as one plain field path and parsing it locally also
+# lets us fail loud on matchExpressions, which a matchLabels-only selector
+# string would otherwise silently ignore.
+POD_SELECTOR_JSON="$(
     ssh "${SSH_KEY_OPTS[@]+"${SSH_KEY_OPTS[@]}"}" -o ConnectTimeout=10 "$CONTROL_NODE" \
-        "sudo kubectl --kubeconfig /etc/rancher/k3s/k3s.yaml -n $NAMESPACE get deploy $DEPLOYMENT -o jsonpath='{range \$k,\$v := .spec.selector.matchLabels}{\$k}={\$v},{end}'"
+        "sudo kubectl --kubeconfig /etc/rancher/k3s/k3s.yaml -n $NAMESPACE get deploy $DEPLOYMENT -o jsonpath='{.spec.selector}'"
 )"
-POD_SELECTOR="${POD_SELECTOR_RAW%,}"
 
-if [[ -z "$POD_SELECTOR" ]]; then
-    echo "✗ could not read pod selector from deployment $DEPLOYMENT" >&2
+POD_SELECTOR="$(
+    python3 -c '
+import json, sys
+
+data = json.loads(sys.argv[1])
+if data.get("matchExpressions"):
+    sys.stderr.write(
+        "deployment selector uses matchExpressions, which this script "
+        "does not translate into a label selector\n"
+    )
+    sys.exit(1)
+labels = data.get("matchLabels") or {}
+if not labels:
+    sys.exit(1)
+print(",".join(f"{k}={v}" for k, v in sorted(labels.items())))
+' "$POD_SELECTOR_JSON"
+)" || {
+    echo "✗ could not build a pod selector from deployment $DEPLOYMENT's spec.selector" >&2
+    echo "  raw selector: $POD_SELECTOR_JSON" >&2
     exit 1
-fi
+}
 
 POD_IMAGE_ID="$(
     ssh "${SSH_KEY_OPTS[@]+"${SSH_KEY_OPTS[@]}"}" -o ConnectTimeout=10 "$CONTROL_NODE" \
@@ -165,38 +204,49 @@ GHCR_MANIFEST_JSON="$(skopeo inspect --raw "docker://${GHCR_IMAGE}:${VERSION}")"
     exit 1
 }
 
-ARM64_DIGEST="$(
+# Assumes `skopeo inspect --raw` returns a multi-platform OCI/Docker index
+# (a top-level "manifests" array) rather than a single-platform manifest —
+# true for every dmf-cms release published so far (spot-checked 0.18.0,
+# 0.19.0, 0.20.0: all publish as an index with an arm64 platform entry
+# plus a buildx attestation-manifest sibling). If the publish pipeline
+# ever changes to emit a bare single-platform manifest instead, this will
+# fail loud below rather than silently mismatch — but the fix at that
+# point is to also accept a manifest without "manifests" and treat its
+# own resolved digest as the expected one, which this does not do today.
+EXPECTED_DIGEST="$(
     python3 -c '
 import json, sys
 
 data = json.loads(sys.argv[1])
+arch = sys.argv[2]
 matches = [
     m["digest"] for m in data.get("manifests", [])
-    if m.get("platform", {}).get("architecture") == "arm64"
+    if m.get("platform", {}).get("architecture") == arch
 ]
 if not matches:
     sys.exit(1)
 print(matches[0])
-' "$GHCR_MANIFEST_JSON"
+' "$GHCR_MANIFEST_JSON" "$IMAGE_ARCH"
 )" || {
-    echo "✗ no arm64 manifest found in the published index ${GHCR_IMAGE}:${VERSION}" >&2
-    echo "  (expected a multi-arch OCI/Docker manifest list with an arm64 platform entry)" >&2
+    echo "✗ no $IMAGE_ARCH manifest found in the published index ${GHCR_IMAGE}:${VERSION}" >&2
+    echo "  (expected a multi-arch OCI/Docker manifest list with a platform entry for $IMAGE_ARCH;" >&2
+    echo "  if the publish pipeline now emits a single-platform manifest instead, this check needs updating)" >&2
     exit 1
 }
 
-echo "GHCR arm64 digest: $ARM64_DIGEST"
+echo "GHCR $IMAGE_ARCH digest: $EXPECTED_DIGEST"
 
-if [[ "$POD_DIGEST" != "$ARM64_DIGEST" ]]; then
+if [[ "$POD_DIGEST" != "$EXPECTED_DIGEST" ]]; then
     echo ""
-    echo "✗ DIGEST MISMATCH: the running pod is not the arm64 image published to GHCR."
+    echo "✗ DIGEST MISMATCH: the running pod is not the $IMAGE_ARCH image published to GHCR."
     echo "  Pod imageID:      $POD_IMAGE_ID"
-    echo "  Expected (GHCR):  ${GHCR_IMAGE}:${VERSION} (arm64) = $ARM64_DIGEST"
+    echo "  Expected (GHCR):  ${GHCR_IMAGE}:${VERSION} ($IMAGE_ARCH) = $EXPECTED_DIGEST"
     echo "  A tag match is not proof — re-run the release flow and re-verify."
     echo "  See dmf-cms/docs/DEVELOPMENT-AND-BUILD-RULES.md §4 and §7."
     exit 1
 fi
 
-echo "✓ digest matches (running pod is the arm64 image published to GHCR)"
+echo "✓ digest matches (running pod is the $IMAGE_ARCH image published to GHCR)"
 
 # Healthz
 echo ""
