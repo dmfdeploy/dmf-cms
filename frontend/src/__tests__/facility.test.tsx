@@ -24,6 +24,7 @@ import FacilityDetail, {
   type FacilityDetailQueryLike,
 } from '../pages/Facility/Detail'
 import type { FacilityDetailResponse, FacilitySummary } from '../api/types'
+import { assertNoInteractiveDescendant } from './testUtils/domAssertions'
 
 function stubFetch(routes: Record<string, unknown>) {
   vi.stubGlobal(
@@ -113,14 +114,18 @@ describe('Facilities list (S1, #285)', () => {
     expect(className).not.toContain('panel')
   })
 
-  // codex P2-1 (umbrella #347 WP-4 round 1): Tile.tsx's `children` prop is
-  // typed React.ReactNode, so nothing at the TYPE level stops this call site
-  // from putting an interactive element inside it (which would land inside
-  // the primary Link — the exact defect Tile exists to prevent for the
-  // `actions` slot). tile.test.tsx proves the slot is safe in isolation; it
-  // can't prove THIS real call site keeps `children` clean, so that's pinned
-  // here directly against the actual rendered page.
-  it("the tile's primary link contains no nested button/link/interactive-role element", async () => {
+  // codex P2-1 (umbrella #347 WP-4, rounds 1-2): Tile.tsx's `children` prop
+  // is typed React.ReactNode, so nothing at the TYPE level stops this call
+  // site from putting an interactive element inside it (which would land
+  // inside the primary Link — the exact defect Tile exists to prevent for
+  // the `actions` slot). tile.test.tsx proves the slot is safe in isolation;
+  // it can't prove THIS real call site keeps `children` clean, so that's
+  // pinned here directly against the actual rendered page, via the shared,
+  // bounded check (testUtils/domAssertions.ts) — round 1's inline check only
+  // rejected button/a/[role="button"], narrower than Tile.tsx's own
+  // contract; this uses the same broader definition mediaWorkloadsGrid's
+  // call-site test now shares.
+  it("the tile's primary link contains no interactive descendant", async () => {
     stubFetch({ '/api/facility/summary': summary() })
     renderWithQuery(
       <MemoryRouter>
@@ -128,9 +133,7 @@ describe('Facilities list (S1, #285)', () => {
       </MemoryRouter>,
     )
     const link = await screen.findByRole('link', { name: /DMF Lab/ })
-    expect(link.querySelector('button')).toBeNull()
-    expect(link.querySelector('a')).toBeNull()
-    expect(link.querySelector('[role="button"]')).toBeNull()
+    assertNoInteractiveDescendant(link)
   })
 
   it('renders an honest not-configured state, no dead link', async () => {
@@ -652,8 +655,12 @@ describe('Facility Detail page states', () => {
 // that claim is true, not just asserted: every panel renders, WorkloadCount
 // stays outside the grid, and every pre-existing assertion in this file
 // (reason banners, empty states, stale handling, above) keeps passing
-// UNMODIFIED — that's what proves the panels' internals are byte-for-byte
-// unchanged, not merely that they still render.
+// UNMODIFIED — that's what proves the table markup, columns, reason-banner
+// branching, and empty-state text in all four panels are unchanged (codex
+// round-2 P3-2 — an earlier version of this comment said "byte-for-byte
+// unchanged" without qualification, which overstated it: PlatformServices/
+// CapacityPanel each carry exactly their directed subtitle edit, see
+// Detail.tsx's own comment above the grid wrapper for the precise split).
 describe('Facility Detail — panel regroup (WP-4, umbrella #347)', () => {
   it('renders all four data-table panels inside the grid wrapper, in a 2-col grid', async () => {
     renderDetail('dmf-lab', { '/api/facility/dmf-lab/detail': detailPayload() })

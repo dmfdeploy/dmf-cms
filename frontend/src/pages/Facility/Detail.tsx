@@ -207,14 +207,21 @@ function Loaded({ data }: { data: FacilityDetailResponse }) {
 
       {/* WP-4 (umbrella #347 Arc 4): the four DATA-TABLE panels regroup from
           a vertical stack into a 2-row x 2-col grid at THIS wrapper/layout
-          level only — every panel function below is byte-for-byte
-          unchanged, not just visually unchanged; the grid wrapper is the
-          only new markup. WorkloadCountPanel is deliberately NOT a fifth
-          grid cell: it's prose summarising a different data domain (media
-          workload counts, not facility hardware truth) and reads as a coda
-          after the four hardware facts, so it stays outside/below the grid
-          in its unchanged full-width position rather than being folded into
-          the layout the grid exists to organise. */}
+          level only. Precisely (codex round-2 P3-2 — an earlier version of
+          this comment said "every panel function below is byte-for-byte
+          unchanged", which the diff contradicts): NodesPanel and
+          StoragePanel have zero edits, full stop; PlatformServicesPanel and
+          CapacityPanel each have exactly their directed subtitle change
+          (delete / keep-visible) plus an explanatory comment, nothing else.
+          In all four, the table markup, columns, reason-banner branching,
+          and empty-state text are unchanged — that's the invariant that
+          actually matters, and it holds. The grid wrapper below is the only
+          new markup at THIS level. WorkloadCountPanel is deliberately NOT a
+          fifth grid cell: it's prose summarising a different data domain
+          (media workload counts, not facility hardware truth) and reads as
+          a coda after the four hardware facts, so it stays outside/below
+          the grid in its unchanged full-width position rather than being
+          folded into the layout the grid exists to organise. */}
       <div className="grid grid-cols-1 gap-6 lg:grid-cols-2">
         <NodesPanel data={data} />
         <PlatformServicesPanel data={data} />
