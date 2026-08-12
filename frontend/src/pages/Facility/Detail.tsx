@@ -205,10 +205,22 @@ function Loaded({ data }: { data: FacilityDetailResponse }) {
         </div>
       )}
 
-      <NodesPanel data={data} />
-      <PlatformServicesPanel data={data} />
-      <StoragePanel data={data} />
-      <CapacityPanel data={data} />
+      {/* WP-4 (umbrella #347 Arc 4): the four DATA-TABLE panels regroup from
+          a vertical stack into a 2-row x 2-col grid at THIS wrapper/layout
+          level only — every panel function below is byte-for-byte
+          unchanged, not just visually unchanged; the grid wrapper is the
+          only new markup. WorkloadCountPanel is deliberately NOT a fifth
+          grid cell: it's prose summarising a different data domain (media
+          workload counts, not facility hardware truth) and reads as a coda
+          after the four hardware facts, so it stays outside/below the grid
+          in its unchanged full-width position rather than being folded into
+          the layout the grid exists to organise. */}
+      <div className="grid grid-cols-1 gap-6 lg:grid-cols-2">
+        <NodesPanel data={data} />
+        <PlatformServicesPanel data={data} />
+        <StoragePanel data={data} />
+        <CapacityPanel data={data} />
+      </div>
       <WorkloadCountPanel />
     </>
   )
@@ -269,13 +281,21 @@ function PlatformServicesPanel({ data }: { data: FacilityDetailResponse }) {
   const { platform_services: services } = data
   return (
     <div className="panel mb-6">
+      {/* WP-4 (umbrella #347 Arc 4): subtitle deleted outright (not moved
+          behind an affordance) — its content is redundant against what this
+          table's own rows already convey. The Version column's cell text
+          for an unlinked service is one of the two explicit, do-not-touch
+          empty states (§6; umbrella #339): "no matching pods in cluster
+          metrics" vs "no cluster location declared for this service", both
+          IN THE SAME ROW as the Access column's bare "—". By the time a
+          reader has parsed even one row, the table has already taught "this
+          page states what was checked, not what's absent" in place — the
+          subtitle's "no link is not the same as not there" restates a
+          lesson the row itself is already carrying, immediately adjacent to
+          where it applies. (Compare CapacityPanel below, whose subtitle
+          stays — its content is NOT recoverable from the table alone.) */}
       <div className="px-6 py-4 border-b border-panel">
         <h2 className="text-lg font-semibold">Platform services</h2>
-        <p className="text-xs text-muted mt-1">
-          As-deployed versions read from the containers running in the cluster; access links
-          from its ingress objects. A service can be running without an ingress — no link is
-          not the same as not there.
-        </p>
       </div>
       {services.reason !== '' ? (
         <SectionBanner reason={services.reason} />
@@ -386,6 +406,17 @@ function CapacityPanel({ data }: { data: FacilityDetailResponse }) {
     <div className="panel mb-6">
       <div className="px-6 py-4 border-b border-panel">
         <h2 className="text-lg font-semibold">Capacity</h2>
+        {/* WP-4 (umbrella #347 Arc 4): kept, unchanged, visible (not moved
+            behind an info affordance) — its "Requests committed is not
+            usage" sentence is not recoverable from the "Allocatable" /
+            "Requests committed" column headers alone, and guards the exact
+            misreading direction this page is deliberately designed against
+            (facility.test.tsx pins the committed/allocatable header wording
+            itself specifically because "used"/"free" is the regression this
+            page must not drift back into — see that test's own comment).
+            The subtitle carries the same anti-misreading intent one level
+            further than the headers alone do, so it stays at default level
+            rather than one tap away. */}
         <p className="text-xs text-muted mt-1">
           Scheduler truth for {capacity.node_name ?? 'this facility'}: what the node can hold, and what
           is already committed against it. Requests committed is not usage — it is what the

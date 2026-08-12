@@ -1,11 +1,14 @@
 import { useMemo } from 'react'
 import { Link } from 'react-router-dom'
+import { AlertCircle, AlertTriangle, CheckCircle2, HelpCircle, RefreshCw, type LucideIcon } from 'lucide-react'
 import { useMediaWorkloadsGrouped } from '../../api/hooks'
 import type { MediaWorkload, MediaWorkloadInstance } from '../../api/types'
 import { lifecycleBadge, type LifecycleBadge } from '../../lib/workloadFlow'
 import { settleQuery } from '../../lib/queryState'
 import LivePreviewBox from './LivePreviewBox'
 import PageHeading from '../../components/PageHeading'
+import Tile from '../../components/Tile'
+import Badge, { type BadgeTone } from '../../components/Badge'
 import { usePageTitle } from '../../hooks/usePageTitle'
 import {
   LIVE_TILE_CAP,
@@ -43,7 +46,7 @@ import {
  * ADDENDUM (umbrella #285, operator direction 2026-08-01) adds three things
  * without touching any of the above: the tile's lifecycle badge now renders
  * lib/workloadFlow.ts's resting-grammar participle instead of the raw
- * `provision`/`configure`/`operate`/`unknown` token (see BADGE_GRAMMAR_CLASS
+ * `provision`/`configure`/`operate`/`unknown` token (see BADGE_GRAMMAR_TONE
  * below for why it never guesses at progress this page cannot observe); a
  * "Create media workload" entry point links out to the draft flow a sibling
  * change builds at /media-workloads/new; and the Unassigned group — defined
@@ -55,16 +58,33 @@ import {
  */
 
 /**
- * Badge styling keyed by GRAMMAR, not by the label string (umbrella #285
- * addendum). The tile never sees `in-flight` today — the grouped-inventory
- * payload carries no job overlay — but the map still covers it rather than
- * silently mis-colouring the day a caller adds one, and it costs nothing to
- * keep the three states in one place next to their titles below.
+ * Badge tone+icon keyed by GRAMMAR, not by the label string (umbrella #285
+ * addendum, migrated onto the shared Badge component in WP-4/#347). The tile
+ * never sees `in-flight` today — the grouped-inventory payload carries no job
+ * overlay — but the map still covers it rather than silently mis-colouring
+ * the day a caller adds one, and it costs nothing to keep the three states in
+ * one place next to their titles below.
+ *
+ * Tone/icon reasoning (Art. 11 — colour is never the only signal): `resting`
+ * names a COMPLETED step (past participle — see workloadFlow.ts's own
+ * RESTING_GRAMMAR docstring), so a checkmark reads correctly as "done".
+ * `in-flight` gets a static (non-spinning) refresh glyph for "in motion"
+ * without committing to continuous animation. `unknown` gets a plain
+ * question mark. `in-flight` and `reconciling` below share the same amber
+ * hue they always have, but now carry DIFFERENT icons — before this, the two
+ * were visually identical except for label text, which is exactly the
+ * ambiguity Art. 11 exists to close.
  */
-const BADGE_GRAMMAR_CLASS: Record<LifecycleBadge['grammar'], string> = {
-  resting: 'bg-blue-500/20 text-blue-300',
-  'in-flight': 'bg-amber-500/20 text-amber-300',
-  unknown: 'bg-white/10 text-muted',
+const BADGE_GRAMMAR_TONE: Record<LifecycleBadge['grammar'], BadgeTone> = {
+  resting: 'info',
+  'in-flight': 'progress',
+  unknown: 'neutral',
+}
+
+const BADGE_GRAMMAR_ICON: Record<LifecycleBadge['grammar'], LucideIcon> = {
+  resting: CheckCircle2,
+  'in-flight': RefreshCw,
+  unknown: HelpCircle,
 }
 
 /**
@@ -335,13 +355,15 @@ function WorkloadEntryTile({
   const reconciling = workload.instances.some((i) => i.reconcile_pending)
 
   return (
-    <Link
+    // Square control-surface tile, now the shared Tile.tsx container
+    // (umbrella #347 Arc 4 WP-4): aspect-square is still the structural
+    // commitment the skin pass depends on, owned by Tile's outer div. The
+    // primary Link and everything below are unchanged from the pre-refactor
+    // single-<Link> shape — Tile just gives a future actions affordance a
+    // sibling slot instead of a spot nested inside the anchor.
+    <Tile
       to={`/media-workloads/${encodeURIComponent(workload.slug)}`}
-      // Square control-surface tile. aspect-square is the structural
-      // commitment the skin pass depends on; everything inside lays out
-      // within it rather than driving its height.
-      className="card group flex aspect-square flex-col gap-3 overflow-hidden rounded-xl transition hover:border-accent/40 hover:bg-white/5"
-      aria-label={`Open ${workload.name} workload detail`}
+      ariaLabel={`Open ${workload.name} workload detail`}
     >
       {rep ? (
         <LivePreviewBox
@@ -359,22 +381,20 @@ function WorkloadEntryTile({
       <div className="flex min-w-0 flex-1 flex-col gap-2">
         <div className="flex flex-wrap items-center gap-2">
           <h2 className="truncate text-base font-semibold capitalize">{workload.name}</h2>
-          <span
-            className={`badge shrink-0 text-xs ${BADGE_GRAMMAR_CLASS[badge.grammar]}`}
+          <Badge
+            tone={BADGE_GRAMMAR_TONE[badge.grammar]}
+            icon={BADGE_GRAMMAR_ICON[badge.grammar]}
+            label={badge.label}
             title={BADGE_TITLE[badge.grammar](badge.label)}
-          >
-            {badge.label}
-          </span>
-          {workload.health === 'degraded' && (
-            <span className="badge shrink-0 bg-red-500/20 text-xs text-red-300">degraded</span>
-          )}
+          />
+          {workload.health === 'degraded' && <Badge tone="danger" icon={AlertCircle} label="degraded" />}
           {reconciling && (
-            <span
-              className="badge shrink-0 bg-amber-900/30 text-xs text-amber-300"
+            <Badge
+              tone="warning"
+              icon={AlertTriangle}
+              label="reconciling"
               title="At least one member's requested and observed state disagree — waiting to converge"
-            >
-              reconciling
-            </span>
+            />
           )}
         </div>
 
@@ -384,7 +404,7 @@ function WorkloadEntryTile({
           {workload.functions.map((f) => `${f.function_key}(${f.running}/${f.count})`).join(', ')}
         </p>
       </div>
-    </Link>
+    </Tile>
   )
 }
 
