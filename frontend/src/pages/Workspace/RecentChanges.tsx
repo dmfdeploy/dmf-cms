@@ -36,31 +36,51 @@ export default function RecentChanges() {
       <div className="divide-y divide-panel">
         {state.phase === 'loading' ? (
           <div className="px-6 py-6 text-center text-muted text-sm">Loading recent changes…</div>
-        ) : recent.length === 0 ? (
-          // Every empty state is designed and names its own cause (Art. 8).
-          // A not-running AWX is not a console fault and must not read as
-          // one, and it must not read as "nothing happened" either.
-          <div className="px-6 py-6 text-center text-muted text-sm">
-            {changesEmptyCopy(state.phase)}
-          </div>
         ) : (
-          recent.map((job) => (
-            <div key={job.id} className="px-6 py-3 flex items-center justify-between gap-4">
-              <div className="flex-1 min-w-0">
-                {/* Operator language at default (Art. 3/8): "what changed" +
-                    plain outcome. The raw AWX template name is system jargon —
-                    demoted to a muted secondary line, not the headline. */}
-                <p className="text-sm font-medium truncate">{describeJob(job.name)}</p>
-                <p className="text-xs text-muted/70 truncate">{job.name}</p>
+          <>
+            {/* fix-round 4 (PR #81, codex sibling sweep): a settled failed
+                refetch ('error' phase) retains TanStack Query's last-good
+                `jobs` — the length===0 branch below never fires when rows
+                are retained, so this pinned Workspace widget used to render
+                them with no notice at all, presenting last-good data as
+                current after the poll that would have confirmed it had
+                failed. Same fix as the Activity → History Jobs panel this
+                widget shares its classifier with (Art. 1: the two states
+                must never disagree, so neither may drift on this either). */}
+            {state.phase === 'error' && (
+              <div className="px-6 py-2 text-xs text-amber-300 bg-amber-500/10">
+                {changesEmptyCopy('error')}
               </div>
-              <div className="flex items-center gap-3 shrink-0 text-xs text-muted">
-                <span className={`badge text-xs ${statusColor[job.status] || 'badge-status-pending'}`}>
-                  {jobOutcome(job.status)}
-                </span>
-                {job.started && <span>{new Date(job.started).toLocaleString()}</span>}
-              </div>
-            </div>
-          ))
+            )}
+            {recent.length === 0 ? (
+              // Every empty state is designed and names its own cause (Art. 8).
+              // A not-running AWX is not a console fault and must not read as
+              // one, and it must not read as "nothing happened" either.
+              state.phase !== 'error' && (
+                <div className="px-6 py-6 text-center text-muted text-sm">
+                  {changesEmptyCopy(state.phase)}
+                </div>
+              )
+            ) : (
+              recent.map((job) => (
+                <div key={job.id} className="px-6 py-3 flex items-center justify-between gap-4">
+                  <div className="flex-1 min-w-0">
+                    {/* Operator language at default (Art. 3/8): "what changed" +
+                        plain outcome. The raw AWX template name is system jargon —
+                        demoted to a muted secondary line, not the headline. */}
+                    <p className="text-sm font-medium truncate">{describeJob(job.name)}</p>
+                    <p className="text-xs text-muted/70 truncate">{job.name}</p>
+                  </div>
+                  <div className="flex items-center gap-3 shrink-0 text-xs text-muted">
+                    <span className={`badge text-xs ${statusColor[job.status] || 'badge-status-pending'}`}>
+                      {jobOutcome(job.status)}
+                    </span>
+                    {job.started && <span>{new Date(job.started).toLocaleString()}</span>}
+                  </div>
+                </div>
+              ))
+            )}
+          </>
         )}
       </div>
     </div>

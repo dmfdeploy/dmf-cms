@@ -126,6 +126,76 @@ describe('Facilities list (S1, #285)', () => {
     expect(await screen.findByText(/NetBox is unreachable/)).toBeTruthy()
     expect(screen.queryByRole('link')).toBeNull()
   })
+
+  // fix-round 4 (PR #81, codex sibling sweep): this page ignored
+  // `summary.isError` entirely — a settled failed read with NO retained
+  // data ever fell through FacilityEntry's whole reason ladder to `!site`,
+  // which reads "NetBox has no site recorded yet" — a real environment
+  // fact this is not; it misstated a read failure as a facility that was
+  // never provisioned.
+  it('a settled failed read with no retained data reads honestly, never "no site recorded yet"', async () => {
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(async () => new Response('boom', { status: 500 })),
+    )
+    renderWithQuery(
+      <MemoryRouter>
+        <Facility />
+      </MemoryRouter>,
+    )
+    expect(await screen.findByText('The facility inventory could not be read. Retrying automatically.')).toBeTruthy()
+    expect(screen.queryByText(/no site recorded yet/)).toBeNull()
+    expect(screen.queryByRole('link')).toBeNull()
+  })
+
+  // Hold-then-reject, not first-load: a settled failed refetch must not
+  // suppress a retained, previously-successful tile (Art. 5) — but must
+  // add a notice, not silently present it as a current read.
+  it('a settled failed refetch keeps the retained tile visible but adds a notice', async () => {
+    vi.useFakeTimers()
+    let calls = 0
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(async () => {
+        calls += 1
+        if (calls === 1) {
+          return new Response(JSON.stringify(summary()), {
+            status: 200,
+            headers: { 'Content-Type': 'application/json' },
+          })
+        }
+        return new Response('boom', { status: 500 })
+      }),
+    )
+    const queryClient = new QueryClient({ defaultOptions: { queries: { retry: false } } })
+    render(
+      <QueryClientProvider client={queryClient}>
+        <MemoryRouter>
+          <Facility />
+        </MemoryRouter>
+      </QueryClientProvider>,
+    )
+
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(60)
+    })
+    const link = screen.getByRole('link', { name: /DMF Lab/ })
+    expect(link).toBeTruthy()
+    expect(screen.queryByText(/could not be refreshed/)).toBeNull()
+
+    // Advance past useFacilitySummary's 60s refetchInterval.
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(60_100)
+    })
+
+    // Retained tile STILL shown (Art. 5) — now qualified by a notice.
+    expect(screen.getByRole('link', { name: /DMF Lab/ })).toBeTruthy()
+    expect(
+      screen.getByText(
+        'The facility inventory could not be refreshed just now — showing the last successful read. Retrying automatically.',
+      ),
+    ).toBeTruthy()
+  })
 })
 
 // ---------------------------------------------------------------------------
@@ -269,6 +339,73 @@ describe('Facility Detail page states', () => {
     expect(screen.getByText('4.0 GiB')).toBeTruthy()
     expect(screen.getByText('500m')).toBeTruthy()
     expect(screen.getByText('512 MiB')).toBeTruthy()
+  })
+
+  // fix-round 4 (PR #81, codex sibling sweep): classifyFacilityDetail only
+  // treated isError as authoritative when NO data was ever retained
+  // (`isError && !q.data`) — a settled failed refetch with a RETAINED
+  // successful payload still classified as 'loaded' with no staleness
+  // notice at all, presenting the whole facility-detail page (nodes,
+  // storage, capacity, the works) as current after the read that would
+  // have confirmed it had failed. Hold-then-reject, not first-load.
+  it('a settled failed refetch keeps the retained page visible but adds a staleness notice', async () => {
+    vi.useFakeTimers()
+    let calls = 0
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(async (input: RequestInfo | URL) => {
+        const url = (typeof input === 'string' ? input : (input as Request).url).toString()
+        if (url.endsWith('/api/facility/dmf-lab/detail')) {
+          calls += 1
+          if (calls === 1) {
+            return new Response(JSON.stringify(detailPayload()), {
+              status: 200,
+              headers: { 'Content-Type': 'application/json' },
+            })
+          }
+          return new Response('boom', { status: 500 })
+        }
+        if (url.endsWith('/api/media-workloads/grouped')) {
+          return new Response(
+            JSON.stringify({ configured: true, degraded: false, scope: [], workloads: [], invalid_instances: [] }),
+            { status: 200, headers: { 'Content-Type': 'application/json' } },
+          )
+        }
+        throw new Error(`unrouted fetch in test: ${url}`)
+      }),
+    )
+    const queryClient = new QueryClient({ defaultOptions: { queries: { retry: false } } })
+    render(
+      <QueryClientProvider client={queryClient}>
+        <MemoryRouter initialEntries={['/facilities/dmf-lab']}>
+          <Routes>
+            <Route path="/facilities/:site" element={<FacilityDetail />} />
+          </Routes>
+        </MemoryRouter>
+      </QueryClientProvider>,
+    )
+
+    // First (successful) read settles — real content, no staleness notice.
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(60)
+    })
+    expect(screen.getByText('Allocatable')).toBeTruthy()
+    expect(screen.queryByText(/could not be refreshed/)).toBeNull()
+
+    // Advance past useFacilityDetail's 60s refetchInterval so the
+    // background refetch fires and rejects, while the old (successful)
+    // detail payload stays retained.
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(60_100)
+    })
+
+    // The retained page content is STILL shown (Art. 5) — now qualified.
+    expect(screen.getByText('Allocatable')).toBeTruthy()
+    expect(
+      screen.getByText(
+        'Facility detail could not be refreshed just now — showing the last successful read. Retrying automatically.',
+      ),
+    ).toBeTruthy()
   })
 
   // umbrella #339 item 1. The page shipped saying "not found in this cluster"

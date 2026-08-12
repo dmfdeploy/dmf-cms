@@ -34,7 +34,16 @@ export function classifyChanges(q: ChangesQueryLike): ChangesState {
 
   let phase: ChangesPhase
   if (q.isLoading && !q.data) phase = 'loading'
-  else if (q.isError && !q.data) phase = 'error'
+  // fix-round 4 (PR #81): a SETTLED failed refetch wins even when TanStack
+  // Query has retained a prior successful `data` (it does, by default,
+  // across a failed background refetch) — checking `isError` only when
+  // `!q.data` let a stale, previously-honest reason token re-authorize an
+  // 'ok' read the CURRENT fetch never established. Same fix, same shape,
+  // as classifyForgejo's own `isError` check above (fix-round P2-3) —
+  // codex's sibling sweep found this sibling classifier had the identical
+  // gap, consumed by both HistoryLane's Recent Jobs panel and Workspace's
+  // RecentChanges widget.
+  else if (q.isError) phase = 'error'
   else {
     switch (q.data?.reason) {
       case 'awx-not-running':

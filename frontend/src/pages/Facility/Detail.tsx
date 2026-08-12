@@ -45,16 +45,22 @@ export interface FacilityDetailQueryLike {
 export interface FacilityDetailState {
   phase: FacilityDetailPhase
   data?: FacilityDetailResponse
+  // fix-round 4 (PR #81, codex sibling sweep): true when phase is 'loaded'
+  // but the CURRENT read failed — `data` is retained from a prior success,
+  // not confirmed current. A settled isError with data retained must NOT
+  // suppress the page (Art. 5 — the screen stays still; the same reasoning
+  // already applied to MediaWorkloads/HistoryLane/RecentChanges), only
+  // qualify it — 'unreadable' stays reserved for "nothing to show at all".
+  stale: boolean
 }
 
 export function classifyFacilityDetail(q: FacilityDetailQueryLike): FacilityDetailState {
-  if (q.isLoading && !q.data) return { phase: 'loading' }
-  if (q.isError && !q.data) return { phase: 'unreadable' }
-  if (!q.data) return { phase: 'unreadable' }
+  if (q.isLoading && !q.data) return { phase: 'loading', stale: false }
+  if (!q.data) return { phase: 'unreadable', stale: false }
   if (!q.data.prometheus_configured && !q.data.netbox_configured) {
-    return { phase: 'unconfigured', data: q.data }
+    return { phase: 'unconfigured', data: q.data, stale: false }
   }
-  return { phase: 'loaded', data: q.data }
+  return { phase: 'loaded', data: q.data, stale: q.isError }
 }
 
 // Reason-token -> operator-language copy (Art. 3: plain words, no system
@@ -134,7 +140,19 @@ export default function FacilityDetail() {
         </div>
       )}
 
-      {state.phase === 'loaded' && state.data && <Loaded data={state.data} />}
+      {state.phase === 'loaded' && state.data && (
+        <>
+          {state.stale && (
+            <div className="panel py-3 px-6 mb-6 border-warn/40">
+              <p className="text-sm text-warn">
+                Facility detail could not be refreshed just now — showing the last successful
+                read. Retrying automatically.
+              </p>
+            </div>
+          )}
+          <Loaded data={state.data} />
+        </>
+      )}
     </div>
   )
 }

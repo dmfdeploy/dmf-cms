@@ -119,42 +119,64 @@ export default function HistoryLane() {
         <div className="divide-y divide-panel">
           {isLoading ? (
             <div className="px-6 py-8 text-center text-muted text-sm">Loading jobs...</div>
-          ) : jobsState.jobs.length === 0 ? (
-            // Was a bare "No recent jobs", which claimed AWX had answered
-            // even when it had not. The token now names the real cause.
-            <div className="px-6 py-8 text-center text-muted text-sm">
-              {changesEmptyCopy(jobsState.phase)}
-            </div>
           ) : (
-            jobsState.jobs.slice(0, 10).map((job) => (
-              <div key={job.id} className="px-6 py-4 hover:bg-panel/30 transition">
-                <div className="flex items-start justify-between">
-                  <div className="flex-1">
-                    {/* Operator language leads (Art. 3/8); the raw AWX
-                        template name stays as a muted expert line — the
-                        History lane still surfaces the catalog key (demo
-                        runbook §7a), just no longer as the headline. */}
-                    <h3 className="font-semibold text-sm">{describeJob(job.name)}</h3>
-                    <p className="text-xs text-muted/70 mt-0.5">{job.name}</p>
-                    <div className="flex items-center gap-2 mt-2 text-xs text-muted">
-                      <span className={`inline-block px-2 py-1 rounded font-semibold ${
-                        job.status === 'successful' ? 'bg-green-500/20 text-green-400' :
-                        job.status === 'failed' ? 'bg-red-500/20 text-red-400' :
-                        job.status === 'running' ? 'bg-blue-500/20 text-blue-400' :
-                        'bg-gray-500/20 text-gray-400'
-                      }`}>
-                        {jobOutcome(job.status)}
-                      </span>
-                      <span>Run {job.id}</span>
-                      {job.elapsed && <span>{job.elapsed.toFixed(1)}s</span>}
+            <>
+              {/* fix-round 4 (PR #81, codex sibling sweep): a settled failed
+                  refetch ('error' phase) retains TanStack Query's last-good
+                  `jobs` — the length===0 branch below never fires when rows
+                  are retained, so this used to render them with no notice
+                  at all, exactly the History-lane defect fix-round 3 closed
+                  for the commits/pulls panels. Same fix: a notice
+                  independent of emptiness; retained rows stay visible
+                  (Art. 5). Every OTHER phase here (not-running/unreachable/
+                  unconfigured) is a fresh, real 200 whose `jobs` is always
+                  [] by the backend's own fail-soft contract, so the
+                  length===0 branch already covers those correctly. */}
+              {jobsState.phase === 'error' && (
+                <div className="px-6 py-2 text-xs text-amber-300 bg-amber-500/10">
+                  {changesEmptyCopy('error')}
+                </div>
+              )}
+              {jobsState.jobs.length === 0 ? (
+                // Was a bare "No recent jobs", which claimed AWX had answered
+                // even when it had not. The token now names the real cause.
+                jobsState.phase !== 'error' && (
+                  <div className="px-6 py-8 text-center text-muted text-sm">
+                    {changesEmptyCopy(jobsState.phase)}
+                  </div>
+                )
+              ) : (
+                jobsState.jobs.slice(0, 10).map((job) => (
+                  <div key={job.id} className="px-6 py-4 hover:bg-panel/30 transition">
+                    <div className="flex items-start justify-between">
+                      <div className="flex-1">
+                        {/* Operator language leads (Art. 3/8); the raw AWX
+                            template name stays as a muted expert line — the
+                            History lane still surfaces the catalog key (demo
+                            runbook §7a), just no longer as the headline. */}
+                        <h3 className="font-semibold text-sm">{describeJob(job.name)}</h3>
+                        <p className="text-xs text-muted/70 mt-0.5">{job.name}</p>
+                        <div className="flex items-center gap-2 mt-2 text-xs text-muted">
+                          <span className={`inline-block px-2 py-1 rounded font-semibold ${
+                            job.status === 'successful' ? 'bg-green-500/20 text-green-400' :
+                            job.status === 'failed' ? 'bg-red-500/20 text-red-400' :
+                            job.status === 'running' ? 'bg-blue-500/20 text-blue-400' :
+                            'bg-gray-500/20 text-gray-400'
+                          }`}>
+                            {jobOutcome(job.status)}
+                          </span>
+                          <span>Run {job.id}</span>
+                          {job.elapsed && <span>{job.elapsed.toFixed(1)}s</span>}
+                        </div>
+                      </div>
+                      <div className="text-right text-xs text-muted">
+                        {job.started && new Date(job.started).toLocaleString()}
+                      </div>
                     </div>
                   </div>
-                  <div className="text-right text-xs text-muted">
-                    {job.started && new Date(job.started).toLocaleString()}
-                  </div>
-                </div>
-              </div>
-            ))
+                ))
+              )}
+            </>
           )}
         </div>
       </div>
