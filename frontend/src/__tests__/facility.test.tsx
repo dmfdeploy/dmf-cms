@@ -702,6 +702,40 @@ describe('Facility Detail — panel regroup (WP-4, umbrella #347)', () => {
     expect(screen.queryByText(/As-deployed versions read from the containers/)).toBeNull()
     expect(screen.getByText(/Requests committed is not usage/)).toBeTruthy()
   })
+
+  // lkirc round-5 finding: each panel's own outer div kept `mb-6` from when
+  // they were a vertical stack, which — inside a `gap-6` grid — ADDS to the
+  // gap rather than replacing it (a grid item's margin is independent of
+  // grid `gap`), doubling the intended 1.5rem spacing between rows to 3rem.
+  // Class-list tripwire only: jsdom can't render real layout, so it can't
+  // measure the actual pixel gap this fix closes — that's verified with a
+  // real browser (browse skill against the compiled CSS), recorded in the
+  // PR and in Loaded()'s own comment. This test guards against a future
+  // edit reintroducing `mb-6` on a panel (or removing it from the grid
+  // wrapper) without anyone measuring the regression again.
+  it('panels carry no mb-6 of their own; the grid wrapper carries it instead', async () => {
+    renderDetail('dmf-lab', { '/api/facility/dmf-lab/detail': detailPayload() })
+    const nodesHeading = await screen.findByRole('heading', { name: 'Nodes', level: 2 })
+    const platformHeading = screen.getByRole('heading', { name: 'Platform services', level: 2 })
+    const storageHeading = screen.getByRole('heading', { name: 'Storage', level: 2 })
+    const capacityHeading = screen.getByRole('heading', { name: 'Capacity', level: 2 })
+
+    const grid = nodesHeading.closest('.grid')
+    expect(grid?.className ?? '').toContain('mb-6')
+
+    for (const heading of [nodesHeading, platformHeading, storageHeading, capacityHeading]) {
+      const panel = heading.closest('.panel')
+      expect(panel).toBeTruthy()
+      expect(panel?.className ?? '').not.toContain('mb-6')
+    }
+
+    // WorkloadCountPanel is OUTSIDE the grid (a normal block sibling, not a
+    // grid item) — its own `mb-6` never interacted with `gap-6` in the
+    // first place, so it's deliberately unaffected by this fix.
+    const workloadHeading = await screen.findByRole('heading', { name: 'Media workloads', level: 2 })
+    const workloadPanel = workloadHeading.closest('.panel')
+    expect(workloadPanel?.className ?? '').toContain('mb-6')
+  })
 })
 
 // umbrella #385 (hard gate 1, sweep): the media-workloads count line reused

@@ -221,8 +221,29 @@ function Loaded({ data }: { data: FacilityDetailResponse }) {
           (media workload counts, not facility hardware truth) and reads as
           a coda after the four hardware facts, so it stays outside/below
           the grid in its unchanged full-width position rather than being
-          folded into the layout the grid exists to organise. */}
-      <div className="grid grid-cols-1 gap-6 lg:grid-cols-2">
+          folded into the layout the grid exists to organise.
+
+          SPACING (lkirc round-5 finding): each of the four panels' own
+          outer div carries `mb-6` — a leftover from when they were a
+          vertical stack and each needed its own bottom margin to space
+          from the next. That's a WRAPPER spacing utility, not "internal"
+          table/banner/empty-state markup (the invariant rounds 2-3 were
+          actually defending), so trimming it here doesn't reopen that
+          invariant — it's the same category of edit as adding this grid
+          div in the first place. Left in place, `gap-6` on this grid
+          ADDS to each panel's own `mb-6` rather than replacing it (a grid
+          item's margin is independent of and additional to grid `gap`),
+          doubling the intended 1.5rem spacing to 3rem between panels and
+          leaving stray trailing space below the grid. `mb-6` moved from
+          the four panels (now plain `className="panel"`, see each
+          function below) onto THIS wrapper instead, so `gap-6` alone
+          spaces the grid's own cells (matching the original 1.5rem), and
+          this div's own margin-bottom reproduces the original 1.5rem gap
+          before WorkloadCountPanel — verified with a real browser
+          (getBoundingClientRect against the compiled CSS, browse skill),
+          not reasoned about in the abstract; see the PR for the measured
+          numbers. */}
+      <div className="grid grid-cols-1 gap-6 mb-6 lg:grid-cols-2">
         <NodesPanel data={data} />
         <PlatformServicesPanel data={data} />
         <StoragePanel data={data} />
@@ -236,7 +257,10 @@ function Loaded({ data }: { data: FacilityDetailResponse }) {
 function NodesPanel({ data }: { data: FacilityDetailResponse }) {
   const { nodes } = data
   return (
-    <div className="panel mb-6">
+    // lkirc round-5: `mb-6` dropped — the grid wrapper's own `gap-6` spaces
+    // this from its siblings now; keeping both would double it. See the
+    // wrapper comment in Loaded() for the full reasoning.
+    <div className="panel">
       <div className="px-6 py-4 border-b border-panel">
         <h2 className="text-lg font-semibold">Nodes</h2>
       </div>
@@ -287,7 +311,9 @@ function NodesPanel({ data }: { data: FacilityDetailResponse }) {
 function PlatformServicesPanel({ data }: { data: FacilityDetailResponse }) {
   const { platform_services: services } = data
   return (
-    <div className="panel mb-6">
+    // lkirc round-5: `mb-6` dropped — see the grid wrapper comment in
+    // Loaded() for why (double-spacing with the grid's own `gap-6`).
+    <div className="panel">
       {/* WP-4 (umbrella #347 Arc 4): subtitle deleted outright (not moved
           behind an affordance) — its content is redundant against what this
           table's own rows already convey. The Version column's cell text
@@ -365,7 +391,9 @@ function PlatformServicesPanel({ data }: { data: FacilityDetailResponse }) {
 function StoragePanel({ data }: { data: FacilityDetailResponse }) {
   const { storage } = data
   return (
-    <div className="panel mb-6">
+    // lkirc round-5: `mb-6` dropped — see the grid wrapper comment in
+    // Loaded() for why (double-spacing with the grid's own `gap-6`).
+    <div className="panel">
       <div className="px-6 py-4 border-b border-panel">
         <h2 className="text-lg font-semibold">Storage</h2>
       </div>
@@ -410,7 +438,11 @@ function StoragePanel({ data }: { data: FacilityDetailResponse }) {
 function CapacityPanel({ data }: { data: FacilityDetailResponse }) {
   const { capacity } = data
   return (
-    <div className="panel mb-6">
+    // lkirc round-5: `mb-6` dropped — see the grid wrapper comment in
+    // Loaded() for why (double-spacing with the grid's own `gap-6`). It's
+    // also the last grid cell in DOM order, so this specifically closes
+    // the stray trailing gap the finding named below the grid.
+    <div className="panel">
       <div className="px-6 py-4 border-b border-panel">
         <h2 className="text-lg font-semibold">Capacity</h2>
         {/* WP-4 (umbrella #347 Arc 4): kept, unchanged, visible (not moved
