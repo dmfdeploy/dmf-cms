@@ -1049,6 +1049,41 @@ describe('tile lifecycle badge grammar (umbrella #285 addendum)', () => {
   })
 })
 
+// codex P2-1 (umbrella #347 WP-4 round 1): Tile.tsx's `children` prop is
+// typed React.ReactNode, so nothing at the TYPE level stops a caller from
+// putting an interactive element inside it (which WOULD land inside the
+// primary Link — the exact defect Tile exists to prevent for the `actions`
+// slot). tile.test.tsx proves the SLOT is safe in isolation; it can't prove
+// this real call site keeps `children` clean. This is the call-site-precise
+// regression net instead: render the actual busiest tile (every badge that
+// can appear simultaneously — lifecycle + degraded + reconciling) and assert
+// its primary link has zero interactive descendants.
+describe('Tile: WorkloadEntryTile keeps the primary link free of interactive descendants (codex P2-1)', () => {
+  it("the tile's primary link contains no nested button/link/interactive-role element", async () => {
+    mkListFetch([
+      {
+        slug: 'test',
+        name: 'test',
+        lifecycle: 'operate',
+        health: 'degraded',
+        instances: [{ ...inst(), reconcile_pending: true, workload_assignment: 'ok' }],
+        functions: [],
+      },
+    ])
+    renderListPage()
+
+    const link = await screen.findByRole('link', { name: 'Open test workload detail' })
+    // All three badges present at once — the busiest this tile's children
+    // ever get — and still zero interactive descendants inside the anchor.
+    expect(within(link).getByText('configured')).toBeTruthy()
+    expect(within(link).getByText('degraded')).toBeTruthy()
+    expect(within(link).getByText('reconciling')).toBeTruthy()
+    expect(link.querySelector('button')).toBeNull()
+    expect(link.querySelector('a')).toBeNull()
+    expect(link.querySelector('[role="button"]')).toBeNull()
+  })
+})
+
 describe('"Create media workload" entry point (umbrella #285 addendum)', () => {
   it('links to /media-workloads/new', async () => {
     mkListFetch([])

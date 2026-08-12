@@ -113,6 +113,26 @@ describe('Facilities list (S1, #285)', () => {
     expect(className).not.toContain('panel')
   })
 
+  // codex P2-1 (umbrella #347 WP-4 round 1): Tile.tsx's `children` prop is
+  // typed React.ReactNode, so nothing at the TYPE level stops this call site
+  // from putting an interactive element inside it (which would land inside
+  // the primary Link — the exact defect Tile exists to prevent for the
+  // `actions` slot). tile.test.tsx proves the slot is safe in isolation; it
+  // can't prove THIS real call site keeps `children` clean, so that's pinned
+  // here directly against the actual rendered page.
+  it("the tile's primary link contains no nested button/link/interactive-role element", async () => {
+    stubFetch({ '/api/facility/summary': summary() })
+    renderWithQuery(
+      <MemoryRouter>
+        <Facility />
+      </MemoryRouter>,
+    )
+    const link = await screen.findByRole('link', { name: /DMF Lab/ })
+    expect(link.querySelector('button')).toBeNull()
+    expect(link.querySelector('a')).toBeNull()
+    expect(link.querySelector('[role="button"]')).toBeNull()
+  })
+
   it('renders an honest not-configured state, no dead link', async () => {
     stubFetch({ '/api/facility/summary': summary({ reason: 'netbox-not-configured', sites: [] }) })
     renderWithQuery(
