@@ -3,6 +3,7 @@ import { useQueryClient } from '@tanstack/react-query'
 import type { CatalogEntry } from '../../api/types'
 import ReasonConfirm from '../../components/ReasonConfirm'
 import { isValidWorkloadSlug } from '../../lib/workloadSlug'
+import { settleQuery } from '../../lib/queryState'
 import {
   useCatalog,
   useCurrentUser,
@@ -433,20 +434,23 @@ function OperationStatusLine({
   onLaunched: (jobId: number) => void
   onError: () => void
 }) {
-  const { data: operation } = useOperationStatus(operationId)
+  // fix-round 6 (PR #81, umbrella #385 codex sweep): a settled failed
+  // refetch retained the last-good `operation` with no notice at all —
+  // `failed` distinguishes that from a genuinely fresh read.
+  const { data: operation, failed } = settleQuery(useOperationStatus(operationId))
 
   useEffect(() => {
     if (!operation) return
-    
+
     let timer: ReturnType<typeof setTimeout> | undefined
-    
+
     if (operation.state === 'launched' && operation.job_id) {
       timer = setTimeout(() => onLaunched(operation.job_id!), 1000)
     } else if (operation.state === 'error') {
       console.error('Operation failed:', operation.error)
       timer = setTimeout(() => onError(), 3000)
     }
-    
+
     return () => {
       if (timer) clearTimeout(timer)
     }
@@ -455,7 +459,7 @@ function OperationStatusLine({
   if (!operation) {
     return (
       <div className="flex items-center gap-2 text-xs text-muted">
-        <span>Querying operation status…</span>
+        <span>{failed ? 'Could not query operation status — retrying automatically' : 'Querying operation status…'}</span>
       </div>
     )
   }
@@ -492,6 +496,9 @@ function OperationStatusLine({
       {operation.error && (
         <span className="text-red-400">{operation.error}</span>
       )}
+      {failed && (
+        <span className="text-amber-300">Could not confirm — showing the last read, retrying</span>
+      )}
     </div>
   )
 }
@@ -509,11 +516,12 @@ function JobStatusLine({
   kind: 'deploy' | 'teardown'
   onComplete: (key: string, kind: 'deploy' | 'teardown') => void
 }) {
-  const { data: jobStatus } = useCatalogJobStatus(entryKey, jobId)
+  // fix-round 6: same shape as OperationStatusLine above.
+  const { data: jobStatus, failed } = settleQuery(useCatalogJobStatus(entryKey, jobId))
 
   useEffect(() => {
     if (!jobStatus?.is_done) return
-    
+
     const timer = setTimeout(() => onComplete(entryKey, kind), 2000)
     return () => clearTimeout(timer)
   }, [jobStatus?.is_done, onComplete, entryKey, kind])
@@ -521,7 +529,7 @@ function JobStatusLine({
   if (!jobStatus) {
     return (
       <div className="flex items-center gap-2 text-xs text-muted">
-        <span>Querying job status…</span>
+        <span>{failed ? 'Could not query job status — retrying automatically' : 'Querying job status…'}</span>
       </div>
     )
   }
@@ -546,6 +554,9 @@ function JobStatusLine({
         {jobStatus.status === 'running' ? '⟳ ' : ''}
         {statusLabel}
       </span>
+      {failed && (
+        <span className="text-amber-300">Could not confirm — showing the last read, retrying</span>
+      )}
     </div>
   )
 }

@@ -23,6 +23,7 @@ import PlanStage from './stages/PlanStage'
 import ProvisionStage from './stages/ProvisionStage'
 import ConfigureStage from './stages/ConfigureStage'
 import FinaliseStage from './stages/FinaliseStage'
+import { settleQuery } from '../../lib/queryState'
 
 /**
  * Workload detail — the WIZARD (umbrella #347 WO-D1, operator direction
@@ -258,7 +259,9 @@ function WorkloadWizard({
   const { hash } = useLocation()
   // fix-round 5 (PR #81, codex sibling sweep): isError threaded down to
   // DesignStage — see its own doc comment on `catalogFailed` for why.
-  const { data: catalogData, isLoading: catalogLoading, isError: catalogError } = useCatalog()
+  //
+  // fix-round 6 (PR #81, umbrella #385): retrofitted onto settleQuery.
+  const { data: catalogData, loading: catalogLoading, failed: catalogError } = settleQuery(useCatalog())
   // umbrella #378b: the SAME effective-role read FinaliseStage already uses
   // for audit fields (user?.role — already view-as-resolved by /api/me, see
   // Topbar.tsx's identical use of the field), threaded into the affordance

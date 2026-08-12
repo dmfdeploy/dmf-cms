@@ -1,4 +1,5 @@
 import type { WorkspaceAlert, WorkspaceHealth } from '../api/types'
+import { settleQuery } from './queryState'
 
 // Single source of truth for the "are we OK?" state machine, shared by the
 // Workspace HealthCore panel and the shell notification bell so the two can
@@ -27,15 +28,22 @@ export interface HealthQueryLike {
 }
 
 export function classifyWorkspaceHealth(q: HealthQueryLike): WorkspaceHealthState {
-  const alerts = q.data?.alerts ?? []
-  const verified = q.data?.watchdog_firing ?? false
+  // fix-round 6 (PR #81, umbrella #385): retrofitted onto settleQuery — this
+  // classifier's own `stale` was already unconditional (`q.isError`, no
+  // `!q.data` gate); the bug rounds 4-5 found was in CONSUMERS not checking
+  // it for the 'not-configured' phase. Expressed through the shared
+  // primitive now so a new classifier gets the same unconditional shape by
+  // copying this one, rather than re-deriving it correctly by luck.
+  const settled = settleQuery(q)
+  const alerts = settled.data?.alerts ?? []
+  const verified = settled.data?.watchdog_firing ?? false
   const hasProblems = alerts.length > 0
-  const stale = q.isError
+  const stale = settled.failed
 
   let phase: WorkspaceHealthPhase
-  if (q.isLoading && !q.data) phase = 'loading'
-  else if (q.data && !q.data.configured) phase = 'not-configured'
-  else if (q.isError && !q.data) phase = 'unknown'
+  if (settled.loading) phase = 'loading'
+  else if (settled.data && !settled.data.configured) phase = 'not-configured'
+  else if (settled.failed && !settled.data) phase = 'unknown'
   else phase = 'live'
 
   return { phase, stale, verified, alerts, hasProblems }

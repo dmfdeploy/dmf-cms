@@ -13,6 +13,7 @@ import type { CatalogEntry, MediaWorkload, Operation, SwitchSourceResult, UserId
 import type { StageActionId, StageState } from '../../../lib/workloadLifecycle'
 import StageCard from './StageCard'
 import { JobStatusLine, OperationStatusLine } from './JobProgress'
+import { settleQuery } from '../../../lib/queryState'
 
 /**
  * Finalise & Review — the teardown action, relocated from
@@ -93,7 +94,9 @@ export default function FinaliseStage({
   // fix-round 5 (PR #81, codex sibling sweep): `catalogFailed` threaded into
   // the absence claim below — see ProvisionStage.tsx's identical fix for
   // the full reasoning (same shared PlanStage/CreateWorkload precedent).
-  const { data: catalogData, isLoading: catalogLoading, isError: catalogFailed } = useCatalog()
+  //
+  // fix-round 6 (PR #81, umbrella #385): retrofitted onto settleQuery.
+  const { data: catalogData, loading: catalogLoading, failed: catalogFailed } = settleQuery(useCatalog())
   const teardownMutation = useTeardownCatalog()
   const purgeMutation = usePurgeWorkload()
   const recordAwxWrite = useActivityStore((s) => s.recordAwxWrite)
@@ -106,7 +109,11 @@ export default function FinaliseStage({
   const [purgeConfirmText, setPurgeConfirmText] = useState('')
   const [purgeOpId, setPurgeOpId] = useState<string | null>(null)
   const [purgeReview, setPurgeReview] = useState<Operation | null>(null)
-  const { data: purgeOp } = useOperationStatus(purgeOpId)
+  // fix-round 6 (PR #81, umbrella #385 codex sweep): the third direct
+  // (non-JobProgress) poller in this file — `data` alone used to drive the
+  // inline "— {state}" text below with no notice when a settled failed
+  // refetch retained the last-observed state.
+  const { data: purgeOp, failed: purgeOpFailed } = settleQuery(useOperationStatus(purgeOpId))
 
   // Read at call time inside the stable callback below (see
   // statusCallbackFor), never captured at render time — track changes
@@ -285,8 +292,15 @@ export default function FinaliseStage({
               </p>
               <p className="mt-1 text-muted/70">
                 op <span className="font-mono">{purgeOpId.slice(0, 8)}...</span>
-                {purgeOp ? ` — ${purgeOp.state}` : ' — querying status…'}
+                {purgeOp ? ` — ${purgeOp.state}` : purgeOpFailed ? ' — could not query status' : ' — querying status…'}
               </p>
+              {purgeOpFailed && (
+                <p className="mt-1 text-amber-300">
+                  {purgeOp
+                    ? 'Could not confirm the latest status — showing the last read, retrying automatically.'
+                    : 'Could not query the delete status — retrying automatically.'}
+                </p>
+              )}
             </div>
           ) : purgeAllowed ? (
             purgeArming ? (

@@ -1,5 +1,6 @@
 import { useMonitoringMetrics, useMonitoringAlerts, useMonitoringTargets } from '@/api/hooks'
 import { AlertCircle, Activity, Zap, HardDrive } from 'lucide-react'
+import { settleQuery } from '@/lib/queryState'
 
 // fix-round 5 (PR #81, codex sibling sweep): none of the three reads on this
 // page checked `isError` anywhere. A never-loaded read (isError, no data at
@@ -14,11 +15,15 @@ import { AlertCircle, Activity, Zap, HardDrive } from 'lucide-react'
 // failed" (the retained content stays visible — Art. 5, the screen stays
 // still — qualified by a notice rather than silently presented as fresh).
 export default function Monitoring() {
-  const metrics = useMonitoringMetrics()
-  const alerts = useMonitoringAlerts()
-  const targets = useMonitoringTargets()
+  // fix-round 6 (PR #81, umbrella #385): retrofitted onto settleQuery —
+  // `.data`/`.isError`/`.isLoading` below become `.data`/`.failed`/`.loading`
+  // via the settled result; every branch reads exactly as it did in
+  // fix-round 5.
+  const metrics = settleQuery(useMonitoringMetrics())
+  const alerts = settleQuery(useMonitoringAlerts())
+  const targets = settleQuery(useMonitoringTargets())
 
-  const isLoading = metrics.isLoading || alerts.isLoading || targets.isLoading
+  const isLoading = metrics.loading || alerts.loading || targets.loading
 
   const metricCards = [
     { label: 'CPU Usage', value: metrics.data?.cpu_percent, unit: '%', icon: Zap, color: 'text-amber-500' },
@@ -32,7 +37,7 @@ export default function Monitoring() {
   return (
     <div className="flex-1 overflow-y-auto p-6">
       {/* Metrics Cards */}
-      {metrics.isError && (
+      {metrics.failed && (
         <div className="panel mb-4 py-3 px-6 border-warn/40">
           <p className="text-sm text-warn">
             {metrics.data
@@ -93,7 +98,7 @@ export default function Monitoring() {
             <div className="px-6 py-8 text-center text-muted text-sm">Loading alerts...</div>
           ) : (
             <>
-              {alerts.isError && (
+              {alerts.failed && (
                 <div className="px-6 py-2 text-xs text-amber-300 bg-amber-500/10">
                   {alerts.data
                     ? 'Alerts could not be refreshed just now — showing the last successful read. Retrying automatically.'
@@ -103,7 +108,7 @@ export default function Monitoring() {
               {activeAlerts.length === 0 ? (
                 // The notice above already named the cause when errored —
                 // "No active alerts" is a claim only a successful read owns.
-                !alerts.isError && (
+                !alerts.failed && (
                   <div className="px-6 py-8 text-center text-muted text-sm">✓ No active alerts</div>
                 )
               ) : (
@@ -128,7 +133,7 @@ export default function Monitoring() {
         <div className="px-6 py-4 border-b border-panel">
           <h2 className="text-lg font-semibold">Scrape Targets</h2>
         </div>
-        {targets.isError && (
+        {targets.failed && (
           <div className="px-6 py-2 text-xs text-amber-300 bg-amber-500/10 border-b border-panel">
             {targets.data
               ? 'Scrape targets could not be refreshed just now — showing the last successful read. Retrying automatically.'
@@ -151,7 +156,7 @@ export default function Monitoring() {
                   <td colSpan={4} className="px-6 py-8 text-center text-muted text-sm">Loading targets...</td>
                 </tr>
               ) : targets.data?.targets?.length === 0 ? (
-                !targets.isError && (
+                !targets.failed && (
                   <tr>
                     <td colSpan={4} className="px-6 py-8 text-center text-muted text-sm">No scrape targets available</td>
                   </tr>

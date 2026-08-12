@@ -5,6 +5,7 @@ import ReasonConfirm from '../../../components/ReasonConfirm'
 import type { MediaWorkload, SwitchSourceResult } from '../../../api/types'
 import type { StageActionId, StageState } from '../../../lib/workloadLifecycle'
 import StageCard from './StageCard'
+import { settleQuery } from '../../../lib/queryState'
 
 /**
  * Configure — source selection and the switch, relocated from
@@ -135,7 +136,12 @@ function InstanceSwitchControl({
   onResult: (result: SwitchSourceResult) => void
   onJobStart: () => void
 }) {
-  const topology = useInstanceTopology(instance)
+  // fix-round 6 (PR #81, umbrella #385): retrofitted onto settleQuery — the
+  // raw query is kept alongside for `.refetch()` (not part of the settled
+  // shape, which is deliberately read-only), used below on a successful
+  // switch.
+  const topologyQuery = useInstanceTopology(instance)
+  const topology = settleQuery(topologyQuery)
   const switchMutation = useSwitchSource()
   const recordAwxWrite = useActivityStore((s) => s.recordAwxWrite)
   const [arming, setArming] = useState(false)
@@ -160,7 +166,7 @@ function InstanceSwitchControl({
   // regardless of isError (observed_at goes stale on its own), but the
   // withdraw-on-error contract should read the same everywhere this
   // topology shape is consumed.
-  if (topology.isError || !topology.data || !Array.isArray(topology.data.sources)) return null
+  if (topology.failed || !topology.data || !Array.isArray(topology.data.sources)) return null
 
   const { sources, active_source, provenance, observed_at } = topology.data
   const isObservedFresh =
@@ -199,7 +205,7 @@ function InstanceSwitchControl({
           onResult(res)
           setArming(false)
           setTarget('')
-          topology.refetch()
+          topologyQuery.refetch()
         },
       },
     )

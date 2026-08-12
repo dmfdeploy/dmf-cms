@@ -3,6 +3,7 @@ import { Link } from 'react-router-dom'
 import { useMediaWorkloadsGrouped } from '../../api/hooks'
 import type { MediaWorkload, MediaWorkloadInstance } from '../../api/types'
 import { lifecycleBadge, type LifecycleBadge } from '../../lib/workloadFlow'
+import { settleQuery } from '../../lib/queryState'
 import LivePreviewBox from './LivePreviewBox'
 import {
   LIVE_TILE_CAP,
@@ -133,7 +134,11 @@ function representativeInstance(wl: MediaWorkload): MediaWorkloadInstance | null
 }
 
 export default function MediaWorkloads() {
-  const { data, isLoading, error, isError } = useMediaWorkloadsGrouped()
+  // fix-round 6 (PR #81, umbrella #385): retrofitted onto settleQuery — the
+  // `isLoading`/`isError` names are kept at the destructure so every branch
+  // below reads exactly as it did in fix-round 1-2, only now expressed
+  // through the shared primitive.
+  const { data, loading: isLoading, failed: isError } = settleQuery(useMediaWorkloadsGrouped())
   const visible = useDocumentVisible()
   const reducedMotion = usePrefersReducedMotion()
 
@@ -170,9 +175,9 @@ export default function MediaWorkloads() {
 
   // A `reason` token is only ever set on the fail-hard paths (not-configured,
   // unreachable, error) — for the BANNER, which names one specific failed
-  // source. The generic `error != null` banner just below already covers a
-  // failed *console* fetch (isError) with its own honest, non-overclaiming
-  // text, so this stays reason-scoped rather than duplicating that banner.
+  // source. The generic `isError` banner just below already covers a failed
+  // *console* fetch with its own honest, non-overclaiming text, so this
+  // stays reason-scoped rather than duplicating that banner.
   const sourceUnreachable = Boolean(data?.degraded && data?.reason)
   // fix-round P1-1: `degraded` is the COMPLETENESS gate on its own — the
   // OTHER way it can be true, invalid workload:* tags excluding members from
@@ -204,7 +209,7 @@ export default function MediaWorkloads() {
         </Link>
       </div>
 
-      {!isLoading && error != null && (
+      {!isLoading && isError && (
         <div className="panel mt-6 border border-amber-500/20 bg-amber-500/10 px-4 py-3 text-sm text-amber-200">
           Media Workloads could not be loaded right now. Retrying automatically.
         </div>

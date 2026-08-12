@@ -2,6 +2,7 @@ import { useParams, Link } from 'react-router-dom'
 import { useFacilityDetail, useMediaWorkloadsGrouped } from '@/api/hooks'
 import type { FacilityDetailResponse } from '@/api/types'
 import { degradedReasonCopy } from '@/pages/MediaWorkloads'
+import { settleQuery } from '@/lib/queryState'
 
 // Facility Detail (S1, #285): node/service/storage/capacity truth for the
 // one facility this console operates, read entirely through the console's
@@ -58,12 +59,15 @@ export interface FacilityDetailState {
 }
 
 export function classifyFacilityDetail(q: FacilityDetailQueryLike): FacilityDetailState {
-  if (q.isLoading && !q.data) return { phase: 'loading', stale: false }
-  if (!q.data) return { phase: 'unreadable', stale: false }
-  if (!q.data.prometheus_configured && !q.data.netbox_configured) {
-    return { phase: 'unconfigured', data: q.data, stale: q.isError }
+  // fix-round 6 (PR #81, umbrella #385): retrofitted onto settleQuery — see
+  // classifyChanges' identical note in lib/changesState.ts.
+  const settled = settleQuery(q)
+  if (settled.loading) return { phase: 'loading', stale: false }
+  if (!settled.data) return { phase: 'unreadable', stale: false }
+  if (!settled.data.prometheus_configured && !settled.data.netbox_configured) {
+    return { phase: 'unconfigured', data: settled.data, stale: settled.failed }
   }
-  return { phase: 'loaded', data: q.data, stale: q.isError }
+  return { phase: 'loaded', data: settled.data, stale: settled.failed }
 }
 
 // Reason-token -> operator-language copy (Art. 3: plain words, no system
@@ -427,7 +431,11 @@ function WorkloadCountPanel() {
   // Reuses the existing media-workloads inventory verbatim — this page
   // never re-derives that count (a second, divergent count would be a
   // trust hazard, not a convenience).
-  const { data, isLoading, isError } = useMediaWorkloadsGrouped()
+  //
+  // fix-round 6 (PR #81, umbrella #385): retrofitted onto settleQuery — the
+  // `isLoading`/`isError` names are kept at the destructure so every branch
+  // below reads exactly as it did in fix-round 5.
+  const { data, loading: isLoading, failed: isError } = settleQuery(useMediaWorkloadsGrouped())
   // fix-round P1-1, SECOND PASS (umbrella #385 PR #81): the first pass only
   // withheld the number when `workloads` was EMPTY, reasoning that a
   // non-zero count stayed honest because "each surviving workload's own

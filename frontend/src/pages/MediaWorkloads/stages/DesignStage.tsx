@@ -2,6 +2,7 @@ import { useInstanceTopology } from '../../../api/hooks'
 import type { CatalogEntry, MediaWorkload } from '../../../api/types'
 import type { StageState } from '../../../lib/workloadLifecycle'
 import StageCard from './StageCard'
+import { settleQuery } from '../../../lib/queryState'
 
 /**
  * Design — read-only from catalog SoT (never mutating): the selected
@@ -135,7 +136,6 @@ export default function DesignStage({
  * confusing empty box.
  */
 function InstanceComposition({ instance }: { instance: string }) {
-  const topology = useInstanceTopology(instance)
   // fix-round 5 (PR #81, codex sibling sweep): this was the unfixed twin of
   // Operate.tsx's InstanceActiveSource — same seam, same missing check. An
   // errored read is unknown, not absence: a failed refetch can retain the
@@ -146,7 +146,10 @@ function InstanceComposition({ instance }: { instance: string }) {
   // line keeps naming the OLD source as active on the very page where they
   // just changed it"). The row withdraws on error too, same as its sibling —
   // the newest read is the one it speaks for.
-  if (topology.isError || !topology.data || !Array.isArray(topology.data.sources)) return null
+  //
+  // fix-round 6 (PR #81, umbrella #385): retrofitted onto settleQuery.
+  const topology = settleQuery(useInstanceTopology(instance))
+  if (topology.failed || !topology.data || !Array.isArray(topology.data.sources)) return null
 
   const { sources, active_source } = topology.data
   if (sources.length === 0) return null

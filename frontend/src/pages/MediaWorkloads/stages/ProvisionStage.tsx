@@ -17,6 +17,7 @@ import type { StageActionId, StageState } from '../../../lib/workloadLifecycle'
 import ClearForDeployment from '../ClearForDeployment'
 import StageCard from './StageCard'
 import { JobStatusLine, OperationStatusLine } from './JobProgress'
+import { settleQuery } from '../../../lib/queryState'
 
 /**
  * Provision — the deploy action, relocated from pages/Catalog/index.tsx
@@ -63,7 +64,8 @@ export default function ProvisionStage({
   // announced a confident "no templates matched" manufactured out of an
   // unhandled error path (verbatim the failure mode PlanStage.tsx's own
   // docstring names, already fixed there and in CreateWorkload.tsx).
-  const { data: catalogData, isLoading: catalogLoading, isError: catalogFailed } = useCatalog()
+  // fix-round 6 (PR #81, umbrella #385): retrofitted onto settleQuery.
+  const { data: catalogData, loading: catalogLoading, failed: catalogFailed } = settleQuery(useCatalog())
   const { data: user } = useCurrentUser()
   const deployMutation = useDeployCatalog()
   const recordAwxWrite = useActivityStore((s) => s.recordAwxWrite)

@@ -2,6 +2,7 @@ import { useEffect, useState } from 'react'
 import { useInstanceMxlStatus } from '../../api/hooks'
 import type { MediaWorkloadInstance } from '../../api/types'
 import { PREVIEW_TICK_MS, STATUS_POLL_MS } from './liveView'
+import { settleQuery } from '../../lib/queryState'
 
 /**
  * The live sidecar preview for ONE instance, with its polling bounds.
@@ -88,7 +89,15 @@ export function useLivePreview({
   const [imgError, setImgError] = useState(false)
   useEffect(() => setImgError(false), [tick])
 
-  const data = status.data
+  // fix-round 6 (PR #81, umbrella #385 codex sweep): `status.isError` was
+  // never checked — a settled failed refetch after a successful
+  // available+preview read kept the "Live · sidecar preview" caption, the
+  // live dot, and the rendered image with no notice that the current poll
+  // had actually failed. `settleQuery` makes `failed` win unconditionally;
+  // `data` below is still the RETAINED payload on purpose (Art. 5 — the
+  // frame keeps showing, `caption`/`liveDot` are what carry the caveat).
+  const settled = settleQuery(status)
+  const data = settled.data
   const available = data?.available === true
   const hasPreview = available && data?.preview === true
   const showImage = canPoll && hasPreview && !imgError
@@ -100,6 +109,10 @@ export function useLivePreview({
     caption = 'No live view for this function'
   } else if (!active) {
     caption = 'Paused — tab not visible'
+  } else if (settled.failed) {
+    caption = hasPreview
+      ? 'Could not be refreshed — showing the last reading'
+      : 'Live view unavailable (read failed)'
   } else if (!available) {
     const reason = data?.reason ?? (status.isLoading ? 'connecting' : 'unavailable')
     caption = `Live view unavailable (${reason})`
@@ -125,7 +138,10 @@ export function useLivePreview({
     setImgError,
     // Held frames get an explicit way forward rather than a stale-looking tile.
     showRefresh: liveEligible && active && !motionAllowed,
-    liveDot: liveEligible && active && available && motionAllowed,
+    // A settled failed poll can never light the live dot, even off retained
+    // available:true data — the dot claims the CURRENT read confirmed live,
+    // and a failed read is the one thing that did not confirm it.
+    liveDot: liveEligible && active && available && motionAllowed && !settled.failed,
     refresh: () => {
       setTick((t) => (t + 1) % 100000)
       if (canPoll) status.refetch()

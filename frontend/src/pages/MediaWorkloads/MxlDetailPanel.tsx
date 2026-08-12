@@ -1,6 +1,7 @@
 import { useEffect, useState } from 'react'
 import { useMxlStatus } from '../../api/hooks'
 import { useDocumentVisible, usePrefersReducedMotion } from './liveView'
+import { settleQuery } from '../../lib/queryState'
 
 /**
  * MXL live view — the per-instance detail panel that replaces the standalone
@@ -21,7 +22,10 @@ export default function MxlDetailPanel() {
   const visible = useDocumentVisible()
   const reducedMotion = usePrefersReducedMotion()
   const active = visible && !reducedMotion
-  const { data, isLoading, isError } = useMxlStatus({ active })
+  // fix-round 6 (PR #81, umbrella #385): retrofitted onto settleQuery — the
+  // `isLoading`/`isError` names are kept at the destructure so every branch
+  // below reads exactly as it did in fix-round 5.
+  const { data, loading: isLoading, failed: isError } = settleQuery(useMxlStatus({ active }))
 
   // Cache-bust the preview ~5/s so the clock overlay visibly ticks.
   const [tick, setTick] = useState(0)

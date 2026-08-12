@@ -17,7 +17,7 @@
  *    workload — never asserted independently of that read.
  */
 import { afterEach, describe, expect, it, vi } from 'vitest'
-import { cleanup, fireEvent, render, screen, waitFor, within } from '@testing-library/react'
+import { act, cleanup, fireEvent, render, screen, waitFor, within } from '@testing-library/react'
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query'
 import { MemoryRouter, Route, Routes } from 'react-router-dom'
 import WorkloadDetail from '../pages/MediaWorkloads/WorkloadDetail'
@@ -97,6 +97,7 @@ afterEach(() => {
   cleanup()
   vi.restoreAllMocks()
   vi.unstubAllGlobals()
+  vi.useRealTimers()
 })
 
 describe('Finalise & Review: delete permanently drives to a real completion', () => {
@@ -309,5 +310,78 @@ describe('Finalise & Review: delete permanently drives to a real completion', ()
 
     // Let the held-open fetch resolve so nothing dangles past the test.
     refetchControl.resolve?.()
+  })
+
+  // fix-round 6 (PR #81, umbrella #385 codex sweep): FinaliseStage's own
+  // direct useOperationStatus(purgeOpId) poll — the third of the file's
+  // trackers, alongside JobProgress.tsx's shared OperationStatusLine/
+  // JobStatusLine — used to render only `— {purgeOp.state}` off `data`
+  // alone, so a settled failed refetch that retained the last-observed
+  // state showed no notice that the current read had failed.
+  it('a settled failed operation-status poll keeps the last-known state visible but adds a notice', async () => {
+    const wl = eligibleWorkload()
+    const grouped: MediaWorkloadsGroupedResponse = {
+      configured: true, degraded: false, scope: [], workloads: [wl], invalid_instances: [],
+    }
+    let opCalls = 0
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
+        const url = (typeof input === 'string' ? input : (input as Request).url).toString()
+        if (url.endsWith('/api/me')) return json(OPERATOR)
+        if (url.endsWith('/api/catalog')) return json({ entries: [] })
+        if (url.endsWith('/api/media-workloads/grouped')) return json(grouped)
+        if (url.match(/\/api\/media-workloads\/studio-a\/purge$/) && (init?.method ?? 'GET') === 'POST') {
+          return json({
+            operation_id: 'op-3', action: 'finalise-purge', target: 'studio-a', state: 'launching',
+            job_id: null, error: null, created_at: 't0', updated_at: 't0', request_id: 'req-purge-3',
+          })
+        }
+        if (url.endsWith('/api/operations/op-3')) {
+          opCalls += 1
+          if (opCalls === 1) {
+            return json({
+              operation_id: 'op-3', action: 'finalise-purge', target: 'studio-a', state: 'launching',
+              job_id: null, error: null, created_at: 't0', updated_at: 't0',
+            })
+          }
+          return new Response('boom', { status: 500 })
+        }
+        return json({})
+      }),
+    )
+
+    const queryClient = renderDetail()
+    await screen.findByRole('navigation', { name: 'Media workload lifecycle' })
+    fireEvent.click(await waitFor(() => within(rail()).getByRole('button', { name: 'Finalise & Review' })))
+    const finalise = stageSection('Finalise & Review')
+
+    fireEvent.click(await within(finalise).findByRole('button', { name: '🗑 Delete permanently' }))
+    fireEvent.change(within(finalise).getByPlaceholderText(/Reason \(required/), { target: { value: 'go' } })
+    fireEvent.change(within(finalise).getByPlaceholderText('studio-a'), { target: { value: 'studio-a' } })
+    fireEvent.click(within(finalise).getByRole('button', { name: 'Delete permanently' }))
+
+    // First (successful) poll settles — genuinely current, no notice.
+    await within(finalise).findByText(/— launching/)
+    expect(within(finalise).queryByText(/Could not confirm the latest status/)).toBeNull()
+
+    // Trigger the SAME background refetch a poll tick would cause, without
+    // depending on real wall-clock time passing against an interval timer
+    // TanStack Query already scheduled with real timers active (switching
+    // to fake timers this late would not retroactively convert it) — same
+    // "trigger via refetchQueries" pattern used for hooks with no natural
+    // cheap timer hook elsewhere in this arc.
+    await act(async () => {
+      await queryClient.refetchQueries({ queryKey: ['operation', 'op-3'] })
+    })
+
+    await waitFor(() => {
+      expect(within(finalise).getByText(/— launching/)).toBeTruthy()
+      expect(
+        within(finalise).getByText(
+          'Could not confirm the latest status — showing the last read, retrying automatically.',
+        ),
+      ).toBeTruthy()
+    })
   })
 })
