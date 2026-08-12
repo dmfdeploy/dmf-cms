@@ -1,30 +1,57 @@
 /**
  * Cheap, mechanical regression net for the isError-gating defect shape this
- * whole fix arc (PR #81, umbrella #385, 6 rounds) kept re-discovering by
+ * whole fix arc (PR #81, umbrella #385, 7 rounds) kept re-discovering by
  * hand: a component reads `.data` off a TanStack Query read-hook and never
- * once considers `isError`/`.failed`/settleQuery anywhere in the file, so a
- * settled failed refetch with data retained silently re-authorizes an
+ * once considers `isError`/`.failed`/settleQuery for THAT SPECIFIC call, so
+ * a settled failed refetch with data retained silently re-authorizes an
  * absence/count/status claim the CURRENT read never established.
  *
- * This is deliberately NOT an AST-based checker — building one (a real
- * ESLint rule walking the actual data-flow from a specific hook call to a
- * specific claim) was flagged in fix-round 6's report as real engineering
- * effort, not built. This is the "cheap, mechanical" alternative: a
- * per-FILE textual heuristic — "this file calls a read-hook AND reads
- * `.data` somewhere AND never once mentions isError/.failed/settleQuery/
- * isFetching anywhere in the whole file". Coarse on purpose (file-level, not
- * call-site-level), so it trades precision for near-zero maintenance cost.
- * Source text comes from Vite's own `import.meta.glob(..., { query: '?raw' })`
- * — no Node `fs`/`path` types needed under this project's DOM-only tsconfig.
+ * fix-round 7 (codex gate on round 6): the first version of this net was a
+ * per-FILE textual heuristic ("does the file mention isError/settleQuery/
+ * isFetching ANYWHERE") and codex broke it on the first real attempt —
+ * Settings.tsx destructured `{ data: user, isLoading }` (an ALIAS, never
+ * the literal token `.data`) with no isError anywhere, and would have kept
+ * passing forever if some UNRELATED hook call elsewhere in the same file
+ * happened to reference isError (or even just a comment mentioning the
+ * word, which is exactly what let HistoryLane.tsx's raw
+ * useChangesJobs()/useChangesCommits()/useChangesPulls() bindings slip past
+ * the old check — none of the three is ever checked directly in that file
+ * at all; only a COMMENT on an unrelated line contains the word "isError").
  *
- * The read-hook list is DERIVED from api/hooks.ts itself (whichever export
- * calls useQuery(...) in its body), not hand-maintained — a new query hook
- * added there is covered automatically rather than silently falling outside
- * this net.
+ * This version is CALL-SITE precise: it locates each individual
+ * `const <LHS> = useHookName(...)` statement and asks, for THAT call alone,
+ * whether error state reaches it, via any of three real patterns actually
+ * used in this codebase:
  *
- * A file can legitimately dodge this net (see EXEMPT below). The bar for
- * adding an entry is a one-line reason the pattern is genuinely safe, not
- * "the test went red" — same discipline as every fix in this arc.
+ *   1. Direct wrap:     const { data, failed } = settleQuery(useHook())
+ *   2. Two-step wrap:   const q = useHook(); const s = settleQuery(q)
+ *                       (needed when `.refetch()` off the raw query is also
+ *                       used, e.g. ConfigureStage.tsx's switch control)
+ *   3. Own destructure: const { data, isError } = useHook()   — checked by
+ *      DESTRUCTURE KEY, not by whether the literal string "isError"
+ *      appears anywhere in the file
+ *   4. Delegation:      const q = useHook(); classifyFoo(q)   — the raw
+ *      query object handed to a classifier that is ITSELF verified (by the
+ *      same mechanism, recursively) to call settleQuery internally
+ *      (lib/changesState.ts's classifyChanges/classifyForgejo, lib/
+ *      workspaceHealth.ts's classifyWorkspaceHealth, Facility/Detail.tsx's
+ *      classifyFacilityDetail) — a raw property/token check on the
+ *      CONSUMING file would never see this; the callee owns the check.
+ *
+ * Direct property access (`q.isError`) or `q.isFetching` on the SAME bound
+ * variable also counts — pre-settleQuery code and WorkloadDetail.tsx's
+ * groupedRead (which genuinely needs isFetching, not just settleQuery's
+ * failed/loading) both use this shape.
+ *
+ * This is still NOT an AST-based checker — no scope/type resolution, pure
+ * regex over source text, so it can be fooled by sufficiently unusual
+ * formatting (a hook call not immediately preceded by `const`, e.g. a
+ * reassignment or an inline prop) — those call sites are silently skipped
+ * (a false negative, not a false positive), which is an accepted tradeoff
+ * for "cheap, mechanical, not full tooling." Every read-hook call in the
+ * app today IS one of the four `const`-declared shapes above (verified by
+ * running this net and getting zero surprises beyond the one already-known
+ * exemption below).
  */
 /// <reference types="vite/client" />
 import { describe, expect, it } from 'vitest'
@@ -44,6 +71,10 @@ function relPath(globKey: string): string {
   return globKey.replace(/^\.\.\//, '')
 }
 
+function escapeRe(s: string): string {
+  return s.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')
+}
+
 /** Every exported hooks.ts function whose OWN body calls useQuery(...) —
  *  i.e. a read, not a useMutation(...) write. Mutations don't retain stale
  *  data across a failed background refetch the way a query does, so they
@@ -51,21 +82,110 @@ function relPath(globKey: string): string {
 function readQueryHookNames(): string[] {
   const hooksSrc = Object.entries(RAW_SOURCES).find(([k]) => relPath(k) === 'api/hooks.ts')?.[1]
   if (!hooksSrc) return []
-  const fnRe = /export function (use\w+)\([^)]*\)\s*\{/g
-  const matches = [...hooksSrc.matchAll(fnRe)]
+  return exportedFunctionsCallingWithin(hooksSrc, 'useQuery(')
+}
+
+/** Every `export function` anywhere in src whose OWN body calls
+ *  settleQuery(...) — a classifier a caller can safely DELEGATE a raw
+ *  query object to (pattern 4 above), derived the same way as the hook
+ *  list rather than hand-maintained. */
+function settleQueryDelegateNames(): string[] {
+  const names = new Set<string>()
+  for (const [globKey, src] of Object.entries(RAW_SOURCES)) {
+    if (relPath(globKey) === 'lib/queryState.ts') continue // settleQuery's own definition
+    for (const name of exportedFunctionsCallingWithin(src, 'settleQuery(')) names.add(name)
+  }
+  return [...names]
+}
+
+/** Crude top-level function splitter: finds `export function NAME(...) {`
+ *  and slices from there to the NEXT such match (or EOF) as that
+ *  function's "body" — good enough for this file's flat, non-nested export
+ *  shape (verified against hooks.ts and every classifier file); does not
+ *  handle arbitrarily nested exported functions in general, which is fine
+ *  here since a false MISS just means a delegate/hook goes undetected
+ *  (caught immediately as a fresh offender, not silently trusted). */
+function exportedFunctionsCallingWithin(src: string, needle: string): string[] {
+  const fnRe = /export function (\w+)\([^)]*\)[^{]*\{/g
+  const matches = [...src.matchAll(fnRe)]
   const names: string[] = []
   matches.forEach((m, i) => {
     const start = m.index! + m[0].length
-    const end = i + 1 < matches.length ? matches[i + 1].index! : hooksSrc.length
-    const body = hooksSrc.slice(start, end)
-    if (body.includes('useQuery(')) names.push(m[1])
+    const end = i + 1 < matches.length ? matches[i + 1].index! : src.length
+    if (src.slice(start, end).includes(needle)) names.push(m[1])
   })
   return names
 }
 
+interface CallSite {
+  hook: string
+  kind: 'destructure' | 'bare'
+  lhs: string // destructure object text (incl. braces), or the bare variable name
+  wrappedInline: boolean // settleQuery(useHook(...)) directly
+}
+
+/** Every `const <LHS> = [settleQuery(] useHookName(` statement in a file,
+ *  for the given hook names. `[^{}]*` (not `.`) inside the destructure
+ *  naturally spans multi-line Prettier-wrapped destructures without
+ *  needing the `s` flag. */
+function findCallSites(src: string, hookNames: string[]): CallSite[] {
+  if (hookNames.length === 0) return []
+  const alternation = hookNames
+    .slice()
+    .sort((a, b) => b.length - a.length) // longer names first — defensive, not load-bearing (see file docstring)
+    .map(escapeRe)
+    .join('|')
+  const re = new RegExp(
+    String.raw`const\s+(\{[^{}]*\}|[A-Za-z_$][\w$]*)\s*=\s*(settleQuery\(\s*)?(?:${alternation})\s*\(`,
+    'g',
+  )
+  const sites: CallSite[] = []
+  let m: RegExpExecArray | null
+  const hookRe = new RegExp(`(?:${alternation})`)
+  while ((m = re.exec(src))) {
+    const lhs = m[1]
+    const wrappedInline = Boolean(m[2])
+    const hookMatch = m[0].match(hookRe)
+    sites.push({
+      hook: hookMatch ? hookMatch[0] : '?',
+      kind: lhs.startsWith('{') ? 'destructure' : 'bare',
+      lhs,
+      wrappedInline,
+    })
+  }
+  return sites
+}
+
+/** Offending call sites in one file — see the file docstring for the four
+ *  recognized compliant shapes. */
+function fileOffenses(src: string, hookNames: string[], delegateNames: string[]): string[] {
+  const offenses: string[] = []
+  for (const site of findCallSites(src, hookNames)) {
+    if (site.wrappedInline) continue // pattern 1: direct settleQuery(useHook()) wrap
+
+    if (site.kind === 'destructure') {
+      if (!/\bdata\b/.test(site.lhs)) continue // never binds `data` — nothing to gate
+      if (/\bisError\b/.test(site.lhs) || /\bisFetching\b/.test(site.lhs)) continue // pattern 3
+      offenses.push(`${site.hook}() destructured as ${site.lhs.replace(/\s+/g, ' ')} with no isError/isFetching key`)
+      continue
+    }
+
+    // bare identifier
+    const v = escapeRe(site.lhs)
+    if (new RegExp(String.raw`settleQuery\(\s*${v}\s*\)`).test(src)) continue // pattern 2: two-step wrap
+    if (new RegExp(String.raw`\b${v}\.(isError|failed|isFetching)\b`).test(src)) continue // direct property access
+    if (delegateNames.some((d) => new RegExp(String.raw`\b${escapeRe(d)}\(\s*${v}\b`).test(src))) continue // pattern 4
+    if (!new RegExp(String.raw`\b${v}\.data\b`).test(src)) continue // never reads .data off it — nothing to gate
+
+    offenses.push(`${site.hook}() bound to "${site.lhs}" with no settleQuery(...)/.isError/.failed/.isFetching/known-delegate anywhere`)
+  }
+  return offenses
+}
+
 // Files verified NOT to need isError-awareness, each with why — checked by
-// hand at the time this net was built (fix-round 6, PR #81). The bar for
-// adding an entry is a real reason, not a red test.
+// hand at the time this net was built (fix-round 6, PR #81) and re-checked
+// under the call-site-precise version (fix-round 7). The bar for adding an
+// entry is a real reason, not a red test.
 const EXEMPT: Record<string, string> = {
   'components/Topbar.tsx':
     "Both reads only ever supply an OPTIONAL display name (facility.data?.site.name, workload?.name), " +
@@ -75,36 +195,32 @@ const EXEMPT: Record<string, string> = {
     "stale-presented-as-current claim). There is no absence/count/status claim here for isError to gate — " +
     "this is a real, pre-existing gap in a DIFFERENT sense (a settled failed refetch keeps showing a " +
     "retained name past its own staleness with no notice, same as every OTHER retained-data notice this " +
-    "arc added elsewhere), tracked separately as it touches no code this PR's rounds 1-6 already changed.",
+    "arc added elsewhere), tracked separately as it touches no code this PR's rounds 1-7 already changed.",
 }
 
-describe('regression net: a read-hook consumer must consider isError somewhere in the file', () => {
-  it('the hook extraction still finds a plausible number of read hooks (sanity, not a defect check)', () => {
-    // Guards the net itself: if hooks.ts's shape changes enough that the
-    // regex stops matching anything, the real test below would silently
-    // pass with zero files checked — this fails loudly instead.
+describe('regression net: a read-hook consumer must consider isError for its OWN call site', () => {
+  it('the hook/delegate extraction still finds a plausible number of names (sanity, not a defect check)', () => {
+    // Guards the net itself: if the export shapes this scans for change
+    // enough that the regexes stop matching anything, the real test below
+    // would silently pass with zero call sites checked — fail loudly instead.
     expect(readQueryHookNames().length).toBeGreaterThan(10)
+    expect(settleQueryDelegateNames().length).toBeGreaterThanOrEqual(4) // the 4 classifiers, at minimum
   })
 
-  it('flags no un-exempted file that reads .data off a query hook without ever checking isError/.failed/settleQuery/isFetching', () => {
+  it('flags no un-exempted call site that reads a query hook\'s data without considering isError for THAT call', () => {
     const readHooks = readQueryHookNames()
-    const escaped = readHooks.map((h) => h.replace(/[.*+?^${}()|[\]\\]/g, '\\$&'))
-    const hookRe = new RegExp(`\\b(${escaped.join('|')})\\s*\\(`)
-    const errorSignalRe = /isError|\.failed\b|settleQuery|isFetching/
+    const delegates = settleQueryDelegateNames()
 
-    const offenders: string[] = []
+    const offendersByFile: Record<string, string[]> = {}
     for (const [globKey, src] of Object.entries(RAW_SOURCES)) {
       const rel = relPath(globKey)
       if (rel === 'api/hooks.ts' || rel === 'lib/queryState.ts') continue
       if (rel in EXEMPT) continue
 
-      if (!hookRe.test(src)) continue // doesn't call a read hook at all
-      if (!src.includes('.data')) continue // never reads .data — nothing to gate
-      if (errorSignalRe.test(src)) continue // considers error state somewhere
-
-      offenders.push(rel)
+      const offenses = fileOffenses(src, readHooks, delegates)
+      if (offenses.length > 0) offendersByFile[rel] = offenses
     }
 
-    expect(offenders).toEqual([])
+    expect(offendersByFile).toEqual({})
   })
 })

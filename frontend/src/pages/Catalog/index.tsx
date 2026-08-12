@@ -31,8 +31,18 @@ interface EntryActionState {
 
 export default function Catalog() {
   const queryClient = useQueryClient()
-  const { data: catalogData, isLoading, error } = useCatalog()
-  const { data: user } = useCurrentUser()
+  // fix-round 7 (PR #81, umbrella #385, codex call-site sweep): retrofitted
+  // onto settleQuery. This page's OWN bug, distinct from the isError-gating
+  // shape the rest of this arc chases: `if (error)` below used to replace
+  // the ENTIRE page with the error panel on ANY failed read, even a settled
+  // refetch that retained a perfectly good `catalogData` — discarding real,
+  // still-current entries (and the ability to deploy/tear them down) rather
+  // than keeping the screen still with a notice (Art. 5), the opposite
+  // direction from every other fix in this arc but the same root cause:
+  // the CURRENT read's failure was never distinguished from "nothing to
+  // show at all".
+  const { data: catalogData, loading: isLoading, failed: isError } = settleQuery(useCatalog())
+  const { data: user } = settleQuery(useCurrentUser())
   const deployMutation = useDeployCatalog()
   const teardownMutation = useTeardownCatalog()
   const recordAwxWrite = useActivityStore((s) => s.recordAwxWrite)
@@ -123,15 +133,18 @@ export default function Catalog() {
     )
   }
 
-  if (error) {
+  if (isError && !catalogData) {
     return (
       <div className="flex-1 overflow-y-auto p-6">
         <div className="panel text-center py-12">
           {/* Art. 8: no stringified exception on an operator surface. This
               page is hidden from the sidebar but still reachable by URL, so
-              "hidden" is not an exemption (GATE-S1-RV). */}
+              "hidden" is not an exemption (GATE-S1-RV). No refetchInterval
+              on useCatalog, so "Reload the page" is the true next step —
+              same convention as ProvisionStage/FinaliseStage's own catalog-
+              read-failure copy. */}
           <p className="text-red-400">
-            The catalog could not be loaded right now. Retrying automatically.
+            The catalog could not be loaded right now. Reload the page to try again.
           </p>
         </div>
       </div>
@@ -142,6 +155,15 @@ export default function Catalog() {
 
   return (
     <div className="flex-1 overflow-y-auto p-6">
+      {/* A settled failed refetch retains `catalogData` from the earlier
+          successful read (Art. 5 — the screen stays still, entries remain
+          deployable/tearable-down) — but the CURRENT read did not confirm
+          it, which must be visible too, not silently absent. */}
+      {isError && (
+        <div className="panel mb-4 border border-amber-500/20 bg-amber-500/10 px-4 py-3 text-sm text-amber-200">
+          The catalog could not be refreshed just now — showing the last successful read. Reload the page to try again.
+        </div>
+      )}
       {entries.length === 0 ? (
         <div className="panel text-center py-12">
           <p className="text-muted">No catalog entries found. Add YAML manifests to /etc/dmf-cms/catalog/.</p>

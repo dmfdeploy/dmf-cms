@@ -1,6 +1,8 @@
 import { useState } from 'react'
 import { QRCodeSVG } from 'qrcode.react'
 import { useCurrentUser, useCreatePasskeyInvitation } from '../api/hooks'
+import { APIError } from '../api/client'
+import { settleQuery } from '../lib/queryState'
 
 const roleBadgeStyles: Record<string, string> = {
   viewer: 'bg-blue-900/40 text-blue-300',
@@ -10,7 +12,24 @@ const roleBadgeStyles: Record<string, string> = {
 }
 
 export default function Settings() {
-  const { data: user, isLoading } = useCurrentUser()
+  // fix-round 7 (PR #81, umbrella #385, codex gate): `!user` alone used to
+  // be the WHOLE gate for "Not authenticated" below — that read as true for
+  // a genuine 401 (real) AND for any OTHER failed read (a transient 500 or
+  // network error, mislabelled as the same claim), AND a settled failed
+  // BACKGROUND refetch that retained `user` from an earlier successful
+  // mount rendered the whole stale profile/authentik_configured section
+  // with no notice at all that the current read had failed. (In practice
+  // the reachable case is the last one: App.tsx's own useCurrentUser() gate
+  // means this component never mounts with `user` undefined on a fresh
+  // load — `isError` here only ever fires on a LATER refetch — but the
+  // dead branches stay correct rather than latently wrong.)
+  const userQuery = useCurrentUser()
+  const { data: user, loading: isLoading, failed: isError } = settleQuery(userQuery)
+  // /api/me answers 401 specifically for "no session" (main.py's
+  // api_current_user) — any OTHER failure (500, network, a timeout) is a
+  // read failure, not evidence the operator isn't signed in, and must not
+  // share that claim's copy (Art. 1).
+  const unauthorized = userQuery.error instanceof APIError && userQuery.error.status === 401
   const invitationMutation = useCreatePasskeyInvitation()
   const [enrollmentUrl, setEnrollmentUrl] = useState('')
   const [expires, setExpires] = useState('')
@@ -43,7 +62,11 @@ export default function Settings() {
   if (!user) {
     return (
       <div className="flex-1 overflow-y-auto p-6">
-        <p className="text-muted">Not authenticated</p>
+        <p className="text-muted">
+          {unauthorized
+            ? 'Not authenticated'
+            : 'Your account could not be read right now. Reload the page to try again.'}
+        </p>
       </div>
     )
   }
@@ -53,6 +76,18 @@ export default function Settings() {
   return (
     <div className="flex-1 overflow-y-auto p-6">
       <div className="max-w-3xl">
+        {/* A settled failed refetch retains `user` from the earlier
+            successful read (Art. 5 — the screen stays still) but the CURRENT
+            read did not confirm it; useCurrentUser has no refetchInterval,
+            so "Reload the page" (not "Retrying automatically") is the true
+            next step, same convention as CreateWorkload.tsx's
+            TemplatePicker. */}
+        {isError && (
+          <div className="mb-4 rounded-lg border border-amber-500/20 bg-amber-500/10 px-4 py-3 text-sm text-amber-200">
+            Could not be refreshed just now — showing the last successful read. Reload the page to try again.
+          </div>
+        )}
+
         {/* Profile */}
         <div className="bg-panel border border-border rounded-lg mb-6">
           <div className="p-4 border-b border-border">
