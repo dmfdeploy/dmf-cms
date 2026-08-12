@@ -41,6 +41,18 @@ export default function HistoryLane() {
   // sibling reads (hard gate 1: an empty/failed read is not "zero commits").
   const commitsPhase = classifyForgejo(commits)
   const pullsPhase = classifyForgejo(pulls)
+  // fix-round 3 (PR #81): the two phases that can co-exist with NON-EMPTY
+  // retained rows and therefore need a notice regardless of emptiness.
+  // 'partial' (fix-round 2): some repos read, some failed, real rows kept.
+  // 'error' (this round): a SETTLED failed refetch — TanStack Query
+  // retains the last-good `data` across it, so `isLoading` is false and
+  // the panel below still has real rows to render, but the CURRENT read
+  // failed. Without this, those retained rows rendered with no notice at
+  // all — presenting last-good data as current after the read that would
+  // have confirmed it had already failed (same defect class as
+  // MediaWorkloads/WorkloadCountPanel/classifyChanges' own isError fixes).
+  const commitsNeedsNotice = commitsPhase === 'partial' || commitsPhase === 'error'
+  const pullsNeedsNotice = pullsPhase === 'partial' || pullsPhase === 'error'
 
   const isLoading = jobs.isLoading || commits.isLoading || pulls.isLoading
 
@@ -160,24 +172,24 @@ export default function HistoryLane() {
             <div className="px-6 py-8 text-center text-muted text-sm">Loading commits...</div>
           ) : (
             <>
-              {/* fix-round P1-2 (PR #81, second pass): rendered whenever the
-                  phase is 'partial', INDEPENDENT of emptiness — the earlier
-                  version only ever called forgejoEmptyCopy inside the
-                  length===0 branch, so a partial read that still retained
-                  rows (the common case: some repos succeeded) rendered
-                  those rows with no incompleteness notice at all, looking
-                  exactly as authoritative as a fully successful read. */}
-              {commitsPhase === 'partial' && (
+              {/* fix-round P1-2 (PR #81, round 2) + fix-round 3: rendered
+                  whenever the phase is 'partial' OR 'error', INDEPENDENT of
+                  emptiness. Round 2 covered 'partial' (some repos read, some
+                  failed) but a SETTLED failed refetch ('error') retains the
+                  prior successful `data` — round 3 closes that gap: those
+                  retained rows below used to render with no notice at all,
+                  presenting last-good data as current after the read that
+                  would have confirmed it had already failed. */}
+              {commitsNeedsNotice && (
                 <div className="px-6 py-2 text-xs text-amber-300 bg-amber-500/10">
-                  {forgejoEmptyCopy('partial', 'commits')}
+                  {forgejoEmptyCopy(commitsPhase, 'commits')}
                 </div>
               )}
               {(commits.data?.repos?.length ?? 0) === 0 ? (
-                // The partial banner above already said "may be
-                // incomplete" — a second, generic "no recent commits" would
-                // contradict it (this repo list isn't confirmed empty, it's
-                // unconfirmed).
-                commitsPhase !== 'partial' && (
+                // The notice above already named the cause — a second,
+                // generic "no recent commits" would contradict it (this
+                // repo list isn't confirmed empty, it's unconfirmed).
+                !commitsNeedsNotice && (
                   <div className="px-6 py-8 text-center text-muted text-sm">
                     {forgejoEmptyCopy(commitsPhase, 'commits')}
                   </div>
@@ -222,13 +234,13 @@ export default function HistoryLane() {
           ) : (
             <>
               {/* Same fix as Recent Commits above — see its comment. */}
-              {pullsPhase === 'partial' && (
+              {pullsNeedsNotice && (
                 <div className="px-6 py-2 text-xs text-amber-300 bg-amber-500/10">
-                  {forgejoEmptyCopy('partial', 'pull requests')}
+                  {forgejoEmptyCopy(pullsPhase, 'pull requests')}
                 </div>
               )}
               {(pulls.data?.pulls?.length ?? 0) === 0 ? (
-                pullsPhase !== 'partial' && (
+                !pullsNeedsNotice && (
                   <div className="px-6 py-8 text-center text-muted text-sm">
                     {forgejoEmptyCopy(pullsPhase, 'pull requests')}
                   </div>
