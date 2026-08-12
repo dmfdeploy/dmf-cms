@@ -1,6 +1,7 @@
 import { Link } from 'react-router-dom'
 import { Building2 } from 'lucide-react'
 import { useFacilitySummary } from '@/api/hooks'
+import { settleQuery } from '@/lib/queryState'
 
 // Facilities (S1, #285): a single-facility console has exactly one entry
 // here. This page used to render a grid of "sites" (plural) plus a
@@ -12,8 +13,11 @@ import { useFacilitySummary } from '@/api/hooks'
 // detail page, where live node/service/storage/capacity truth actually
 // lives (pages/Facility/Detail.tsx).
 export default function Facility() {
-  const summary = useFacilitySummary()
-  const loading = summary.isLoading && !summary.data
+  // fix-round 6 (PR #81, umbrella #385): retrofitted onto settleQuery — the
+  // `.isError`/`.data` field names below are kept via the settled result so
+  // every branch reads exactly as it did in fix-round 4.
+  const summary = settleQuery(useFacilitySummary())
+  const loading = summary.loading
 
   return (
     <div className="flex-1 overflow-y-auto p-6">
@@ -30,7 +34,7 @@ export default function Facility() {
           "NetBox has no site recorded yet" — a real environment fact this
           is not; it misstates a read failure as a facility that has never
           been provisioned. */}
-      {!loading && summary.isError && !summary.data && (
+      {!loading && summary.failed && !summary.data && (
         <div className="panel py-6 px-6 border-warn/40">
           <p className="text-sm text-warn">
             The facility inventory could not be read. Retrying automatically.
@@ -42,7 +46,7 @@ export default function Facility() {
           Art. 5 keeps the tile visible rather than suppressing it, but the
           read that would have confirmed it's still current just failed —
           that must be visible too, not silently absent. */}
-      {!loading && summary.isError && summary.data && (
+      {!loading && summary.failed && summary.data && (
         <div className="panel py-3 px-6 mb-4 border-warn/40">
           <p className="text-sm text-warn">
             The facility inventory could not be refreshed just now — showing the last successful

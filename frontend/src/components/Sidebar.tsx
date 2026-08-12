@@ -1,5 +1,6 @@
 import { Link, useLocation } from 'react-router-dom'
 import { useCurrentUser } from '../api/hooks'
+import { settleQuery } from '../lib/queryState'
 
 interface NavItem {
   label: string
@@ -108,6 +109,9 @@ const icons: Record<string, React.ReactNode> = {
   shield: (
     <path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z" stroke="currentColor" strokeWidth="2" fill="none" strokeLinecap="round" strokeLinejoin="round" />
   ),
+  warning: (
+    <path d="M12 9v4m0 4h.01M10.29 3.86l-8.13 14.09A1.5 1.5 0 003.5 20h17a1.5 1.5 0 001.34-2.05L13.71 3.86a1.5 1.5 0 00-2.42 0z" stroke="currentColor" strokeWidth="2" fill="none" strokeLinecap="round" strokeLinejoin="round" />
+  ),
 }
 
 function renderItem(item: NavItem, pathname: string) {
@@ -153,7 +157,14 @@ export default function Sidebar() {
   // hover/focus tooltip per item, not gone — just no longer competing with
   // the breadcrumb for the same job.
   const location = useLocation()
-  const { data: user } = useCurrentUser()
+  // fix-round 6 (PR #81, umbrella #385 codex sweep): `user` alone drove the
+  // role gate below — `undefined` covers BOTH "still loading" and "the read
+  // failed with nothing ever retained", so a role/tenancy read that failed
+  // on first load silently narrowed this nav to viewer-only with no signal
+  // anything was wrong (Admin/Media Workloads just... weren't there). A
+  // settled failed refetch with a role already retained is unaffected —
+  // `user` stays the last-confirmed value either way (Art. 5).
+  const { data: user, failed: userFailed } = settleQuery(useCurrentUser())
 
   const role = user?.role || 'viewer'
   const groups = user?.groups || []
@@ -182,6 +193,25 @@ export default function Sidebar() {
         {rails.map((item) => renderItem(item, location.pathname))}
         {secondaries.length > 0 && <div className="border-t border-border my-2 mx-2" />}
         {secondaries.map((item) => renderItem(item, location.pathname))}
+        {/* Role/tenancy read failed and nothing was ever retained (see
+            settleQuery note above) — the nav above is silently narrowed to
+            viewer-only, so say so rather than leaving it unexplained. */}
+        {userFailed && !user && (
+          <div
+            role="status"
+            className="group relative mt-auto flex h-10 w-10 mx-auto items-center justify-center rounded-lg text-amber-400"
+          >
+            <svg className="w-5 h-5 shrink-0" viewBox="0 0 24 24" fill="none" aria-hidden="true">
+              {icons.warning}
+            </svg>
+            <span
+              role="tooltip"
+              className="pointer-events-none absolute left-full z-30 ml-2 whitespace-nowrap rounded bg-panel px-2 py-1 text-xs text-text opacity-0 shadow-lg transition-opacity duration-150 group-hover:opacity-100 group-focus-visible:opacity-100"
+            >
+              Could not confirm your role — Admin/Media Workloads may be hidden. Reload the page to try again.
+            </span>
+          </div>
+        )}
       </nav>
     </aside>
   )

@@ -2,6 +2,7 @@ import { useState, useEffect } from 'react'
 import { useWorkflows, useLaunchWorkflow, useWorkflowJobStatus, useCurrentUser, useOperationStatus, isOperation } from '../../api/hooks'
 import ReasonConfirm from '../../components/ReasonConfirm'
 import { useActivityStore } from '../../store/activity'
+import { settleQuery } from '../../lib/queryState'
 
 interface ActiveJob {
   workflowName: string
@@ -18,7 +19,12 @@ interface PendingOperation {
 // per-page hero it used to also own was retired — umbrella #347 WO-D1 spec
 // C). Launch outcomes stay anchored on the card (hard gate 2).
 export default function JobsLane() {
-  const { data: user } = useCurrentUser()
+  // fix-round 6 (PR #81, umbrella #385 codex sweep): `!user?.awx_configured`
+  // used to be the FIRST branch checked below, before loading/error were
+  // even considered — `user` is `undefined` on every first render and on
+  // every failed read, so both cases misread as the false claim "AWX API
+  // not configured" rather than "still checking" / "could not confirm".
+  const { data: user, loading: userLoading, failed: userFailed } = settleQuery(useCurrentUser())
   const { data: workflowsData, isLoading, isError } = useWorkflows()
   const launchMutation = useLaunchWorkflow()
   const recordAwxWrite = useActivityStore((s) => s.recordAwxWrite)
@@ -51,7 +57,15 @@ export default function JobsLane() {
 
   return (
     <div>
-      {!user?.awx_configured ? (
+      {userLoading ? (
+        <div className="panel text-center py-12">
+          <p className="text-muted">Checking AWX configuration...</p>
+        </div>
+      ) : userFailed && !user ? (
+        <div className="panel text-center py-12">
+          <p className="text-muted">Could not confirm AWX configuration. Reload the page to try again.</p>
+        </div>
+      ) : !user?.awx_configured ? (
         <div className="panel text-center py-12">
           <p className="text-muted">AWX API not configured. Release 2 will expose approved AWX jobs from this surface.</p>
         </div>
@@ -229,26 +243,34 @@ function OperationMonitor({
   onLaunched: (jobId: number) => void
   onError: () => void
 }) {
-  const { data: operation } = useOperationStatus(operationId)
+  // fix-round 6 (PR #81, umbrella #385 codex sweep): same shape as
+  // JobProgress.tsx's OperationStatusLine — a settled failed refetch
+  // retained the last-good `operation` with no notice. `failed` distinguishes
+  // "still querying" (silent, as before) from "the read itself failed" and
+  // "showing the last read, unconfirmed" once data is retained.
+  const { data: operation, failed } = settleQuery(useOperationStatus(operationId))
 
   useEffect(() => {
     if (!operation) return
-    
+
     let timer: ReturnType<typeof setTimeout> | undefined
-    
+
     if (operation.state === 'launched' && operation.job_id) {
       timer = setTimeout(() => onLaunched(operation.job_id!), 1000)
     } else if (operation.state === 'error') {
       console.error('Operation failed:', operation.error)
       timer = setTimeout(() => onError(), 3000)
     }
-    
+
     return () => {
       if (timer) clearTimeout(timer)
     }
   }, [operation, onLaunched, onError])
 
-  if (!operation) return null
+  if (!operation) {
+    if (!failed) return null
+    return <div className="text-xs text-amber-300">Could not query operation status — retrying automatically</div>
+  }
 
   // umbrella #347: Record<string, string> + fallback — see the matching
   // note in pages/Catalog/index.tsx's own copy of this widget.
@@ -279,24 +301,31 @@ function OperationMonitor({
         {operation.error && (
           <span className="text-xs text-red-500">{operation.error}</span>
         )}
+        {failed && (
+          <span className="text-xs text-amber-300">Could not confirm — retrying</span>
+        )}
       </div>
     </div>
   )
 }
 
 function JobStatus({ jobId, onComplete }: { jobId: number; onComplete: () => void }) {
-  const { data: jobStatus } = useWorkflowJobStatus(jobId)
+  // fix-round 6: same shape as OperationMonitor above.
+  const { data: jobStatus, failed } = settleQuery(useWorkflowJobStatus(jobId))
 
   const isTerminal = jobStatus ? ['successful', 'failed', 'error', 'canceled'].includes(jobStatus.status) : false
 
   useEffect(() => {
     if (!isTerminal) return
-    
+
     const timer = setTimeout(() => onComplete(), 2000)
     return () => clearTimeout(timer)
   }, [isTerminal, onComplete])
 
-  if (!jobStatus) return null
+  if (!jobStatus) {
+    if (!failed) return null
+    return <div className="text-xs text-amber-300">Could not query job status — retrying automatically</div>
+  }
 
   const statusColor = {
     new: 'badge-status-new',
@@ -318,23 +347,30 @@ function JobStatus({ jobId, onComplete }: { jobId: number; onComplete: () => voi
       <span className="text-xs text-muted">
         job #{jobStatus.job_id} • {jobStatus.elapsed.toFixed(1)}s
       </span>
+      {failed && (
+        <span className="text-xs text-amber-300">Could not confirm — retrying</span>
+      )}
     </div>
   )
 }
 
 function JobMonitor({ workflowName, jobId, onComplete }: { workflowName: string; jobId: number; onComplete: () => void }) {
-  const { data: jobStatus } = useWorkflowJobStatus(jobId)
+  // fix-round 6: same shape as OperationMonitor/JobStatus above.
+  const { data: jobStatus, failed } = settleQuery(useWorkflowJobStatus(jobId))
 
   const isTerminal = jobStatus ? ['successful', 'failed', 'error', 'canceled'].includes(jobStatus.status) : false
 
   useEffect(() => {
     if (!isTerminal) return
-    
+
     const timer = setTimeout(() => onComplete(), 2000)
     return () => clearTimeout(timer)
   }, [isTerminal, onComplete])
 
-  if (!jobStatus) return null
+  if (!jobStatus) {
+    if (!failed) return null
+    return <div className="text-xs text-amber-300">Could not query job status — retrying automatically</div>
+  }
 
   const statusColor = {
     new: 'badge-status-new',
@@ -359,6 +395,9 @@ function JobMonitor({ workflowName, jobId, onComplete }: { workflowName: string;
           {jobStatus.status.charAt(0).toUpperCase() + jobStatus.status.slice(1)}
         </span>
         <span className="text-xs text-muted w-16 text-right">{jobStatus.elapsed.toFixed(1)}s</span>
+        {failed && (
+          <span className="text-xs text-amber-300">Could not confirm — retrying</span>
+        )}
       </div>
     </div>
   )

@@ -3,6 +3,7 @@ import { QRCodeSVG } from 'qrcode.react'
 import { useAdminUsers, useAdminGroups, useAdminHealth, useCreatePasskeyInvitation } from '@/api/hooks'
 import { Users, Bot, Activity } from 'lucide-react'
 import type { AdminUser, PasskeyInvitationResponse } from '@/api/types'
+import { settleQuery } from '@/lib/queryState'
 
 // A single Users table body. The People / Machine-identities split (ADR-0028
 // C4/D8) renders two of these over the human vs machine partitions rather than
@@ -99,14 +100,17 @@ export default function Admin() {
   // fix-round 5 (PR #81, codex sibling sweep): isError on all three — see
   // UsersTable's own doc comment and the Integration Health / Groups
   // sections below for what each one fixes.
-  const users = useAdminUsers()
-  const groups = useAdminGroups()
-  const health = useAdminHealth()
+  //
+  // fix-round 6 (PR #81, umbrella #385): retrofitted onto settleQuery —
+  // `.isError`/`.isLoading` below become `.failed`/`.loading`.
+  const users = settleQuery(useAdminUsers())
+  const groups = settleQuery(useAdminGroups())
+  const health = settleQuery(useAdminHealth())
   const inviteMutation = useCreatePasskeyInvitation()
   const [showQR, setShowQR] = useState(false)
   const [inviteResult, setInviteResult] = useState<PasskeyInvitationResponse | null>(null)
 
-  const isLoading = users.isLoading || groups.isLoading || health.isLoading
+  const isLoading = users.loading || groups.loading || health.loading
 
   const allUsers: AdminUser[] = users.data?.users ?? []
   const humanUsers = allUsers.filter((u) => u.user_type === 'human')
@@ -137,7 +141,7 @@ export default function Admin() {
               retained — a Connected/Disconnected dot plus latency is a
               status-posture claim of exactly the kind classifyWorkspaceHealth
               exists to prevent from rendering unqualified. */}
-          {health.isError && (
+          {health.failed && (
             <div className="col-span-full text-xs text-amber-300 bg-amber-500/10 rounded px-3 py-2">
               {health.data
                 ? 'Could not be refreshed just now — showing the last successful read. Retrying automatically.'
@@ -210,7 +214,7 @@ export default function Admin() {
           </div>
         )}
 
-        <UsersTable users={humanUsers} isLoading={isLoading} failed={users.isError} emptyLabel="No people" />
+        <UsersTable users={humanUsers} isLoading={isLoading} failed={users.failed} emptyLabel="No people" />
       </div>
 
       {/* Machine identities — service / automation principals, kept distinct
@@ -222,7 +226,7 @@ export default function Admin() {
             Machine identities
           </h2>
         </div>
-        <UsersTable users={machineUsers} isLoading={isLoading} failed={users.isError} emptyLabel="No machine identities" />
+        <UsersTable users={machineUsers} isLoading={isLoading} failed={users.failed} emptyLabel="No machine identities" />
       </div>
 
       {/* Groups Management */}
@@ -237,7 +241,7 @@ export default function Admin() {
           {/* fix-round 5: named regardless of whether groups are retained —
               the per-group member COUNT below is exactly the kind of claim
               from an unconfirmed read hard gate 1 forbids. */}
-          {groups.isError && (
+          {groups.failed && (
             <div className="px-6 py-2 text-xs text-amber-300 bg-amber-500/10">
               {(groups.data?.groups?.length ?? 0) > 0
                 ? 'Could not be refreshed just now — showing the last successful read. Retrying automatically.'
@@ -247,7 +251,7 @@ export default function Admin() {
           {isLoading ? (
             <div className="px-6 py-8 text-center text-muted text-sm">Loading groups...</div>
           ) : groups.data?.groups?.length === 0 ? (
-            !groups.isError && (
+            !groups.failed && (
               <div className="px-6 py-8 text-center text-muted text-sm">No groups</div>
             )
           ) : (

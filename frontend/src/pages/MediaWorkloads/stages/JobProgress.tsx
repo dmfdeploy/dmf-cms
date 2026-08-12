@@ -1,5 +1,6 @@
 import { useEffect } from 'react'
 import { useCatalogJobStatus, useOperationStatus } from '../../../api/hooks'
+import { settleQuery } from '../../../lib/queryState'
 
 /**
  * Launch-job progress/outcome, relocated verbatim (behaviour-for-behaviour)
@@ -33,7 +34,13 @@ export function OperationStatusLine({
   onLaunched: (jobId: number) => void
   onError: () => void
 }) {
-  const { data: operation } = useOperationStatus(operationId)
+  // fix-round 6 (PR #81, umbrella #385 codex sweep): this polls every 3s
+  // while non-terminal, and `data` was the only thing read — a settled
+  // failed refetch retained the last-good `operation` with no notice, so a
+  // stuck/failing poll silently kept showing e.g. "Launching job" as
+  // current. `settleQuery` surfaces `failed` alongside the retained data
+  // (Art. 5 — the line stays put) so the caption can say so (Art. 1).
+  const { data: operation, failed } = settleQuery(useOperationStatus(operationId))
 
   useEffect(() => {
     if (!operation) return
@@ -49,7 +56,11 @@ export function OperationStatusLine({
   }, [operation, onLaunched, onError])
 
   if (!operation) {
-    return <div className="text-xs text-muted">Querying operation status…</div>
+    return (
+      <div className="text-xs text-muted">
+        {failed ? 'Could not query operation status — retrying automatically' : 'Querying operation status…'}
+      </div>
+    )
   }
 
   return (
@@ -62,6 +73,9 @@ export function OperationStatusLine({
         <span className="text-red-400">
           Launch did not start — {operation.error}
         </span>
+      )}
+      {failed && (
+        <span className="text-amber-300">Could not confirm — showing the last read, retrying</span>
       )}
     </div>
   )
@@ -94,7 +108,10 @@ export function JobStatusLine({
   onComplete: (key: string) => void
   onStatusChange?: (status: string) => void
 }) {
-  const { data: jobStatus } = useCatalogJobStatus(entryKey, jobId)
+  // fix-round 6 (PR #81, umbrella #385 codex sweep): same shape as
+  // OperationStatusLine above — a settled failed refetch (this polls every
+  // 2s) used to keep showing the last-good status with no notice.
+  const { data: jobStatus, failed } = settleQuery(useCatalogJobStatus(entryKey, jobId))
 
   useEffect(() => {
     if (jobStatus?.status) onStatusChange?.(jobStatus.status)
@@ -107,7 +124,11 @@ export function JobStatusLine({
   }, [jobStatus?.is_done, onComplete, entryKey])
 
   if (!jobStatus) {
-    return <div className="text-xs text-muted">Querying job status…</div>
+    return (
+      <div className="text-xs text-muted">
+        {failed ? 'Could not query job status — retrying automatically' : 'Querying job status…'}
+      </div>
+    )
   }
 
   const label = jobStatus.status.charAt(0).toUpperCase() + jobStatus.status.slice(1)
@@ -118,6 +139,9 @@ export function JobStatusLine({
         {jobStatus.status === 'running' ? '⟳ ' : ''}
         {label}
       </span>
+      {failed && (
+        <span className="text-amber-300">Could not confirm — showing the last read, retrying</span>
+      )}
     </div>
   )
 }

@@ -1,4 +1,5 @@
 import type { AdminJobsResponse, ChangesCommitsResponse, ChangesPullsResponse } from '../api/types'
+import { settleQuery } from './queryState'
 
 // Single source of truth for the "recent changes" degraded states, shared by
 // the Workspace RecentChanges widget and the Activity → History jobs lane so
@@ -30,22 +31,19 @@ export interface ChangesQueryLike {
 }
 
 export function classifyChanges(q: ChangesQueryLike): ChangesState {
-  const jobs = q.data?.jobs ?? []
+  // fix-round 6 (PR #81, umbrella #385): retrofitted onto settleQuery —
+  // `loading`/`failed` below are exactly the `q.isLoading && !q.data` /
+  // `q.isError` checks this function itself introduced in fix-round 4 (see
+  // that round's note, preserved in queryState.ts now), expressed through
+  // the shared primitive so a new classifier copies this shape by default.
+  const settled = settleQuery(q)
+  const jobs = settled.data?.jobs ?? []
 
   let phase: ChangesPhase
-  if (q.isLoading && !q.data) phase = 'loading'
-  // fix-round 4 (PR #81): a SETTLED failed refetch wins even when TanStack
-  // Query has retained a prior successful `data` (it does, by default,
-  // across a failed background refetch) — checking `isError` only when
-  // `!q.data` let a stale, previously-honest reason token re-authorize an
-  // 'ok' read the CURRENT fetch never established. Same fix, same shape,
-  // as classifyForgejo's own `isError` check above (fix-round P2-3) —
-  // codex's sibling sweep found this sibling classifier had the identical
-  // gap, consumed by both HistoryLane's Recent Jobs panel and Workspace's
-  // RecentChanges widget.
-  else if (q.isError) phase = 'error'
+  if (settled.loading) phase = 'loading'
+  else if (settled.failed) phase = 'error'
   else {
-    switch (q.data?.reason) {
+    switch (settled.data?.reason) {
       case 'awx-not-running':
         phase = 'not-running'
         break
@@ -112,15 +110,12 @@ export interface ForgejoQueryLike {
 }
 
 export function classifyForgejo(q: ForgejoQueryLike): ForgejoPhase {
-  if (q.isLoading && !q.data) return 'loading'
-  // fix-round P2-3: a SETTLED failed refetch wins even when TanStack Query
-  // has retained a prior successful `data` (it does, by default, across a
-  // failed background refetch) — checking `isError` only when `!q.data` let
-  // a stale, previously-honest reason token re-authorize an "ok"/"genuinely
-  // empty" read the CURRENT fetch never established. Same defect class,
-  // same fix as MediaWorkloads/index.tsx's `cannotClaimNone`.
-  if (q.isError) return 'error'
-  switch (q.data?.reason) {
+  // fix-round 6 (PR #81, umbrella #385): retrofitted onto settleQuery — see
+  // classifyChanges' identical note above.
+  const settled = settleQuery(q)
+  if (settled.loading) return 'loading'
+  if (settled.failed) return 'error'
+  switch (settled.data?.reason) {
     case 'forgejo-unreachable':
       return 'unreachable'
     case 'forgejo-partial':

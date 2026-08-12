@@ -1,4 +1,5 @@
 import { useAppContract, useCurrentUser, useAdminHealth } from '../../api/hooks'
+import { settleQuery } from '../../lib/queryState'
 
 // Admin default panels on the Workspace home (IA §4.1 role-varied content;
 // moved from the retired pages/overview/AdminOverview.tsx, #174 WP4). The
@@ -21,9 +22,10 @@ export default function AdminPanels() {
   // Connected/Disconnected + latency/user/template counts from `healthData`
   // with no isError check at all — same shape as Admin.tsx's own
   // Integration Health panel.
-  const { data: user, isError: userError } = useCurrentUser()
-  const { data: contract, isError: contractError } = useAppContract()
-  const { data: healthData, isLoading: healthLoading, isError: healthError } = useAdminHealth()
+  // fix-round 6 (PR #81, umbrella #385): retrofitted onto settleQuery.
+  const { data: user, failed: userError } = settleQuery(useCurrentUser())
+  const { data: contract, failed: contractError } = settleQuery(useAppContract())
+  const { data: healthData, loading: healthLoading, failed: healthError } = settleQuery(useAdminHealth())
 
   if (!contract || !user) {
     if (contractError || userError) {

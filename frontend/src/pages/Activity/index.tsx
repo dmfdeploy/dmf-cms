@@ -1,5 +1,6 @@
 import { Navigate, NavLink, useParams } from 'react-router-dom'
 import { useCurrentUser } from '../../api/hooks'
+import { settleQuery } from '../../lib/queryState'
 import JobsLane from './JobsLane'
 import HistoryLane from './HistoryLane'
 
@@ -10,9 +11,20 @@ import HistoryLane from './HistoryLane'
 // (IA §7 matrix) — cosmetic here, the backend gates every action.
 export default function Activity() {
   const { lane } = useParams()
-  const { data: user } = useCurrentUser()
+  // fix-round 6 (PR #81, umbrella #385 codex sweep): `user` was `undefined`
+  // on the FIRST render of every direct load of /activity/jobs, not just on
+  // a failed read — `canUseJobs` defaulted to false before the role was
+  // ever confirmed, so the very first render below fired a REPLACE redirect
+  // to /activity/history that a genuine non-viewer could not come back from
+  // even once their role resolved a moment later. Decide nothing until the
+  // read has settled.
+  const { data: user, loading: userLoading, failed: userFailed } = settleQuery(useCurrentUser())
   const role = user?.role ?? 'viewer'
-  const canUseJobs = role !== 'viewer'
+  const canUseJobs = !userLoading && role !== 'viewer'
+
+  if (userLoading) {
+    return <div className="flex-1 overflow-y-auto p-6 text-sm text-muted">Loading…</div>
+  }
 
   if (!lane) {
     return <Navigate to={canUseJobs ? '/activity/jobs' : '/activity/history'} replace />
@@ -21,6 +33,21 @@ export default function Activity() {
     return <Navigate to="/activity" replace />
   }
   if (lane === 'jobs' && !canUseJobs) {
+    // A settled read that genuinely failed with no role ever retained is
+    // NOT the same as a confirmed viewer — say so and offer a way forward
+    // (Art. 8) instead of silently bouncing a possible non-viewer away with
+    // no explanation and no way back.
+    if (userFailed && !user) {
+      return (
+        <div className="flex-1 overflow-y-auto p-6 text-sm text-muted">
+          Could not confirm your role, so the Jobs lane can&apos;t be shown right now.{' '}
+          <NavLink to="/activity/history" className="text-accent underline">
+            Go to History
+          </NavLink>{' '}
+          or reload the page to try again.
+        </div>
+      )
+    }
     return <Navigate to="/activity/history" replace />
   }
 
