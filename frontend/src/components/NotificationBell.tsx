@@ -32,7 +32,9 @@ function summaryText(state: WorkspaceHealthState): string {
     case 'loading':
       return 'Checking…'
     case 'not-configured':
-      return 'Monitoring not configured'
+      // fix-round 5: `stale` was computed but never consulted for this
+      // phase — same gap HealthCore.tsx had, same fix (see its comment).
+      return state.stale ? 'Monitoring not configured — unconfirmed just now' : 'Monitoring not configured'
     case 'unknown':
       return 'Monitoring unreachable'
     case 'live':
@@ -127,7 +129,9 @@ export default function NotificationBell() {
               <div className="px-4 py-6 text-center text-warn text-sm">
                 <AlertTriangle className="w-8 h-8 mx-auto mb-2" />
                 {state.phase === 'not-configured'
-                  ? 'Monitoring is not configured in this environment, so alerts cannot be assessed.'
+                  ? state.stale
+                    ? 'This could not be confirmed just now — showing the last successful read (monitoring was not configured then). Retrying automatically.'
+                    : 'Monitoring is not configured in this environment, so alerts cannot be assessed.'
                   : state.phase === 'unknown'
                     ? 'Monitoring is unreachable — health cannot be confirmed right now.'
                     : state.stale

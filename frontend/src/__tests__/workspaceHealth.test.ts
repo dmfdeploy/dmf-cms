@@ -49,6 +49,19 @@ describe('classifyWorkspaceHealth', () => {
     expect(isNominal(s)).toBe(false)
   })
 
+  // fix-round 5 (PR #81, codex sibling sweep): `stale` is computed as
+  // `q.isError` UNCONDITIONALLY (not gated on phase), so it was already
+  // correct here — the bug this round fixed was that HealthCore.tsx and
+  // NotificationBell.tsx never CONSULTED it for the 'not-configured'
+  // phase. Pinning the classifier's own correctness explicitly so a
+  // future change to this function can't silently reintroduce the
+  // upstream half of that gap.
+  it('stale is computed for not-configured too, not just live', () => {
+    const s = classifyWorkspaceHealth({ isLoading: false, isError: true, data: health({ configured: false }) })
+    expect(s.phase).toBe('not-configured')
+    expect(s.stale).toBe(true)
+  })
+
   it('missing Watchdog is never nominal even with zero alerts', () => {
     const s = classifyWorkspaceHealth({ isLoading: false, isError: false, data: health({ watchdog_firing: false }) })
     expect(s.verified).toBe(false)

@@ -57,7 +57,13 @@ export default function ProvisionStage({
    */
   onJobStart: () => void
 }) {
-  const { data: catalogData, isLoading: catalogLoading } = useCatalog()
+  // fix-round 5 (PR #81, codex sibling sweep): `catalogFailed` is threaded
+  // into the absence claim below — a failed catalog read left `entries`
+  // empty exactly like a genuinely-empty catalog would, so the stage
+  // announced a confident "no templates matched" manufactured out of an
+  // unhandled error path (verbatim the failure mode PlanStage.tsx's own
+  // docstring names, already fixed there and in CreateWorkload.tsx).
+  const { data: catalogData, isLoading: catalogLoading, isError: catalogFailed } = useCatalog()
   const { data: user } = useCurrentUser()
   const deployMutation = useDeployCatalog()
   const recordAwxWrite = useActivityStore((s) => s.recordAwxWrite)
@@ -241,10 +247,16 @@ export default function ProvisionStage({
   return (
     <StageCard label="Provision" state={state}>
       {entries.length === 0 ? (
-        <p className="text-muted">
+        <p className={catalogFailed ? 'text-amber-200/80' : 'text-muted'}>
           {catalogLoading
             ? 'Loading template information…'
-            : "No catalog templates matched this workload's functions."}
+            : catalogFailed
+              ? // "Retrying automatically" is false for useCatalog specifically
+                // (no refetchInterval, retry exhausted) — see
+                // CreateWorkload.tsx's TemplatePicker for the identical
+                // correction and why it matters here too.
+                "The catalog couldn't be read right now, so this workload's templates can't be listed. Reload the page to try the read again."
+              : "No catalog templates matched this workload's functions."}
         </p>
       ) : (
         <div className="space-y-4">

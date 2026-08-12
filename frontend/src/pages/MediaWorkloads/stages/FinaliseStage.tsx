@@ -90,7 +90,10 @@ export default function FinaliseStage({
    */
   user: UserIdentity | undefined
 }) {
-  const { data: catalogData, isLoading: catalogLoading } = useCatalog()
+  // fix-round 5 (PR #81, codex sibling sweep): `catalogFailed` threaded into
+  // the absence claim below — see ProvisionStage.tsx's identical fix for
+  // the full reasoning (same shared PlanStage/CreateWorkload precedent).
+  const { data: catalogData, isLoading: catalogLoading, isError: catalogFailed } = useCatalog()
   const teardownMutation = useTeardownCatalog()
   const purgeMutation = usePurgeWorkload()
   const recordAwxWrite = useActivityStore((s) => s.recordAwxWrite)
@@ -242,10 +245,12 @@ export default function FinaliseStage({
           {state === 'not-applicable' ? (
             <p className="mt-1 text-muted">Nothing is running yet, so there is nothing to tear down.</p>
           ) : entries.length === 0 ? (
-            <p className="mt-1 text-muted">
+            <p className={`mt-1 ${catalogFailed ? 'text-amber-200/80' : 'text-muted'}`}>
               {catalogLoading
                 ? 'Loading template information…'
-                : "No catalog templates matched this workload's functions."}
+                : catalogFailed
+                  ? "The catalog couldn't be read right now, so this workload's templates can't be listed. Reload the page to try the read again."
+                  : "No catalog templates matched this workload's functions."}
             </p>
           ) : (
             <div className="mt-2 space-y-3">

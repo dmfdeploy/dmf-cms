@@ -18,11 +18,18 @@ export default function DesignStage({
   workload,
   catalogEntries,
   catalogLoading,
+  catalogFailed,
   state,
 }: {
   workload: MediaWorkload
   catalogEntries: CatalogEntry[]
   catalogLoading: boolean
+  // fix-round 5 (PR #81, codex sibling sweep): a failed catalog read left
+  // `catalogEntries` empty exactly like a genuinely-empty catalog would —
+  // every function's join then missed, and EVERY item below rendered "this
+  // function key isn't in the current catalog… may have been removed" for a
+  // reason that had nothing to do with removal. See below.
+  catalogFailed: boolean
   state: StageState
 }) {
   const entries = workload.functions
@@ -35,6 +42,20 @@ export default function DesignStage({
       <div className="space-y-4">
         <div>
           <h3 className="text-xs uppercase tracking-wide text-muted">Templates</h3>
+          {/* fix-round 5: named ONCE at the section level — a failed catalog
+              read misses EVERY join below, so accusing each function
+              individually of having been "removed" would repeat a false
+              claim once per row instead of naming the real, single cause.
+              "Retrying automatically" is not said here on purpose: useCatalog
+              carries no refetchInterval, so nothing is actually retrying
+              (the same true-tail correction CreateWorkload.tsx's
+              TemplatePicker already made). */}
+          {catalogFailed && (
+            <p className="mt-1 text-xs text-amber-200/80">
+              The catalog couldn&apos;t be read right now, so template details below could not
+              be checked. Reload the page to try the read again.
+            </p>
+          )}
           {entries.length === 0 ? (
             <p className="mt-1 text-muted">
               {catalogLoading
@@ -54,7 +75,7 @@ export default function DesignStage({
                     </span>
                   </div>
                   {entry?.summary && <p className="mt-1 text-xs text-muted">{entry.summary}</p>}
-                  {!entry && (
+                  {!entry && !catalogFailed && (
                     <p className="mt-1 text-xs text-amber-200/80">
                       This function key isn&apos;t in the current catalog — it may have been
                       removed since this workload was deployed.
@@ -115,7 +136,17 @@ export default function DesignStage({
  */
 function InstanceComposition({ instance }: { instance: string }) {
   const topology = useInstanceTopology(instance)
-  if (!topology.data || !Array.isArray(topology.data.sources)) return null
+  // fix-round 5 (PR #81, codex sibling sweep): this was the unfixed twin of
+  // Operate.tsx's InstanceActiveSource — same seam, same missing check. An
+  // errored read is unknown, not absence: a failed refetch can retain the
+  // prior successful data while isError flips true (useInstanceTopology has
+  // retry:false, and ConfigureStage's switch control calls topology.refetch()
+  // right after a successful source switch — so the reachable path is
+  // "operator switches source on Configure, the refetch here fails, and this
+  // line keeps naming the OLD source as active on the very page where they
+  // just changed it"). The row withdraws on error too, same as its sibling —
+  // the newest read is the one it speaks for.
+  if (topology.isError || !topology.data || !Array.isArray(topology.data.sources)) return null
 
   const { sources, active_source } = topology.data
   if (sources.length === 0) return null

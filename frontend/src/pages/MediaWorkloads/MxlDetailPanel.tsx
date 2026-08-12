@@ -21,7 +21,7 @@ export default function MxlDetailPanel() {
   const visible = useDocumentVisible()
   const reducedMotion = usePrefersReducedMotion()
   const active = visible && !reducedMotion
-  const { data, isLoading } = useMxlStatus({ active })
+  const { data, isLoading, isError } = useMxlStatus({ active })
 
   // Cache-bust the preview ~5/s so the clock overlay visibly ticks.
   const [tick, setTick] = useState(0)
@@ -48,6 +48,21 @@ export default function MxlDetailPanel() {
 
   if (isLoading) {
     return <div className="p-4 text-sm text-muted">Loading live view…</div>
+  }
+
+  // fix-round 5 (PR #81, codex sibling sweep): checked BEFORE
+  // `!data?.configured`, same reasoning as the paused-state guard above —
+  // a settled failed read with nothing ever retained left `data` undefined
+  // exactly like a disabled query does, and `!data?.configured` cannot tell
+  // "never configured" apart from "just failed to read." Reading it as
+  // "not configured" told the operator something false about their
+  // environment, not merely something stale.
+  if (isError && !data) {
+    return (
+      <p className="text-sm text-muted">
+        Live status could not be read right now. Retrying automatically.
+      </p>
+    )
   }
 
   if (!data?.configured) {
@@ -78,6 +93,16 @@ export default function MxlDetailPanel() {
         <div className="mb-3 rounded-lg border border-white/10 bg-black/30 px-3 py-2 text-sm text-muted">
           Paused — showing the last reading. Resumes when this tab is visible
           and reduced motion is off.
+        </div>
+      )}
+      {/* fix-round 5: a settled failed poll while ACTIVE retains the last
+          successful payload — everything below (head index, latency, node
+          list, the preview image) is real but not confirmed current. Same
+          "held frame must say it is held" reasoning as the paused banner
+          above, for the other way a frame goes stale. */}
+      {active && isError && (
+        <div className="mb-3 rounded-lg border border-amber-500/20 bg-amber-500/10 px-3 py-2 text-sm text-amber-200">
+          Could not be refreshed just now — showing the last reading. Retrying automatically.
         </div>
       )}
       {!data.reachable && (

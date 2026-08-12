@@ -45,9 +45,12 @@ export interface FacilityDetailQueryLike {
 export interface FacilityDetailState {
   phase: FacilityDetailPhase
   data?: FacilityDetailResponse
-  // fix-round 4 (PR #81, codex sibling sweep): true when phase is 'loaded'
-  // but the CURRENT read failed — `data` is retained from a prior success,
-  // not confirmed current. A settled isError with data retained must NOT
+  // fix-round 4/5 (PR #81, codex sibling sweep): true when `data` is
+  // retained from a prior success but the CURRENT read failed — for EITHER
+  // 'loaded' or 'unconfigured' (fix-round 5 closed the second: the
+  // unconfigured branch hardcoded `stale: false`, so a failed refetch
+  // after a valid unconfigured read silently presented that stale config
+  // posture as current). A settled isError with data retained must NOT
   // suppress the page (Art. 5 — the screen stays still; the same reasoning
   // already applied to MediaWorkloads/HistoryLane/RecentChanges), only
   // qualify it — 'unreadable' stays reserved for "nothing to show at all".
@@ -58,7 +61,7 @@ export function classifyFacilityDetail(q: FacilityDetailQueryLike): FacilityDeta
   if (q.isLoading && !q.data) return { phase: 'loading', stale: false }
   if (!q.data) return { phase: 'unreadable', stale: false }
   if (!q.data.prometheus_configured && !q.data.netbox_configured) {
-    return { phase: 'unconfigured', data: q.data, stale: false }
+    return { phase: 'unconfigured', data: q.data, stale: q.isError }
   }
   return { phase: 'loaded', data: q.data, stale: q.isError }
 }
@@ -132,12 +135,26 @@ export default function FacilityDetail() {
       )}
 
       {state.phase === 'unconfigured' && (
-        <div className="panel py-6 px-6">
-          <p className="text-sm text-muted">
-            Neither monitoring nor NetBox is configured in this environment, so
-            no facility detail can be read from here.
-          </p>
-        </div>
+        <>
+          {/* fix-round 5: a failed refetch after a valid unconfigured read
+              must not silently present that (now possibly stale) config
+              posture as current — same reasoning as the 'loaded' banner
+              below, applied here too. */}
+          {state.stale && (
+            <div className="panel py-3 px-6 mb-6 border-warn/40">
+              <p className="text-sm text-warn">
+                This could not be confirmed just now — showing the last successful read.
+                Retrying automatically.
+              </p>
+            </div>
+          )}
+          <div className="panel py-6 px-6">
+            <p className="text-sm text-muted">
+              Neither monitoring nor NetBox is configured in this environment, so
+              no facility detail can be read from here.
+            </p>
+          </div>
+        </>
       )}
 
       {state.phase === 'loaded' && state.data && (
@@ -448,15 +465,22 @@ function WorkloadCountPanel() {
           <p className="text-sm text-muted">
             Cannot confirm the media workload count — this could not be read. Retrying automatically.
           </p>
+        ) : isError ? (
+          // fix-round 5: this used to sit AFTER `!data.configured` below,
+          // contradicting the doc comment above (`countUnreliable`'s own
+          // "isError wins regardless of retained data") — a settled failed
+          // refetch that retained a `configured: false` payload silently
+          // kept presenting that stale config posture as current instead
+          // of surfacing the failed read. isError now wins unconditionally,
+          // ahead of every other branch that reads retained `data`.
+          <p className="text-sm text-muted">
+            Cannot confirm the media workload count — the last read attempt failed. Retrying automatically.
+          </p>
         ) : !data.configured ? (
           <p className="text-sm text-muted">
             {data.reason
               ? facilityReasonCopy(data.reason) || 'Media workloads are not configured for this environment.'
               : 'Media workloads are not configured for this environment.'}
-          </p>
-        ) : isError ? (
-          <p className="text-sm text-muted">
-            Cannot confirm the media workload count — the last read attempt failed. Retrying automatically.
           </p>
         ) : countUnreliable && data.reason ? (
           // Fail-hard path: `workloads` is empty by construction here (see

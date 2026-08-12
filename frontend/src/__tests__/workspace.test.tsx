@@ -5,7 +5,7 @@
  * verdict as content, never a raw error (hard gates 1+4).
  */
 import { afterEach, describe, expect, it, vi } from 'vitest'
-import { cleanup, render, screen } from '@testing-library/react'
+import { act, cleanup, render, screen } from '@testing-library/react'
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query'
 import { MemoryRouter } from 'react-router-dom'
 import Workspace from '../pages/Workspace'
@@ -78,6 +78,7 @@ afterEach(() => {
   cleanup()
   vi.unstubAllGlobals()
   vi.restoreAllMocks()
+  vi.useRealTimers()
 })
 
 describe('Workspace health core states (plan §6)', () => {
@@ -153,6 +154,65 @@ describe('Workspace health core states (plan §6)', () => {
   it('not-configured renders the explicit dark state', async () => {
     renderWorkspace(health({ configured: false, reachable: false, watchdog_firing: false }))
     expect(await screen.findByText(/Monitoring is not configured in this environment/)).toBeTruthy()
+  })
+
+  // fix-round 5 (PR #81, codex sibling sweep): classifyWorkspaceHealth's
+  // `stale` field was already correctly computed as `q.isError`
+  // unconditionally (see workspaceHealth.test.ts's own pin for the 'live'
+  // phase) — but this early return for 'not-configured' never CONSULTED
+  // it, so a settled failed refetch after a retained "not configured" read
+  // silently kept presenting that stale config posture as current, with no
+  // notice at all. Hold-then-reject, not first-load.
+  it('a settled failed refetch after a retained not-configured read adds a staleness notice', async () => {
+    vi.useFakeTimers()
+    let calls = 0
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(async (input: RequestInfo | URL) => {
+        const url = (typeof input === 'string' ? input : (input as Request).url).toString()
+        if (url.endsWith('/api/me')) return new Response(JSON.stringify(user), { status: 200 })
+        if (url.endsWith('/api/changes/jobs')) return new Response(JSON.stringify({ jobs: [] }), { status: 200 })
+        if (url.endsWith('/api/workspace/health')) {
+          calls += 1
+          if (calls === 1) {
+            return new Response(
+              JSON.stringify(health({ configured: false, reachable: false, watchdog_firing: false })),
+              { status: 200, headers: { 'Content-Type': 'application/json' } },
+            )
+          }
+          return new Response('boom', { status: 500 })
+        }
+        return new Response('{}', { status: 200 })
+      }),
+    )
+    const queryClient = new QueryClient({ defaultOptions: { queries: { retry: false } } })
+    render(
+      <QueryClientProvider client={queryClient}>
+        <MemoryRouter>
+          <Workspace />
+        </MemoryRouter>
+      </QueryClientProvider>,
+    )
+
+    // First (successful, not-configured) read settles — no staleness
+    // notice, a genuinely current read. Fake timers active, so settle() +
+    // getBy*, never findBy* (findBy* waits on real timers and would hang).
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(60)
+    })
+    expect(screen.getByText(/Monitoring is not configured in this environment/)).toBeTruthy()
+    expect(screen.queryByText(/could not be confirmed/)).toBeNull()
+
+    // Advance past useWorkspaceHealth's 30s refetchInterval so the
+    // background refetch fires and rejects, while the retained (not-
+    // configured) data stays in place.
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(30_100)
+    })
+
+    // The retained message is STILL shown (Art. 5) — now qualified.
+    expect(screen.getByText(/Monitoring is not configured in this environment/)).toBeTruthy()
+    expect(screen.getByText(/could not be confirmed just now/)).toBeTruthy()
   })
 })
 
