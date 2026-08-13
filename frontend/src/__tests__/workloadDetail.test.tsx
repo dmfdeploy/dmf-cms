@@ -1518,6 +1518,107 @@ describe('delete-permanently gate: authorization (umbrella dmfdeploy/dmfdeploy#3
   })
 })
 
+// ---------------------------------------------------------------------------
+// umbrella dmfdeploy/dmfdeploy#392: a background grouped-inventory poll must
+// not evict the operator from an already-selected Finalise & Review, and
+// must not wipe an armed delete-permanently form's typed reason.
+//
+// Root cause: isGroupedReadTrustworthy (workloadLifecycle.ts) fails closed on
+// groupedRead.isFetching by design — membersDataTrustworthy, and therefore
+// stageActions('finalise')'s delete-permanently branch, correctly go empty
+// for the duration of every background refetch, exactly like the #378a/b/c
+// gates above. Before this fix, WorkloadDetail.tsx's activeStep/selectedStep
+// persisted that MOMENTARY dip as if it were a durable lock (the very next
+// render's effect wrote the fallback into state unconditionally), so a
+// refetch that resolved a heartbeat later still left the operator bounced to
+// Provision — and FinaliseStage's purgeAllowed-gated form unmounted on the
+// same dip, discarding whatever reason the operator had typed. Simulates
+// useMediaWorkloadsGrouped's real 15000ms refetchInterval with an explicit
+// refetch (deterministic and controllable, not a real 15s wait) — the poll
+// mechanism is what production's refetchInterval triggers on a timer; this
+// drives the identical react-query state transition without the wall-clock
+// dependency.
+describe('Finalise & Review selection survives a background poll (umbrella dmfdeploy/dmfdeploy#392)', () => {
+  it('holds the panel on Finalise, and keeps the armed form + typed reason intact, across FOUR consecutive in-flight grouped refetches', async () => {
+    // Four consecutive cycles — the same "four times the old ~15-20s
+    // failure window" bar #392 itself sets, expressed as four actual
+    // isFetching transitions instead of a 60s wall-clock wait: each
+    // iteration re-arms its own gate so the NEXT simulated poll is held
+    // in flight exactly like the previous one, proving this isn't a
+    // "survives once" fix that a second poll could still catch out.
+    let releaseGrouped: () => void = () => {}
+    const fetchOpts: Parameters<typeof mkFetch>[0] = {}
+    const armGroupedGate = () => {
+      fetchOpts.groupedGate = new Promise((r) => { releaseGrouped = () => r(null) })
+    }
+    armGroupedGate()
+
+    const eligible = purgeEligibleWorkload()
+    const REASON_TEXT = 'no longer needed for this run'
+    Object.assign(fetchOpts, {
+      workload: eligible,
+      user: { role: 'operator', real_role: 'operator' },
+      // Only the SECOND-and-later grouped read (the simulated background
+      // poll) hangs — the initial load must resolve normally so the wizard
+      // can reach Finalise & Review in the first place.
+      groupedDelayAfter: 1,
+    })
+    const h = mkFetch(fetchOpts)
+    const queryClient = renderDetail()
+    await findRail()
+    const finaliseSection = await selectStep('Finalise & Review')
+
+    fireEvent.click(within(finaliseSection).getByRole('button', { name: '🗑 Delete permanently' }))
+    fireEvent.change(within(finaliseSection).getByPlaceholderText(REASON_PLACEHOLDER), {
+      target: { value: REASON_TEXT },
+    })
+    fireEvent.change(within(finaliseSection).getByPlaceholderText(eligible.slug), {
+      target: { value: eligible.slug },
+    })
+    expect(
+      (within(finaliseSection).getByRole('button', { name: 'Delete permanently' }) as HTMLButtonElement).disabled,
+    ).toBe(false)
+
+    for (let cycle = 1; cycle <= 4; cycle++) {
+      const callsBefore = h.calls.grouped
+      // The same trigger shape as production's refetchInterval firing while
+      // the operator is mid-review — explicit here so each in-flight window
+      // is observable and controllable instead of a real 15s wait.
+      void queryClient.refetchQueries({ queryKey: ['media-workloads-grouped'] })
+      await waitFor(() => expect(h.calls.grouped).toBeGreaterThan(callsBefore))
+
+      // Assertions below query the LIVE document (screen), not the
+      // `finaliseSection` reference captured before the first poll — a
+      // stale detached node would still report its old children even if
+      // the wizard actually navigated away underneath it, which is exactly
+      // the failure mode this test exists to catch.
+      expect(screen.getByRole('heading', { name: 'Finalise & Review', level: 2 }), `cycle ${cycle}`).toBeTruthy()
+      expect(screen.queryByRole('heading', { name: 'Provision', level: 2 }), `cycle ${cycle}`).toBeNull()
+      expect(
+        (screen.getByPlaceholderText(REASON_PLACEHOLDER) as HTMLTextAreaElement).value,
+        `cycle ${cycle}`,
+      ).toBe(REASON_TEXT)
+
+      const release = releaseGrouped
+      armGroupedGate() // next cycle's gate is live before this one releases
+      release()
+      await waitFor(() =>
+        expect(queryClient.getQueryState(['media-workloads-grouped'])?.fetchStatus).toBe('idle'),
+      )
+    }
+
+    // Settled again afterward — still on Finalise, form still intact, the
+    // delete-permanently button's own gating (unrelated to navigation) is
+    // untouched by this fix and still correctly re-enabled once the read is
+    // fresh again.
+    expect(screen.getByRole('heading', { name: 'Finalise & Review', level: 2 })).toBeTruthy()
+    expect((screen.getByPlaceholderText(REASON_PLACEHOLDER) as HTMLTextAreaElement).value).toBe(REASON_TEXT)
+    expect(
+      (screen.getByRole('button', { name: 'Delete permanently' }) as HTMLButtonElement).disabled,
+    ).toBe(false)
+  })
+})
+
 describe('delete-permanently gate: entity identity (umbrella dmfdeploy/dmfdeploy#378c)', () => {
   it('never renders the affordance for the synthetic unassigned bucket', async () => {
     mkFetch({ workload: purgeEligibleWorkload({ slug: 'unassigned', name: 'Unassigned' }) })

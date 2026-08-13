@@ -302,37 +302,52 @@ export default function FinaliseStage({
                 </p>
               )}
             </div>
+          ) : purgeArming ? (
+            // umbrella #392 fix round: checked BEFORE purgeAllowed, mirroring
+            // FinaliseEntry's teardown panel below (arming alone keeps
+            // ReasonConfirm mounted) and ConfigureStage's InstanceSwitchControl
+            // (own docstring: "allowed gates only the INITIAL button — once
+            // armed, ... not the module's stageActions() gate"). purgeAllowed
+            // is fed by membersDataTrustworthy/purgeAuthorized, both of which
+            // fail closed on their query's isFetching and so flip false for
+            // the duration of every background poll even when nothing real
+            // changed. Gating the ARMED form on it (the old order) unmounted
+            // ReasonConfirm on every poll tick, silently wiping the operator's
+            // typed reason (ReasonConfirm's own local state) — a narrower
+            // instance of the same "transient read treated as a durable
+            // change" bug #392 fixes at the wizard level. The server remains
+            // the actual authorization boundary (see purgeAuthorized's own
+            // docstring); staying armed through a stale instant is not a new
+            // trust the client is extending, since handlePurge below only
+            // ever dispatches to that same server-checked endpoint.
+            <div className="mt-2">
+              <ReasonConfirm
+                variant="danger"
+                title={`Delete ${workload.name} permanently?`}
+                description="Removes this workload's residual catalog records from the source of truth via the finalise-purge automation. The entry stops existing — there is no rollback."
+                confirmLabel="Delete permanently"
+                pendingLabel="Deleting…"
+                pending={purgeMutation.isPending}
+                error={purgeMutation.isError ? purgeMutation.error : undefined}
+                extraField={{
+                  label: 'Type the workload slug to confirm',
+                  placeholder: workload.slug,
+                  value: purgeConfirmText,
+                  onChange: setPurgeConfirmText,
+                  invalid: purgeConfirmText !== workload.slug,
+                  invalidHint: `Type "${workload.slug}" exactly to confirm — this cannot be undone.`,
+                }}
+                onConfirm={(reason) => handlePurge(reason)}
+                onCancel={() => {
+                  setPurgeArming(false)
+                  setPurgeConfirmText('')
+                }}
+              />
+            </div>
           ) : purgeAllowed ? (
-            purgeArming ? (
-              <div className="mt-2">
-                <ReasonConfirm
-                  variant="danger"
-                  title={`Delete ${workload.name} permanently?`}
-                  description="Removes this workload's residual catalog records from the source of truth via the finalise-purge automation. The entry stops existing — there is no rollback."
-                  confirmLabel="Delete permanently"
-                  pendingLabel="Deleting…"
-                  pending={purgeMutation.isPending}
-                  error={purgeMutation.isError ? purgeMutation.error : undefined}
-                  extraField={{
-                    label: 'Type the workload slug to confirm',
-                    placeholder: workload.slug,
-                    value: purgeConfirmText,
-                    onChange: setPurgeConfirmText,
-                    invalid: purgeConfirmText !== workload.slug,
-                    invalidHint: `Type "${workload.slug}" exactly to confirm — this cannot be undone.`,
-                  }}
-                  onConfirm={(reason) => handlePurge(reason)}
-                  onCancel={() => {
-                    setPurgeArming(false)
-                    setPurgeConfirmText('')
-                  }}
-                />
-              </div>
-            ) : (
-              <button className="btn btn-danger btn-sm mt-2" onClick={() => setPurgeArming(true)}>
-                🗑 Delete permanently
-              </button>
-            )
+            <button className="btn btn-danger btn-sm mt-2" onClick={() => setPurgeArming(true)}>
+              🗑 Delete permanently
+            </button>
           ) : (
             <p className="mt-1 text-muted">
               {state === 'not-applicable'
