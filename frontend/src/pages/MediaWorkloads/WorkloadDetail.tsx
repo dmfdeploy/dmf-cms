@@ -351,15 +351,62 @@ function WorkloadWizard({
   // can never reach a control the gate closed.
   const requestedStep = hash.replace(/^#/, '')
 
+  // umbrella #392 fix round: groupedRead.isFetching/userQuery.isFetching
+  // feed the SAME steps classification (via membersDataTrustworthy /
+  // purgeAuthorized in workloadLifecycle.ts) that decides which step is
+  // openable — deliberately, so a background poll can't make the operator
+  // trust a mid-refetch read for the actual purge gate. But that fail-closed
+  // value is presentation-UNSTABLE by design: it flips false for however
+  // long the background request the operator didn't ask for is in flight,
+  // then flips back once it settles, even when nothing about the workload
+  // actually changed. Reacting to that flip live turned a one-tick
+  // classification dip into silently evicting the operator from Finalise
+  // mid-review, before they had time to read the confirmation, type a
+  // reason, and click through (#392) — and it happened TWICE over: once in
+  // activeStep's own fallback ladder, and independently in FlowStep.tsx,
+  // which refuses to mount `children` at all whenever the `state` it's
+  // handed is 'locked' (its own defence-in-depth comment), so even holding
+  // `activeStep` steady still unmounted the stage component underneath it
+  // for the poll's duration, wiping any local state (an armed
+  // ReasonConfirm's typed reason) along with it.
+  //
+  // `settledStepsRef` latches the last STEPS classification computed while
+  // neither read was in flight — the same "freeze the last good value
+  // during render" idiom ProvisionStage.tsx's lastEligibleKeyRef already
+  // uses for an analogous problem. `displaySteps` is what this component
+  // uses for its OWN panel (openability + the state handed to FlowStep)
+  // whenever the read is unsettled; deliberately NOT what feeds the rail
+  // below (buildHeaderSlotRail still reads live `flow.steps`) — the rail is
+  // supposed to keep reflecting a background poll in real time, exactly
+  // what GATE-378b's own test already pins ("the rail losing its Finalise
+  // button... is the discriminator"). isGroupedReadTrustworthy/
+  // isPurgeAuthorized/stageActions and the delete-permanently button's own
+  // gating are all untouched — `actions` passed to each stage below is
+  // still recomputed fresh from `input` every render, so the button/action
+  // list still correctly withholds while either read is unsettled. Only the
+  // PANEL — which step is selected, and whether its content stays mounted —
+  // stops reacting to a read that hasn't settled yet.
+  const dataUnsettled = groupedRead.isFetching || userQuery.isFetching
+  const settledStepsRef = useRef(steps)
+  if (!dataUnsettled) settledStepsRef.current = steps
+  const displaySteps = dataUnsettled ? settledStepsRef.current : steps
+
   const activeStep =
-    selectedStep !== null && isStepOpenable(steps[selectedStep])
+    selectedStep !== null && isStepOpenable(displaySteps[selectedStep])
       ? selectedStep
-      : defaultSelection(steps, current, offFlow, requestedStep)
+      : defaultSelection(displaySteps, current, offFlow, requestedStep)
 
   // React's sanctioned "derived state" pattern: persist the computed
   // fallback into state so a later query refresh that keeps the operator's
   // step openable does NOT re-run this priority order — spec A is explicit
-  // that only ceasing to be openable re-triggers it.
+  // that only ceasing to be openable re-triggers it. Needs no separate
+  // `dataUnsettled` guard here: whenever selectedStep is non-null and the
+  // read is unsettled, the ternary above already forces activeStep to equal
+  // selectedStep (displaySteps[selectedStep] reflects the last SETTLED,
+  // necessarily-non-locked classification for a step that was selected),
+  // so this effect only ever fires on a REAL divergence (a settled,
+  // still-locked classification, or the initial null->selection mount,
+  // which should commit immediately regardless of fetch state).
   useEffect(() => {
     if (activeStep !== selectedStep) setSelectedStep(activeStep)
   }, [activeStep, selectedStep])
@@ -583,7 +630,15 @@ function WorkloadWizard({
         anchorId={activeStep}
         number={activeIndex + 1}
         label={STEP_LABEL[activeStep]}
-        state={steps[activeStep]}
+        // umbrella #392: displaySteps, not live `steps` — FlowStep refuses
+        // to mount `children` at all when handed 'locked' (its own
+        // defence-in-depth comment), so the live, transiently-locked value
+        // would unmount the active stage's own local state (an armed
+        // ReasonConfirm's typed reason) every time a background poll ticked
+        // while this step happened to be selected. See displaySteps' own
+        // comment above for why the rail a few lines below deliberately
+        // does NOT get the same treatment.
+        state={displaySteps[activeStep]}
         isCurrentPosition={activeStep === current}
         lockedReason={LOCKED_REASON[activeStep]}
         canPrevious={canPrevious}
