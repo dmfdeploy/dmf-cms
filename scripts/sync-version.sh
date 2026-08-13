@@ -1,5 +1,6 @@
 #!/usr/bin/env bash
-# Propagate VERSION → pyproject.toml, frontend/package.json, charts/dmf-cms/Chart.yaml, charts/dmf-cms/values.yaml
+# Propagate VERSION → pyproject.toml, frontend/package.json, frontend/package-lock.json,
+# charts/dmf-cms/Chart.yaml, charts/dmf-cms/values.yaml
 #
 # Usage:
 #   scripts/sync-version.sh              # propagate current VERSION
@@ -16,6 +17,7 @@ cd "$REPO_ROOT"
 VERSION_FILE="$REPO_ROOT/VERSION"
 PYPROJECT="$REPO_ROOT/pyproject.toml"
 PACKAGE_JSON="$REPO_ROOT/frontend/package.json"
+PACKAGE_LOCK_JSON="$REPO_ROOT/frontend/package-lock.json"
 CHART_YAML="$REPO_ROOT/charts/dmf-cms/Chart.yaml"
 VALUES_YAML="$REPO_ROOT/charts/dmf-cms/values.yaml"
 
@@ -34,6 +36,7 @@ Files kept in sync:
   - VERSION                       (source of truth)
   - pyproject.toml                (project.version)
   - frontend/package.json         (.version)
+  - frontend/package-lock.json    (.version + .packages[""].version)
   - charts/dmf-cms/Chart.yaml     (version + appVersion)
   - charts/dmf-cms/values.yaml    (image.tag)
 EOF
@@ -63,6 +66,17 @@ get_pyproject_version() {
 get_package_json_version() {
     # Use python3 to avoid jq dependency
     python3 -c "import json; print(json.load(open('$PACKAGE_JSON'))['version'])"
+}
+
+# npm lockfile v3 mirrors the root package's version in two places: the
+# top-level .version and .packages[""].version (the "" key is the root
+# package itself, not a dependency). Both must track VERSION.
+get_package_lock_version() {
+    python3 -c "import json; print(json.load(open('$PACKAGE_LOCK_JSON'))['version'])"
+}
+
+get_package_lock_root_pkg_version() {
+    python3 -c "import json; print(json.load(open('$PACKAGE_LOCK_JSON'))['packages'][''].get('version', ''))"
 }
 
 get_chart_version() {
@@ -107,6 +121,14 @@ with open("$PACKAGE_JSON", "w") as f:
 EOF
     echo "  ✓ frontend/package.json"
 
+    # frontend/package-lock.json — top-level .version and .packages[""].version.
+    # Delegate to npm's own tool rather than hand-editing the lockfile: it
+    # touches exactly those two fields and leaves dependency resolution /
+    # integrity data untouched. --allow-same-version covers the propagate-only
+    # case where package.json is already at $v. Requires npm on PATH.
+    (cd "$REPO_ROOT/frontend" && npm version "$v" --no-git-tag-version --allow-same-version >/dev/null)
+    echo "  ✓ frontend/package-lock.json"
+
     # charts/dmf-cms/Chart.yaml — version: X.Y.Z and appVersion: "X.Y.Z"
     sed -i.bak -E 's/^version:[[:space:]]*.*$/version: '"$v"'/' "$CHART_YAML"
     sed -i.bak -E 's/^appVersion:[[:space:]]*.*$/appVersion: "'"$v"'"/' "$CHART_YAML"
@@ -122,10 +144,12 @@ EOF
 }
 
 check() {
-    local v py pkg chart_v chart_av values_tag
+    local v py pkg pkg_lock pkg_lock_root chart_v chart_av values_tag
     v="$(read_current_version)"
     py="$(get_pyproject_version)"
     pkg="$(get_package_json_version)"
+    pkg_lock="$(get_package_lock_version)"
+    pkg_lock_root="$(get_package_lock_root_pkg_version)"
     chart_v="$(get_chart_version)"
     chart_av="$(get_chart_appversion)"
     values_tag="$(get_values_image_tag)"
@@ -135,6 +159,8 @@ check() {
     for entry in \
         "pyproject.toml=$py" \
         "frontend/package.json=$pkg" \
+        "package-lock.json(.version)=$pkg_lock" \
+        "package-lock.json(packages[\"\"].version)=$pkg_lock_root" \
         "Chart.yaml(version)=$chart_v" \
         "Chart.yaml(appVersion)=$chart_av" \
         "values.yaml(image.tag)=$values_tag"; do
