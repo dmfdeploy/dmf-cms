@@ -141,39 +141,45 @@ ssh "${SSH_KEY_OPTS[@]+"${SSH_KEY_OPTS[@]}"}" -o ConnectTimeout=10 "$CONTROL_NOD
 echo ""
 echo "Digest check..."
 
-# Fetch the deployment's whole spec.selector as JSON and build the label
-# selector locally with python3, rather than trying to iterate the
-# matchLabels map inside the remote jsonpath expression itself. kubectl's
-# `-o jsonpath` dialect does NOT support Go-template map destructuring
-# (`{range $k,$v := ...}` is go-template syntax, not jsonpath — it fails
-# every time with "unrecognized character in action: U+002C ','").
-# Fetching the object as one plain field path and parsing it locally also
-# lets us fail loud on matchExpressions, which a matchLabels-only selector
-# string would otherwise silently ignore.
-POD_SELECTOR_JSON="$(
+# Fetch the whole deployment as -o json (unambiguous, real JSON — no
+# jsonpath/go-template dialect question for a nested object at all) and
+# extract spec.selector locally with python3, rather than trying to
+# iterate the matchLabels map inside a remote jsonpath expression itself.
+# An earlier version of this fetch used `-o jsonpath='{.spec.selector}'`,
+# which also does emit real JSON for an object result (kubectl's jsonpath
+# printer json.Marshals non-scalar results; it's `-o go-template=` that
+# stringifies maps as Go's `map[k:v]` — a different templating engine,
+# easy to conflate but not what jsonpath does) — but -o json sidesteps
+# that question entirely instead of resting correctness on which
+# dialect's behavior is being assumed.
+DEPLOY_JSON="$(
     ssh "${SSH_KEY_OPTS[@]+"${SSH_KEY_OPTS[@]}"}" -o ConnectTimeout=10 "$CONTROL_NODE" \
-        "sudo kubectl --kubeconfig /etc/rancher/k3s/k3s.yaml -n $NAMESPACE get deploy $DEPLOYMENT -o jsonpath='{.spec.selector}'"
+        "sudo kubectl --kubeconfig /etc/rancher/k3s/k3s.yaml -n $NAMESPACE get deploy $DEPLOYMENT -o json"
 )"
 
+# Extracting spec.selector locally (rather than in the remote jsonpath/
+# kubectl call) also lets us fail loud on matchExpressions, which a
+# matchLabels-only selector string would otherwise silently ignore.
 POD_SELECTOR="$(
     python3 -c '
 import json, sys
 
-data = json.loads(sys.argv[1])
-if data.get("matchExpressions"):
+deploy = json.loads(sys.argv[1])
+selector = deploy.get("spec", {}).get("selector") or {}
+if selector.get("matchExpressions"):
     sys.stderr.write(
         "deployment selector uses matchExpressions, which this script "
         "does not translate into a label selector\n"
     )
     sys.exit(1)
-labels = data.get("matchLabels") or {}
+labels = selector.get("matchLabels") or {}
 if not labels:
+    sys.stderr.write("deployment spec.selector.matchLabels is empty\n")
     sys.exit(1)
 print(",".join(f"{k}={v}" for k, v in sorted(labels.items())))
-' "$POD_SELECTOR_JSON"
+' "$DEPLOY_JSON"
 )" || {
     echo "✗ could not build a pod selector from deployment $DEPLOYMENT's spec.selector" >&2
-    echo "  raw selector: $POD_SELECTOR_JSON" >&2
     exit 1
 }
 
