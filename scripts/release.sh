@@ -116,7 +116,7 @@ echo "[1/4] Syncing version files..."
 # 4. Commit
 echo ""
 echo "[2/4] Committing version bump..."
-git add VERSION pyproject.toml frontend/package.json charts/dmf-cms/Chart.yaml charts/dmf-cms/values.yaml
+git add VERSION pyproject.toml frontend/package.json frontend/package-lock.json charts/dmf-cms/Chart.yaml charts/dmf-cms/values.yaml
 git commit -s -m "chore(release): v$NEW"
 
 # 5. Tag
