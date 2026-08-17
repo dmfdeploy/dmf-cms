@@ -136,11 +136,22 @@ export default function WorkloadOperate() {
     railInput && workloadForRail
       ? {
           slug: workloadForRail.slug,
-          rail: buildHeaderSlotRail(classifyWorkloadForHeaderSlot(railInput), {
+          rail: buildHeaderSlotRail(classifyWorkloadForHeaderSlot(railInput, workloadForRail.instances), {
             activeChip: 'operate',
             lockedReasons: LOCKED_REASON,
             jobOwnerLabel: null,
             jobInFlight: false,
+            // umbrella dmf-cms#391 Pass 1, FIX ROUND (codex gate — P1, the
+            // counts): this call site used to compute running/total itself
+            // and hand them in here (same gap as WorkloadDetail.tsx's
+            // identical block — a caller-supplied count with no formula
+            // behind it, forgeable independently of `trustworthy`).
+            // Removed entirely: classifyWorkloadForHeaderSlot now takes
+            // workloadForRail.instances directly (above) and derives
+            // running/total itself, alongside trustworthy, stored together
+            // in the TRUST WeakMap — see store/headerSlot.ts's TRUST side
+            // table docstring. RailModelExtras no longer has a
+            // runningReadout field for this call site to fill in at all.
             onSelect: (step: FlowStepId) =>
               navigate(`/media-workloads/${encodeURIComponent(workloadForRail.slug)}#${step}`),
           }),

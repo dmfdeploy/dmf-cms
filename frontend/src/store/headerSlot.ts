@@ -24,10 +24,13 @@ import type { WorkloadLifecycleInput } from '../lib/workloadLifecycle'
  *    call, and returning a plain FlowState between the phases would reopen
  *    exactly the gap round 4 closed (a hand-built FlowState reaching the
  *    rail without ever calling the classifier).
- *      - classifyWorkloadForHeaderSlot(input) calls classifyWorkloadFlow
- *        once and returns a ClassifiedFlow — structurally a FlowState (the
- *        caller reads .steps/.current/.offFlow/.undetermined exactly as
- *        before) plus a module-private brand.
+ *      - classifyWorkloadForHeaderSlot(input, instances) calls
+ *        classifyWorkloadFlow once and returns a ClassifiedFlow —
+ *        structurally a FlowState (the caller reads
+ *        .steps/.current/.offFlow/.undetermined exactly as before) plus a
+ *        module-private brand. FIX ROUND (codex gate — P1, the counts):
+ *        `instances` is a second, REQUIRED parameter as of that fix — see
+ *        point 3 below and the TRUST side table's own docstring for why.
  *      - buildHeaderSlotRail(flow, extras) accepts ONLY a ClassifiedFlow —
  *        a plain FlowState-shaped object literal does not typecheck here
  *        either, so the two-phase split does not reopen the single-call
@@ -42,6 +45,82 @@ import type { WorkloadLifecycleInput } from '../lib/workloadLifecycle'
  *    and `useHeaderSlotContent` (read, Topbar-only) are the entire public
  *    surface — there is no `setHeaderSlot` reachable from outside this
  *    module to bypass any guarantee above.
+ * 3. dmf-cms#391: the run-count readout — BOTH the `trustworthy` flag AND
+ *    the `running`/`total` counts themselves — is likewise unforgeable.
+ *    Earlier fix rounds only covered `trustworthy`: a first pass put it on
+ *    ClassifiedFlow as a public `readonly` field (still forgeable — a spread
+ *    copy ignores `readonly`), a second pass moved it into a WeakMap keyed
+ *    on the flow's identity (closed for real) — but left `running`/`total`
+ *    on RailModelExtras as plain caller-supplied numbers with no formula
+ *    behind them at all: a caller holding a genuine, honestly-obtained
+ *    `trustworthy: true` flow could STILL pair it with `runningReadout: {
+ *    running: 999, total: 1 }` and the rail would print exactly that, no
+ *    cast required. FIX ROUND (codex gate — P1, the counts): closed by
+ *    storing all three facts together in ONE WeakMap entry, computed
+ *    together, in the ONE function that is allowed to write to it —
+ *    `classifyWorkloadForHeaderSlot` now takes the workload's raw
+ *    `instances` array (the same one buildWorkloadLifecycleInput already
+ *    consumes to derive `anyMemberObservedRunning`) and derives
+ *    `running`/`total` itself, rather than trusting a parallel channel for
+ *    them. RailModelExtras no longer has a `runningReadout` field of any
+ *    shape — there is no field left through which a caller could specify a
+ *    count, matching or mismatched. See the TRUST side table's own
+ *    docstring, right below the brand symbols, for the full account.
+ *
+ *    The exact guarantee, stated precisely rather than broadly (fix round,
+ *    codex gate — precision pass; earlier phrasing here read close to "no
+ *    caller can ever cause a wrong count to render", which overclaims):
+ *    a rail model produced by buildHeaderSlotRail carries counts derived
+ *    from the instances actually given to classifyWorkloadForHeaderSlot,
+ *    and — FIX ROUND (codex gate — mutable output): as of this fix, both
+ *    `runningReadout` and the rail model itself are `Object.freeze`d before
+ *    being returned, so neither field-mutation (`rail.runningReadout.running
+ *    = 999`) nor whole-object replacement (`rail.runningReadout = {...}`)
+ *    takes effect afterwards either — pinned in topbarBrand.test.tsx by
+ *    asserting on the actual RENDERED output after an attempted mutation,
+ *    not merely that the object is frozen. That is the whole guarantee.
+ *    It is deliberately NOT "no caller can ever cause a wrong count to
+ *    render" — two narrower, accepted gaps remain, same register as point
+ *    1's own "Honest limit" above:
+ *      (a) HeaderSlotRailModel's own brand (RAIL_BRAND) is exactly as
+ *          compile-time-only as ClassifiedFlow's readonly field was before
+ *          an earlier fix — a caller willing to write `as unknown as
+ *          HeaderSlotRailModel` can hand-build a whole rail model, every
+ *          field included, and register it directly via
+ *          useRegisterHeaderSlot, bypassing buildHeaderSlotRail (and
+ *          therefore TRUST, and the freeze) entirely. This one genuinely
+ *          does require a deliberate, visible cast to reach — TypeScript's
+ *          own error on the unforced attempt is exactly what
+ *          topbarBrand.test.tsx's brand-forgery tests pin.
+ *      (b) NO CAST NEEDED for this one: classifyWorkloadForHeaderSlot takes
+ *          `input` and `instances` as two independent parameters, and
+ *          nothing at the type level binds either one to a specific real
+ *          workload's identity. A caller that calls it with workload A's
+ *          `input` and workload B's `instances` — an ordinary, otherwise
+ *          well-typed function call, no cast, no trickery — gets back a
+ *          `ClassifiedFlow` whose position facts and count facts genuinely
+ *          describe two different workloads, and TRUST stores that
+ *          mismatched pairing exactly as trustingly as a consistent one.
+ *          Not reachable in practice today (both real call sites pass
+ *          `input`/`instances` derived from the SAME `workload` object
+ *          already in scope), but nothing enforces that they must.
+ *    DECLARED OUT OF SCOPE, not merely unmentioned: LifecycleStrip's own
+ *    `runningReadout` PROP being plain and fabricable by a direct component
+ *    consumer (e.g. testUtils/HeaderSlotProbe.tsx, or the dev harness, both
+ *    of which call classifyWorkloadForHeaderSlot/buildHeaderSlotRail
+ *    themselves rather than hand-building props, but nothing stops some
+ *    future caller from doing otherwise). A React component's props are not
+ *    a trust boundary and cannot be made into one — the guarantee this
+ *    module makes is about what buildHeaderSlotRail itself produces, never
+ *    about what any arbitrary consumer of LifecycleStrip directly could, in
+ *    principle, hand it instead.
+ *    All three items above are accepted rather than chased further —
+ *    closing (a) or (b) completely means runtime-validating every call site
+ *    forever, not a one-time fix, and (c) is categorically not this
+ *    module's boundary to enforce — for the same reason the round-4 limit
+ *    above is accepted: the CLIENT is affordance control here, never the
+ *    authorization boundary; the real one is the server, which this
+ *    module's own guarantees were never a substitute for.
  *
  * `slug` guards against a stale registration surviving past the route that
  * owns it — Topbar renders content only when it matches the workload slug
@@ -86,15 +165,82 @@ import type { WorkloadLifecycleInput } from '../lib/workloadLifecycle'
 const FLOW_BRAND: unique symbol = Symbol('ClassifiedFlow')
 const RAIL_BRAND: unique symbol = Symbol('HeaderSlotRailModel')
 
+/**
+ * FIX ROUND (dmf-cms#391, codex gate — P1 RESIDUAL, then P1 the counts): a
+ * first pass put `membersDataTrustworthy` on ClassifiedFlow as a public
+ * `readonly` field. `readonly` is a COMPILE-TIME-ONLY guarantee — `{
+ * ...realFlow, membersDataTrustworthy: true }` still typechecks (object
+ * spread doesn't respect the source's readonly-ness on the COPY) and
+ * produces a real runtime object with `trustworthy` genuinely forged to
+ * `true`. The bar this module sets for itself is "cannot be
+ * hand-fabricated", not merely "not casually fabricated" — a public field
+ * of any kind, mutable or not, fails that bar, because a value having the
+ * field is exactly what a forger needs to succeed.
+ *
+ * Fixed with a module-private WeakMap side table instead of a second type.
+ * Both the trust fact AND the run counts are keyed by OBJECT IDENTITY,
+ * entirely off the type system — NOT split across two channels (an earlier
+ * version of this fix moved `trustworthy` here but left `running`/`total`
+ * as plain caller-supplied numbers on RailModelExtras, which meant a caller
+ * holding a genuine `trustworthy: true` flow could still pair it with
+ * fabricated counts and have them print unchanged; see this file's own
+ * "WHAT IS ACTUALLY ENFORCED" point 3 for the full account of that gap and
+ * why storing everything in one entry closes it). `classifyWorkloadForHeaderSlot`
+ * is the only function that ever calls `TRUST.set`, on the exact object it
+ * is about to return, from the same WorkloadLifecycleInput classifyWorkloadFlow
+ * itself consumed PLUS the workload's own instances array. There is no
+ * longer a public field on ClassifiedFlow for a forger to set at all, and no
+ * separate caller-suppliable count field anywhere — the facts simply aren't
+ * reachable through object literal syntax any more. A spread copy (`{
+ * ...realFlow }`) is a DIFFERENT object than the one `TRUST.set` was called
+ * on, even though it is structurally identical and — since object spread
+ * copies symbol keys too — even still satisfies ClassifiedFlow's brand
+ * typecheck; its lookup in TRUST simply MISSES, and `buildHeaderSlotRail`
+ * reads that miss as "not trustworthy, zero counts". That is the correct
+ * failure direction: an object that merely LOOKS like a real
+ * classification, however it was obtained, fails closed rather than
+ * inheriting whatever the original had. Pinned in topbarBrand.test.tsx: a
+ * spread copy, and a hand-built fake cast through `as unknown as
+ * ClassifiedFlow`, both yield `trustworthy: false`; and the exact
+ * fabrication codex demonstrated (a genuine trustworthy flow paired with a
+ * hand-supplied `runningReadout: { running: 999, total: 1 }`) no longer
+ * typechecks at all, on either end of the call.
+ */
+interface TrustedRunningCounts {
+  trustworthy: boolean
+  running: number
+  total: number
+}
+const TRUST = new WeakMap<object, TrustedRunningCounts>()
+
 export type ClassifiedFlow = FlowState & { readonly [FLOW_BRAND]: true }
 
 /**
  * Phase 1: the only function that can produce a ClassifiedFlow. Calls
- * classifyWorkloadFlow exactly once.
+ * classifyWorkloadFlow exactly once, and is the ONE place that ever writes
+ * to TRUST (see that side table's own docstring above).
+ *
+ * `instances` is the workload's raw member-instance array — the SAME shape
+ * (and, at both real call sites, the literal same array) lib/workloadLifecycle.ts's
+ * buildWorkloadLifecycleInput already consumes to derive
+ * `anyMemberObservedRunning`. Threaded in here, rather than accepting a
+ * pre-computed `running`/`total` from the caller, so this function is the
+ * ONE place those numbers are ever computed — closing the gap where a
+ * caller-supplied count could disagree with the caller-supplied trust flag
+ * (see the TRUST docstring above).
  */
-export function classifyWorkloadForHeaderSlot(input: WorkloadLifecycleInput): ClassifiedFlow {
+export function classifyWorkloadForHeaderSlot(
+  input: WorkloadLifecycleInput,
+  instances: { observed_state: string }[],
+): ClassifiedFlow {
   const flow = classifyWorkloadFlow(input)
-  return { ...flow, [FLOW_BRAND]: true }
+  const classified: ClassifiedFlow = { ...flow, [FLOW_BRAND]: true }
+  TRUST.set(classified, {
+    trustworthy: input.membersDataTrustworthy ?? false,
+    running: instances.filter((i) => i.observed_state === 'running').length,
+    total: instances.length,
+  })
+  return classified
 }
 
 export interface HeaderSlotRailModel {
@@ -105,15 +251,56 @@ export interface HeaderSlotRailModel {
   lockedReasons: Record<FlowStepId, string>
   jobOwnerLabel: string | null
   jobInFlight: boolean
+  /** dmf-cms#391 Pass 1: the rail's row-end run-count readout. */
+  runningReadout: RailRunningReadout
   onSelect: (step: FlowStepId) => void
   readonly [RAIL_BRAND]: true
+}
+
+/**
+ * dmf-cms#391 Pass 1: the rail's row-end "N of M running" readout — what
+ * LifecycleStrip actually renders. Every field here is DERIVED, never
+ * caller-supplied; there is no corresponding "extras" type any more (see
+ * FIX ROUND below) — this interface exists purely as buildHeaderSlotRail's
+ * output shape and LifecycleStrip's prop type.
+ *
+ * FIX ROUND (codex gate — P1 blocker): `trustworthy` used to be a plain
+ * caller-supplied field, threaded straight through RailModelExtras/
+ * buildHeaderSlotRail via `...extras`. Closed by moving it into the TRUST
+ * WeakMap (see that side table's own docstring, above the brand symbols).
+ *
+ * FIX ROUND (codex gate — P1 residual): the WeakMap itself first keyed on a
+ * `readonly` field's mistaken belief that `readonly` meant unforgeable — it
+ * doesn't (a spread copy ignores it). Fixed by moving trust off any public
+ * field entirely and onto WeakMap identity, which a spread copy genuinely
+ * cannot reproduce.
+ *
+ * FIX ROUND (codex gate — P1, the counts): neither earlier round touched
+ * `running`/`total` — they stayed on RailModelExtras as plain caller-
+ * supplied numbers with no formula behind them, so a caller holding a
+ * genuine `trustworthy: true` flow could still pair it with fabricated
+ * counts and have them print unchanged. Closed by storing running/total in
+ * the SAME TRUST entry as trustworthy, computed together in
+ * classifyWorkloadForHeaderSlot from the workload's real instances array —
+ * see that function's own docstring. RailModelExtras no longer has a
+ * `runningReadout` field of any shape at all (the RailRunningCounts type
+ * that used to sit there has been removed outright, not merely emptied) —
+ * there is no channel left through which a caller could specify a count,
+ * matching or mismatched.
+ */
+export interface RailRunningReadout {
+  running: number
+  total: number
+  trustworthy: boolean
 }
 
 /** Everything a rail model needs beyond classification itself —
  *  presentation/interaction facts the caller already owns directly
  *  (wizard selection or route identity, locked-reason copy, job tracking,
  *  the click/navigate handler), none of which is a lifecycle-derivation
- *  fact. */
+ *  fact. FIX ROUND (codex gate — P1, the counts): `runningReadout` is GONE
+ *  from this interface — see RailRunningReadout's own docstring for why a
+ *  caller no longer supplies any part of the run-count readout at all. */
 export interface RailModelExtras {
   activeChip: FlowStepId | 'operate' | null
   lockedReasons: Record<FlowStepId, string>
@@ -127,15 +314,41 @@ export interface RailModelExtras {
  * ONLY a ClassifiedFlow (phase 1's output) — a plain FlowState-shaped
  * object literal does not typecheck as the first argument, so splitting
  * classification into two calls does not reopen the gap round 4 closed.
+ *
+ * `runningReadout` is built entirely from the TRUST side table now — NOT
+ * from `extras` at all, because `extras` (RailModelExtras) no longer has
+ * anywhere to carry it. `TRUST.get(flow)` fails closed on a miss (a `flow`
+ * this function never saw come out of classifyWorkloadForHeaderSlot — a
+ * spread copy, a hand-built fake) to `{ trustworthy: false, running: 0,
+ * total: 0 }` — the exact-zero fallback values don't matter functionally
+ * (LifecycleStrip never renders running/total when trustworthy is false),
+ * they exist only so this function always returns a fully-typed
+ * RailRunningReadout.
+ *
+ * FIX ROUND (codex gate — mutable output): both the returned rail object
+ * AND its nested `runningReadout` are `Object.freeze`d before returning.
+ * Without this, a caller holding a genuinely-produced rail could still do
+ * `rail.runningReadout.running = 999` (field mutation) or
+ * `rail.runningReadout = {...}` (whole-object replacement) after the fact,
+ * with no cast and no trickery — every guarantee above only covers HOW the
+ * object was built, not whether it stays that way once handed back.
+ * Freezing both levels closes field-mutation (the nested object) and
+ * whole-object replacement (the outer one) in one pass — see
+ * topbarBrand.test.tsx for a test that asserts on the actual RENDERED
+ * output after an attempted mutation, not merely `Object.isFrozen`.
  */
 export function buildHeaderSlotRail(flow: ClassifiedFlow, extras: RailModelExtras): HeaderSlotRailModel {
-  return {
+  const trust = TRUST.get(flow) ?? { trustworthy: false, running: 0, total: 0 }
+  const runningReadout = Object.freeze({ running: trust.running, total: trust.total, trustworthy: trust.trustworthy })
+  const rail: HeaderSlotRailModel = {
     steps: flow.steps,
     current: flow.current,
     offFlow: flow.offFlow,
     ...extras,
+    runningReadout,
     [RAIL_BRAND]: true,
   }
+  return Object.freeze(rail)
 }
 
 export interface HeaderSlotContent {

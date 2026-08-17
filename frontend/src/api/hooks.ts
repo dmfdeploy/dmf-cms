@@ -39,11 +39,25 @@ export function isOperation(result: any): result is Operation {
   return result && typeof result === 'object' && 'operation_id' in result
 }
 
-export function useCurrentUser() {
+/**
+ * `enabled` defaults to `true` — every existing call site (every one of
+ * them calls this with no arguments) is unaffected. FIX ROUND (dmf-cms#391,
+ * codex gate — D): added specifically so App.tsx can pass `false` on the
+ * dev-harness route, so that route makes genuinely zero network calls
+ * rather than firing an unstubbed /api/me it never reads the result of.
+ * Safe because callers share ['user'] as a cache key regardless of their
+ * own `enabled` value — TanStack Query fetches for a key as long as ANY
+ * mounted observer for it has `enabled: true`, so a single `enabled: false`
+ * instance (this one) never suppresses a fetch any OTHER mounted instance
+ * still needs; on the dev-harness route this is the only mounted instance
+ * at all (that branch returns before Shell/Topbar/any other page mounts).
+ */
+export function useCurrentUser(enabled: boolean = true) {
   return useQuery({
     queryKey: ['user'],
     queryFn: () => apiCall<UserIdentity>('/api/me'),
     retry: false,
+    enabled,
   })
 }
 

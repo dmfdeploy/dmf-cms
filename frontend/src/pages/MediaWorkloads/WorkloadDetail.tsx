@@ -31,7 +31,15 @@ import { usePageTitle } from '../../hooks/usePageTitle'
  * Workload detail — the WIZARD (umbrella #347 WO-D1, operator direction
  * 2026-08-02: "the workload detail page becomes a wizard — one lifecycle
  * step visible at a time, Next/Previous, the EBU-colored rail as the
- * prominent navigation spine").
+ * prominent navigation spine"). VERBATIM HISTORICAL QUOTE, not a live
+ * description — FIX ROUND (codex gate — P3): flagged explicitly here,
+ * rather than only 30 lines down, because a reader skimming just the
+ * opening could otherwise take "EBU-colored" as current. It stopped being
+ * accurate at the Arc 4 WP-2 ruling (see point 2 below and
+ * LifecycleStrip.tsx's own docstring): colour tracks SELECTION now, not EBU
+ * stage identity, and as of dmf-cms#391 Pass 1 the rail is neutral/
+ * selection-coloured only — the six EBU stage hues are retired as key
+ * fills entirely.
  *
  * Arc B (umbrella #285) rebuilt S1's six-stacked-cards page into a folding
  * accordion: every step mounted, one pinned open, the rest behind a
@@ -340,7 +348,13 @@ function WorkloadWizard({
       role: userQuery.data?.role,
     },
   })
-  const flow = classifyWorkloadForHeaderSlot(input)
+  // umbrella dmf-cms#391 Pass 1, FIX ROUND (codex gate — P1, the counts):
+  // workload.instances threaded straight in — classifyWorkloadForHeaderSlot
+  // derives the rail's running/total itself from this same array, rather
+  // than trusting a pre-computed count from further down this function (see
+  // store/headerSlot.ts's TRUST side table docstring for why that
+  // caller-supplied channel was the actual gap).
+  const flow = classifyWorkloadForHeaderSlot(input, workload.instances)
   const { steps, current, offFlow, undetermined } = flow
   const badge = lifecycleBadge(input)
 
@@ -478,6 +492,17 @@ function WorkloadWizard({
       lockedReasons: LOCKED_REASON,
       jobOwnerLabel,
       jobInFlight,
+      // umbrella dmf-cms#391 Pass 1, FIX ROUND (codex gate — P1, the
+      // counts): this call site used to compute running/total itself and
+      // hand them in here — that was the actual gap (a caller-supplied
+      // count with no formula behind it, forgeable independently of
+      // `trustworthy`). Removed entirely: buildHeaderSlotRail derives
+      // running/total, alongside trustworthy, from the TRUST WeakMap —
+      // populated a few lines up by classifyWorkloadForHeaderSlot(input,
+      // workload.instances), the SAME instances array this object used to
+      // read counts off directly before this fix. RailModelExtras no
+      // longer has a runningReadout field for this call site to fill in at
+      // all.
       onSelect: selectStep,
     }),
   })

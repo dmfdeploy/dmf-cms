@@ -424,15 +424,27 @@ describe('the flow is five steps under a six-stage vocabulary', () => {
     mkFetch({ workload: workload({ lifecycle: 'provision' }) })
     renderDetail()
     const strip = await findRail()
-    expect(within(strip).getByText('Control'), 'Control group label missing').toBeTruthy()
 
-    // Arc 4 WP-3: each chip's label and state word now share one line/span
-    // (the rail's single-line row), so an exact TEXT match no longer
-    // isolates the label alone — aria-label does, unchanged, and reading
-    // it off the DOM in document order proves the same ordering property.
-    // Operate itself is not in this list: its accessible name comes from
-    // its visible text content, not an aria-label, so it is checked
-    // separately below.
+    // Pass 1 crosspoint-bus redesign (dmf-cms#391) removed the visible
+    // uppercase "Control" text label that used to sit at the start of the
+    // Control/Operate group; the group's accessible identity now rests
+    // entirely on role="group" aria-label="Control". This replaces the old
+    // getByText('Control') visible-text check (which no longer has anything
+    // to find) with a getByLabelText('Control') check that the group still
+    // exists and is still labelled "Control" via its aria-label.
+    expect(within(strip).getByLabelText('Control'), 'Control group missing its aria-label').toBeTruthy()
+
+    // FIX ROUND (codex gate, P3): this used to say each chip's label and
+    // state word "share one line/span" — the state word is gone entirely
+    // as of the Pass 1 crosspoint-bus redesign (dmf-cms#391); a chip's
+    // label is now the ONLY text it carries. Querying by aria-label rather
+    // than plain text is still the right approach regardless — it is the
+    // explicit, unambiguous isolator this suite already relies on
+    // elsewhere, not a workaround for text sharing a line that no longer
+    // happens — and reading labels off the DOM in document order still
+    // proves the same chip-ordering property. Operate itself is not in
+    // this list: its accessible name comes from its visible text content,
+    // not an aria-label, so it is checked separately below.
     const knownLabels = ['Design', 'Plan', 'Provision', 'Configure', 'Finalise & Review', 'Control']
     const chipLabels = Array.from(strip.querySelectorAll('[aria-label]'))
       .map((el) => el.getAttribute('aria-label'))
