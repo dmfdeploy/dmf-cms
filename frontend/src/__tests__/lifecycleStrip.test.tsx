@@ -6,12 +6,44 @@ import type { FlowStepId, FlowStepState } from '../lib/workloadFlow'
 
 /**
  * The rail's "never colour alone" contract (Constitution Art. 11, umbrella
- * #347 WO-D1 Acceptance Criterion 8, carried forward through the Arc 4
- * WP-3 rail-treatment ruling): every chip state carries text AND an
- * icon/shape cue, so a viewer who cannot distinguish the selected chip's
- * fill (or the ring) still gets the same information from the DOM. This is
- * a rendering test, not a visual/storybook one — it asserts on the actual
- * icon + text nodes present for each state.
+ * #347 WO-D1 Acceptance Criterion 8).
+ *
+ * FIX ROUND (dmf-cms#391 Pass 1, codex gate — P3): this docstring used to
+ * say "every chip state carries text AND an icon/shape cue, so a viewer who
+ * cannot distinguish the selected chip's fill (or the ring) still gets the
+ * same information from the DOM" and "asserts on the actual icon + text
+ * nodes present for each state" — both stale since the crosspoint-bus
+ * redesign removed the per-state StateGlyph icon set and the selection ring
+ * (see LifecycleStrip.tsx's own file docstring). A LATER pass of this same
+ * fix round then claimed the contract "still holds" for every fact while,
+ * in the same breath, admitting SELECTION has "no text/shape companion any
+ * more" — an internal contradiction, not a resolved claim, and it is
+ * corrected here rather than papered over a second time. Per-fact status,
+ * stated plainly:
+ *   - LOCKED: passes cleanly — a dashed border is a genuine SHAPE cue,
+ *     independent of the key's fill, plus the key's own inert rendering.
+ *   - POSITION: passes cleanly — the tally bar is a real shape (a bar,
+ *     present or absent) for sighted users, `aria-current="step"` /
+ *     Operate's `aria-describedby` for assistive tech; never colour.
+ *   - SELECTION: an OPEN QUESTION, not a resolved pass — flagged to the
+ *     operator directly, not quietly resolved in prose. For sighted users
+ *     the only encoding left is the key's fill: a full inversion within the
+ *     SAME neutral/grayscale token family (bg-text/text-bg vs. muted text
+ *     on a faint or bordered face) — never a hue change, so this is not
+ *     "colour" in WCAG SC 1.4.1's strict sense, and the solid-fill-vs-
+ *     outline silhouette is a real visual difference, not nothing. But it
+ *     is not reinforced by any SECOND, independent shape or icon cue the
+ *     way LOCKED's dashed border or POSITION's tally bar are — narrower
+ *     than this codebase's own historical bar for "never one signal alone"
+ *     elsewhere. `aria-pressed` and the sr-only "Selected" node cover
+ *     assistive tech, which is a genuinely separate axis, not a substitute
+ *     for a sighted-only encoding. Whether fill-inversion alone is
+ *     sufficient, or SELECTION needs a second cue (Pass 2's own scope — the
+ *     key becoming its own disclosure — may be the natural place for one),
+ *     is the operator's call, not this test file's to assert either way.
+ * This file is a rendering test, not a visual/storybook one — it asserts on
+ * the actual DOM nodes and attributes present for each fact, not on how
+ * the page looks.
  */
 
 const LOCKED_REASONS: Record<FlowStepId, string> = {
@@ -22,6 +54,13 @@ const LOCKED_REASONS: Record<FlowStepId, string> = {
   finalise: 'finalise locked reason',
 }
 
+// umbrella dmf-cms#391 Pass 1: LifecycleStrip now requires a runningReadout
+// prop (store/headerSlot.ts's RailRunningReadout) — a trustworthy 1-of-1
+// default here so every existing test in this file that doesn't care about
+// the readout doesn't have to know about it. Tests that DO care pass their
+// own override.
+const DEFAULT_RUNNING_READOUT = { running: 1, total: 1, trustworthy: true }
+
 function renderRail(overrides: {
   steps: Record<FlowStepId, FlowStepState>
   activeChip: FlowStepId | 'operate' | null
@@ -29,6 +68,7 @@ function renderRail(overrides: {
   offFlow?: boolean
   jobOwnerLabel?: string | null
   jobInFlight?: boolean
+  runningReadout?: { running: number; total: number; trustworthy: boolean }
 }) {
   render(
     <MemoryRouter>
@@ -40,6 +80,7 @@ function renderRail(overrides: {
         lockedReasons={LOCKED_REASONS}
         jobOwnerLabel={overrides.jobOwnerLabel ?? null}
         jobInFlight={overrides.jobInFlight ?? false}
+        runningReadout={overrides.runningReadout ?? DEFAULT_RUNNING_READOUT}
         onSelect={() => {}}
         slug="studio-a"
       />
@@ -53,10 +94,26 @@ function chip(label: string): HTMLElement {
   return screen.getByLabelText(label)
 }
 
+/** umbrella dmf-cms#391: the tally bar is a decorative, aria-hidden child —
+ *  queried structurally (data-testid) rather than by text, since it carries
+ *  none. */
+function hasTally(chipEl: HTMLElement): boolean {
+  return chipEl.querySelector('[data-testid="position-tally"]') !== null
+}
+
 afterEach(cleanup)
 
-describe('every non-locked, non-busy state carries an icon and a distinct text label', () => {
-  it('renders a state-specific icon plus its own text for complete/open/current/record', () => {
+// FIX ROUND (dmf-cms#391 Pass 1): the whole premise of this describe/it —
+// a per-state "state word" (STATE_TEXT: Now/Ready/Done/Record/Locked) plus
+// a per-state StateGlyph <svg> icon — was removed wholesale in the
+// crosspoint-bus redesign. Every key now renders ONLY its own EBU label
+// text (`<span className="text-xs font-semibold">{label}</span>`),
+// regardless of state, and no icon at all. Rewritten to pin the NEW
+// invariant instead of the deleted one: same four steps at four different
+// states, but now asserting the label text (not a state word) and the
+// absence of any <svg>.
+describe('every non-locked, non-busy state renders its own EBU label as plain text, with no per-state icon or word', () => {
+  it('renders only the EBU label text for complete/open/current/record, and no <svg> icon, regardless of state', () => {
     const steps: Record<FlowStepId, FlowStepState> = {
       design: 'complete',
       plan: 'record',
@@ -66,16 +123,14 @@ describe('every non-locked, non-busy state carries an icon and a distinct text l
     }
     renderRail({ steps, activeChip: 'configure', current: 'configure' })
 
-    const expectations: Array<[FlowStepId, string]> = [
-      ['design', 'Done'],
-      ['plan', 'Record'],
-      ['provision', 'Ready'],
-      ['configure', 'Now'],
-    ]
-    for (const [id, text] of expectations) {
+    const expectations: FlowStepId[] = ['design', 'plan', 'provision', 'configure']
+    for (const id of expectations) {
       const el = chip(LabelFor(id))
-      expect(within(el).getByText(text, { exact: false }), `${id} missing its state text`).toBeTruthy()
-      expect(el.querySelector('svg'), `${id} missing an icon`).toBeTruthy()
+      // The EBU label is the only text this chip carries now — no
+      // "Done"/"Ready"/"Now"/"Record" state word exists anywhere in the
+      // markup any more, no matter what state the step is actually in.
+      expect(within(el).getByText(LabelFor(id)), `${id} missing its EBU label text`).toBeTruthy()
+      expect(el.querySelector('svg'), `${id} should carry no per-state icon`).toBeNull()
     }
   })
 })
@@ -84,8 +139,16 @@ function LabelFor(id: FlowStepId): string {
   return { design: 'Design', plan: 'Plan', provision: 'Provision', configure: 'Configure', finalise: 'Finalise & Review' }[id]
 }
 
-describe('locked state carries a lock icon, "Locked" text, and a dashed-border shape cue — never colour alone', () => {
-  it('renders all three for a locked chip, with its reason behind a keyboard/tap-operable toggle, not a permanent caption', () => {
+// FIX ROUND (dmf-cms#391 Pass 1): the lock <svg> icon and the "Locked" text
+// caption both went away in the crosspoint-bus redesign — a locked chip now
+// shows ONLY its EBU label text plus a dashed border (the "i" toggle below
+// is a disclosure control, not itself a state cue). The dashed border is
+// therefore the sole surviving non-colour cue, so the describe title no
+// longer claims a lock icon or "Locked" text exist. The LockedReasonToggle
+// interaction block itself is untouched — that behavior wasn't part of the
+// redesign and still works exactly as before.
+describe('locked state carries a dashed-border shape cue — never colour alone', () => {
+  it('renders the dashed border for a locked chip, with its reason behind a keyboard/tap-operable toggle, not a permanent caption', () => {
     const steps: Record<FlowStepId, FlowStepState> = {
       design: 'complete',
       plan: 'complete',
@@ -96,12 +159,30 @@ describe('locked state carries a lock icon, "Locked" text, and a dashed-border s
     renderRail({ steps, activeChip: 'design', current: null })
 
     const provision = chip('Provision')
-    expect(within(provision).getByText('Locked', { exact: false })).toBeTruthy()
+    // "Locked" text and the lock <svg> icon are gone (see file-level comment
+    // above) — only the dashed border remains as the non-colour cue.
     expect(provision.className).toContain('border-dashed')
-    expect(provision.querySelector('svg')).toBeTruthy()
 
-    // A locked chip is inert — no button role, so colour+shape+text is all
-    // a screen reader or a colour-blind operator has, and all three agree.
+    // A locked chip is inert — no button role. FIX ROUND (codex gate, P3):
+    // this used to credit the dashed border to "a screen reader or a
+    // colour-blind operator" alike — wrong for the screen-reader half. A
+    // screen reader does not expose CSS border-style at all; a visual
+    // dashed border is legible only to a SIGHTED operator (colour-blind or
+    // not). What actually distinguishes a locked key for a screen-reader
+    // operator is the semantic difference this suite asserts just below —
+    // no button role reachable, nothing in the tab order — not the border
+    // itself.
+    //
+    // FIX ROUND (codex gate, P2): within(provision).queryByRole('button')
+    // searches provision's DESCENDANTS only — Testing Library's `within`
+    // never treats the container itself as a candidate — so this could
+    // never have caught the chip ROOT regressing to a <button>, only a
+    // stray <button> nested inside it. tagName is the actual discriminator
+    // for "is this element itself a button". Mutation-verified: temporarily
+    // changed the locked branch's `<div className={chipClass} ...>` to
+    // `<button>` in LifecycleStrip.tsx, reran this test, confirmed it failed
+    // (tagName === 'BUTTON'), then restored — see the PR description.
+    expect(provision.tagName).toBe('DIV')
     expect(within(provision).queryByRole('button')).toBeNull()
 
     // The reason is NOT a permanent caption (would not fit a single-line
@@ -131,25 +212,45 @@ describe('locked state carries a lock icon, "Locked" text, and a dashed-border s
     // (including from any opacity elsewhere in the chip's own subtree). The
     // test below is the one that pins the real number.
     expect(provision.className).not.toMatch(/\bopacity-\d+\b/)
-    // The dashed border + lock glyph + "Locked" text stay as the designed,
-    // non-colour cue.
+    // FIX ROUND (codex gate, P3): this used to say "the dashed border +
+    // lock glyph + 'Locked' text stay as the designed, non-colour cue" —
+    // the glyph and the text are both gone (see the describe block's own
+    // FIX ROUND comment above). The dashed border is the ONLY surviving
+    // non-colour cue for locked now.
     expect(provision.className).toContain('border-dashed')
   })
 
-  // FIX ROUND (P3 round 3): the test above only ever pinned that the
-  // CHIP-level opacity class was gone — it said nothing about the inner
-  // state-word span, which carried the SAME opacity-70 independently and
-  // was still under AA on its own (~3.95:1, see below). A comment right
-  // here used to claim that span "was never the compounding half" and was
-  // therefore fine; that was true of round 2's specific defect and false of
-  // AA. This test computes the actual WCAG contrast ratio the state word's
-  // rendered className composites to against MIRRORED design tokens (see
-  // the constants below — this does not read src/index.css or resolve real
-  // CSS opacity/colour syntax, it hardcodes the two values that file
-  // currently defines) and pins that value, not the presence or absence of
-  // any one class — so a *different* opacity utility landing on this span
-  // in a future round still gets caught.
-  it('the state word text composites to at least the 4.5:1 AA floor at its actual rendered opacity', () => {
+  // FIX ROUND (dmf-cms#391 Pass 1): the "Locked" state-word text this test
+  // used to query for is gone entirely — every key (locked or not) now
+  // renders ONLY its EBU label inside a single
+  // `<span className="text-xs font-semibold">{label}</span>`, per
+  // LifecycleStrip.tsx's own docstring ("COLOUR TRACKS SELECTION..." /
+  // "dark (locked)" section). That section documents this exact lesson
+  // being learned the hard way TWICE already: opacifying this chip's text
+  // silently composited it under the 4.5:1 AA floor, with no second,
+  // dimmer-but-still-AA-safe text token to fall back to.
+  //
+  // FIX ROUND (codex gate, P2 — then corrected again, this prose itself
+  // overstated the fix): an earlier pass of this fix round replaced the
+  // composited-contrast assertion with a plain class-name string match ("no
+  // opacity-N class present"), which cannot detect contrast lost through an
+  // ANCESTOR's opacity (only the label span's own class). The real
+  // composited-contrast assertion below (the SAME unmodified
+  // effectiveContrastRatio helper the pre-redesign version of this test
+  // used, pointed at the new leaf/root pair — label span and chip
+  // container, one hop apart) DOES cover that ancestor case, by walking the
+  // whole leaf-to-root subtree. Its ACTUAL remaining scope, stated
+  // precisely rather than oversold: it detects opacity-CLASS regressions
+  // within that subtree only — see effectiveContrastRatio's and
+  // tailwindOpacity's own docstrings below for the honest limit. It does
+  // NOT detect a changed text-colour utility (e.g. text-muted swapped for
+  // something dimmer but still fully opaque), an inline `style="opacity:
+  // ..."`, or CSS-file opacity — none of those touch the Tailwind
+  // opacity-N class this helper actually parses, so a regression via any of
+  // those routes would still pass silently. The class-name check stays too,
+  // as a cheap, specific "how" alongside the real "does it still pass"
+  // check, within that same known scope.
+  it("a locked chip's own label composites to at least the 4.5:1 AA floor, and carries no opacity utility that could silently drop it", () => {
     const steps: Record<FlowStepId, FlowStepState> = {
       design: 'complete',
       plan: 'complete',
@@ -160,9 +261,10 @@ describe('locked state carries a lock icon, "Locked" text, and a dashed-border s
     renderRail({ steps, activeChip: 'design', current: null })
 
     const provision = chip('Provision')
-    const stateWord = within(provision).getByText('Locked', { exact: false })
+    const label = within(provision).getByText('Provision')
 
-    expect(effectiveContrastRatio(provision, stateWord)).toBeGreaterThanOrEqual(4.5)
+    expect(label.className).not.toMatch(/\bopacity-\d+\b/)
+    expect(effectiveContrastRatio(provision, label)).toBeGreaterThanOrEqual(4.5)
   })
 })
 
@@ -215,6 +317,14 @@ describe('the locked-reason popover stays inside the viewport for a trigger near
 // paint colours — if either token changes, this drifts out of sync and the
 // test below stops meaning what it says, same honest limit as any other
 // hardcoded-token test in this suite.
+//
+// FIX ROUND (codex gate, P2): a prior pass of this fix round claimed
+// effectiveContrastRatio's one call site was gone for good (the "Locked"
+// state-word text it used to measure was removed) and left it dead behind a
+// `void` reference purely to satisfy noUnusedLocals. That was premature —
+// the helper is generic over ANY (root, leaf) pair, not specific to the old
+// "Locked" text, and is now genuinely called again by the locked-chip
+// opacity/contrast test above, pointed at the new single label span.
 const BG: readonly [number, number, number] = [0x0a, 0x0a, 0x0b]
 const MUTED: readonly [number, number, number] = [0x9a, 0x9a, 0xa2]
 
@@ -236,7 +346,17 @@ function compositeOnBg(fg: readonly [number, number, number], alpha: number): [n
   return [0, 1, 2].map((i) => fg[i] * alpha + BG[i] * (1 - alpha)) as [number, number, number]
 }
 
-/** Tailwind's opacity-N utility, or 1 (fully opaque) if the element carries none. */
+/**
+ * Tailwind's opacity-N utility, or 1 (fully opaque) if the element carries
+ * none. HONEST LIMIT (codex gate, P3): this greps `className` for the
+ * literal `opacity-\d+` Tailwind utility ONLY — it has no way to see an
+ * inline `style="opacity: ..."` attribute, a CSS-file rule targeting this
+ * element by some other selector, or any other route to a lower rendered
+ * alpha. If this component ever grows one of those instead of the Tailwind
+ * utility, this test would go on reporting full opacity while the real
+ * page renders dimmer text — the same class of gap every hardcoded-token
+ * test in this file already accepts (see the BG/MUTED comment above).
+ */
 function tailwindOpacity(el: Element): number {
   const m = el.className.match(/\bopacity-(\d+)\b/)
   return m ? Number(m[1]) / 100 : 1
@@ -244,10 +364,13 @@ function tailwindOpacity(el: Element): number {
 
 /**
  * The combined alpha a nested run of text actually renders at is the
- * product of every ancestor-inclusive opacity between it and `root` — walks
- * up from `leaf` and stops at (and includes) `root`, so it only accounts
- * for opacity within the subtree under test, not anything above it in the
- * page.
+ * product of every opacity between `leaf` and `root`, INCLUSIVE of both
+ * ends — walks up from `leaf` via `parentElement` and stops the moment it
+ * reaches `root` (never further, so nothing above `root` in the real page
+ * is considered, however that ancestor chain continues). Bounded by
+ * `tailwindOpacity`'s own honest limit above — this only ever sees
+ * Tailwind's opacity-N class, nothing else that could lower a real
+ * browser's rendered alpha.
  */
 function effectiveContrastRatio(root: Element, leaf: Element): number {
   let alpha = 1
@@ -260,8 +383,15 @@ function effectiveContrastRatio(root: Element, leaf: Element): number {
   return wcagContrastRatio(compositeOnBg(MUTED, alpha), BG)
 }
 
-describe('a job in flight overrides every non-locked chip\'s text to "Waiting", not just its colour', () => {
-  it('shows "Waiting" text on every non-locked chip and ONE shared reason note for the row', () => {
+// FIX ROUND (dmf-cms#391 Pass 1): the per-chip "Waiting" text override is
+// gone entirely — a busy chip now shows ONLY its own EBU label, exactly
+// like every other non-locked chip (see the top describe block in this
+// file). The row-end run-count readout (store/headerSlot.ts's
+// RailRunningReadout, tested in its own describe block below) is what now
+// carries job-in-flight status for the row as a whole, instead of a
+// per-chip text swap.
+describe("a job in flight demotes every non-locked chip to inert, but its label text is untouched — no per-chip override text at all", () => {
+  it('keeps each chip\'s own EBU label (never "Waiting") while busy, plus ONE shared reason note for the row', () => {
     const steps: Record<FlowStepId, FlowStepState> = {
       design: 'complete',
       plan: 'complete',
@@ -279,12 +409,21 @@ describe('a job in flight overrides every non-locked chip\'s text to "Waiting", 
 
     for (const label of ['Design', 'Plan', 'Provision', 'Configure', 'Finalise & Review']) {
       const el = chip(label)
-      expect(within(el).getByText('Waiting', { exact: false }), `${label} missing Waiting text`).toBeTruthy()
+      // The chip's own label text still renders unchanged...
+      expect(within(el).getByText(label), `${label} missing its own label text`).toBeTruthy()
+      // ...and no "Waiting" override text was ever introduced in its place.
+      expect(within(el).queryByText('Waiting', { exact: false }), `${label} unexpectedly shows Waiting text`).toBeNull()
+      // FIX ROUND (codex gate, P2): within(el).queryByRole('button') only
+      // ever searches el's DESCENDANTS (Testing Library's `within` never
+      // considers the container itself a candidate) — it could never catch
+      // el ITSELF regressing to a <button> while busy, which is the actual
+      // inertness claim this test makes. tagName is the real discriminator.
+      expect(el.tagName, `${label} chip root itself must not be a <button> while busy`).toBe('DIV')
       expect(within(el).queryByRole('button'), `${label} still interactive while busy`).toBeNull()
     }
     // ONE shared note for the whole row, not the same sentence repeated
     // under every chip (the old per-chip repetition said the identical
-    // thing five times).
+    // thing five times) — this part is unchanged by the redesign.
     expect(
       screen.getAllByText('A Configure job is in progress — wait for its outcome.').length,
     ).toBe(1)
@@ -315,7 +454,16 @@ describe('backend position and wizard selection are each their own signal', () =
     expect(provision.className).toContain('text-muted')
   })
 
-  it('the backend position gets its own same-line "Position" text+icon marker, even on a chip that is not selected', () => {
+  // FIX ROUND (dmf-cms#391 Pass 1): the visible "Position" text+icon caption
+  // is gone — POSITION now renders as a tally bar (a thin illuminated strip
+  // across the key's top edge, `data-testid="position-tally"`, aria-hidden
+  // since it is a REDUNDANT visual cue whenever it renders at all: the
+  // key's own aria-current="step" already carries the fact for assistive
+  // tech, unconditionally, whether or not the bar itself is showing — see
+  // the two tests right below this one for the operator's actual ruling on
+  // when the bar itself renders. This test now pins the STRUCTURAL
+  // presence/absence of that bar, not text content.
+  it('the backend position gets its own tally bar, even on a chip that is not selected', () => {
     const steps: Record<FlowStepId, FlowStepState> = {
       design: 'complete',
       plan: 'complete',
@@ -326,14 +474,45 @@ describe('backend position and wizard selection are each their own signal', () =
     renderRail({ steps, activeChip: 'design', current: 'provision' })
 
     const provision = chip('Provision')
-    expect(within(provision).getByText('Position')).toBeTruthy()
-    expect(provision.querySelectorAll('svg').length).toBeGreaterThan(1) // state icon + position icon
+    expect(hasTally(provision), 'Provision (position, not selected) should carry a tally bar').toBe(true)
+    // aria-current="step" is the unconditional accessible carrier of
+    // POSITION — it does not depend on whether the tally bar itself
+    // rendered (see the "converges" test below, where the bar is withheld
+    // but this attribute is not).
+    expect(provision.getAttribute('aria-current')).toBe('step')
 
     const design = chip('Design')
-    expect(within(design).queryByText('Position')).toBeNull()
+    expect(hasTally(design), 'Design (neither position nor selected) should carry no tally bar').toBe(false)
   })
 
-  it('the Position marker survives the busy non-interactive rendering (chip demoted from <button> to inert <div>)', () => {
+  // NEW (dmf-cms#391 Pass 1, operator's ruling — pinned in both directions
+  // per the work order): the tally is withheld exactly when the illuminated
+  // (selected) key is ALSO the position — the inverted fill already says
+  // "this is where you are" and a redundant bar under it would say nothing
+  // new. The sibling test above already pins the "diverge -> bar renders"
+  // half; this pins "converge -> no bar", so the rule is checked from both
+  // sides rather than just inferred from one.
+  it('withholds the tally bar when the selected chip IS the position — the fill alone already says so', () => {
+    const steps: Record<FlowStepId, FlowStepState> = {
+      design: 'complete',
+      plan: 'complete',
+      provision: 'current',
+      configure: 'locked',
+      finalise: 'locked',
+    }
+    // Selected AND position both land on Provision this time.
+    renderRail({ steps, activeChip: 'provision', current: 'provision' })
+
+    const provision = chip('Provision')
+    expect(provision.className).toContain('bg-text') // still visibly selected
+    expect(hasTally(provision), 'a converged selected+position key should carry no tally bar').toBe(false)
+    // The ARIA carrier for POSITION is NOT conditional on the bar — a
+    // screen-reader operator still gets the fact even though the bar (a
+    // sighted-only affordance) is correctly withheld.
+    expect(provision.getAttribute('aria-current')).toBe('step')
+  })
+
+  it('the tally bar survives the busy non-interactive rendering (chip demoted from <button> to inert <div>)', () => {
     const steps: Record<FlowStepId, FlowStepState> = {
       design: 'complete',
       plan: 'complete',
@@ -350,11 +529,32 @@ describe('backend position and wizard selection are each their own signal', () =
     })
 
     const provision = chip('Provision')
-    expect(within(provision).queryByRole('button')).toBeNull() // demoted to inert
-    expect(within(provision).getByText('Position')).toBeTruthy()
+    // FIX ROUND (codex gate, P2): within(provision).queryByRole('button')
+    // only searches DESCENDANTS — it cannot detect provision ITSELF still
+    // being a <button>, which is exactly the "demoted to inert <div>" claim
+    // this test's own title makes. tagName is the real discriminator; the
+    // queryByRole check stays as a secondary, belt-and-suspenders proof that
+    // no button is reachable anywhere in the subtree either.
+    expect(provision.tagName, 'demoted to inert — chip root itself must be a <div>').toBe('DIV')
+    expect(within(provision).queryByRole('button')).toBeNull()
+    expect(hasTally(provision)).toBe(true)
+    // FIX ROUND (codex gate, P2): the interactive <button> branch's own
+    // aria-current="step" was already pinned above (the two tests before
+    // this one), but the INERT <div> branch — LifecycleStrip.tsx's
+    // `aria-current={isPosition ? 'step' : undefined}` on that div — had no
+    // test of its own. Position is unconditional on interactivity (see the
+    // file docstring's own point on this), so a job-in-flight chip that is
+    // also the position must still carry it.
+    expect(provision.getAttribute('aria-current')).toBe('step')
   })
 
-  it('the Operate/Control chip carries its own "Position" marker when off-flow, and is inverted when selected', () => {
+  // FIX ROUND (dmf-cms#391 Pass 1): Operate's visible "Position" caption is
+  // gone too. Split into the converged/diverged cases explicitly (the old
+  // single test only ever exercised the converged case — offFlow AND
+  // activeChip both 'operate' — which is now exactly the case where NEITHER
+  // the tally bar NOR its sr-only equivalent should render, matching the
+  // five-key rule above).
+  it('Operate renders no tally and no sr-only position text when it is both the position and the selection', () => {
     const steps: Record<FlowStepId, FlowStepState> = {
       design: 'complete',
       plan: 'complete',
@@ -365,8 +565,91 @@ describe('backend position and wizard selection are each their own signal', () =
     renderRail({ steps, activeChip: 'operate', current: null, offFlow: true })
 
     const operate = screen.getByRole('link', { name: 'Operate' })
-    expect(within(operate.parentElement as HTMLElement).getByText('Position')).toBeTruthy()
     expect(operate.className).toContain('bg-text')
+    expect(hasTally(operate.parentElement as HTMLElement)).toBe(false)
+    expect(operate.getAttribute('aria-describedby')).toBeNull()
+    expect(screen.queryByText('This workload is currently at Operate.')).toBeNull()
+  })
+
+  // NEW (dmf-cms#391 Pass 1): the work order's own accessibility gate — the
+  // Operate LINK's aria-current is repurposed to carry SELECTION (see the
+  // "aria-current tracks SELECTION" describe block below), which leaves
+  // POSITION with no ARIA carrier of its own on that element. Before this
+  // pass the visible "Position" badge covered that gap for everyone,
+  // sighted or not; Pass 1 removes the badge, so this sr-only text is the
+  // ONLY thing left that still tells a screen-reader operator "this
+  // workload is actually sitting at Operate" when a flow step, not Operate,
+  // is what's selected. Losing this silently would be a real regression,
+  // not a cosmetic one — pinned here.
+  it("Operate's position is exposed accessibly (aria-describedby + sr-only text) when off-flow and Operate is not the selected chip", () => {
+    const steps: Record<FlowStepId, FlowStepState> = {
+      design: 'complete',
+      plan: 'complete',
+      provision: 'complete',
+      configure: 'open',
+      finalise: 'open',
+    }
+    // offFlow: true (workload IS at Operate) but a flow step is selected,
+    // not Operate — the diverging case.
+    renderRail({ steps, activeChip: 'design', current: null, offFlow: true })
+
+    const operate = screen.getByRole('link', { name: 'Operate' })
+    expect(operate.className).not.toContain('bg-text') // not selected
+    expect(hasTally(operate.parentElement as HTMLElement)).toBe(true)
+
+    const describedById = operate.getAttribute('aria-describedby')
+    expect(describedById).toBeTruthy()
+    const description = document.getElementById(describedById as string)
+    expect(description).toBeTruthy()
+    expect(description?.textContent).toBe('This workload is currently at Operate.')
+    // The description text is genuinely visually hidden, not just present —
+    // sr-only is the same class this codebase uses for every other
+    // reachable-but-invisible node (see the job-in-flight "Selected" node
+    // above).
+    expect(description?.className).toContain('sr-only')
+  })
+
+  // NEW (codex gate, P2): the sibling test above only ever exercised the
+  // interactive <Link> branch. LifecycleStrip.tsx's Operate INERT <div>
+  // branch (jobInFlight — the Control group goes inert exactly like the
+  // five orchestration chips do) carries the identical
+  // `aria-describedby={operateHasPositionOnly ? operatePositionId : undefined}`
+  // — unasserted until now, so a dropped association there would have
+  // passed silently.
+  it("Operate's aria-describedby position association survives the busy INERT rendering too, with no duplicated sr-only node", () => {
+    const steps: Record<FlowStepId, FlowStepState> = {
+      design: 'complete',
+      plan: 'complete',
+      provision: 'complete',
+      configure: 'complete',
+      finalise: 'complete',
+    }
+    renderRail({
+      steps,
+      activeChip: 'design',
+      current: null,
+      offFlow: true,
+      jobOwnerLabel: 'Configure',
+      jobInFlight: true,
+    })
+
+    // Busy demotes Operate to the inert <div> branch — no link/button role
+    // reachable for it at all.
+    expect(screen.queryByRole('link', { name: 'Operate' })).toBeNull()
+    const operate = screen.getByText('Operate', { selector: 'div' })
+    expect(operate.tagName).toBe('DIV')
+
+    const describedById = operate.getAttribute('aria-describedby')
+    expect(describedById).toBeTruthy()
+    const description = document.getElementById(describedById as string)
+    expect(description?.textContent).toBe('This workload is currently at Operate.')
+    expect(description?.className).toContain('sr-only')
+
+    // Exactly one sr-only position node exists — the <Link> and <div>
+    // branches are mutually exclusive (only one mounts at a time) and both
+    // point at the SAME sibling span (see LifecycleStrip.tsx), never a
+    // per-branch duplicate.
+    expect(screen.getAllByText('This workload is currently at Operate.')).toHaveLength(1)
   })
 })
 
@@ -452,6 +735,15 @@ describe('a job-in-flight chip that is also the SELECTED one still carries that 
     // Still inert — this must NOT reintroduce a button role (the whole
     // rest of this suite's "job in flight -> nothing is reachable" pins
     // rely on that absence).
+    //
+    // FIX ROUND (codex gate, P2 — same defect class as the other
+    // within(...).queryByRole('button') fixes in this file, found in the
+    // same sweep): querySelector('[role="button"]') only matches the
+    // LITERAL role="button" attribute — a regression to a native <button>
+    // element (which carries an IMPLICIT button role with no such
+    // attribute at all) would pass this check silently. tagName closes
+    // that gap directly on the chip root itself.
+    expect(provision.tagName).toBe('DIV')
     expect(provision.closest('li')?.querySelector('[role="button"]')).toBeNull()
     // Not aria-pressed — that state has no valid role to attach to on a
     // non-button, so a user agent could legitimately ignore it.
@@ -464,6 +756,10 @@ describe('a job-in-flight chip that is also the SELECTED one still carries that 
     expect(within(design).queryByText('Selected')).toBeNull()
   })
 
+  // CONFIRMED unaffected by the dmf-cms#391 Pass 1 redesign: the sr-only
+  // "Selected" node is orthogonal to the state-word/icon removals (it was
+  // never a state word itself), so no changes were needed here — already
+  // green before and after this fix round.
   it('never renders "Selected" text on a locked chip outside a job — it is never the selected one', () => {
     const steps: Record<FlowStepId, FlowStepState> = {
       design: 'complete',
@@ -514,8 +810,103 @@ describe('the Operate link\'s aria-current tracks SELECTION, not just backend PO
 
     const operate = screen.getByRole('link', { name: 'Operate' })
     expect(operate.getAttribute('aria-current')).toBeNull()
-    // The POSITION fact survives independently — the same-line "Position"
-    // badge, unconditional on offFlow, not on aria-current.
-    expect(within(operate.closest('[role="group"]') as HTMLElement).getByText('Position')).toBeTruthy()
+    // FIX ROUND (dmf-cms#391 Pass 1): the POSITION fact still survives
+    // independently of aria-current — the visible "Position" badge this
+    // used to check is gone, replaced by the tally bar (sighted) plus an
+    // aria-describedby'd sr-only text node (screen readers), both
+    // unconditional on offFlow alone, gated only on offFlow &&
+    // activeChip !== 'operate' (see lifecycleStrip.test.tsx's dedicated
+    // tally-contract tests above for the full render-rule pin).
+    expect(hasTally(operate.parentElement as HTMLElement)).toBe(true)
+    expect(screen.getByText('This workload is currently at Operate.')).toBeTruthy()
+  })
+})
+
+// NEW (dmf-cms#391 Pass 1): the row-end run-count readout. `trustworthy` is
+// a plain prop as far as LifecycleStrip itself is concerned (this file
+// tests the component in isolation, via renderRail's own directly-supplied
+// runningReadout — it never goes through store/headerSlot.ts's
+// classifyWorkloadForHeaderSlot/buildHeaderSlotRail pipeline here). In
+// production that value traces back to WorkloadLifecycleInput's
+// membersDataTrustworthy (lib/workloadLifecycle.ts's
+// isGroupedReadTrustworthy), but FIX ROUND (codex gate — P1 residual): it
+// is no longer a simple threaded pass-through — buildHeaderSlotRail derives
+// it from a module-private WeakMap keyed on the classified flow's own
+// identity (see headerSlot.ts's TRUST side table docstring). Neither that
+// freshness formula nor the WeakMap derivation is this file's concern —
+// this file only pins that LifecycleStrip RENDERS what it is handed
+// correctly; topbarBrand.test.tsx covers the derivation itself.
+describe('the row-end run-count readout', () => {
+  const READY_STEPS: Record<FlowStepId, FlowStepState> = {
+    design: 'complete',
+    plan: 'complete',
+    provision: 'complete',
+    configure: 'open',
+    finalise: 'open',
+  }
+
+  // ART. 1 HARD RULE, pinned: an untrustworthy read must never print a
+  // count — not the real one, not a stale one, not a guess. This is the
+  // operator's own line from the work order, verbatim.
+  it('prints no count when the underlying read is untrustworthy — an honest non-answer instead', () => {
+    renderRail({
+      steps: READY_STEPS,
+      activeChip: 'design',
+      current: 'design',
+      runningReadout: { running: 3, total: 5, trustworthy: false },
+    })
+
+    // The real numbers must not leak into the DOM even though they were
+    // passed in — trustworthy: false withholds them entirely, the same
+    // fail-closed discipline as every other gate in this codebase.
+    expect(screen.queryByText('3 of 5 running', { exact: false })).toBeNull()
+    expect(screen.queryByText(/\d+ of \d+ running/i)).toBeNull()
+    expect(screen.getByText('Count unavailable', { exact: false })).toBeTruthy()
+  })
+
+  it('prints the trustworthy count, green LED, when at least one instance is running', () => {
+    renderRail({
+      steps: READY_STEPS,
+      activeChip: 'design',
+      current: 'design',
+      runningReadout: { running: 2, total: 4, trustworthy: true },
+    })
+
+    expect(screen.getByText('2 of 4 running', { exact: false })).toBeTruthy()
+  })
+
+  it('prints the trustworthy count, grey (not red or green) LED, when nothing is running', () => {
+    renderRail({
+      steps: READY_STEPS,
+      activeChip: 'design',
+      current: 'design',
+      runningReadout: { running: 0, total: 4, trustworthy: true },
+    })
+
+    expect(screen.getByText('0 of 4 running', { exact: false })).toBeTruthy()
+  })
+
+  // A job this session started is a fact LifecycleStrip already has
+  // directly (jobInFlight/jobOwnerLabel) — it takes priority over the
+  // trustworthy count even when trustworthy is also true, and renders the
+  // job label WITHOUT a fabricated elapsed duration (no start-timestamp
+  // fact exists anywhere in this data model — see the file docstring on
+  // RunningReadout).
+  it('shows the job label instead of a count while a job is in flight, with no invented elapsed time', () => {
+    renderRail({
+      steps: READY_STEPS,
+      activeChip: 'design',
+      current: 'design',
+      jobOwnerLabel: 'Configure',
+      jobInFlight: true,
+      runningReadout: { running: 2, total: 4, trustworthy: true },
+    })
+
+    // "Configure" also appears as a plain step-key label elsewhere in the
+    // row, so this must scope to the readout itself rather than
+    // screen.getByText, which would ambiguously match both.
+    const readout = screen.getByTestId('running-readout')
+    expect(within(readout).queryByText('2 of 4 running', { exact: false })).toBeNull()
+    expect(within(readout).getByText('Configure', { exact: false })).toBeTruthy()
   })
 })

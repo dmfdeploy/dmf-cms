@@ -1,5 +1,5 @@
 import { useEffect } from 'react'
-import { Routes, Route, Navigate } from 'react-router-dom'
+import { Routes, Route, Navigate, useLocation } from 'react-router-dom'
 import { useCurrentUser } from './api/hooks'
 import { useAuthStore } from './store/auth'
 import Shell from './components/Shell'
@@ -16,12 +16,28 @@ import MediaWorkloads from './pages/MediaWorkloads'
 import Catalog from './pages/Catalog'
 import Admin from './pages/Admin'
 import Settings from './pages/Settings'
+import { isDevHarnessRoute } from './pages/Dev/devHarnessRoute'
+import LifecycleRailHarness from './pages/Dev/LifecycleRailHarness'
 
 export default function App() {
-  const { data: user, isLoading: userLoading, isError } = useCurrentUser()
+  // dmf-cms#391: checked ahead of every auth-derived branch below,
+  // including the redirect effect — see devHarnessRoute.ts's own docstring
+  // for why this must be a bypass, not just another <Route> inside the
+  // (auth-gated) production route table below.
+  const location = useLocation()
+  const devHarness = isDevHarnessRoute(location.pathname)
+
+  // FIX ROUND (dmf-cms#391, codex gate — D): `enabled: !devHarness` makes
+  // the dev-harness route genuinely fire zero network calls, rather than
+  // firing an unstubbed /api/me it never reads the result of and merely
+  // hoping that's harmless. See useCurrentUser's own docstring for why this
+  // is safe to add (additive, defaults to enabled, and this is the only
+  // mounted instance on this particular route).
+  const { data: user, isLoading: userLoading, isError } = useCurrentUser(!devHarness)
   const { setUser, setLoading } = useAuthStore()
 
   useEffect(() => {
+    if (devHarness) return
     if (userLoading) {
       setLoading(true)
     } else if (user) {
@@ -30,7 +46,11 @@ export default function App() {
       // Not authenticated, redirect to login
       window.location.href = '/auth/login'
     }
-  }, [user, userLoading, isError, setUser, setLoading])
+  }, [devHarness, user, userLoading, isError, setUser, setLoading])
+
+  if (devHarness) {
+    return <LifecycleRailHarness />
+  }
 
   if (userLoading) {
     return (

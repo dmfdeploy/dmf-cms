@@ -14,75 +14,140 @@ import { FLOW_STEPS, type FlowStepId, type FlowStepState } from '../../lib/workl
  * flow — it sits in the Control vertical, set apart under its own group
  * label and rendered as a real route link, never a wizard step.
  *
- * ARC 4 WP-3: LIVES IN THE HEADER SLOT NOW, A SINGLE NON-WRAPPING ROW
- * (umbrella #347). This is a real information-architecture change, not a
- * recolour — the previous version stacked a state word, and conditionally
- * a "Current position" caption, a "Selected" caption, a locked-reason
- * sentence, or a job-in-flight sentence, underneath every chip. None of
- * that fits a single line, so:
- *   - every chip is one line: icon + label + state word, inline;
- *   - the "Selected" caption is GONE — redundant now that exactly one
- *     step's content is mounted below (FlowStep.tsx): what's selected is
- *     self-evident from the page, not from the rail;
- *   - the workload's actual POSITION still gets a same-line marker
- *     (PositionGlyph + "Position", appended to whichever chip it is) even
- *     when a DIFFERENT step is selected — dropping this would lose real
- *     information in exactly the case it matters (reviewing Design while
- *     the workload sits at Configure), which the old stacked caption
- *     always showed regardless of selection;
- *   - a locked step's reason moves behind a small, keyboard/tap-operable
- *     disclosure (LockedReasonToggle below) instead of a permanent
- *     caption — the same "tappable info affordance, not hover-only"
- *     pattern already used for System details elsewhere in this codebase;
- *   - job-in-flight state collapses from one repeated sentence under every
- *     non-locked chip to ONE shared note in the row.
+ * ARC 4 WP-3: LIVES IN THE HEADER SLOT, A SINGLE NON-WRAPPING ROW (umbrella
+ * #347). See store/headerSlot.ts for how WorkloadDetail/Operate register
+ * the rail model this component renders.
  *
- * ARC 4 WP-2/rail-treatment ruling (umbrella #347, operator decision
- * 2026-08-11, issue #347 comment "Arc 4 — rail treatment ruling"):
- * COLOUR NOW TRACKS SELECTION, NOT STAGE IDENTITY. The six EBU stage hues
- * (lib/stagePalette.ts) are retired as chip fills on the demo path — the
- * Constitution already adopts ISA-101 (§5, Art. 4: grayscale-normal,
- * colour = abnormal), and six saturated hues on the NORMAL path spent the
- * whole colour budget for no work the stage names weren't already doing
- * (measured: stage hues sit within ~1.1:1 of the semantic status colours
- * in greyscale). This softens the 2026-08-02 "EBU-coloured rail" direction
- * further than the earlier Arc 4 ruling did — stated here per that
- * ruling's own requirement, not left to read as drift.
- *   - inactive chip: muted text, no fill (7.08:1)
- *   - the SELECTED chip: inverted — dark text on bright neutral `#e8e8ea`
- *     (16.17:1), i.e. `bg-text text-bg`
- *   - cyan is NOT used here — it is the action accent, and the promoted
- *     primary action sits in this same row; cyan meaning both "where you
- *     are" and "the thing to click" would make the action ambiguous
- *     exactly where it matters most on camera
- * The six tokens stay defined in index.css/lib/stagePalette.ts — unused by
- * this file now, on purpose (reversibility: restoring stage colour is one
- * class string, not a re-plumb). Do not delete them.
+ * PASS 1 — CROSSPOINT BUS REDESIGN (dmf-cms#391, operator-approved design,
+ * 2026-08-17). NOTHING ABOUT WHAT IS CLICKABLE changed this pass — every
+ * interactive/inert BRANCH below (which elements are a <button> vs an inert
+ * <div>, when a key is locked vs openable, the whole selection/job-in-flight
+ * decision ladder) is byte-for-byte the same DECISION LOGIC the wizard
+ * already had.
+ *
+ * FIX ROUND (codex gate — P3): this docstring used to extend that same
+ * "byte-for-byte unchanged" claim to "every accessibility carrier on it" —
+ * false, and corrected here rather than left standing, since it was a claim
+ * about a security-relevant surface (this rail sits behind
+ * devHarnessRoute.ts's auth-bypass gate) repeated in more than one place.
+ * `aria-pressed`, the five keys' `aria-current="step"`, the job-in-flight
+ * sr-only "Selected" node, and LockedReasonToggle are all genuinely
+ * unchanged carriers. But the visible "Position" badge that used to give
+ * Operate's position fact a sighted-only presence was REMOVED, and a NEW
+ * carrier was ADDED in its place — `aria-describedby` on the Operate
+ * link/div plus a sr-only "This workload is currently at Operate." span —
+ * because without it, removing the visible badge would have made that fact
+ * silently unreachable for a screen-reader operator (see this file's own
+ * "SELECTION AND POSITION ARE TWO DIFFERENT FACTS" section below for the
+ * full account, and the render-rule tests in lifecycleStrip.test.tsx). That
+ * is a genuinely new accessibility carrier this pass added, not a pixel
+ * change wearing the same logic. The rail now reads as a crosspoint bus:
+ * SELECTION is an illuminated key (bg-text/text-bg, unchanged from before),
+ * POSITION is a thin tally bar across a key's top edge, and per-step state
+ * words (Now/Ready/Done/Record/Locked) plus their icons are gone entirely —
+ * the six EBU labels plus the two signals above are the whole vocabulary
+ * now. Removed along with the state words: the StateGlyph icon set, the
+ * PositionGlyph star + literal "Position" caption, the visible "Control"
+ * text label (the group's `role="group" aria-label="Control"` stays — see
+ * lifecycleStrip.test.tsx's own aria-label pin), and the selection ring
+ * (the inverted key fill alone now carries "this is selected" visually,
+ * same as it always could have).
+ *
+ * A run-count readout was added at the row's end — "N OF M RUNNING" derived
+ * from workload.instances (FIX ROUND, codex gate — P3: this used to point at
+ * store/headerSlot.ts's RailModelExtras for that derivation; RailModelExtras
+ * no longer carries it at all — see that file's HeaderSlotRailModel /
+ * buildHeaderSlotRail instead, which derive it internally from a real
+ * instances array now required by classifyWorkloadForHeaderSlot) — so
+ * the information the old per-chip state words used to carry in aggregate
+ * ("how much of this workload is actually running") has a home again, in
+ * one place instead of five. Art. 1: when the underlying member-state read
+ * is not trustworthy (lib/workloadLifecycle.ts's own
+ * isGroupedReadTrustworthy — reused via WorkloadLifecycleInput's
+ * `membersDataTrustworthy`, not re-derived here), the readout says so rather
+ * than printing a stale or half-true count.
+ *
+ * LockedReasonToggle (the "i" disclosure) is UNCHANGED and stays load-bearing
+ * this pass: locked keys are still non-interactive, so it remains the only
+ * way a locked step's reason is reachable at all. Pass 2 is where the key
+ * itself becomes the disclosure and this toggle can retire.
  *
  * SELECTION AND POSITION ARE TWO DIFFERENT FACTS, deliberately never
- * conflated onto one signal. On the five orchestration chips: `aria-pressed`
- * marks SELECTED on the interactive `<button>` variant (mounted below). A
- * job-in-flight chip is not a button (busy is not the same fact as locked,
- * and a busy chip CAN still be the selected one) — round P3-6 first tried
- * putting `aria-pressed` on that chip's own inert `<div>` too, but WAI-ARIA
- * 1.2 defines `aria-pressed` only for the element that itself carries
- * `role="button"` — this div neither carries that role nor inherits the
- * permission from being near one, so a user agent is not required to
- * expose it there; corrected (P3 round 3) to a visually-hidden "Selected"
- * text node instead, reachable text rather than a state attribute with
- * nothing to attach it to. That div still
- * deliberately carries no role="button", both because it genuinely isn't
- * one and because this suite's own "job in flight -> no button reachable"
- * tests rely on that absence. `aria-current="step"` marks the backend-derived
- * POSITION, and the same-line Position marker (icon + text, described
- * above) restates it visibly. On the Operate LINK specifically (fix round
- * P3-6): it carries no aria-pressed at all — a nav Link isn't a toggle — so
- * its own `aria-current` is repurposed to carry SELECTION
- * (`activeChip === 'operate'`) instead of position, matching the inverted
- * fill it renders on exactly that condition; POSITION there is still the
- * separate, unconditional "Position" badge, never aria-current. A workload
- * can sit at Configure while the operator reviews Design, and the rail says
- * both without one overloading the other.
+ * conflated onto one signal — this predates Pass 1 and still holds exactly
+ * as before. On the five orchestration keys: `aria-pressed` marks SELECTED
+ * on the interactive `<button>` variant. A job-in-flight key is not a button
+ * (busy is not the same fact as locked, and a busy key CAN still be the
+ * selected one) — WAI-ARIA 1.2 defines `aria-pressed` only for the element
+ * that itself carries `role="button"`, so that branch instead carries a
+ * visually-hidden "Selected" text node. That div still deliberately carries
+ * no role="button", both because it genuinely isn't one and because this
+ * suite's own "job in flight -> no button reachable" tests rely on that
+ * absence. `aria-current="step"` marks the backend-derived POSITION on the
+ * five keys, unconditionally on `isPosition` — independent of whether the
+ * tally bar itself renders (the bar is suppressed when position and
+ * selection coincide, per the operator's Pass 1 ruling below, but the ARIA
+ * carrier is not, because a sighted operator reading the illuminated key as
+ * "this is both" is not the same guarantee for a screen-reader user, who
+ * needs the position fact stated regardless of what the fill alone implies).
+ *
+ * On the Operate LINK specifically: it carries no aria-pressed at all — a
+ * nav Link isn't a toggle — so its own `aria-current` is repurposed to carry
+ * SELECTION (`activeChip === 'operate'`) instead of position, matching the
+ * inverted fill it renders on exactly that condition. That repurposing
+ * means `aria-current` alone cannot ALSO carry POSITION for Operate the way
+ * it does for the five keys — a second, separate carrier is needed there,
+ * or the fact goes missing for assistive tech entirely.
+ *
+ * FIX ROUND (dmf-cms#391 Pass 1, codex gate — P3): rewritten as history,
+ * not a live claim — this paragraph used to say POSITION there "has no ARIA
+ * carrier of its own" in the present tense, immediately followed by a
+ * sentence describing the carrier that in fact exists; self-contradictory
+ * as originally written, not a stale-vs-current gap. The actual sequence:
+ * BEFORE Pass 1, the visible "Position" badge was POSITION's only
+ * carrier — sighted-only, nothing for assistive tech. Pass 1 removes that
+ * badge and, in its place, adds a genuine ARIA carrier that did not exist
+ * before: `aria-describedby` on the Operate link/div, pointing at an
+ * sr-only span (`operatePositionId` below) — rendered under the identical
+ * condition the tally bar itself uses (`offFlow && activeChip !==
+ * 'operate'`), so position never silently vanishes for a screen-reader
+ * operator just because sighted operators can already read it off the
+ * illuminated key.
+ *
+ * TALLY BAR RENDER RULE (operator's Pass 1 ruling, pinned by
+ * lifecycleStrip.test.tsx): renders ONLY when position and selection
+ * DIVERGE — `isPosition && !isSelected` for the five keys, `offFlow &&
+ * activeChip !== 'operate'` for Operate. When the illuminated key already
+ * IS the position, the bar is withheld — the illumination already says so,
+ * and a redundant bar under it would say nothing new. The bar itself is
+ * neutral (`--color-text`), never red or green: position is not a health
+ * claim (that is what the run-count readout is for), and this rail already
+ * spends its one "on air" register (red) nowhere else, so introducing it
+ * here for an unrelated fact would misstate what red means everywhere else
+ * in this console.
+ *
+ * COLOUR TRACKS SELECTION, NOT STAGE IDENTITY (ARC 4 WP-2 ruling, unchanged
+ * by Pass 1). The six EBU stage hues (lib/stagePalette.ts) stay retired as
+ * key fills — the Constitution already adopts ISA-101 (§5, Art. 4:
+ * grayscale-normal, colour = abnormal). Three brightness levels replace the
+ * old binary (selected/not):
+ *   - lit (selected): inverted, dark text on bright neutral `#e8e8ea`
+ *     (16.17:1) — `bg-text text-bg`, unchanged from before Pass 1.
+ *   - normal (open/available): muted text (7.08:1) on a faint neutral face,
+ *     1px solid border.
+ *   - dark (locked): the SAME muted text token, unopacified — this suite's
+ *     own fix-round history (see the removed StateGlyph-era comments in git
+ *     blame) found and re-found that opacifying this exact text composites
+ *     under the 4.5:1 AA floor; there is no second, dimmer-but-still-AA-safe
+ *     text token defined in index.css to opacify toward instead, so "dark"
+ *     is expressed entirely through a darker/emptier key face plus a dashed
+ *     border (the pre-Pass-1 locked shape cue, kept — Art. 11, colour is
+ *     never the only signal, and a locked key now carries no icon or word of
+ *     its own to say so any other way).
+ * Cyan (`--color-accent`) is NOT used here — it is the action accent, and
+ * the promoted primary action sits in this same row; cyan meaning both
+ * "where you are" and "the thing to click" would make the action ambiguous
+ * exactly where it matters most on camera. The six stage tokens stay defined
+ * in index.css/lib/stagePalette.ts, unused by this file — reversibility.
  */
 
 const STEP_LABEL: Record<FlowStepId, string> = {
@@ -91,73 +156,6 @@ const STEP_LABEL: Record<FlowStepId, string> = {
   provision: 'Provision',
   configure: 'Configure',
   finalise: 'Finalise & Review',
-}
-
-const STATE_TEXT: Record<FlowStepState, string> = {
-  current: 'Now',
-  open: 'Ready',
-  complete: 'Done',
-  record: 'Record',
-  locked: 'Locked',
-}
-
-function StateGlyph({ state }: { state: FlowStepState }) {
-  switch (state) {
-    case 'complete':
-      return (
-        <path
-          d="M20 6 9 17l-5-5"
-          stroke="currentColor"
-          strokeWidth="2.5"
-          fill="none"
-          strokeLinecap="round"
-          strokeLinejoin="round"
-        />
-      )
-    case 'locked':
-      return (
-        <path
-          d="M6 10V7a6 6 0 1112 0v3M5 10h14v10H5V10z"
-          stroke="currentColor"
-          strokeWidth="2"
-          fill="none"
-          strokeLinecap="round"
-          strokeLinejoin="round"
-        />
-      )
-    case 'record':
-      return (
-        <path
-          d="M4 6h16M4 12h16M4 18h10"
-          stroke="currentColor"
-          strokeWidth="2"
-          fill="none"
-          strokeLinecap="round"
-        />
-      )
-    case 'current':
-      return (
-        <path
-          d="M12 2l2.4 7.2H22l-6 4.6 2.4 7.2L12 16.4l-6.4 4.6L8 13.8l-6-4.6h7.6z"
-          fill="currentColor"
-        />
-      )
-    case 'open':
-    default:
-      return <circle cx="12" cy="12" r="6" fill="currentColor" />
-  }
-}
-
-/** The same "current position" glyph used inline, next to the Position word. */
-function PositionGlyph() {
-  return (
-    <svg className="h-3 w-3 shrink-0" viewBox="0 0 24 24" fill="none" aria-hidden="true">
-      <path
-        d="M12 2l2.4 7.2H22l-6 4.6 2.4 7.2L12 16.4l-6.4 4.6L8 13.8l-6-4.6h7.6z"
-        fill="currentColor"
-      />
-    </svg>
-  )
 }
 
 /**
@@ -253,6 +251,93 @@ function LockedReasonToggle({ label, reason }: { label: string; reason: string }
   )
 }
 
+/**
+ * The position tally — a thin illuminated bar across a key's top edge, in
+ * `--color-text`, neutral. Never rendered by itself for a key that is also
+ * selected (see the file docstring's "TALLY BAR RENDER RULE") — every call
+ * site below already guards on that before mounting this.
+ */
+function PositionTally() {
+  return (
+    <span
+      aria-hidden="true"
+      data-testid="position-tally"
+      className="absolute inset-x-0 top-0 h-[3px] rounded-t-[2px] bg-text"
+    />
+  )
+}
+
+/** The run-count readout's LED + text, right-aligned at the row's end. */
+function RunningReadout({
+  runningReadout,
+  jobInFlight,
+  jobOwnerLabel,
+}: {
+  runningReadout: { running: number; total: number; trustworthy: boolean }
+  jobInFlight: boolean
+  jobOwnerLabel: string | null
+}) {
+  // Priority: a job this session started is a fact this component KNOWS
+  // regardless of the grouped read's own freshness (it is local state, set
+  // synchronously by the caller — see WorkloadDetail.tsx's startJob), so it
+  // wins over the trustworthy check below rather than being gated by it.
+  //
+  // umbrella dmf-cms#391 fix round: the design called for "<job> ·
+  // <elapsed>" here, but no elapsed-since-start fact exists anywhere in this
+  // data model — WorkloadDetail's job overlay is a plain boolean plus an
+  // owner label, no start timestamp, and lib/workloadLifecycle.ts's own
+  // docstring is explicit that this module family adds "no new backend, no
+  // network, no clock" (see that file's header). Inventing a client-side
+  // start timestamp here would be exactly that new clock, for a number this
+  // rail could not verify against anything. Renders the job label alone
+  // instead of guessing a duration.
+  if (jobInFlight) {
+    return (
+      <div data-testid="running-readout" className="ml-auto flex shrink-0 items-center gap-1.5 pl-2">
+        <span aria-hidden="true" className="h-1.5 w-1.5 shrink-0 rounded-full bg-warning" />
+        <span className="whitespace-nowrap font-mono text-2xs uppercase tracking-wide text-muted tabular-nums">
+          {jobOwnerLabel ?? 'Job'} · running
+        </span>
+      </div>
+    )
+  }
+
+  // ART. 1 HARD RULE: an untrustworthy member-state read must not print a
+  // count — not a stale one, not a guessed one. `runningReadout.trustworthy`
+  // ultimately traces back to WorkloadLifecycleInput.membersDataTrustworthy
+  // (lib/workloadLifecycle.ts's isGroupedReadTrustworthy, called once
+  // there) — but this component just receives it as a plain prop and does
+  // not care how. FIX ROUND (codex gate, P1 residual): the actual
+  // derivation is store/headerSlot.ts's buildHeaderSlotRail, reading a
+  // module-private WeakMap keyed on the classified flow's own identity, NOT
+  // a direct field pass-through — see that file's TRUST side table
+  // docstring for the full account. This file adds no second freshness
+  // formula of its own regardless of that mechanism's exact shape.
+  if (!runningReadout.trustworthy) {
+    return (
+      <div data-testid="running-readout" className="ml-auto flex shrink-0 items-center gap-1.5 pl-2">
+        <span aria-hidden="true" className="h-1.5 w-1.5 shrink-0 rounded-full bg-muted" />
+        <span className="whitespace-nowrap font-mono text-2xs uppercase tracking-wide text-muted">
+          Count unavailable
+        </span>
+      </div>
+    )
+  }
+
+  const { running, total } = runningReadout
+  return (
+    <div data-testid="running-readout" className="ml-auto flex shrink-0 items-center gap-1.5 pl-2">
+      <span
+        aria-hidden="true"
+        className={`h-1.5 w-1.5 shrink-0 rounded-full ${running > 0 ? 'bg-ok' : 'bg-muted'}`}
+      />
+      <span className="whitespace-nowrap font-mono text-2xs uppercase tracking-wide text-muted tabular-nums">
+        {running} of {total} running
+      </span>
+    </div>
+  )
+}
+
 export default function LifecycleStrip({
   steps,
   activeChip,
@@ -261,17 +346,16 @@ export default function LifecycleStrip({
   lockedReasons,
   jobOwnerLabel,
   jobInFlight,
+  runningReadout,
   onSelect,
   slug,
 }: {
   steps: Record<FlowStepId, FlowStepState>
   /** Which chip reads as selected — one of the five steps, `'operate'`, or
    *  none. Always drives the inverted fill. The accessible signal on top of
-   *  that varies by branch (P3 round 3): `aria-pressed` on the interactive
-   *  `<button>` variant, a visually-hidden "Selected" text node on a
-   *  job-in-flight chip's inert `<div>` (aria-pressed is not valid there —
-   *  see the busy-branch comment below), and `aria-current` on the Operate
-   *  `<Link>` (not a toggle, so no aria-pressed at all). */
+   *  that varies by branch: `aria-pressed` on the interactive `<button>`
+   *  variant, a visually-hidden "Selected" text node on a job-in-flight
+   *  chip's inert `<div>`, and `aria-current` on the Operate `<Link>`. */
   activeChip: FlowStepId | 'operate' | null
   /** The workload's backend-derived position, or null. */
   current: FlowStepId | null
@@ -281,12 +365,23 @@ export default function LifecycleStrip({
   /** Verbatim stage label of the step that owns the in-flight job, if any. */
   jobOwnerLabel: string | null
   jobInFlight: boolean
+  /** umbrella dmf-cms#391: the row-end run-count readout's raw inputs —
+   *  derived from workload.instances by the caller (WorkloadDetail.tsx /
+   *  Operate.tsx via store/headerSlot.ts), never re-derived here. */
+  runningReadout: { running: number; total: number; trustworthy: boolean }
   onSelect: (step: FlowStepId) => void
   slug: string
 }) {
   const jobReason = jobOwnerLabel
     ? `A ${jobOwnerLabel} job is in progress — wait for its outcome.`
     : ''
+
+  // umbrella dmf-cms#391: the sr-only carrier for Operate's POSITION fact
+  // (see the file docstring) — scoped by slug so two mounted instances (not
+  // reachable today; the header slot renders exactly one) could never share
+  // an id.
+  const operatePositionId = `lifecycle-operate-position-${slug}`
+  const operateHasPositionOnly = offFlow && activeChip !== 'operate'
 
   return (
     <nav aria-label="Media workload lifecycle" className="flex flex-nowrap items-center gap-2">
@@ -297,46 +392,26 @@ export default function LifecycleStrip({
           const isPosition = id === current
           const isSelected = id === activeChip
           const interactive = !jobInFlight && !locked
+          // Operator's Pass 1 ruling (pinned below in lifecycleStrip.test.tsx):
+          // the tally never renders on a key that is already illuminated —
+          // the fill alone already says "this is where you are".
+          const showTally = isPosition && !isSelected
 
-          // FIX ROUND (WP-3 spec B gate, P2-5, then P3 round 3): the locked
-          // chip's own opacity-70 used to sit on top of the inner
-          // state-word span's own opacity-70 — two multipliers compounding
-          // to ~2.50:1. Round 2 removed the CHIP-level one, leaving the
-          // state word alone at its own single opacity-70 — which composites
-          // muted-on-bg's 7.08:1 down to ~3.95:1 on its own, still under the
-          // 4.5:1 AA floor for text. That was found and mis-cleared: a test
-          // asserted only the chip-level class was gone and its own comment
-          // claimed the state word's opacity "was never the compounding
-          // half", true of round 2's specific defect but not a real AA
-          // pass — the state word's own single multiplier was never checked
-          // against the floor at all. The state word below now carries no
-          // opacity class either; every chip, locked or not, reads its text
-          // at plain muted-on-bg. The dashed border + lock glyph + "Locked"
-          // state word remain the designed non-colour cue (Art. 11).
+          const keyToneClass = isSelected
+            ? 'bg-text text-bg border-transparent'
+            : locked
+              ? 'bg-white/[0.03] text-muted border-dashed border-white/15'
+              : 'bg-white/5 text-muted border-white/10'
+
           const chipClass = [
-            'flex items-center gap-1.5 whitespace-nowrap rounded-lg border px-2.5 py-1.5 transition-shadow',
-            isSelected ? 'bg-text text-bg' : 'text-muted',
-            locked ? 'border-dashed border-white/30' : 'border-transparent',
-            isSelected ? 'ring-2 ring-white ring-offset-2 ring-offset-bg' : '',
+            'relative flex items-center gap-1.5 whitespace-nowrap rounded-[3px] border px-2.5 py-1.5 transition-shadow',
+            keyToneClass,
           ].join(' ')
 
           const inner = (
             <>
-              <svg className="h-3.5 w-3.5 shrink-0" viewBox="0 0 24 24" fill="none" aria-hidden="true">
-                <StateGlyph state={state} />
-              </svg>
-              <span className="text-xs font-semibold">
-                {STEP_LABEL[id]}
-                <span className="ml-1 font-normal">
-                  · {jobInFlight ? 'Waiting' : STATE_TEXT[state]}
-                </span>
-              </span>
-              {isPosition && (
-                <span className="ml-0.5 flex items-center gap-0.5 opacity-80">
-                  <PositionGlyph />
-                  <span className="text-2xs">Position</span>
-                </span>
-              )}
+              {showTally && <PositionTally />}
+              <span className="text-xs font-semibold">{STEP_LABEL[id]}</span>
             </>
           )
 
@@ -346,9 +421,10 @@ export default function LifecycleStrip({
                 <button
                   type="button"
                   className={chipClass}
-                  // Explicit accessible name — the visible chip also carries
-                  // a state word (Ready/Done/…) that shouldn't be part of
-                  // what a step selector is called.
+                  // Explicit accessible name — the key's own label is all
+                  // there is now (no trailing state word to exclude), but an
+                  // explicit aria-label keeps this independent of whatever
+                  // else ends up inside the button in a later pass.
                   aria-label={STEP_LABEL[id]}
                   aria-pressed={isSelected}
                   aria-current={isPosition ? 'step' : undefined}
@@ -363,36 +439,10 @@ export default function LifecycleStrip({
                   aria-current={isPosition ? 'step' : undefined}
                 >
                   {inner}
-                  {/* FIX ROUND (WP-3 spec B gate, P3-6; corrected P3 round
-                      3): a job-in-flight chip can still be the SELECTED one
-                      (the operator is looking at Provision when Provision's
-                      own job starts), and nothing besides the fill colour
-                      said so before this — every non-locked chip's text
-                      collapses to the identical "· Waiting" during a job, so
-                      a colour-blind or screen-reader operator had no way to
-                      tell the chip they're actually on apart from a
-                      merely-suppressed sibling (Art. 11: colour is never the
-                      only signal). The first fix put aria-pressed on this
-                      div — WAI-ARIA 1.2 defines aria-pressed only for the
-                      element that itself carries role="button"; this div
-                      neither carries that role nor inherits the permission
-                      from being near one, so a user agent is not required
-                      to expose it here at all — the test that "proved" it
-                      only checked DOM spelling, not an exposed accessibility
-                      property. Reachable text
-                      is the actual fix — a visually-hidden "Selected" node,
-                      same pattern as any other sr-only label in this
-                      codebase, with no role/state attribute riding on an
-                      element that was never a widget. Still deliberately NO
-                      role="button": this branch only exists because
-                      `interactive = !jobInFlight && !locked`, and every
-                      OTHER test in this suite that proves a job-in-flight
-                      chip is inert does so by asserting no button role is
-                      reachable here (queryByRole('button', ...) === null) —
-                      adding role="button" would break that much wider
-                      invariant for the same reason it would have before. A
-                      locked step is never selected (isStepOpenable excludes
-                      it), so this never fires for the locked case. */}
+                  {/* A job-in-flight chip can still be the SELECTED one — see
+                      the file docstring's "SELECTION AND POSITION ARE TWO
+                      DIFFERENT FACTS" section for why this is a reachable
+                      text node rather than aria-pressed on a non-button. */}
                   {jobInFlight && isSelected && <span className="sr-only">Selected</span>}
                 </div>
               )}
@@ -416,50 +466,55 @@ export default function LifecycleStrip({
           read as a sixth step of the SAME sequence, exactly the claim spec B
           and the operator's 2026-08-02 ruling rule out. It is a sibling
           labelled group instead, visually adjacent but structurally outside
-          the ordered list entirely. */}
+          the ordered list entirely. The VISIBLE "Control" word is gone as of
+          Pass 1 (dmf-cms#391) — the group's own accessible name
+          (role="group" aria-label="Control") is the only thing that still
+          says so, and lifecycleStrip.test.tsx pins that it stays. */}
       <div role="group" aria-label="Control" className="flex shrink-0 items-center gap-1.5 border-l border-white/10 pl-2">
-        <span className="text-2xs uppercase tracking-wide text-muted">Control</span>
         {!jobInFlight ? (
           <Link
             to={`/media-workloads/${encodeURIComponent(slug)}/operate`}
-            className={`whitespace-nowrap rounded-lg px-2.5 py-1.5 text-xs font-semibold ${
-              activeChip === 'operate' ? 'bg-text text-bg ring-2 ring-white ring-offset-2 ring-offset-bg' : 'text-muted'
+            className={`relative whitespace-nowrap rounded-[3px] border px-2.5 py-1.5 text-xs font-semibold ${
+              activeChip === 'operate'
+                ? 'bg-text text-bg border-transparent'
+                : 'bg-white/5 text-muted border-white/10'
             }`}
-            // FIX ROUND (WP-3 spec B gate, P3-6): keyed to SELECTION
-            // (activeChip — is the operator looking at Operate right now),
-            // not to POSITION (offFlow). Those are the same two axes the
-            // five orchestration chips' INTERACTIVE (button) variant keeps
-            // apart via aria-pressed (selection) vs. aria-current="step"
-            // (position) — the busy variant instead uses a visually-hidden
-            // "Selected" text node (see that branch's own comment above),
-            // so this is no longer true of all five chips universally, only
-            // of the button case. This link has no aria-pressed (a nav Link
-            // isn't a toggle), so aria-current is the one signal it has,
-            // and it needs to carry
-            // SELECTION to match the inverted fill it already renders on
-            // /operate. Before this fix, visiting /operate directly for a
-            // workload not actually AT Operate (offFlow false, activeChip
-            // 'operate') left this link visually inverted with NO
-            // aria-current at all — the POSITION fact still renders
-            // separately below (the "Position" badge), unconditionally on
-            // offFlow, so nothing is lost by no longer overloading this
-            // attribute with it.
+            // Keyed to SELECTION (activeChip — is the operator looking at
+            // Operate right now), not to POSITION (offFlow) — see the file
+            // docstring's "SELECTION AND POSITION ARE TWO DIFFERENT FACTS".
             aria-current={activeChip === 'operate' ? 'page' : undefined}
+            aria-describedby={operateHasPositionOnly ? operatePositionId : undefined}
           >
+            {operateHasPositionOnly && <PositionTally />}
             Operate
           </Link>
         ) : (
-          <div className={`whitespace-nowrap rounded-lg px-2.5 py-1.5 text-xs font-semibold ${activeChip === 'operate' ? 'bg-text text-bg' : 'text-muted'}`}>
+          <div
+            className={`relative whitespace-nowrap rounded-[3px] border px-2.5 py-1.5 text-xs font-semibold ${
+              activeChip === 'operate'
+                ? 'bg-text text-bg border-transparent'
+                : 'bg-white/5 text-muted border-white/10'
+            }`}
+            aria-describedby={operateHasPositionOnly ? operatePositionId : undefined}
+          >
+            {operateHasPositionOnly && <PositionTally />}
             Operate
           </div>
         )}
-        {offFlow && (
-          <span className="flex items-center gap-0.5 whitespace-nowrap text-2xs text-muted opacity-80">
-            <PositionGlyph />
-            Position
+        {/* umbrella dmf-cms#391: the sr-only equivalent of the removed
+            visible "Position" badge — Operate's aria-current is spoken for
+            by SELECTION (above), so without this a screen-reader operator
+            loses the workload-is-at-Operate fact entirely the moment it
+            isn't also the selected chip. Same render condition as the tally
+            bar it replaces visually. */}
+        {operateHasPositionOnly && (
+          <span id={operatePositionId} className="sr-only">
+            This workload is currently at Operate.
           </span>
         )}
       </div>
+
+      <RunningReadout runningReadout={runningReadout} jobInFlight={jobInFlight} jobOwnerLabel={jobOwnerLabel} />
     </nav>
   )
 }

@@ -93,12 +93,21 @@ const NOOP_EXTRAS = {
   onSelect: () => {},
 }
 
+// FIX ROUND (dmf-cms#391, codex gate — P1, the counts): RailModelExtras no
+// longer has a runningReadout field of any kind — NOOP_EXTRAS above dropped
+// it entirely, and classifyWorkloadForHeaderSlot now takes the workload's
+// raw instances directly as its own second argument instead. This fixture
+// stands in for that array everywhere in this file that doesn't care about
+// the specific count.
+const NOOP_INSTANCES: { observed_state: string }[] = [{ observed_state: 'running' }]
+
 /** Builds a rail model the only sanctioned way — classifyWorkloadForHeaderSlot
- *  then buildHeaderSlotRail, fed a real WorkloadLifecycleInput, never a
- *  hand-built object literal (see the unforgeability describe block below
- *  for what happens when a test tries that anyway). */
+ *  then buildHeaderSlotRail, fed a real WorkloadLifecycleInput (and
+ *  instances array), never a hand-built object literal (see the
+ *  unforgeability describe block below for what happens when a test tries
+ *  that anyway). */
 function railModel(overrides: { activeChip?: FlowStepId | 'operate'; lifecycle?: WorkloadLifecycle } = {}): HeaderSlotRailModel {
-  const flow = classifyWorkloadForHeaderSlot({ lifecycle: overrides.lifecycle ?? 'provision' })
+  const flow = classifyWorkloadForHeaderSlot({ lifecycle: overrides.lifecycle ?? 'provision' }, NOOP_INSTANCES)
   return buildHeaderSlotRail(flow, { activeChip: overrides.activeChip ?? 'design', ...NOOP_EXTRAS })
 }
 
@@ -179,6 +188,17 @@ describe('the rail model is unforgeable — only buildHeaderSlotRail can produce
     // plain structural interface. Enforced by `npm run build`'s tsc pass —
     // this project's tsconfig include=["src"] type-checks __tests__ too —
     // not by vitest, which strips types without checking them.
+    //
+    // FIX ROUND (codex gate, P1b): this object used to OMIT runningReadout
+    // entirely, which became a required field when dmf-cms#391 added it —
+    // meaning the @ts-expect-error was satisfied by "runningReadout is
+    // missing", not by the brand, and would have stayed green even with the
+    // brand deleted outright. Mutation-verified (see the PR description):
+    // temporarily removed `readonly [RAIL_BRAND]: true` from
+    // HeaderSlotRailModel in store/headerSlot.ts, ran `tsc --noEmit`, and
+    // confirmed the error on this exact line disappeared (the object below
+    // is now genuinely structurally complete for every OTHER field) —
+    // restored immediately after.
     const forged: HeaderSlotRailModel = {
       steps: OPEN_STEPS,
       activeChip: 'design',
@@ -187,6 +207,7 @@ describe('the rail model is unforgeable — only buildHeaderSlotRail can produce
       lockedReasons: NO_LOCKED_REASONS,
       jobOwnerLabel: null,
       jobInFlight: false,
+      runningReadout: { running: 1, total: 1, trustworthy: true },
       onSelect: () => {},
     }
     expect(forged.activeChip).toBe('design')
@@ -207,7 +228,7 @@ describe('the rail model is unforgeable — only buildHeaderSlotRail can produce
   it('classifies via the real classifyWorkloadFlow — matches its own direct output for the same input', () => {
     const input: WorkloadLifecycleInput = { lifecycle: 'configure' }
     const direct = classifyWorkloadFlow(input)
-    const flow: ClassifiedFlow = classifyWorkloadForHeaderSlot(input)
+    const flow: ClassifiedFlow = classifyWorkloadForHeaderSlot(input, NOOP_INSTANCES)
     const rail = buildHeaderSlotRail(flow, { activeChip: 'configure', ...NOOP_EXTRAS })
     expect(flow.steps).toEqual(direct.steps)
     expect(flow.current).toBe(direct.current)
@@ -215,6 +236,163 @@ describe('the rail model is unforgeable — only buildHeaderSlotRail can produce
     expect(rail.steps).toEqual(direct.steps)
     expect(rail.current).toBe(direct.current)
     expect(rail.offFlow).toBe(direct.offFlow)
+  })
+})
+
+// NEW (dmf-cms#391, codex gate — P1 fix, then P1 RESIDUAL, then P1 the
+// counts, then mutable output): four rounds of the same lesson, on the run-
+// count readout's `trustworthy` flag and its running/total NUMBERS.
+//
+// THE PRECISE GUARANTEE THIS BLOCK PROVES, stated narrowly on purpose (fix
+// round, codex gate — precision pass; an earlier version of this comment
+// said "from ANY caller-suppliable channel at all", which overclaims): a
+// rail model produced by buildHeaderSlotRail carries counts derived from
+// the instances actually given to classifyWorkloadForHeaderSlot, and
+// cannot be altered afterwards. It is NOT "no caller can ever cause a
+// wrong count to render" — headerSlot.ts's own docstring documents two
+// narrower, accepted gaps this suite does not chase (a brand-cast escape
+// hatch; classifyWorkloadForHeaderSlot's input/instances pairing not being
+// bound to a single workload identity) and one thing categorically out of
+// scope (LifecycleStrip's own component props are not a trust boundary).
+//
+// The four rounds: the first fix closed the `extras.runningReadout.trustworthy`
+// seam; it left `trustworthy` as a public `readonly` field on
+// ClassifiedFlow, which a spread copy could still override despite
+// `readonly` — closed for real with the module-private TRUST WeakMap. That
+// WeakMap then only stored `trustworthy` — `running`/`total` stayed on
+// RailModelExtras as plain caller-supplied numbers with NO formula behind
+// them at all, so a caller holding a genuine `trustworthy: true` flow could
+// still pair it with `runningReadout: { running: 999, total: 1 }` and the
+// rail would print exactly that. Closed by moving running/total into the
+// SAME TRUST entry, computed together from a real `instances` array
+// classifyWorkloadForHeaderSlot now requires as its second argument. Then:
+// even a genuinely-produced rail was plain, mutable JS — `rail.runningReadout.running
+// = 999` after the fact took effect with no cast at all. Closed by
+// Object.freeze on both the rail and its nested runningReadout — see
+// headerSlot.ts's own docstring for the full four-round account.
+describe('the run-count readout — trustworthy AND the counts themselves — is derived from the classification, not from extras, cannot be fabricated by identity tricks, and cannot be mutated afterwards', () => {
+  it('rail.runningReadout.trustworthy matches the input the REAL classifier consumed, both true and false', () => {
+    const trustworthyFlow = classifyWorkloadForHeaderSlot({ lifecycle: 'configure', membersDataTrustworthy: true }, NOOP_INSTANCES)
+    const untrustworthyFlow = classifyWorkloadForHeaderSlot({ lifecycle: 'configure', membersDataTrustworthy: false }, NOOP_INSTANCES)
+    const railA = buildHeaderSlotRail(trustworthyFlow, { activeChip: 'configure', ...NOOP_EXTRAS })
+    const railB = buildHeaderSlotRail(untrustworthyFlow, { activeChip: 'configure', ...NOOP_EXTRAS })
+    expect(railA.runningReadout.trustworthy).toBe(true)
+    expect(railB.runningReadout.trustworthy).toBe(false)
+  })
+
+  // NEW (codex gate — P1, the counts): this is the actual reproduction of
+  // the hole codex found — a genuine, honestly-obtained trustworthy flow,
+  // with fabricated running/total numbers attached alongside it. Proves the
+  // rendered count tracks the REAL instances fed to the classifier, not
+  // anything a caller could separately specify.
+  it('the rendered running/total tracks the instances actually fed to the classifier — there is no other channel for a count', () => {
+    const instances = [
+      { observed_state: 'running' },
+      { observed_state: 'running' },
+      { observed_state: 'failing' },
+    ]
+    const flow = classifyWorkloadForHeaderSlot({ lifecycle: 'configure', membersDataTrustworthy: true }, instances)
+    const rail = buildHeaderSlotRail(flow, { activeChip: 'configure', ...NOOP_EXTRAS })
+    expect(rail.runningReadout.running).toBe(2)
+    expect(rail.runningReadout.total).toBe(3)
+  })
+
+  it('the exact fabrication codex demonstrated no longer typechecks, on either end of the call', () => {
+    expect(() => {
+      // @ts-expect-error — classifyWorkloadForHeaderSlot now requires an
+      // `instances` second argument; this is the exact single-argument call
+      // the original fabrication relied on to obtain a genuine trustworthy
+      // flow with no instances bound to it at all. Wrapped in expect().toThrow()
+      // rather than left bare: the JS itself still runs despite the
+      // suppressed type error, and with no instances array to filter, it
+      // throws — an incidental but confirming second signal that there is
+      // truly nothing left to call this way, not just a type-checker
+      // complaint.
+      classifyWorkloadForHeaderSlot({ lifecycle: 'configure', membersDataTrustworthy: true })
+    }).toThrow()
+
+    const flow = classifyWorkloadForHeaderSlot({ lifecycle: 'configure', membersDataTrustworthy: true }, NOOP_INSTANCES)
+    expect(() => {
+      // @ts-expect-error — RailModelExtras no longer declares a
+      // runningReadout field of any shape; this is the exact fabricated
+      // `{ running: 999, total: 1 }` extras object the original hole
+      // permitted with no cast at all. There is no field left to attach it
+      // to, so this is a genuine excess-property error, not a suppressed
+      // runtime concern — the call below still runs (extra properties on an
+      // object literal are ignored at runtime once past the type checker)
+      // and simply has no effect on the result.
+      buildHeaderSlotRail(flow, { activeChip: 'configure', ...NOOP_EXTRAS, runningReadout: { running: 999, total: 1 } })
+    }).not.toThrow()
+  })
+
+  // NEW (codex gate, P1 residual): a spread copy of a real, trustworthy
+  // ClassifiedFlow. This is deliberately NOT a @ts-expect-error case —
+  // object spread copies symbol-keyed properties same as string-keyed ones,
+  // so `{ ...flow }` still genuinely satisfies ClassifiedFlow's brand
+  // typecheck. That is exactly why a public field (even readonly) was the
+  // wrong mechanism: the type system cannot tell "the real object" apart
+  // from "a structurally-identical copy of it" — only reference identity
+  // can, which is what the TRUST WeakMap keys on. Covers both trustworthy
+  // AND the counts, since the counts fix moved them into the SAME entry.
+  it('a spread copy of a real, trustworthy ClassifiedFlow fails closed to untrustworthy with a zero count — copying is not the same object', () => {
+    const flow = classifyWorkloadForHeaderSlot({ lifecycle: 'configure', membersDataTrustworthy: true }, [
+      { observed_state: 'running' },
+      { observed_state: 'running' },
+    ])
+    const spreadCopy: ClassifiedFlow = { ...flow }
+    const rail = buildHeaderSlotRail(spreadCopy, { activeChip: 'configure', ...NOOP_EXTRAS })
+    expect(rail.runningReadout.trustworthy).toBe(false)
+    expect(rail.runningReadout.running).toBe(0)
+    expect(rail.runningReadout.total).toBe(0)
+  })
+
+  // NEW (codex gate, P1 residual): a wholly hand-built fake, forced through
+  // the type system with `as unknown as ClassifiedFlow` — the type-level
+  // brand check is bypassed entirely here on purpose, simulating a caller
+  // willing to lie to the compiler outright. Still fails closed, because
+  // TRUST.get on an object it never wrote returns undefined regardless of
+  // what TypeScript was told to believe about that object's type.
+  it('a hand-built fake forced through the type system also fails closed to untrustworthy with a zero count', () => {
+    const fake = {
+      steps: OPEN_STEPS,
+      current: null,
+      offFlow: false,
+      undetermined: false,
+    } as unknown as ClassifiedFlow
+    const rail = buildHeaderSlotRail(fake, { activeChip: 'configure', ...NOOP_EXTRAS })
+    expect(rail.runningReadout.trustworthy).toBe(false)
+    expect(rail.runningReadout.running).toBe(0)
+    expect(rail.runningReadout.total).toBe(0)
+  })
+
+  // NEW (codex gate — mutable output): a rail model is plain JS once built;
+  // nothing stopped a caller from mutating it after the fact, with no cast
+  // and no identity trickery at all — `rail.runningReadout.running = 999`
+  // typechecked and took effect. Proves the fix at the level that actually
+  // matters: what RENDERS, not merely that Object.isFrozen(rail) is true
+  // (a mechanism check a reader would still have to trust actually mattered).
+  it('mutating a built rail model — either the nested readout or the whole object — throws, and the RENDERED output never reflects the attempt', () => {
+    const flow = classifyWorkloadForHeaderSlot({ lifecycle: 'configure', membersDataTrustworthy: true }, [
+      { observed_state: 'running' },
+    ])
+    const rail = buildHeaderSlotRail(flow, { activeChip: 'configure', ...NOOP_EXTRAS })
+
+    // Both mutation shapes throw — frozen at both levels, per
+    // buildHeaderSlotRail's own docstring.
+    expect(() => {
+      ;(rail.runningReadout as { running: number }).running = 999
+    }).toThrow()
+    expect(() => {
+      ;(rail as { runningReadout: unknown }).runningReadout = { running: 999, total: 1, trustworthy: true }
+    }).toThrow()
+
+    // The real proof: render it, exactly as Topbar does, and confirm the
+    // ORIGINAL derived count is what a real operator would actually see —
+    // not "999", and not merely "the object claims to be frozen".
+    renderTopbarAt('/media-workloads/studio-a', { slug: 'studio-a', rail })
+    const row = screen.getByTestId('header-slot-row')
+    expect(within(row).getByText('1 of 1 running', { exact: false })).toBeTruthy()
+    expect(within(row).queryByText('999', { exact: false })).toBeNull()
   })
 })
 
