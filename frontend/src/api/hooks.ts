@@ -431,6 +431,26 @@ export function useInstanceMxlStatus(
 // `topology_ref`, so only the receiver-not-found subset is predictable and
 // not receiver-not-topology, which is most of them. Exposing that field is
 // the remedy and is deliberately out of this arc's scope.
+// umbrella #402: this read feeds ConfigureStage's OBSERVED_SOURCE_STALE_MS
+// fuse (15s) — the backend re-stamps observed_at on every request from a
+// live sidecar probe, so polling is what actually renews it. Without a
+// refetchInterval, observed_at freezes at mount while the fuse's own clock
+// (Date.now()) keeps advancing: freshness can only decay, never renew, and
+// the switch control withdraws for good ~15s after page load. 5000ms is
+// comfortably under the 15s bound (3 polls fit inside it) and matches
+// existing practice (useWorkflowJobStatus above).
+//
+// retry: false meant a SINGLE transient poll failure flipped isError
+// immediately (no attempts to exhaust), which — combined with the interval
+// above — would otherwise blink the control out at whatever moment a
+// transient failure landed. retry: 1 absorbs exactly one such failure
+// (react-query's `isError` only flips once retries are exhausted, so the
+// retained data + a pending retry keeps `settleQuery(...).failed` false
+// throughout). retryDelay is explicit and fixed rather than the client's
+// default exponential backoff: 300ms resolves a retry far inside both the
+// 15s staleness bound and the 5s poll cadence, and — deterministic instead
+// of backoff-computed — keeps fake-timer tests exact instead of timing-
+// flaky.
 export function useInstanceTopology(instance: string, opts?: { enabled?: boolean }) {
   return useQuery({
     queryKey: ['media-workloads-topology', instance],
@@ -445,7 +465,9 @@ export function useInstanceTopology(instance: string, opts?: { enabled?: boolean
       }
     },
     enabled: opts?.enabled ?? true,
-    retry: false,
+    refetchInterval: 5000,
+    retry: 1,
+    retryDelay: 300,
   })
 }
 
