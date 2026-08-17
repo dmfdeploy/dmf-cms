@@ -107,6 +107,8 @@ interface FetchOpts {
   topologyFailAfter?: Record<string, number>
   /** After this many grouped-inventory reads, subsequent reads return `workload` instead of the base fixture — models an inventory change observed on a later poll/refetch (same after-N-reads shape as topologyFailAfter). */
   workloadAfter?: { reads: number; workload: MediaWorkload | null }
+  /** After this many grouped-inventory reads, subsequent reads 500 — models a BACKGROUND refetch that fails after an initial success, with react-query retaining the stale `data` alongside the new `error` (same after-N-reads shape as topologyFailAfter; PR #90 review, dmf-cms#391 header-rail regression coverage). */
+  groupedFailAfter?: number
   /** FIX ROUND P2-3: /api/me response — defaults to a bare {} (no role),
    *  which isPurgeAuthorized fails closed on, matching every pre-fix-round
    *  test in this file (they never exercised delete-permanently). Override
@@ -133,6 +135,9 @@ function mkFetch(opts: FetchOpts = {}) {
     if (url.endsWith('/api/catalog')) return json({ entries: catalog })
     if (url.endsWith('/api/media-workloads/grouped')) {
       groupedCalls += 1
+      if (opts.groupedFailAfter != null && groupedCalls > opts.groupedFailAfter) {
+        return json({ error: 'boom' }, 500)
+      }
       const current =
         opts.workloadAfter && groupedCalls > opts.workloadAfter.reads ? opts.workloadAfter.workload : wl
       return json({
@@ -508,5 +513,52 @@ describe('FIX ROUND P2-3: the rail agrees with WorkloadDetail for a purge-eligib
     // field silently producing the same visual result for the wrong reason.
     const strip = await screen.findByRole('navigation', { name: 'Media workload lifecycle' })
     expect(within(strip).queryByLabelText('Finalise & Review')?.tagName).toBe('DIV')
+  })
+})
+
+// ---------------------------------------------------------------------------
+// PR #90 REVIEW (dmf-cms#391): the rail used to be registered from
+// `workloadForRail` alone, with no reference to `error`/`configured` at all.
+// React Query retains the prior successful `data` on a failed BACKGROUND
+// refetch (isError/error flip while `data` stays populated — documented
+// behaviour, proven elsewhere in this codebase: catalogHonesty.test.tsx,
+// activityLaneHonesty.test.tsx), so a poll that failed after an earlier
+// success left the Topbar showing a fully populated, running-count-bearing
+// rail built from stale data while the body said the workload could not be
+// loaded. The case that matters is exactly this one — isError true while
+// `data` is still around — not the simpler "never loaded at all" case
+// (already covered above by "states the grouped inventory is unreachable").
+// ---------------------------------------------------------------------------
+
+describe('the header rail during a failed background refetch (PR #90 review, dmf-cms#391)', () => {
+  it('withdraws the rail from the Topbar when a background refetch fails with retained data', async () => {
+    mkFetch({ workload: workload(), groupedFailAfter: 1 })
+    const queryClient = renderOperate()
+    await screen.findByText(/The monitoring surface for this workload/)
+
+    // First (successful) read settles — the rail is present, with a real
+    // running-count readout (the thing Pass 1 added and the thing that must
+    // not survive into the error state below).
+    const strip = await screen.findByRole('navigation', { name: 'Media workload lifecycle' })
+    expect(strip.textContent).toMatch(/1 of 1 running/)
+
+    // A genuine react-query refetch — same mechanism the 15s poll
+    // (useMediaWorkloadsGrouped, hooks.ts) and the "active source" tests
+    // above use. The grouped endpoint now 500s, but react-query retains the
+    // prior successful `data`: `error`/`isError` flip true while `data`
+    // stays populated with the SAME workload the rail above was built from.
+    await queryClient.invalidateQueries({ queryKey: ['media-workloads-grouped'] })
+
+    await waitFor(() =>
+      expect(
+        screen.getByText(/This workload could not be loaded right now\. Retrying automatically\./),
+      ).toBeTruthy(),
+    )
+    // THE ASSERTION THAT MATTERS: the rail is ABSENT from the Topbar, not
+    // merely that the body shows the error — a naive `if (!data)` guard
+    // would pass "body shows the error" while still leaving the stale rail
+    // (and its stale running count) mounted, which is exactly the bug the
+    // reviewer caught.
+    expect(screen.queryByRole('navigation', { name: 'Media workload lifecycle' })).toBeNull()
   })
 })

@@ -104,12 +104,32 @@ export default function WorkloadOperate() {
   // Arc 4 WP-3 (umbrella #347): the rail is present here too, Operate
   // selected, its five stage entries navigating rather than locally
   // selecting (this page mounts no wizard step of its own). Computed here,
-  // ahead of every early return below, and registered unconditionally
-  // (content is null until a workload resolves) — useRegisterHeaderSlot is
-  // a hook and must run in the same order every render; WorkloadDetail.tsx
-  // gets to call it deeper in an inner component because ITS early returns
-  // all happen in an outer wrapper that owns no hooks of its own, this page
-  // has no such split.
+  // ahead of every early return below, and the HOOK CALL is unconditional
+  // (useRegisterHeaderSlot must run in the same order every render) —
+  // WorkloadDetail.tsx gets to call it deeper in an inner component because
+  // ITS early returns all happen in an outer wrapper that owns no hooks of
+  // its own (WorkloadWizard simply never mounts on an errored/unconfigured
+  // read, so its registration never fires); this page has no such split, so
+  // the CONTENT passed to the hook has to carry the gate instead.
+  //
+  // FIX ROUND (PR #90 review, dmf-cms#391): `hasReadError`/`isUnconfigured`
+  // below are the exact two atoms the early returns further down branch on;
+  // `readUnusable` is their OR and gates ONLY the rail's registered content
+  // (never `workloadForRail` itself — the error/unconfigured PageHeadings
+  // below still want the workload's real name over the raw slug when stale
+  // data still has one). Before this fix the rail was gated on
+  // `workloadForRail` alone, with no reference to either atom: a failed
+  // BACKGROUND refetch (React Query retains the prior successful `data`
+  // while `error`/`isError` flip non-null — documented behaviour, not an
+  // edge case) left the Topbar showing a fully populated, running-count-
+  // bearing rail built from stale data while the body said the workload
+  // could not be loaded. Because the rail gate and the early returns read
+  // the SAME `hasReadError`/`isUnconfigured` variables, the two cannot drift
+  // out of step the way two hand-kept-in-sync guards could.
+  const hasReadError = error != null
+  const isUnconfigured = data != null && !data.configured
+  const readUnusable = hasReadError || isUnconfigured
+
   const workloadForRail = data?.workloads.find((w) => w.slug === slug)
   // Unconditional, ahead of every early return below — same reasoning as
   // the rail registration two comments up (hooks must run every render).
@@ -133,7 +153,7 @@ export default function WorkloadOperate() {
       })
     : null
   useRegisterHeaderSlot(
-    railInput && workloadForRail
+    !readUnusable && railInput && workloadForRail
       ? {
           slug: workloadForRail.slug,
           rail: buildHeaderSlotRail(classifyWorkloadForHeaderSlot(railInput, workloadForRail.instances), {
@@ -173,7 +193,7 @@ export default function WorkloadOperate() {
     )
   }
 
-  if (error != null) {
+  if (hasReadError) {
     return (
       <div className="flex-1 overflow-y-auto p-6">
         <PageHeading>{workloadForRail ? `${workloadForRail.name} — Operate` : slug}</PageHeading>
@@ -184,7 +204,7 @@ export default function WorkloadOperate() {
     )
   }
 
-  if (data && !data.configured) {
+  if (isUnconfigured) {
     return (
       <div className="flex-1 overflow-y-auto p-6">
         <PageHeading>{workloadForRail ? `${workloadForRail.name} — Operate` : slug}</PageHeading>
