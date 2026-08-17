@@ -266,7 +266,25 @@ function InstanceSwitchControl({
               label: 'Target source',
               placeholder: 'Select a source…',
               value: target,
-              invalid: target === '' || !isObservedFresh,
+              // umbrella #402: `topology` now polls while armed (it didn't
+              // before), so `target` — plain state, not re-derived from
+              // `otherSources` — can point at a source that a poll landing
+              // mid-arm has since promoted to active_source or dropped from
+              // the list entirely. Both leave the <select> showing a value
+              // with no matching <option> while target itself stays set, so
+              // without this check Confirm would still be clickable and
+              // submit() would fire against a target neither list nor gate
+              // still vouches for. This is a NEW gap polling introduces
+              // (topology.data could not change while armed before this
+              // fix); it is deliberately NOT a change to isObservedFresh or
+              // submit()'s own freshness re-check, both out of scope here —
+              // this only widens the existing Confirm-disable condition to a
+              // fact already available at render time.
+              invalid: target === '' || !isObservedFresh || !otherSources.some((s) => s.id === target),
+              invalidHint:
+                target !== '' && isObservedFresh && !otherSources.some((s) => s.id === target)
+                  ? 'Selected source is no longer available — choose again.'
+                  : undefined,
               onChange: setTarget,
               options: otherSources.map((s) => ({ value: s.id, label: `${s.id} (${s.pattern})` })),
             }}
