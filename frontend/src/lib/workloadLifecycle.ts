@@ -88,11 +88,12 @@ export type StageActionId =
    *  workload has not been cleared to run yet). */
   | 'deploy'
   /**
-   * Flip an instance's desired state bootstrapped -> active in NetBox, so
-   * the automation lane may deploy it. Offered at PROVISION whenever any
-   * member is still bootstrapped — keyed to member state, NOT to position,
-   * because clearing the first of several siblings moves the position to
-   * configure while the rest still need clearing.
+   * Flip an instance's desired state bootstrapped -> active in NetBox.
+   * Nothing converges it automatically (dmfdeploy#411: no such lane
+   * exists) — Provision deploys it, when run. Offered at PROVISION
+   * whenever any member is still bootstrapped — keyed to member state, NOT
+   * to position, because clearing the first of several siblings moves the
+   * position to configure while the rest still need clearing.
    */
   | 'clear-for-deployment'
   /** Re-point a flow at a different source (Configure, once running). */
