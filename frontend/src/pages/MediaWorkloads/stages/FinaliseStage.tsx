@@ -104,6 +104,18 @@ export default function FinaliseStage({
 
   const [track, setTrack] = useState<Record<string, EntryTrack>>({})
   const [lastJob, setLastJob] = useState<{ entryKey: string; jobId: number; status: string } | null>(null)
+  // umbrella #403: a teardown tracked by OPERATION id (the async path — see
+  // handleTeardown below) used to have no way back OUT of `track` unless the
+  // transient `launched` state was actually observed, because neither
+  // onOpLaunched nor onOpError fires on the operation's real terminal states
+  // (run_complete, run_failed, ...). A watched action (teardown is one) keeps
+  // running right past `launched` toward one of those regardless — so a
+  // missed poll tick left `track[key].opId` set forever: `busy` never fell,
+  // and the "job in progress" banner never cleared, with no self-recovery
+  // short of a remount. `lastOpOutcome` is this path's own review record —
+  // same idea as `purgeReview` below, kept separate because it can name a
+  // DIFFERENT entry than the last completed job.
+  const [lastOpOutcome, setLastOpOutcome] = useState<{ entryKey: string; operation: Operation } | null>(null)
 
   const [purgeArming, setPurgeArming] = useState(false)
   const [purgeConfirmText, setPurgeConfirmText] = useState('')
@@ -223,6 +235,21 @@ export default function FinaliseStage({
     void queryClient.invalidateQueries({ queryKey: ['catalog'] })
   }
 
+  // umbrella #403: OperationStatusLine's onTerminal — the operation reached
+  // a REAL terminal state without ever being observed at `launched`, so the
+  // job-id hand-off (handleJobComplete's own path) never happened. Clearing
+  // `track` here is what lets `busy` finally fall; recording the outcome is
+  // what keeps Art. 1 intact — a failed teardown must read as failed, not
+  // silently join the same "cleared" state a success does (mirrors
+  // PURGE_TERMINAL_STATES / setPurgeReview above, the same shape for the
+  // same reason).
+  const handleOpTerminal = (key: string, operation: Operation) => {
+    setTrack((prev) => ({ ...prev, [key]: EMPTY_TRACK }))
+    setLastOpOutcome({ entryKey: key, operation })
+    void queryClient.invalidateQueries({ queryKey: ['media-workloads-grouped'] })
+    void queryClient.invalidateQueries({ queryKey: ['catalog'] })
+  }
+
   const handlePurge = async (reason: string) => {
     onJobStart()
     try {
@@ -274,6 +301,7 @@ export default function FinaliseStage({
                     onTeardown={(reason) => handleTeardown(entry, reason)}
                     onOpLaunched={(jobId) => setTrack((prev) => ({ ...prev, [entry.key]: { jobId, opId: null } }))}
                     onOpError={() => setTrack((prev) => ({ ...prev, [entry.key]: EMPTY_TRACK }))}
+                    onOpTerminal={(operation) => handleOpTerminal(entry.key, operation)}
                     onStatusChange={statusCallbackFor(entry.key)}
                     onJobComplete={() => handleJobComplete(entry.key)}
                   />
@@ -359,7 +387,7 @@ export default function FinaliseStage({
 
         <div className="border-t border-white/5 pt-3">
           <h3 className="text-xs uppercase tracking-wide text-muted">Review</h3>
-          {!lastJob && !lastSwitchResult && !purgeReview ? (
+          {!lastJob && !lastSwitchResult && !purgeReview && !lastOpOutcome ? (
             <p className="mt-1 text-muted">No teardown, switch, or delete has run yet in this session.</p>
           ) : (
             <div className="mt-1 space-y-2">
@@ -368,6 +396,22 @@ export default function FinaliseStage({
                   Last job: <span className="font-mono">#{lastJob.jobId}</span> ({lastJob.entryKey}) —{' '}
                   {lastJob.status}
                 </p>
+              )}
+              {lastOpOutcome && (
+                <div className="text-xs">
+                  {lastOpOutcome.operation.state === 'run_complete' ? (
+                    <p className="text-green-400">
+                      Teardown of <span className="font-mono">{lastOpOutcome.entryKey}</span> completed.
+                    </p>
+                  ) : (
+                    // Art. 8, same as purgeReview below: whatever the backend
+                    // actually recorded, never a fake success.
+                    <p className="text-red-300">
+                      Teardown of <span className="font-mono">{lastOpOutcome.entryKey}</span> did not complete —{' '}
+                      {lastOpOutcome.operation.error ?? lastOpOutcome.operation.l3_outcome ?? lastOpOutcome.operation.state}
+                    </p>
+                  )}
+                </div>
               )}
               {lastSwitchResult && (
                 <div className="text-xs">
@@ -426,6 +470,7 @@ function FinaliseEntry({
   onTeardown,
   onOpLaunched,
   onOpError,
+  onOpTerminal,
   onStatusChange,
   onJobComplete,
 }: {
@@ -437,6 +482,7 @@ function FinaliseEntry({
   onTeardown: (reason: string) => Promise<void>
   onOpLaunched: (jobId: number) => void
   onOpError: () => void
+  onOpTerminal: (operation: Operation) => void
   onStatusChange: (status: string) => void
   onJobComplete: () => void
 }) {
@@ -496,7 +542,12 @@ function FinaliseEntry({
 
       {track.opId != null && (
         <div className="mt-2">
-          <OperationStatusLine operationId={track.opId} onLaunched={onOpLaunched} onError={onOpError} />
+          <OperationStatusLine
+            operationId={track.opId}
+            onLaunched={onOpLaunched}
+            onError={onOpError}
+            onTerminal={onOpTerminal}
+          />
         </div>
       )}
       {track.jobId != null && (

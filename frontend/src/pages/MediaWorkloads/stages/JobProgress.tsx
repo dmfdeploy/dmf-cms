@@ -1,6 +1,7 @@
-import { useEffect } from 'react'
+import { useEffect, useRef } from 'react'
 import { useCatalogJobStatus, useOperationStatus } from '../../../api/hooks'
 import { settleQuery } from '../../../lib/queryState'
+import type { Operation } from '../../../api/types'
 
 /**
  * Launch-job progress/outcome, relocated verbatim (behaviour-for-behaviour)
@@ -16,6 +17,18 @@ const OPERATION_LABEL: Record<string, string> = {
   launching: 'Launching job',
   launched: 'Launched',
   error: 'Error',
+  // umbrella #403: the REAL terminal states a watched action (deploy/
+  // teardown/rollback/finalise-purge — see useOperationStatus's own
+  // _WATCHED_TERMINAL_STATES) settles at, past `launched`. Without these,
+  // an operation observed at one of these states rendered an empty label
+  // here — the operation id followed by blank space — for as long as the
+  // line stayed mounted. A real, visible symptom on its own, independent of
+  // the stuck-busy defect these are fixed alongside.
+  run_complete: 'Complete',
+  run_failed: 'Failed',
+  failed_rollback_required: 'Rollback required',
+  rollback_incomplete: 'Rollback incomplete',
+  run_status_unknown: 'Status unknown',
 }
 
 const OPERATION_CLASS: Record<string, string> = {
@@ -23,16 +36,43 @@ const OPERATION_CLASS: Record<string, string> = {
   launching: 'text-blue-300',
   launched: 'text-green-400',
   error: 'text-red-400',
+  run_complete: 'text-green-400',
+  run_failed: 'text-red-400',
+  failed_rollback_required: 'text-red-400',
+  rollback_incomplete: 'text-red-400',
+  run_status_unknown: 'text-amber-300',
 }
+
+// umbrella #403: the same real-terminal set, as an array for the membership
+// check below. `launched` is deliberately absent — it is the transient
+// mid-flight state the pre-existing onLaunched hand-off already owns, and
+// the exact state a client can miss (a watched action keeps running right
+// past it toward one of these regardless of whether anyone observed it).
+// `error` is also absent — it already has its own dedicated callback.
+const OPERATION_TERMINAL_STATES: Operation['state'][] = [
+  'run_complete', 'run_failed', 'failed_rollback_required', 'rollback_incomplete', 'run_status_unknown',
+]
 
 export function OperationStatusLine({
   operationId,
   onLaunched,
   onError,
+  onTerminal,
 }: {
   operationId: string
   onLaunched: (jobId: number) => void
   onError: () => void
+  /**
+   * umbrella #403: fires ONCE per operation id, the moment the operation is
+   * observed in any of OPERATION_TERMINAL_STATES. The only reliable signal
+   * for a watched action — `launched` (what onLaunched depends on) is
+   * transient, and a watched action keeps running right past it toward a
+   * real terminal state whether or not any poll happened to land during
+   * that window (a missed tick, a backgrounded tab — refetchInterval does
+   * not run there). Optional: existing callers, and
+   * jobProgressHonesty.test.tsx, only ever needed onLaunched/onError.
+   */
+  onTerminal?: (operation: Operation) => void
 }) {
   // fix-round 6 (PR #81, umbrella #385 codex sweep): this polls every 3s
   // while non-terminal, and `data` was the only thing read — a settled
@@ -42,6 +82,15 @@ export function OperationStatusLine({
   // (Art. 5 — the line stays put) so the caption can say so (Art. 1).
   const { data: operation, failed } = settleQuery(useOperationStatus(operationId))
 
+  // umbrella #403: which operation id onTerminal has already fired for. Set
+  // INSIDE the timeout callback, only once it actually runs — never at
+  // schedule time — so a re-render that swaps in a new (but still-terminal)
+  // `operation` object before the timer elapses correctly reschedules it
+  // instead of permanently skipping the call. The guard below only ever
+  // suppresses scheduling a SECOND timer once the first one has truly fired
+  // for this id.
+  const firedTerminalFor = useRef<string | null>(null)
+
   useEffect(() => {
     if (!operation) return
     let timer: ReturnType<typeof setTimeout> | undefined
@@ -49,11 +98,25 @@ export function OperationStatusLine({
       timer = setTimeout(() => onLaunched(operation.job_id!), 1000)
     } else if (operation.state === 'error') {
       timer = setTimeout(() => onError(), 3000)
+    } else if (
+      onTerminal &&
+      OPERATION_TERMINAL_STATES.includes(operation.state) &&
+      firedTerminalFor.current !== operationId
+    ) {
+      const settledOperation = operation
+      // Same good-news/bad-news pacing as the two branches above: a clean
+      // run_complete hands off promptly, anything else lingers long enough
+      // to actually read before the line (and whatever it's part of) clears.
+      const delay = operation.state === 'run_complete' ? 1000 : 3000
+      timer = setTimeout(() => {
+        firedTerminalFor.current = operationId
+        onTerminal(settledOperation)
+      }, delay)
     }
     return () => {
       if (timer) clearTimeout(timer)
     }
-  }, [operation, onLaunched, onError])
+  }, [operation, operationId, onLaunched, onError, onTerminal])
 
   if (!operation) {
     return (
