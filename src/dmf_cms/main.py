@@ -4233,6 +4233,13 @@ def create_app(settings: Settings | None = None, contract: AppContract | None = 
             # Link-out to the function's own console when it declares a real host.
             "ingress_url": ingress_url,
             "provision_demand": provision_demand,
+            # umbrella #401: the referenced topology instance's shared
+            # source display noun (dmf-media catalog/topology-params.j1.yaml
+            # source_noun) — null for every entry without a topology_ref,
+            # and null when the instance has no noun of its own. Read once
+            # at catalog-load time (CatalogEntry.topology_source_noun);
+            # never re-derived here.
+            "topology_source_noun": entry.topology_source_noun,
         }
 
     @app.get("/api/catalog")

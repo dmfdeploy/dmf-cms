@@ -50,6 +50,17 @@ class CatalogEntry:
     # that actually populate this field for real entries are out of scope
     # here; this WO supports the mechanism.
     topology_ref: Optional[str] = None
+    # umbrella #401: the topology instance's own shared display noun for
+    # its sources[] (dmf-media catalog/topology-params.j1.yaml's
+    # `source_noun` field — additive, same admission criteria as
+    # source_profile). Read via load_topology_instance (the SAME
+    # validating reader the launch seam uses) at catalog-load time, purely
+    # for display — never re-derived, never a hardcoded per-function name.
+    # None when the entry has no topology_ref, the referenced instance
+    # fails to load/validate, or the field is genuinely absent from it —
+    # all three degrade the SAME way: a consumer falls back to something
+    # true (the raw function_key), never a baked-in guess.
+    topology_source_noun: Optional[str] = None
 
 
 def _validate_ebu(key: str, ebu: Any) -> bool:
@@ -157,6 +168,25 @@ def _load_one_yaml(path: Path) -> Optional[CatalogEntry]:
         return None
 
     topology_ref = raw.get("topology_ref")
+    topology_source_noun: Optional[str] = None
+    if topology_ref:
+        # umbrella #401 — read-only, display-only: a malformed/unreadable
+        # topology instance must never reject THIS entry (that refusal is
+        # load_topology_instance's own callers' job, at deploy time); it
+        # only means the noun stays None, degrading exactly like a
+        # topology instance that simply omits source_noun.
+        _tp, _tp_err = load_topology_instance(str(path.parent), str(topology_ref))
+        if _tp_err is not None:
+            logger.debug(
+                "catalog: entry '%s' topology_ref %r could not be read for its "
+                "display noun (%s) — entry still loads, noun stays absent",
+                key, topology_ref, _tp_err,
+            )
+        else:
+            noun = _tp.get("source_noun") if isinstance(_tp, dict) else None
+            if isinstance(noun, str) and noun:
+                topology_source_noun = noun
+
     return CatalogEntry(
         key=str(key),
         display_name=str(raw.get("display_name", key)),
@@ -168,6 +198,7 @@ def _load_one_yaml(path: Path) -> Optional[CatalogEntry]:
         dependencies=raw.get("dependencies"),
         ingress=raw.get("ingress"),
         topology_ref=str(topology_ref) if topology_ref else None,
+        topology_source_noun=topology_source_noun,
     )
 
 

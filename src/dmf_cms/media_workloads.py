@@ -134,6 +134,20 @@ def _service_to_instance(
         "instance": svc.get("name", ""),
         "netbox_id": svc.get("id"),
         "function_key": _tag_suffix(names, "app"),
+        # umbrella #401 — a topology-spawned source instance (one Helm
+        # release per declared sources[] entry, no catalog entry of its
+        # own by design) carries two provenance tags the launcher stamps
+        # at deploy time (dmf-runbooks roles/mxl/defaults/main.yml):
+        # topology-parent:<catalog entry key> and
+        # topology-source:<declared sources[].id>. Read the SAME generic
+        # way app:/lifecycle: already are — no naming-contract knowledge,
+        # no parsing of `instance`/function_key, nothing dmf-cms-specific.
+        # Both null when the tags are absent: an ordinary instance (never
+        # topology-spawned), or a topology-spawned instance provisioned
+        # before this tagging existed — both degrade identically to
+        # "genuinely unresolvable via this path", never a guess.
+        "topology_parent_key": _tag_suffix(names, "topology-parent"),
+        "topology_source_id": _tag_suffix(names, "topology-source"),
         # ONLY a boolean leaves the backend — never the coords/URL/IP. WP-C
         # uses it to decide which tiles poll the live-view endpoints.
         "live_view": sidecar_base_url(

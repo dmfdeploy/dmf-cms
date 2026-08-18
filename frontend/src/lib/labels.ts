@@ -66,6 +66,25 @@ function functionNoun(key: string): string {
   return FUNCTION_NOUNS[key] ?? humaniseIdentifier(key)
 }
 
+// ── Topology-spawned sources (umbrella #401) ────────────────────────────────
+
+// A topology-spawned source instance (e.g. "mxl-videotest-view-source-a")
+// renders as its catalog-declared noun plus its declared source id — "MXL
+// Test-Pattern Source · source-a". `noun` comes from the PARENT catalog
+// entry's topology_source_noun (dmf-media catalog/topology-params.j1.yaml's
+// source_noun field, surfaced by CatalogEntry.topology_source_noun) — read,
+// never guessed. Deliberately does NOT fall back through FUNCTION_NOUNS
+// above (a separate, hardcoded, already-stale concern this fix must not
+// widen): when the topology declares no noun, the fallback is the raw
+// function_key — true, not invented.
+export function topologySourceLabel(
+  noun: string | null | undefined,
+  functionKey: string,
+  sourceId: string,
+): string {
+  return `${noun ?? functionKey} · ${sourceId}`
+}
+
 // An AWX job/template name → an operator-language "what changed" title.
 //   media-launch-mxl-videotestsrc   → "Deployed MXL Test-Pattern Source"
 //   media-finalise-mxl-videotest-view → "Removed MXL Test-Pattern Viewer"

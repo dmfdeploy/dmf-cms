@@ -289,6 +289,45 @@ describe('the live view', () => {
     expect(requested.textContent).toBe('active')
     expect(observed.textContent).toBe('running')
   })
+
+  // umbrella #401 — a topology-spawned source instance's tile used to
+  // render its raw slug as BOTH the title and the identifier line (no
+  // catalog entry of its own, so the display_name lookup on its own
+  // function_key always missed). The fallback chain now checks the
+  // recorded parent tag FIRST: the title becomes the noun + source id,
+  // genuinely distinct from the identifier line below it.
+  it('extends the display-name fallback chain: a topology-spawned source renders its parent noun + source id, not its raw slug twice', async () => {
+    mkFetch({
+      workload: workload({
+        instances: [
+          instance({
+            instance: 'mxl-videotest-view-source-a',
+            function_key: 'mxl-videotest-view-source-a',
+            topology_parent_key: 'mxl-videotest-view',
+            topology_source_id: 'source-a',
+          }),
+        ],
+        functions: [
+          { function_key: 'mxl-videotest-view-source-a', count: 1, running: 1, reconcile_pending: 0 },
+        ],
+      }),
+      catalog: [
+        catalogEntry({
+          key: 'mxl-videotest-view',
+          display_name: 'MXL Test-Pattern Viewer',
+          topology_source_noun: 'MXL Test-Pattern Source',
+        }),
+      ],
+    })
+    renderOperate()
+    await screen.findByText(/The monitoring surface for this workload/)
+
+    const live = section('Live view')
+    expect(within(live).getByText('MXL Test-Pattern Source · source-a')).toBeTruthy()
+    // The identifier line stays the raw instance id — now genuinely
+    // distinct from the title above it, not the same string twice.
+    expect(within(live).getByText('mxl-videotest-view-source-a')).toBeTruthy()
+  })
 })
 
 // ---- active source: conditional per instance -----------------------------

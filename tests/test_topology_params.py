@@ -545,6 +545,74 @@ def test_catalog_entry_dataclass_default_topology_ref_none():
     assert entry.topology_ref is None
 
 
+# ── CatalogEntry.topology_source_noun (umbrella #401) — T4 ──────────────
+
+J1_INSTANCE_WITH_SOURCE_NOUN = J1_INSTANCE.replace(
+    "topology_params:\n  schema_version: 1\n",
+    "topology_params:\n  schema_version: 1\n"
+    '  source_noun: "MXL Test-Pattern Source"\n',
+)
+
+_ENTRY_WITH_TOPOLOGY_REF = """\
+    key: mxl-videotest-view
+    display_name: "Viewer"
+    summary: "x"
+    ebu:
+      layer: 5
+      media_function_type: view
+    topology_ref: topology-params.j1.yaml
+"""
+
+
+def test_entry_exposes_topology_source_noun_from_instance(tmp_path: Path):
+    """T4a: the catalog entry exposes the topology's declared source_noun."""
+    assert "source_noun" not in J1_INSTANCE  # guard: fixtures actually differ
+    _write(tmp_path, "entry.yaml", _ENTRY_WITH_TOPOLOGY_REF)
+    _write(tmp_path, "topology-params.j1.yaml", J1_INSTANCE_WITH_SOURCE_NOUN)
+    entries = load_catalog_entries(str(tmp_path))
+    assert entries[0].topology_source_noun == "MXL Test-Pattern Source"
+
+
+def test_entry_topology_source_noun_null_without_topology_ref(tmp_path: Path):
+    """T4b: an entry with no topology at all exposes source_noun == None."""
+    _write(tmp_path, "entry.yaml", """\
+        key: mxl-videotestsrc
+        display_name: "Src"
+        summary: "x"
+        ebu:
+          layer: 5
+          media_function_type: source
+    """)
+    entries = load_catalog_entries(str(tmp_path))
+    assert entries[0].topology_ref is None
+    assert entries[0].topology_source_noun is None
+
+
+def test_entry_topology_source_noun_null_when_instance_omits_it(tmp_path: Path):
+    """A topology_ref entry whose instance simply has no source_noun field
+    degrades to None — never a guess, never a fallback name invented here."""
+    _write(tmp_path, "entry.yaml", _ENTRY_WITH_TOPOLOGY_REF)
+    _write(tmp_path, "topology-params.j1.yaml", J1_INSTANCE)  # no source_noun
+    entries = load_catalog_entries(str(tmp_path))
+    assert entries[0].topology_ref == "topology-params.j1.yaml"
+    assert entries[0].topology_source_noun is None
+
+
+def test_entry_topology_source_noun_null_when_instance_missing(tmp_path: Path):
+    """A topology_ref pointing at a file that doesn't exist must not reject
+    the ENTRY itself (that's a deploy-time refusal, not a catalog-load-time
+    one) — it only means the noun stays absent."""
+    _write(tmp_path, "entry.yaml", _ENTRY_WITH_TOPOLOGY_REF)
+    entries = load_catalog_entries(str(tmp_path))
+    assert entries[0].topology_ref == "topology-params.j1.yaml"
+    assert entries[0].topology_source_noun is None
+
+
+def test_catalog_entry_dataclass_default_topology_source_noun_none():
+    entry = CatalogEntry(key="k", display_name="d", summary="s")
+    assert entry.topology_source_noun is None
+
+
 def test_load_topology_instance_through_configmap_symlink_layout(tmp_path):
     """Kubernetes ConfigMap volumes serve files as symlinks into ..data/ —
     the containment backstop must not refuse legitimately-mounted refs

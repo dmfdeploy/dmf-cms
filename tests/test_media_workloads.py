@@ -124,6 +124,43 @@ def test_single_mode_lists_instances_with_desired_vs_observed(monkeypatch):
     assert {f["function_key"] for f in body["functions"]} == {"mxl-videotestsrc", "nmos-cpp"}
 
 
+def test_topology_spawned_instance_exposes_recorded_provenance(monkeypatch):
+    # umbrella #401 — the two new tags are read the SAME generic way
+    # app:/lifecycle: already are (_tag_suffix); dmf-cms never constructs
+    # or parses an instance name to arrive at these values.
+    def fake_request(api_url, api_token, path, ssl_context=None):
+        return {
+            "results": [
+                _service(
+                    "mxl-videotest-view-source-a",
+                    [
+                        "dmf-catalog",
+                        "app:mxl-videotest-view-source-a",
+                        "lifecycle:active",
+                        "topology-parent:mxl-videotest-view",
+                        "topology-source:source-a",
+                    ],
+                ),
+                # An ordinary instance — no topology-parent:/topology-source:
+                # tags at all — must expose both fields as null, not a guess.
+                _service("mxl-videotest-view", ["dmf-catalog", "app:mxl-videotest-view", "lifecycle:active"]),
+            ]
+        }
+
+    monkeypatch.setattr(netbox_module, "_request", fake_request)
+    client = _client(MediaTenancySettings(mode="single"))
+    body = client.get("/api/media-workloads").json()
+    by_name = {i["instance"]: i for i in body["instances"]}
+
+    spawned = by_name["mxl-videotest-view-source-a"]
+    assert spawned["topology_parent_key"] == "mxl-videotest-view"
+    assert spawned["topology_source_id"] == "source-a"
+
+    ordinary = by_name["mxl-videotest-view"]
+    assert ordinary["topology_parent_key"] is None
+    assert ordinary["topology_source_id"] is None
+
+
 def test_scoped_mode_unmapped_group_sees_nothing(monkeypatch):
     def fake_request(*args, **kwargs):  # pragma: no cover - must not run
         raise AssertionError("scoped user with no mapped tenants must not reach NetBox")

@@ -448,6 +448,13 @@ export interface CatalogEntry {
   // has no honest number to show and must say so rather than guess or
   // silently treat it as zero demand.
   provision_demand?: { cpu_m: number; mem_b: number } | null
+  // umbrella #401: this entry's referenced topology instance's shared
+  // source display noun (dmf-media catalog/topology-params.j1.yaml's
+  // source_noun) — null for every entry without a topology, and null when
+  // the instance has no noun of its own. Optional, same reasoning as
+  // provision_demand above: every pre-existing fixture that builds a
+  // CatalogEntry literal stays valid without an edit.
+  topology_source_noun?: string | null
 }
 
 export interface CatalogListResponse {
@@ -567,6 +574,24 @@ export interface MediaWorkloadInstance {
     ports: number[]
     protocol: string | null
   }
+  // umbrella #401: a topology-spawned source instance's recorded
+  // provenance — read verbatim from the NetBox topology-parent:/
+  // topology-source: tags the launcher stamps at deploy time
+  // (dmf-runbooks roles/mxl/defaults/main.yml), the SAME generic way
+  // function_key already comes from app:. Never constructed or parsed
+  // from `instance`/function_key on this side.
+  //
+  // topology_parent_key: the catalog entry that produced this instance.
+  // topology_source_id: the declared topology sources[].id this instance
+  // embodies (e.g. "source-a").
+  // Both null for an ordinary (non-topology) instance, AND for a
+  // topology-spawned instance provisioned before this tagging existed —
+  // both are genuinely "not recorded", never a guess. Optional, same
+  // fixture-compatibility reasoning as CatalogEntry.provision_demand: the
+  // real API always sets them; every pre-existing test fixture that
+  // builds a MediaWorkloadInstance literal stays valid without an edit.
+  topology_parent_key?: string | null
+  topology_source_id?: string | null
 }
 
 export interface MediaWorkloadFunction {
