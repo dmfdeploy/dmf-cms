@@ -15,20 +15,20 @@ export const InsideFlowStep = createContext(false)
  *
  * Replaces the S1/Arc-B all-step accordion (every step rendered, folded
  * behind a per-step Review/Hide toggle): the wizard instead mounts EXACTLY
- * ONE step's body — whichever WorkloadDetail's selection logic has chosen —
+ * ONE step's body — whichever WorkloadSetup's selection logic has chosen —
  * and this component is that mount plus its Previous/Next controls. There is
- * no expand/collapse state here any more: WorkloadDetail never selects a
+ * no expand/collapse state here any more: WorkloadSetup never selects a
  * step this component would need to hide, because selection only ever lands
  * on an openable step (lib/workloadFlow.ts's `isStepOpenable`).
  *
- * THE LOCKED GUARD STAYS ANYWAY, defence in depth. Nothing in WorkloadDetail
+ * THE LOCKED GUARD STAYS ANYWAY, defence in depth. Nothing in WorkloadSetup
  * should ever pass state="locked" here, but if a caller bug did, this still
  * refuses to mount `children` — the same property flowStep.test.tsx pinned
  * for the old accordion: a caller bug must not be able to reach a control
  * the gate closed.
  *
  * PREVIOUS/NEXT ARE NAVIGATION ONLY. They never complete, unlock, or mutate
- * a step — WorkloadDetail computes canPrev/canNext from the flow's own
+ * a step — WorkloadSetup computes canPrev/canNext from the flow's own
  * adjacency + lock state and passes them straight through; this component
  * renders whatever it is told, as a button when enabled and as inert text
  * naming the reason when not (never a disabled button — umbrella #285's

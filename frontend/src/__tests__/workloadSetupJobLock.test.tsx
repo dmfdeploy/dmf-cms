@@ -1,5 +1,5 @@
 /**
- * WorkloadDetail's OWN synchronous job-lock contract (GATE-D1 P1.1),
+ * WorkloadSetup's OWN synchronous job-lock contract (GATE-D1 P1.1),
  * isolated from any stage's real mutation timing.
  *
  * WHY THIS IS A SEPARATE FILE WITH A MOCKED STAGE. The obvious test —
@@ -14,18 +14,26 @@
  * This file removes that ambiguity entirely: ConfigureStage is replaced
  * with a minimal fake that calls `onJobStart()` and NEVER calls
  * `onBusyChange` at all — no react-query mutation, no busy computation, no
- * effect anywhere in this test that could set the flag. If WorkloadDetail's
+ * effect anywhere in this test that could set the flag. If WorkloadSetup's
  * own `startJob` does not flip `switching` itself, `jobInFlight` can never
  * become true through any path this test exercises, and the rail would stay
  * live. That isolates the exact property the fix claims: the parent sets
  * its own busy flag in the SAME synchronous handler that starts the job,
  * independent of whatever the stage's own mutation library does.
+ *
+ * GUARD LABEL (dmfdeploy#414 gate, round 1): every test in this file is a
+ * GUARD pinning the pre-#414 GATE-D1 P1.1 synchronous job-lock contract
+ * described above, unchanged by this arc — only the mount route moved,
+ * from the bare slug to /setup. Baseline: the pre-#414 commit on `main`,
+ * where these same assertions passed identically against WorkloadDetail.tsx
+ * at the bare slug (as workloadDetailJobLock.test.tsx, this file's pre-#414
+ * name).
  */
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import { cleanup, fireEvent, render, screen, within } from '@testing-library/react'
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query'
 import { MemoryRouter, Route, Routes } from 'react-router-dom'
-import WorkloadDetail from '../pages/MediaWorkloads/WorkloadDetail'
+import WorkloadSetup from '../pages/MediaWorkloads/WorkloadSetup'
 import HeaderSlotProbe from './testUtils/HeaderSlotProbe'
 import type { MediaWorkload, MediaWorkloadsGroupedResponse } from '../api/types'
 
@@ -76,9 +84,9 @@ function renderDetail() {
   const queryClient = new QueryClient({ defaultOptions: { queries: { retry: false } } })
   render(
     <QueryClientProvider client={queryClient}>
-      <MemoryRouter initialEntries={['/media-workloads/studio-a']}>
+      <MemoryRouter initialEntries={['/media-workloads/studio-a/setup']}>
         <Routes>
-          <Route path="/media-workloads/:slug" element={<WorkloadDetail />} />
+          <Route path="/media-workloads/:slug/setup" element={<WorkloadSetup />} />
         </Routes>
         <HeaderSlotProbe />
       </MemoryRouter>
@@ -92,7 +100,7 @@ afterEach(() => {
   vi.unstubAllGlobals()
 })
 
-describe("WorkloadDetail's own job-lock contract, isolated from any stage's mutation timing (GATE-D1 P1.1)", () => {
+describe("WorkloadSetup's own job-lock contract, isolated from any stage's mutation timing (GATE-D1 P1.1)", () => {
   it('locks the rail on the SAME synchronous click that starts a job — no stage effect involved at all', async () => {
     mkFetch()
     renderDetail()
@@ -103,7 +111,7 @@ describe("WorkloadDetail's own job-lock contract, isolated from any stage's muta
 
     // The fake stage's only behaviour: call onJobStart(). It never reports
     // busy on its own — nothing here could set jobInFlight except
-    // WorkloadDetail's own startJob.
+    // WorkloadSetup's own startJob.
     fireEvent.click(await screen.findByRole('button', { name: 'Fake start job' }))
 
     // No await, no waitFor: this assertion runs on the exact render produced

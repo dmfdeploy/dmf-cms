@@ -352,21 +352,23 @@ export function classifyWorkloadLifecycle(
 /**
  * The ONE constructor every route rendering a workload's rail must use to
  * turn a MediaWorkload into a WorkloadLifecycleInput (fix round, umbrella
- * #347 WP-3 spec B gate, P2-3). Before this existed, WorkloadDetail.tsx and
- * Operate.tsx each hand-built this object, and they had drifted: Operate's
- * copy set only `lifecycle` and `hasBootstrappedMembers`, leaving
- * `allMembersBootstrapped`/`anyMemberObservedRunning`/
+ * #347 WP-3 spec B gate, P2-3). Before this existed, WorkloadDetail.tsx
+ * (renamed WorkloadSetup.tsx by dmfdeploy#414) and Operate.tsx (renamed
+ * WorkloadHome.tsx) each hand-built this object, and they had drifted: the
+ * Operate.tsx copy set only `lifecycle` and `hasBootstrappedMembers`,
+ * leaving `allMembersBootstrapped`/`anyMemberObservedRunning`/
  * `membersDataTrustworthy`/`purgeAuthorized`/`isPurgeableEntity` all absent
  * — which stageActions() reads as false/withheld for every one of them,
- * regardless of what the workload actually is. A workload WorkloadDetail
+ * regardless of what the workload actually is. A workload the flow page
  * correctly read as Finalise-open and purge-eligible would read as
  * Finalise-locked on /operate: two derivations of the SAME workload
  * disagreeing, exactly what this module's own docstring says a single
  * classifier exists to prevent (see the file docstring, above).
  *
  * Job-state flags (`launching`/`switching`/`tearingDown`) are the one
- * legitimately route-specific input — Operate runs no jobs of its own and
- * always passes none.
+ * legitimately route-specific input — the monitoring route (Operate.tsx at
+ * the time, WorkloadHome.tsx today) runs no jobs of its own and always
+ * passes none.
  *
  * FIX ROUND (P3 round 3, P3-5): `membersDataTrustworthy`/`purgeAuthorized`
  * used to be taken PRE-COMPUTED, as plain booleans the caller was trusted
@@ -381,7 +383,7 @@ export function classifyWorkloadLifecycle(
  * isGroupedReadTrustworthy/isPurgeAuthorized already accept) and calls both
  * formulas itself — there is no boolean-shaped seam left for a caller to
  * substitute a different computation through. Each caller still owns
- * getting its own query results here: WorkloadDetail's outer component
+ * getting its own query results here: WorkloadSetup's outer component
  * still computes nothing itself, it just threads its grouped read's raw
  * fields down as a prop rather than a pre-reduced boolean (see that
  * component's own prop docstring for why the read lives one component up

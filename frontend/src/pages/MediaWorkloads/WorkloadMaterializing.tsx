@@ -3,6 +3,7 @@ import { Link } from 'react-router-dom'
 import { useQueryClient } from '@tanstack/react-query'
 import { JobStatusLine, OperationStatusLine } from './stages/JobProgress'
 import type { Operation } from '../../api/types'
+import ViewLiveExit from './ViewLiveExit'
 
 /**
  * The gap between "the deploy was accepted" and "the workload exists"
@@ -135,6 +136,34 @@ export default function WorkloadMaterializing({
   const [jobId, setJobId] = useState<number | null>(launch.jobId ?? null)
   const [jobStatus, setJobStatus] = useState<string | null>(null)
   const [operationFailed, setOperationFailed] = useState(false)
+  // dmfdeploy#414 gate, round 1 (P1): whether JobStatusLine's own poll has
+  // observed a terminal `is_done` yet — the raw fact, not paced by
+  // handleJobComplete's deliberate 2s read-the-outcome delay below. Feeds
+  // ViewLiveExit's job-navigation lock: the launch job IS a mutation in
+  // flight (being polled right here), and while it's running the workload
+  // does not exist in NetBox yet, so "View live" would send the operator
+  // into home's own not-found/unresolved reading for the workload they
+  // just created — this arc's own defect class, pointed at the one exit
+  // that had skipped the lock. Starts false regardless of whether `launch`
+  // already carries a jobId (sync path): JobStatusLine hasn't completed its
+  // first poll yet either way, so fail-closed (locked) is correct from the
+  // first render.
+  const [jobDone, setJobDone] = useState(false)
+  // dmfdeploy#414 gate, round 2 (P1): the operation-level twin of jobDone
+  // above — whether OperationStatusLine's own poll has observed the
+  // operation reach error or any terminal state yet, reported live via its
+  // onDoneChange (see that prop's docstring in JobProgress.tsx), NOT via
+  // operationFailed below, which stays driven by the PACED onError/onTerminal
+  // callbacks and is left alone for the display purpose it already serves
+  // (the failure copy branch, the job-id handoff). Round 1 fixed jobDone;
+  // this is the other half of the same lock that round 1 missed — while an
+  // operation had already gone terminal, the exit stayed locked for up to
+  // 3 more seconds because operationFailed (paced) was the only signal
+  // jobInFlight read. Sticky once true: OperationStatusLine unmounts the
+  // instant jobId is assigned (see the render below), but this state
+  // variable lives in the parent and keeps its last value regardless —
+  // deliberately so, see jobInFlight's own comment for why that matters.
+  const [operationDone, setOperationDone] = useState(false)
 
   const handleLaunched = useCallback((id: number) => setJobId(id), [])
   const handleOperationError = useCallback(() => setOperationFailed(true), [])
@@ -177,12 +206,52 @@ export default function WorkloadMaterializing({
   const failed = operationFailed || jobFailed
   const jobSucceeded = jobStatus === 'successful'
 
+  // dmfdeploy#414 gate, round 1+2 (P1): locked while the launch job is
+  // genuinely still being polled — unlocked the moment EITHER layer reports
+  // a terminal outcome. `operationDone` covers the operation's own raw
+  // error/terminal fact (round 2 — see its docstring above); `jobDone`
+  // covers the job's own raw `is_done` fact (round 1). Deliberately OR, not
+  // a branch on which of jobId/operationId is currently set: an operation
+  // that goes terminal WITH a job id attached (e.g. run_complete) reports
+  // operationDone=true immediately, then hands `jobId` off a beat later
+  // (paced, same as always) so JobStatusLine mounts fresh with its own
+  // jobDone still false — branching on jobId there would re-lock the exit
+  // for that handoff window even though the run is already known complete.
+  // ORing keeps operationDone's true sticky through that handoff (its
+  // owning OperationStatusLine unmounts, but this state lives in the parent
+  // and does not reset), so the exit does not flicker unlocked→locked→
+  // unlocked. Neither raw signal ever needs to un-fire once true: both are
+  // reports of a real terminal fact, not a display state to reconcile back.
+  // `operationFailed` (paced) deliberately does NOT appear here any more —
+  // it stays wired to the failure-copy branch and the job-id handoff below,
+  // exactly what it was already correct for.
+  const jobInFlight = !(operationDone || jobDone)
+
   return (
     <div className="flex-1 overflow-y-auto p-6">
-      {/* Not page chrome — an outcome heading (spec C's sanctioned survivor):
-          the one fact this whole component exists to state honestly, before
-          the workload's own identity even exists to put in a breadcrumb. */}
-      <h1 className="text-lg font-semibold text-text">{failed ? 'Launch failed' : 'Provisioning'}</h1>
+      <div className="flex flex-wrap items-center justify-between gap-3">
+        {/* Not page chrome — an outcome heading (spec C's sanctioned
+            survivor): the one fact this whole component exists to state
+            honestly, before the workload's own identity even exists to put
+            in a breadcrumb. */}
+        <h1 className="text-lg font-semibold text-text">{failed ? 'Launch failed' : 'Provisioning'}</h1>
+        {/* dmfdeploy#414 point 3: the setup exit, present here too — the
+            SAME shared ViewLiveExit component WorkloadSetup.tsx's own
+            loading-safe branches use, not a second implementation (see that
+            component's own docstring for the fix-round finding: leaving
+            here does not cancel the launch job server-side, but while it is
+            still running the workload does not exist in NetBox yet, so an
+            always-active exit would send the operator straight into home's
+            own not-found/unresolved reading for the workload they just
+            created). Locked exactly as long as the launch job is genuinely
+            in flight; unlocked the moment it reaches any terminal state,
+            including failure. */}
+        <ViewLiveExit
+          slug={slug}
+          jobInFlight={jobInFlight}
+          jobReasonText="The launch job is in progress — wait for its outcome."
+        />
+      </div>
 
       <div
         className={`panel mt-6 border px-4 py-4 ${
@@ -249,6 +318,7 @@ export default function WorkloadMaterializing({
               onLaunched={handleLaunched}
               onError={handleOperationError}
               onTerminal={handleOperationTerminal}
+              onDoneChange={setOperationDone}
             />
           ) : jobId !== null ? (
             <JobStatusLine
@@ -256,6 +326,7 @@ export default function WorkloadMaterializing({
               jobId={jobId}
               onComplete={handleJobComplete}
               onStatusChange={handleStatusChange}
+              onDoneChange={setJobDone}
             />
           ) : (
             // REACHABLE, on exactly one path: the operation errored before it

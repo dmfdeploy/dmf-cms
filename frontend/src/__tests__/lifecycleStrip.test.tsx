@@ -23,8 +23,12 @@ import type { FlowStepId, FlowStepState } from '../lib/workloadFlow'
  *   - LOCKED: passes cleanly — a dashed border is a genuine SHAPE cue,
  *     independent of the key's fill, plus the key's own inert rendering.
  *   - POSITION: passes cleanly — the tally bar is a real shape (a bar,
- *     present or absent) for sighted users, `aria-current="step"` /
- *     Operate's `aria-describedby` for assistive tech; never colour.
+ *     present or absent) for sighted users, `aria-current="step"` for
+ *     assistive tech; never colour. dmfdeploy#414: the Operate-specific
+ *     carrier this bullet used to also name (`aria-describedby` on the now-
+ *     deleted Control group) is gone with the group itself — see
+ *     LifecycleStrip.tsx's own docstring for why that carrier is no longer
+ *     needed at all, not merely relocated.
  *   - SELECTION: an OPEN QUESTION, not a resolved pass — flagged to the
  *     operator directly, not quietly resolved in prose. For sighted users
  *     the only encoding left is the key's fill: a full inversion within the
@@ -63,9 +67,8 @@ const DEFAULT_RUNNING_READOUT = { running: 1, total: 1, trustworthy: true }
 
 function renderRail(overrides: {
   steps: Record<FlowStepId, FlowStepState>
-  activeChip: FlowStepId | 'operate' | null
+  activeChip: FlowStepId | null
   current: FlowStepId | null
-  offFlow?: boolean
   jobOwnerLabel?: string | null
   jobInFlight?: boolean
   runningReadout?: { running: number; total: number; trustworthy: boolean }
@@ -76,13 +79,11 @@ function renderRail(overrides: {
         steps={overrides.steps}
         activeChip={overrides.activeChip}
         current={overrides.current}
-        offFlow={overrides.offFlow ?? false}
         lockedReasons={LOCKED_REASONS}
         jobOwnerLabel={overrides.jobOwnerLabel ?? null}
         jobInFlight={overrides.jobInFlight ?? false}
         runningReadout={overrides.runningReadout ?? DEFAULT_RUNNING_READOUT}
         onSelect={() => {}}
-        slug="studio-a"
       />
     </MemoryRouter>,
   )
@@ -548,13 +549,16 @@ describe('backend position and wizard selection are each their own signal', () =
     expect(provision.getAttribute('aria-current')).toBe('step')
   })
 
-  // FIX ROUND (dmf-cms#391 Pass 1): Operate's visible "Position" caption is
-  // gone too. Split into the converged/diverged cases explicitly (the old
-  // single test only ever exercised the converged case — offFlow AND
-  // activeChip both 'operate' — which is now exactly the case where NEITHER
-  // the tally bar NOR its sr-only equivalent should render, matching the
-  // five-key rule above).
-  it('Operate renders no tally and no sr-only position text when it is both the position and the selection', () => {
+  // dmfdeploy#414: supersedes the three pre-#414 "Operate renders no
+  // tally"/"Operate's position is exposed accessibly"/"...survives the busy
+  // INERT rendering" tests that used to live here — all three pinned the
+  // Control group's own tally/aria-describedby machinery, which is deleted
+  // outright along with the group (LifecycleStrip.tsx's own docstring).
+  // There is no longer an Operate carrier to test the presence OR absence
+  // of; this proves the replacement fact instead — a workload off this rail
+  // entirely (`current: null`, the `offFlow` case) leaves every one of the
+  // five keys without a tally, because none of them IS the position.
+  it('an off-flow workload (current: null) carries no tally on any of the five keys — there is no sixth key for it to land on instead', () => {
     const steps: Record<FlowStepId, FlowStepState> = {
       design: 'complete',
       plan: 'complete',
@@ -562,99 +566,16 @@ describe('backend position and wizard selection are each their own signal', () =
       configure: 'open',
       finalise: 'open',
     }
-    renderRail({ steps, activeChip: 'operate', current: null, offFlow: true })
+    renderRail({ steps, activeChip: 'finalise', current: null })
 
-    const operate = screen.getByRole('link', { name: 'Operate' })
-    expect(operate.className).toContain('bg-text')
-    expect(hasTally(operate.parentElement as HTMLElement)).toBe(false)
-    expect(operate.getAttribute('aria-describedby')).toBeNull()
-    expect(screen.queryByText('This workload is currently at Operate.')).toBeNull()
-  })
-
-  // NEW (dmf-cms#391 Pass 1): the work order's own accessibility gate — the
-  // Operate LINK's aria-current is repurposed to carry SELECTION (see the
-  // "aria-current tracks SELECTION" describe block below), which leaves
-  // POSITION with no ARIA carrier of its own on that element. Before this
-  // pass the visible "Position" badge covered that gap for everyone,
-  // sighted or not; Pass 1 removes the badge, so this sr-only text is the
-  // ONLY thing left that still tells a screen-reader operator "this
-  // workload is actually sitting at Operate" when a flow step, not Operate,
-  // is what's selected. Losing this silently would be a real regression,
-  // not a cosmetic one — pinned here.
-  it("Operate's position is exposed accessibly (aria-describedby + sr-only text) when off-flow and Operate is not the selected chip", () => {
-    const steps: Record<FlowStepId, FlowStepState> = {
-      design: 'complete',
-      plan: 'complete',
-      provision: 'complete',
-      configure: 'open',
-      finalise: 'open',
+    for (const id of ['design', 'plan', 'provision', 'configure', 'finalise'] as FlowStepId[]) {
+      expect(hasTally(chip(LabelFor(id))), `${id} should carry no tally — current is null`).toBe(false)
     }
-    // offFlow: true (workload IS at Operate) but a flow step is selected,
-    // not Operate — the diverging case.
-    renderRail({ steps, activeChip: 'design', current: null, offFlow: true })
-
-    const operate = screen.getByRole('link', { name: 'Operate' })
-    expect(operate.className).not.toContain('bg-text') // not selected
-    expect(hasTally(operate.parentElement as HTMLElement)).toBe(true)
-
-    const describedById = operate.getAttribute('aria-describedby')
-    expect(describedById).toBeTruthy()
-    const description = document.getElementById(describedById as string)
-    expect(description).toBeTruthy()
-    expect(description?.textContent).toBe('This workload is currently at Operate.')
-    // The description text is genuinely visually hidden, not just present —
-    // sr-only is the same class this codebase uses for every other
-    // reachable-but-invisible node (see the job-in-flight "Selected" node
-    // above).
-    expect(description?.className).toContain('sr-only')
-  })
-
-  // NEW (codex gate, P2): the sibling test above only ever exercised the
-  // interactive <Link> branch. LifecycleStrip.tsx's Operate INERT <div>
-  // branch (jobInFlight — the Control group goes inert exactly like the
-  // five orchestration chips do) carries the identical
-  // `aria-describedby={operateHasPositionOnly ? operatePositionId : undefined}`
-  // — unasserted until now, so a dropped association there would have
-  // passed silently.
-  it("Operate's aria-describedby position association survives the busy INERT rendering too, with no duplicated sr-only node", () => {
-    const steps: Record<FlowStepId, FlowStepState> = {
-      design: 'complete',
-      plan: 'complete',
-      provision: 'complete',
-      configure: 'complete',
-      finalise: 'complete',
-    }
-    renderRail({
-      steps,
-      activeChip: 'design',
-      current: null,
-      offFlow: true,
-      jobOwnerLabel: 'Configure',
-      jobInFlight: true,
-    })
-
-    // Busy demotes Operate to the inert <div> branch — no link/button role
-    // reachable for it at all.
-    expect(screen.queryByRole('link', { name: 'Operate' })).toBeNull()
-    const operate = screen.getByText('Operate', { selector: 'div' })
-    expect(operate.tagName).toBe('DIV')
-
-    const describedById = operate.getAttribute('aria-describedby')
-    expect(describedById).toBeTruthy()
-    const description = document.getElementById(describedById as string)
-    expect(description?.textContent).toBe('This workload is currently at Operate.')
-    expect(description?.className).toContain('sr-only')
-
-    // Exactly one sr-only position node exists — the <Link> and <div>
-    // branches are mutually exclusive (only one mounts at a time) and both
-    // point at the SAME sibling span (see LifecycleStrip.tsx), never a
-    // per-branch duplicate.
-    expect(screen.getAllByText('This workload is currently at Operate.')).toHaveLength(1)
   })
 })
 
 describe('colour now tracks SELECTION, not stage identity (Arc 4 rail-treatment ruling, umbrella #347)', () => {
-  it('every non-selected chip (including Operate) is neutral — no fill, muted text', () => {
+  it('every non-selected chip is neutral — no fill, muted text', () => {
     const steps: Record<FlowStepId, FlowStepState> = {
       design: 'open',
       plan: 'open',
@@ -669,21 +590,23 @@ describe('colour now tracks SELECTION, not stage identity (Arc 4 rail-treatment 
       expect(el.className, `${id} should be neutral`).toContain('text-muted')
       expect(el.className, `${id} should carry no inverted fill`).not.toContain('bg-text')
     }
-    const operate = screen.getByRole('link', { name: 'Operate' })
-    expect(operate.className).toContain('text-muted')
-    expect(operate.className).not.toContain('bg-text')
 
     // Cyan (the action accent) never appears on the rail — it would make
     // the promoted primary action ambiguous with "where you are".
     for (const id of ['design', 'plan', 'provision', 'configure', 'finalise'] as FlowStepId[]) {
       expect(chip(LabelFor(id)).className).not.toContain('accent')
     }
-    expect(operate.className).not.toContain('accent')
   })
 })
 
-describe('Control/Operate is structurally NOT a sixth item of the orchestration list (GATE-D1 P1.2)', () => {
-  it('renders exactly five <li> in the orchestration <ol>, and Operate outside it entirely', () => {
+// dmfdeploy#414: supersedes the pre-#414 "Control/Operate is structurally
+// NOT a sixth item of the orchestration list" test (GATE-D1 P1.2) — that
+// test proved Operate sat OUTSIDE the <ol> as a labelled sibling group.
+// There is no sibling group left to prove anything about; this proves the
+// stronger, current fact — nothing reads as a sixth key anywhere in the
+// rail, structurally or by an accessible name.
+describe('the rail is exactly five keys, nothing adjacent that could read as a sixth (dmfdeploy#414)', () => {
+  it('renders exactly five <li> in the orchestration <ol>, and no link, group, or "Operate" text anywhere in the nav', () => {
     const steps: Record<FlowStepId, FlowStepState> = {
       design: 'complete',
       plan: 'complete',
@@ -697,11 +620,11 @@ describe('Control/Operate is structurally NOT a sixth item of the orchestration 
     expect(list.tagName).toBe('OL')
     expect(list.querySelectorAll(':scope > li')).toHaveLength(5)
 
-    const operate = screen.getByRole('link', { name: 'Operate' })
-    // Not a descendant of the ordered list at all — a sibling group, not a
-    // sixth ordinal item wearing a divider.
-    expect(list.contains(operate)).toBe(false)
-    expect(operate.closest('[role="group"]')?.getAttribute('aria-label')).toBe('Control')
+    const nav = screen.getByRole('navigation', { name: 'Media workload lifecycle' })
+    expect(within(nav).queryByRole('link')).toBeNull()
+    expect(within(nav).queryByRole('group')).toBeNull()
+    expect(within(nav).queryByText('Operate')).toBeNull()
+    expect(within(nav).queryByLabelText('Control')).toBeNull()
   })
 })
 
@@ -775,52 +698,16 @@ describe('a job-in-flight chip that is also the SELECTED one still carries that 
   })
 })
 
-describe('the Operate link\'s aria-current tracks SELECTION, not just backend POSITION', () => {
-  it('carries aria-current when Operate is the selected chip, even for a workload not actually at Operate', () => {
-    // offFlow: false — the workload's own position is NOT Operate — but
-    // activeChip: 'operate' — the operator is looking at /operate anyway
-    // (reachable by direct navigation; Operate.tsx always passes
-    // activeChip: 'operate' regardless of position). Before this fix,
-    // aria-current was keyed to offFlow alone, so this exact, reachable
-    // case rendered the inverted "selected" fill with NO aria-current at
-    // all.
-    const steps: Record<FlowStepId, FlowStepState> = {
-      design: 'complete',
-      plan: 'complete',
-      provision: 'current',
-      configure: 'locked',
-      finalise: 'locked',
-    }
-    renderRail({ steps, activeChip: 'operate', current: 'provision', offFlow: false })
-
-    const operate = screen.getByRole('link', { name: 'Operate' })
-    expect(operate.getAttribute('aria-current')).toBe('page')
-    expect(operate.className).toContain('bg-text')
-  })
-
-  it('carries no aria-current when a flow chip, not Operate, is selected — even if the workload IS at Operate', () => {
-    const steps: Record<FlowStepId, FlowStepState> = {
-      design: 'complete',
-      plan: 'complete',
-      provision: 'complete',
-      configure: 'complete',
-      finalise: 'open',
-    }
-    renderRail({ steps, activeChip: 'design', current: null, offFlow: true })
-
-    const operate = screen.getByRole('link', { name: 'Operate' })
-    expect(operate.getAttribute('aria-current')).toBeNull()
-    // FIX ROUND (dmf-cms#391 Pass 1): the POSITION fact still survives
-    // independently of aria-current — the visible "Position" badge this
-    // used to check is gone, replaced by the tally bar (sighted) plus an
-    // aria-describedby'd sr-only text node (screen readers), both
-    // unconditional on offFlow alone, gated only on offFlow &&
-    // activeChip !== 'operate' (see lifecycleStrip.test.tsx's dedicated
-    // tally-contract tests above for the full render-rule pin).
-    expect(hasTally(operate.parentElement as HTMLElement)).toBe(true)
-    expect(screen.getByText('This workload is currently at Operate.')).toBeTruthy()
-  })
-})
+// dmfdeploy#414: the pre-#414 "the Operate link's aria-current tracks
+// SELECTION, not just backend POSITION" describe block lived here — both of
+// its tests exercised the Operate <Link>'s own aria-current repurposing,
+// which no longer exists (LifecycleStrip.tsx no longer renders an Operate
+// link at all). Nothing survives to replace it with: the five keys' own
+// aria-current="step" behaviour (POSITION, unconditional on selection) is
+// already covered above in "backend position and wizard selection are each
+// their own signal", and SELECTION on the five keys is aria-pressed, not
+// aria-current — there is no analogous "selected but not the position"
+// aria-current case among them to pin.
 
 // NEW (dmf-cms#391 Pass 1): the row-end run-count readout. `trustworthy` is
 // a plain prop as far as LifecycleStrip itself is concerned (this file

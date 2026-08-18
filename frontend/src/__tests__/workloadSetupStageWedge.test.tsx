@@ -1,7 +1,7 @@
 /**
  * GATE-D1 P2.5: the #344 departed-key wedge fix, proved discriminating for
  * Provision and Finalise specifically — not just Configure (the only stage
- * workloadDetailWizard.test.tsx's Acceptance-1 test exercises). Reconstructing
+ * workloadSetupWizard.test.tsx's Acceptance-1 test exercises). Reconstructing
  * ProvisionStage/FinaliseStage's busy computation as
  * `Object.values(track).some(...)` (the pre-fix shape) must leave the FULL
  * suite green everywhere except the two tests in this file — that is the
@@ -15,12 +15,19 @@
  * JobStatusLine unmounted with the row), so `Object.values(track).some(...)`
  * would count it forever; `functionKeys.some(key => activeTrack(track[key]))`
  * does not, because the departed key is no longer in `functionKeys`.
+ *
+ * GUARD LABEL (dmfdeploy#414 gate, round 1): every test in this file is a
+ * GUARD pinning the pre-#414 GATE-D1 P2.5 wedge fix described above,
+ * unchanged by this arc — only the mount route moved, from the bare slug
+ * to /setup. Baseline: the pre-#414 commit on `main`, where these same
+ * assertions passed identically against WorkloadDetail.tsx at the bare
+ * slug (as workloadDetailStageWedge.test.tsx, this file's pre-#414 name).
  */
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import { cleanup, fireEvent, render, screen, waitFor, within } from '@testing-library/react'
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query'
 import { MemoryRouter, Route, Routes } from 'react-router-dom'
-import WorkloadDetail from '../pages/MediaWorkloads/WorkloadDetail'
+import WorkloadSetup from '../pages/MediaWorkloads/WorkloadSetup'
 import HeaderSlotProbe from './testUtils/HeaderSlotProbe'
 import type { CatalogEntry, MediaWorkload, MediaWorkloadsGroupedResponse } from '../api/types'
 
@@ -52,9 +59,9 @@ function renderDetail() {
   const queryClient = new QueryClient({ defaultOptions: { queries: { retry: false } } })
   render(
     <QueryClientProvider client={queryClient}>
-      <MemoryRouter initialEntries={['/media-workloads/studio-a']}>
+      <MemoryRouter initialEntries={['/media-workloads/studio-a/setup']}>
         <Routes>
-          <Route path="/media-workloads/:slug" element={<WorkloadDetail />} />
+          <Route path="/media-workloads/:slug/setup" element={<WorkloadSetup />} />
         </Routes>
         <HeaderSlotProbe />
       </MemoryRouter>

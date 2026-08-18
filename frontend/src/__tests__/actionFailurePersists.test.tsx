@@ -22,12 +22,18 @@
  * outside their own armed subtree (see ProvisionStage.tsx's clearMutation
  * .isError paragraph and ConfigureStage.tsx's close-only-on-success submit)
  * — the reference shape this fix now matches everywhere else.
+ *
+ * GUARD LABEL (dmfdeploy#414 gate, round 1): every test in this file is a
+ * GUARD pinning the pre-#414 #386 fix described above, unchanged by this
+ * arc — only the wizard-mounting tests' route moved, from the bare slug to
+ * /setup. Baseline: the pre-#414 commit on `main`, where these same
+ * assertions passed identically at the bare slug.
  */
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import { act, cleanup, fireEvent, render, screen, waitFor, within } from '@testing-library/react'
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query'
 import { MemoryRouter, Route, Routes } from 'react-router-dom'
-import WorkloadDetail from '../pages/MediaWorkloads/WorkloadDetail'
+import WorkloadSetup from '../pages/MediaWorkloads/WorkloadSetup'
 import Catalog from '../pages/Catalog'
 import JobsLane from '../pages/Activity/JobsLane'
 import HeaderSlotProbe from './testUtils/HeaderSlotProbe'
@@ -105,9 +111,9 @@ describe('Provision: a refused deploy stays legible at the point of action', () 
     const queryClient = new QueryClient({ defaultOptions: { queries: { retry: false } } })
     render(
       <QueryClientProvider client={queryClient}>
-        <MemoryRouter initialEntries={['/media-workloads/studio-a']}>
+        <MemoryRouter initialEntries={['/media-workloads/studio-a/setup']}>
           <Routes>
-            <Route path="/media-workloads/:slug" element={<WorkloadDetail />} />
+            <Route path="/media-workloads/:slug/setup" element={<WorkloadSetup />} />
           </Routes>
           <HeaderSlotProbe />
         </MemoryRouter>
@@ -204,9 +210,9 @@ describe('Finalise & Review: a refused teardown stays legible at the point of ac
     const queryClient = new QueryClient({ defaultOptions: { queries: { retry: false } } })
     render(
       <QueryClientProvider client={queryClient}>
-        <MemoryRouter initialEntries={['/media-workloads/studio-a']}>
+        <MemoryRouter initialEntries={['/media-workloads/studio-a/setup']}>
           <Routes>
-            <Route path="/media-workloads/:slug" element={<WorkloadDetail />} />
+            <Route path="/media-workloads/:slug/setup" element={<WorkloadSetup />} />
           </Routes>
           <HeaderSlotProbe />
         </MemoryRouter>

@@ -1,11 +1,11 @@
 /**
  * Plan stage — the capacity comparison (umbrella #285 S3).
  *
- * PlanStage is rendered directly here (not through WorkloadDetail/the full
+ * PlanStage is rendered directly here (not through WorkloadSetup/the full
  * rail) — its capacity comparison only depends on `workload.functions`,
  * `/api/catalog`, `/api/facility/summary` and `/api/facility/{slug}/detail`,
  * so isolating it keeps this file self-contained and unaffected by the
- * other stages' own machinery. Same MSW-free idiom as workloadDetail.test.tsx:
+ * other stages' own machinery. Same MSW-free idiom as workloadSetup.test.tsx:
  * a test QueryClient, fetch stubbed via vi.stubGlobal.
  *
  * The point of this file is the regression guard at the bottom: this

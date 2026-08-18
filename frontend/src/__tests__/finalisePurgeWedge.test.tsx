@@ -1,26 +1,33 @@
 /**
  * Delete permanently (umbrella #347 WO-A2b-2, operator ruling 2026-08-02) —
  * a wedge-style FinaliseStage test in the same idiom as
- * workloadDetailStageWedge.test.tsx: full WorkloadDetail render, real fetch
+ * workloadSetupStageWedge.test.tsx: full WorkloadSetup render, real fetch
  * mocking, driving the write to a REAL completion signal rather than
  * stopping at "the POST fired".
  *
  * Proves, end-to-end:
  *  - the action is offered only under the member-state conditions
  *    workloadLifecycle.test.ts pins in isolation (negative cases here too,
- *    against the REAL wiring from WorkloadDetail down);
+ *    against the REAL wiring from WorkloadSetup down);
  *  - arm -> typed-slug + reason -> POST carries {confirm, reason};
  *  - completion (operation reaches run_complete) invalidates
  *    ['media-workloads-grouped'] and ['catalog'], renders the confirmed-
  *    absent provenance (purge_verified_at), and the UI's absence claim
  *    itself comes from the REFRESHED grouped read no longer listing the
  *    workload — never asserted independently of that read.
+ *
+ * GUARD LABEL (dmfdeploy#414 gate, round 1): every test in this file is a
+ * GUARD pinning the pre-#414 umbrella #347 WO-A2b-2 delete-permanently
+ * contract described above, unchanged by this arc — only the mount route
+ * moved, from the bare slug to /setup. Baseline: the pre-#414 commit on
+ * `main`, where these same assertions passed identically against
+ * WorkloadDetail.tsx at the bare slug.
  */
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import { act, cleanup, fireEvent, render, screen, waitFor, within } from '@testing-library/react'
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query'
 import { MemoryRouter, Route, Routes } from 'react-router-dom'
-import WorkloadDetail from '../pages/MediaWorkloads/WorkloadDetail'
+import WorkloadSetup from '../pages/MediaWorkloads/WorkloadSetup'
 import HeaderSlotProbe from './testUtils/HeaderSlotProbe'
 import { useActivityStore } from '../store/activity'
 import type { MediaWorkload, MediaWorkloadsGroupedResponse, UserIdentity } from '../api/types'
@@ -33,7 +40,7 @@ function json(body: unknown, status = 200) {
 // MEMBER-STATE gates (this file's whole point, per the docstring above), so
 // the acting user is a role the purge endpoint's own floor
 // (_require_min_role(request, "operator")) accepts — the authorization gate
-// itself is pinned separately in workloadDetail.test.tsx and
+// itself is pinned separately in workloadSetup.test.tsx and
 // workloadLifecycle.test.ts.
 const OPERATOR: UserIdentity = {
   subject: 'ops',
@@ -51,9 +58,9 @@ function renderDetail() {
   const queryClient = new QueryClient({ defaultOptions: { queries: { retry: false } } })
   render(
     <QueryClientProvider client={queryClient}>
-      <MemoryRouter initialEntries={['/media-workloads/studio-a']}>
+      <MemoryRouter initialEntries={['/media-workloads/studio-a/setup']}>
         <Routes>
-          <Route path="/media-workloads/:slug" element={<WorkloadDetail />} />
+          <Route path="/media-workloads/:slug/setup" element={<WorkloadSetup />} />
         </Routes>
         <HeaderSlotProbe />
       </MemoryRouter>
@@ -261,10 +268,10 @@ describe('Finalise & Review: delete permanently drives to a real completion', ()
     // version of this test only ever supplied a COMPLETED response and
     // never actually constructed a pending fetch — react-query's own
     // isFetching never went true, so it never exercised
-    // WorkloadDetail.tsx's `!isError && !isFetching` gate at all. This one
+    // WorkloadSetup.tsx's `!isError && !isFetching` gate at all. This one
     // does: the grouped query resolves once (eligible), then a SECOND
     // fetch (triggered by invalidateQueries, mirroring the exact "next
-    // background poll" pattern workloadDetailStageWedge.test.tsx already
+    // background poll" pattern workloadSetupStageWedge.test.tsx already
     // uses) is held open indefinitely — react-query keeps the PREVIOUS
     // (still-eligible) payload in `data` while `isFetching` is true, and
     // the button must disappear anyway.
@@ -300,7 +307,7 @@ describe('Finalise & Review: delete permanently drives to a real completion', ()
     await within(finalise).findByRole('button', { name: '🗑 Delete permanently' })
 
     // Trigger the background refetch WITHOUT awaiting it (it never settles
-    // within this test) — same trigger workloadDetailStageWedge.test.tsx
+    // within this test) — same trigger workloadSetupStageWedge.test.tsx
     // uses to simulate "the next poll tick lands".
     void queryClient.invalidateQueries({ queryKey: ['media-workloads-grouped'] })
 

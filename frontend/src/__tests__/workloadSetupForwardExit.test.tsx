@@ -1,23 +1,36 @@
 /**
  * dmfdeploy#412: the forward exit out of Configure. Proves the WIRING —
- * that WorkloadDetail.tsx actually calls lib/workloadFlow.ts's
+ * that WorkloadSetup.tsx actually calls lib/workloadFlow.ts's
  * classifyForwardExit and renders what it says, and that the old defect
  * (Next after Configure landing on Finalise & Review's Teardown/Delete
  * surface) is gone — on top of classifyForwardExit's own exhaustive
  * per-row unit tests in workloadFlow.test.ts, which this file does not
  * repeat.
  *
- * Harness copied from workloadDetail.test.tsx (MSW-free, a fresh
+ * dmfdeploy#414 migration note: the exit's destination moved from the
+ * retired `/operate` route to the workload's home (the bare slug) — see
+ * lib/routes.ts's workloadHomePath. The `ForwardExit` classification
+ * itself ('none'/'view-status'/'live') and its copy are UNCHANGED by that
+ * arc; only the href the same two labels point at moved.
+ *
+ * Harness copied from workloadSetup.test.tsx (MSW-free, a fresh
  * react-query QueryClient per render, fetch stubbed via vi.stubGlobal) —
- * same convention workloadDetailStageWedge.test.tsx and
- * workloadDetailWizard.test.tsx already follow: each file defines its own
+ * same convention workloadSetupStageWedge.test.tsx and
+ * workloadSetupWizard.test.tsx already follow: each file defines its own
  * local fixtures rather than importing another test file's.
+ *
+ * GUARD LABEL (dmfdeploy#414 gate, round 1): every test in this file is a
+ * GUARD pinning dmfdeploy#412's classifyForwardExit contract, unchanged by
+ * #414 except for the one migration noted above (the destination href).
+ * Baseline: the pre-#414 commit on `main` — where these same assertions
+ * passed identically against WorkloadDetail.tsx with an `/operate` href,
+ * as workloadDetailForwardExit.test.tsx, this file's pre-#414 name.
  */
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import { cleanup, fireEvent, render, screen, waitFor, within } from '@testing-library/react'
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query'
 import { MemoryRouter, Route, Routes } from 'react-router-dom'
-import WorkloadDetail from '../pages/MediaWorkloads/WorkloadDetail'
+import WorkloadSetup from '../pages/MediaWorkloads/WorkloadSetup'
 import HeaderSlotProbe from './testUtils/HeaderSlotProbe'
 import type { CatalogEntry, MediaWorkload, MediaWorkloadInstance, MediaWorkloadsGroupedResponse } from '../api/types'
 
@@ -110,9 +123,9 @@ function mkFetch(wl: MediaWorkload, grouped: Partial<Pick<MediaWorkloadsGroupedR
 function renderDetail() {
   render(
     <QueryClientProvider client={new QueryClient({ defaultOptions: { queries: { retry: false } } })}>
-      <MemoryRouter initialEntries={['/media-workloads/studio-a']}>
+      <MemoryRouter initialEntries={['/media-workloads/studio-a/setup']}>
         <Routes>
-          <Route path="/media-workloads/:slug" element={<WorkloadDetail />} />
+          <Route path="/media-workloads/:slug/setup" element={<WorkloadSetup />} />
         </Routes>
         <HeaderSlotProbe />
       </MemoryRouter>
@@ -204,7 +217,7 @@ describe('dmfdeploy#412: what Configure offers instead, state by state', () => {
     // own `[data-step-state]` container — this asserts against the page,
     // gated on Configure being the mounted step (asserted above).
     const link = await screen.findByRole('link', { name: /View workload status/ })
-    expect(link.getAttribute('href')).toBe('/media-workloads/studio-a/operate')
+    expect(link.getAttribute('href')).toBe('/media-workloads/studio-a')
     expect(screen.queryByText(/Open live view/)).toBeNull()
     // FIX ROUND (dmfdeploy#412 gate, round 2): the classifier has no
     // job-outcome input, so nothing here may claim a deploy "succeeded" —
@@ -249,7 +262,7 @@ describe('dmfdeploy#412: what Configure offers instead, state by state', () => {
     await selectStep('Configure')
 
     const link = await screen.findByRole('link', { name: /Open live view/ })
-    expect(link.getAttribute('href')).toBe('/media-workloads/studio-a/operate')
+    expect(link.getAttribute('href')).toBe('/media-workloads/studio-a')
     expect(screen.queryByText(/View workload status/)).toBeNull()
     expect(screen.queryByText(/preview/i)).toBeNull()
   })
@@ -261,7 +274,7 @@ describe('dmfdeploy#412: what Configure offers instead, state by state', () => {
     await selectStep('Configure')
 
     const link = await screen.findByRole('link', { name: /Open live view/ })
-    expect(link.getAttribute('href')).toBe('/media-workloads/studio-a/operate')
+    expect(link.getAttribute('href')).toBe('/media-workloads/studio-a')
     expect(screen.queryByText(/View workload status/)).toBeNull()
     expect(screen.queryByText(/preview/i)).toBeNull()
   })

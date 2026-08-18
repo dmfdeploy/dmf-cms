@@ -4,6 +4,7 @@ import { isOperation, useCatalog, useDeployCatalog, useFacilitySummary } from '.
 import type { CatalogEntry, FacilitySummary } from '../../api/types'
 import { classifyDraftFlow, FLOW_STEPS, type DraftProgress, type FlowStepId } from '../../lib/workloadFlow'
 import { isValidWorkloadSlug } from '../../lib/workloadSlug'
+import { workloadSetupPath } from '../../lib/routes'
 import { APIError } from '../../api/client'
 import ReasonConfirm from '../../components/ReasonConfirm'
 import FlowStep from './FlowStep'
@@ -48,10 +49,10 @@ import { usePageTitle } from '../../hooks/usePageTitle'
  *
  * WP-3 spec C — THE WIZARD. This used to stack all five DraftFlowStep
  * accordion panels on one page, each independently foldable. That is
- * retired in favour of the exact one-step-at-a-time shape WorkloadDetail's
+ * retired in favour of the exact one-step-at-a-time shape WorkloadSetup's
  * own wizard already uses (WO-D1): FlowStep.tsx, REUSED HERE UNCHANGED, and
  * a local selectedStep + Previous/Next, mirroring WorkloadWizard's own
- * pattern in WorkloadDetail.tsx. Studio name + slug become their own FIRST
+ * pattern in WorkloadSetup.tsx. Studio name + slug become their own FIRST
  * step, "Identity" — deliberately NOT one of FlowStep's five numbered,
  * coloured lifecycle stages (the canonical lifecycle has six stages and the
  * orchestration rail shows five; an identity step is neither), so it gets
@@ -152,7 +153,7 @@ export default function CreateWorkload() {
 
   // The wizard's own presentation state — never persisted, and never
   // derived from FlowStepState (same discipline as WorkloadWizard's
-  // selectedStep in WorkloadDetail.tsx). Re-settles fresh on every mount
+  // selectedStep in WorkloadSetup.tsx). Re-settles fresh on every mount
   // (see the effect below), so navigating away and back always lands the
   // operator back on the step their SAVED DATA implies, not wherever they
   // happened to leave the wizard visually.
@@ -208,7 +209,7 @@ export default function CreateWorkload() {
   const flow = classifyDraftFlow(draft)
 
   // React's sanctioned "derived state" pattern (same as WorkloadWizard's
-  // identical effect in WorkloadDetail.tsx): persist the computed default
+  // identical effect in WorkloadSetup.tsx): persist the computed default
   // into state once, on mount (or after a Start Over resets selectedStep to
   // null) — but never again once the operator has an explicit selection, so
   // a facility query settling a moment later doesn't fight their own
@@ -256,14 +257,25 @@ export default function CreateWorkload() {
       // stamps the workload:<slug> tag and the inventory picks it up. So the
       // navigation carries the launch — whichever of the two shapes the seam
       // returned — and the destination renders the materializing story until
-      // the record appears. Navigating bare would land the operator on
-      // "Workload not found" for the workload they just created.
+      // the record appears.
+      //
+      // dmfdeploy#414 migration hazard H1: this used to navigate to the bare
+      // slug, which was the flow page pre-inversion. Post-inversion the bare
+      // slug is WorkloadHome — a just-created workload has no members yet,
+      // so it would classify as an honest but WRONG cold-entry state there
+      // (or worse, "not found", since WorkloadHome has no launch-state
+      // fallback the way the setup route does), silently losing the
+      // materializing story this navigation exists to carry. The setup route
+      // is where WorkloadMaterializing.tsx actually mounts (WorkloadSetup.tsx
+      // reads `launch` off router state exactly as this used to when it was
+      // named WorkloadSetup.tsx), so the destination moves with it —
+      // through workloadSetupPath (H3), not a hand-built string.
       //
       // WP-3 spec C: the draft's job is done — it becomes the real workload
       // this navigation is carrying, so its browser-local state is cleared
       // rather than left to greet the operator's next visit to /new.
       resetDraft()
-      navigate(`/media-workloads/${encodeURIComponent(trimmedSlug)}`, {
+      navigate(workloadSetupPath(trimmedSlug), {
         state: {
           launch: isOperation(result)
             ? { entryKey: selectedEntry.key, operationId: result.operation_id }

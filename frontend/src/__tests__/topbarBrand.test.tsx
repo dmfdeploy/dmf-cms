@@ -106,14 +106,14 @@ const NOOP_INSTANCES: { observed_state: string }[] = [{ observed_state: 'running
  *  instances array), never a hand-built object literal (see the
  *  unforgeability describe block below for what happens when a test tries
  *  that anyway). */
-function railModel(overrides: { activeChip?: FlowStepId | 'operate'; lifecycle?: WorkloadLifecycle } = {}): HeaderSlotRailModel {
+function railModel(overrides: { activeChip?: FlowStepId | null; lifecycle?: WorkloadLifecycle } = {}): HeaderSlotRailModel {
   const flow = classifyWorkloadForHeaderSlot({ lifecycle: overrides.lifecycle ?? 'provision' }, NOOP_INSTANCES)
   return buildHeaderSlotRail(flow, { activeChip: overrides.activeChip ?? 'design', ...NOOP_EXTRAS })
 }
 
 /** The only sanctioned way to register slot content — mirrors how a real
- *  caller (WorkloadDetail/Operate) uses the hook, rather than reaching
- *  into store internals. */
+ *  caller (WorkloadSetup/WorkloadHome, dmfdeploy#414) uses the hook, rather
+ *  than reaching into store internals. */
 function SlotRegistrar({ content }: { content: HeaderSlotContent | null }) {
   useRegisterHeaderSlot(content)
   return null
@@ -417,8 +417,14 @@ describe('the header slot is genuinely route-scoped, not just content-presence-g
     expect(screen.queryByTestId('header-slot-row')).toBeNull()
   })
 
-  it('also renders on the /operate child route for the same slug', () => {
-    renderTopbarAt('/media-workloads/studio-a/operate', { slug: 'studio-a', rail: railModel() })
+  // dmfdeploy#414: the pre-#414 version of this test mounted at the old
+  // `/operate` child route — that URL is now a compatibility redirect
+  // (App.tsx's OperateRedirect) with nothing of its own to register a rail
+  // under; nothing in the real app ever calls Topbar at that path any more.
+  // The route that still genuinely carries a second workload-detail child
+  // is /setup — this proves the same route-scoping fact there instead.
+  it('also renders on the /setup child route for the same slug', () => {
+    renderTopbarAt('/media-workloads/studio-a/setup', { slug: 'studio-a', rail: railModel() })
     expect(screen.getByTestId('header-slot-row')).toBeTruthy()
   })
 })
@@ -430,11 +436,13 @@ describe('the rail is rendered from the registered MODEL, not an injected node',
       rail: railModel({ activeChip: 'configure', lifecycle: 'configure' }),
     })
     const row = screen.getByTestId('header-slot-row')
-    // The five real orchestration chips + Operate, rendered by Topbar from
-    // the model — a caller never supplied this markup itself.
+    // The five real orchestration chips, rendered by Topbar from the model
+    // — a caller never supplied this markup itself. dmfdeploy#414: no
+    // Operate chip to assert any more — LifecycleStrip.tsx no longer
+    // renders one at all.
     for (const label of ['Design', 'Plan', 'Provision', 'Configure', 'Finalise & Review']) {
       expect(within(row).getByLabelText(label), `${label} chip missing`).toBeTruthy()
     }
-    expect(within(row).getByRole('link', { name: 'Operate' })).toBeTruthy()
+    expect(within(row).queryByRole('link', { name: 'Operate' })).toBeNull()
   })
 })

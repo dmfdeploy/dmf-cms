@@ -1,19 +1,26 @@
 /**
  * GATE-D1.4 (operator review round 2, PR #70): every piece of the wizard's
  * per-workload state must NOT bleed from one workload to another when the
- * operator navigates /media-workloads/A -> /media-workloads/B — same route,
- * only the :slug param changes, which React does not remount for on its
- * own. WorkloadDetail.tsx now keys the wizard subtree on `workload.slug`
- * (`<WorkloadWizard key={workload.slug} .../>`) so a workload change tears
- * the old instance down and mounts a fresh one; these tests prove that
- * holds for the three concrete failure modes the review named: selection,
- * the job-in-flight lock, and hash-focus consumption.
+ * operator navigates /media-workloads/A/setup -> /media-workloads/B/setup —
+ * same route, only the :slug param changes, which React does not remount
+ * for on its own. WorkloadSetup.tsx now keys the wizard subtree on
+ * `workload.slug` (`<WorkloadWizard key={workload.slug} .../>`) so a
+ * workload change tears the old instance down and mounts a fresh one; these
+ * tests prove that holds for the three concrete failure modes the review
+ * named: selection, the job-in-flight lock, and hash-focus consumption.
+ *
+ * GUARD LABEL (dmfdeploy#414 gate, round 1): every test in this file is a
+ * GUARD pinning the pre-#414 GATE-D1.4 remount contract described above,
+ * unchanged by this arc — only the mount route moved, from the bare slug
+ * to /setup. Baseline: the pre-#414 commit on `main`, where these same
+ * assertions passed identically against WorkloadDetail.tsx at the bare
+ * slug (as workloadDetailCrossWorkload.test.tsx, this file's pre-#414 name).
  */
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import { cleanup, fireEvent, render, screen, waitFor, within } from '@testing-library/react'
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query'
 import { Link, MemoryRouter, Route, Routes } from 'react-router-dom'
-import WorkloadDetail from '../pages/MediaWorkloads/WorkloadDetail'
+import WorkloadSetup from '../pages/MediaWorkloads/WorkloadSetup'
 import HeaderSlotProbe from './testUtils/HeaderSlotProbe'
 import type {
   CatalogEntry,
@@ -107,13 +114,13 @@ function renderAt(initialSlug: string) {
   const queryClient = new QueryClient({ defaultOptions: { queries: { retry: false } } })
   render(
     <QueryClientProvider client={queryClient}>
-      <MemoryRouter initialEntries={[`/media-workloads/${initialSlug}`]}>
+      <MemoryRouter initialEntries={[`/media-workloads/${initialSlug}/setup`]}>
         <nav>
-          <Link to="/media-workloads/studio-a">go to A</Link>
-          <Link to="/media-workloads/studio-b">go to B</Link>
+          <Link to="/media-workloads/studio-a/setup">go to A</Link>
+          <Link to="/media-workloads/studio-b/setup">go to B</Link>
         </nav>
         <Routes>
-          <Route path="/media-workloads/:slug" element={<WorkloadDetail />} />
+          <Route path="/media-workloads/:slug/setup" element={<WorkloadSetup />} />
         </Routes>
         <HeaderSlotProbe />
       </MemoryRouter>
@@ -185,7 +192,11 @@ describe('a job in flight on one workload does not lock navigation on another (o
       expect(screen.getByRole('heading', { name: 'Finalise & Review', level: 2 })).toBeTruthy(),
     )
     expect(within(rail()).getByRole('button', { name: 'Design' })).toBeTruthy()
-    expect(within(rail()).getByRole('link', { name: 'Operate' })).toBeTruthy()
+    // dmfdeploy#414: the rail has no Operate link any more to prove live —
+    // the setup exit (also job-lock-gated, WorkloadSetup.tsx's ViewLiveExit)
+    // is the equivalent proof that B's whole navigation surface is live,
+    // not locked by A's still-open job.
+    expect(screen.getByRole('link', { name: 'View live' })).toBeTruthy()
 
     // REMOUNT A: no crash, and the local busy overlay is GONE — this is the
     // documented reload-equivalence (the backend's own `lifecycle: 'provision'`
@@ -289,12 +300,12 @@ describe('hash-focus consumption does not bleed from one workload to the next', 
     const queryClient = new QueryClient({ defaultOptions: { queries: { retry: false } } })
     render(
       <QueryClientProvider client={queryClient}>
-        <MemoryRouter initialEntries={['/media-workloads/studio-a#configure']}>
+        <MemoryRouter initialEntries={['/media-workloads/studio-a/setup#configure']}>
           <nav>
-            <Link to="/media-workloads/studio-b#configure">go to B with #configure</Link>
+            <Link to="/media-workloads/studio-b/setup#configure">go to B with #configure</Link>
           </nav>
           <Routes>
-            <Route path="/media-workloads/:slug" element={<WorkloadDetail />} />
+            <Route path="/media-workloads/:slug/setup" element={<WorkloadSetup />} />
           </Routes>
           <HeaderSlotProbe />
         </MemoryRouter>

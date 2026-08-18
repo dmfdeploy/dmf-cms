@@ -17,8 +17,8 @@
  * reopening the visual one Arc 4 closed.
  *
  * Mount this on every render state EXCEPT one that already carries its own
- * single, VISIBLE <h1> as the heading for that state (WorkloadDetail's/
- * Operate's "Workload not found", WorkloadMaterializing's "Launch failed"/
+ * single, VISIBLE <h1> as the heading for that state (WorkloadSetup's/
+ * WorkloadHome's "Workload not found", WorkloadMaterializing's "Launch failed"/
  * "Provisioning") — a page must never carry two. A loading/error/degraded
  * state that has no visible heading of its own (the common case) still owes
  * the document outline a page identity, the same as the happy path; the WP-4

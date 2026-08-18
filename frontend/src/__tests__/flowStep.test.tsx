@@ -7,11 +7,12 @@ import type { FlowStepState } from '../lib/workloadFlow'
  * FlowStep's contract as the wizard's single mounted panel (umbrella #347
  * WO-D1, GATE-B item 4's successor). The S1/Arc-B accordion this component
  * used to be (pinned/expand/collapse) is gone — the wizard mounts exactly
- * one step at a time, chosen by WorkloadDetail, and this component's whole
+ * one step at a time, chosen by WorkloadSetup (the guided-flow route,
+ * dmfdeploy#414 — formerly WorkloadDetail.tsx), and this component's whole
  * remaining job is: render that step's chrome + body, and render
- * Previous/Next per whatever WorkloadDetail decided is navigable.
+ * Previous/Next per whatever WorkloadSetup decided is navigable.
  *
- * WHY THE LOCKED GUARD STILL GETS ITS OWN TESTS. WorkloadDetail's selection
+ * WHY THE LOCKED GUARD STILL GETS ITS OWN TESTS. WorkloadSetup's selection
  * logic never chooses a locked step (isStepOpenable gates it), so this guard
  * should never fire in practice — but it is defence in depth, the same
  * property the old accordion pinned: a caller bug must not be able to reach

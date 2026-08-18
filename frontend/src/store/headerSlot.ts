@@ -6,8 +6,8 @@ import type { WorkloadLifecycleInput } from '../lib/workloadLifecycle'
 /**
  * The typed, route-scoped header slot (umbrella dmfdeploy/dmfdeploy#347 Arc
  * 4 WP-2/WP-3). Topbar renders a second header row beneath the h-14
- * breadcrumb row on workload-detail routes, and only there; WorkloadDetail
- * and Operate register into it — the route components that already own
+ * breadcrumb row on workload-detail routes, and only there; WorkloadSetup
+ * and WorkloadHome register into it — the route components that already own
  * steps, selection, locked reasons, and job-in-flight state. Topbar itself
  * must never derive that state — lib/workloadLifecycle.ts is the single
  * derivation of "where is this workload", and a second one living in
@@ -127,15 +127,18 @@ import type { WorkloadLifecycleInput } from '../lib/workloadLifecycle'
  * parsed from the current URL, so even a caller that forgets to clear on
  * unmount cannot leak its rail onto a different route.
  *
- * `activeChip` names which chip (one of the five orchestration stages, or
- * `'operate'`, or none) reads as selected — WorkloadDetail passes its own
- * wizard selection; Operate always passes `'operate'`, since on that route
- * Operate is what the operator is looking at regardless of the workload's
- * backend position (that fact is `offFlow`, a separate axis — see
- * lib/workloadFlow.ts's FlowState docstring). The two must not be
- * conflated: a workload can sit at Operate (offFlow) while the operator
- * has a flow step selected on the detail page, and vice versa is not
- * reachable but the type does not assume it never will be.
+ * `activeChip` names which of the five orchestration stages reads as
+ * selected, or none — WorkloadSetup.tsx passes its own wizard selection;
+ * WorkloadHome.tsx (dmfdeploy#414, the retired Operate route's successor)
+ * always passes `null`, since none of the five stages is what the operator
+ * is looking at there regardless of the workload's backend position (that
+ * fact is `offFlow`, a separate axis on the underlying FlowState — see
+ * lib/workloadFlow.ts's own docstring). `offFlow` still rides along on
+ * HeaderSlotRailModel below (a plain passthrough of `flow.offFlow`, read by
+ * the dev inspection harness's debug printout) but dmfdeploy#414 removed
+ * LifecycleStrip's own use of it: nothing on the five-key rail renders a
+ * position for Operate any more, because Operate is no longer a rail entry
+ * at all — see that component's own docstring.
  *
  * FIX ROUND (WP-3 spec B gate, P2-1): this module used to also carry a
  * `primaryAction` descriptor (`HeaderSlotPrimaryAction`, a branded
@@ -245,7 +248,7 @@ export function classifyWorkloadForHeaderSlot(
 
 export interface HeaderSlotRailModel {
   steps: Record<FlowStepId, FlowStepState>
-  activeChip: FlowStepId | 'operate' | null
+  activeChip: FlowStepId | null
   current: FlowStepId | null
   offFlow: boolean
   lockedReasons: Record<FlowStepId, string>
@@ -302,7 +305,7 @@ export interface RailRunningReadout {
  *  from this interface — see RailRunningReadout's own docstring for why a
  *  caller no longer supplies any part of the run-count readout at all. */
 export interface RailModelExtras {
-  activeChip: FlowStepId | 'operate' | null
+  activeChip: FlowStepId | null
   lockedReasons: Record<FlowStepId, string>
   jobOwnerLabel: string | null
   jobInFlight: boolean
@@ -373,7 +376,7 @@ const useHeaderSlotStore = create<HeaderSlotState>((set) => ({
 
 /**
  * Convenience hook for the route component that owns the slot's state
- * (WorkloadDetail, Operate). Registers on mount/update, clears on unmount —
+ * (WorkloadSetup, WorkloadHome). Registers on mount/update, clears on unmount —
  * so navigating away always clears the row even if the caller forgets to,
  * rather than leaving a stale rail for the slug guard above to catch.
  *
@@ -390,7 +393,11 @@ const useHeaderSlotStore = create<HeaderSlotState>((set) => ({
  * any test in this suite, and the claim that it was has been made and
  * shown false twice now — aliasing this import to useEffect leaves
  * railRouteContract.test.tsx, topbarBrand.test.tsx, workloadDetail.test.tsx
- * and workloadOperate.test.tsx (74 tests) fully green. That is not a gap in
+ * and workloadOperate.test.tsx (74 tests at the time this was measured;
+ * dmfdeploy#414 renamed the latter two workloadSetup.test.tsx/
+ * workloadHome.test.tsx and both have since gained tests of their own, so
+ * this count is a historical snapshot, not a live assertion) fully green.
+ * That is not a gap in
  * those tests' coverage of THEIR OWN contracts; it is Testing Library's
  * act() intentionally flushing passive effects synchronously as part of
  * settling a render/fireEvent/waitFor, specifically so tests don't have to

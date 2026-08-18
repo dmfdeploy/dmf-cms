@@ -10,6 +10,7 @@ import PageHeading from '../../components/PageHeading'
 import Tile from '../../components/Tile'
 import Badge, { type BadgeTone } from '../../components/Badge'
 import { usePageTitle } from '../../hooks/usePageTitle'
+import { workloadHomePath } from '../../lib/routes'
 import {
   LIVE_TILE_CAP,
   useDocumentVisible,
@@ -21,7 +22,7 @@ import {
  *
  * One square control-surface TILE per workload, opening the workload detail
  * page. The per-instance grid, the live modal and the clear-for-deployment
- * control MOVED onto WorkloadDetail's lifecycle rail. The Grid|Table toggle
+ * control MOVED onto WorkloadSetup's lifecycle rail. The Grid|Table toggle
  * and its table view were REMOVED outright — not moved, and not reachable
  * anywhere; say removed, because "moved" would send a reader looking.
  *
@@ -362,7 +363,7 @@ function WorkloadEntryTile({
     // single-<Link> shape — Tile just gives a future actions affordance a
     // sibling slot instead of a spot nested inside the anchor.
     <Tile
-      to={`/media-workloads/${encodeURIComponent(workload.slug)}`}
+      to={workloadHomePath(workload.slug)}
       ariaLabel={`Open ${workload.name} workload detail`}
     >
       {rep ? (
