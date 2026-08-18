@@ -501,8 +501,8 @@ export function useSwitchSource() {
 }
 
 // The ONE consequential media-workloads write (ADR-0037): flips desired
-// state in NetBox; convergence belongs to the automation lane. reason is
-// mandatory (C5 quartet).
+// state in NetBox; nothing converges it automatically (dmfdeploy#411) —
+// Provision does, when run. reason is mandatory (C5 quartet).
 export function useClearForDeployment() {
   const queryClient = useQueryClient()
   return useMutation({

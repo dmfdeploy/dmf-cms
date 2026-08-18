@@ -293,8 +293,9 @@ def list_instances(
         key = inst["function_key"]
         if key is not None and key in observed:
             inst["observed_state"] = "running" if observed[key] >= 1.0 else "failing"
-        # Intent says active but runtime proof is absent/failing -> the gap
-        # the AWX drift lane exists to converge (ADR-0037 §4).
+        # Intent says active but runtime proof is absent/failing — the two
+        # disagree. This flags that gap; it does not name, or claim exists,
+        # anything that closes it automatically (dmfdeploy#411).
         inst["reconcile_pending"] = (
             inst["requested_state"] == "active" and inst["observed_state"] != "running"
         )
@@ -1112,9 +1113,12 @@ def clear_for_deployment(
     """Flip an instance's lifecycle tag bootstrapped -> active (ADR-0037 WP2b).
 
     "Clear for deployment" IS the desired-state flip: ``lifecycle:active`` is
-    the intent signal the AWX lane understands (the tag taxonomy is binary,
-    ADR-0013). NetBox is the ONLY thing the console writes; convergence is
-    the catalog launch / drift-detection loop's job — never k3s from here.
+    the intent signal the binary tag taxonomy defines (ADR-0013) for a
+    future converger. No such converger runs today — nothing is scheduled,
+    and the catalog-drift check has no job template either, so it never
+    flags the gap on its own (dmfdeploy#411). An operator-run Provision
+    deploy is what deploys it, today. NetBox is the ONLY thing the console
+    writes — never k3s from here.
 
     Scope is enforced independently on this write path: the instance is
     looked up WITHIN the caller's tenant scope, so an out-of-scope name is

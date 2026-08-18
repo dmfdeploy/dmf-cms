@@ -54,9 +54,9 @@ export default function ClearForDeployment({
     <div className="min-w-64 rounded-lg border border-amber-500/30 bg-amber-500/10 p-3 text-amber-100">
       <div className="text-xs font-semibold">Clear {instance} for deployment?</div>
       <p className="mt-1 text-xs text-amber-200/80">
-        This records the intent to run in the facility source of truth; the
-        platform's automation lane will deploy it. The console does not start
-        anything directly.
+        This records the intent to run in the facility source of truth. It
+        shows as pending reconciliation until something deploys it — today,
+        that's Provision. This action does not deploy anything itself.
       </p>
       <textarea
         className="mt-2 w-full rounded border border-white/10 bg-black/20 p-1 text-xs text-text"

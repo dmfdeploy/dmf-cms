@@ -5210,10 +5210,13 @@ def create_app(settings: Settings | None = None, contract: AppContract | None = 
     async def api_media_workloads_clear(request: Request, instance: str):
         """Clear for deployment — the ONE consequential media-workloads write.
 
-        Flips the instance's NetBox lifecycle tag to active (desired state);
-        the AWX lane converges it (ADR-0037 §4). Captures the ADR-0028 C5
-        quartet; scope + role are enforced independently on this write path.
-        NetBox is the only thing the console writes — never k3s.
+        Flips the instance's NetBox lifecycle tag to active (desired state).
+        Nothing here converges it automatically — see
+        ``reconcile.expectation`` on the response for what the operator is
+        actually told (dmfdeploy#411); Provision is what deploys it today.
+        Captures the ADR-0028 C5 quartet; scope + role are enforced
+        independently on this write path. NetBox is the only thing the
+        console writes — never k3s.
         """
         user, err = _require_media_workloads_access(request)
         if err is not None:
@@ -5271,7 +5274,7 @@ def create_app(settings: Settings | None = None, contract: AppContract | None = 
                 {"error": result["error"], "request_id": request_id}, status_code=502
             )
         # Close the loop at the point of action (hard gate 2): new state +
-        # what converges it and how to watch.
+        # what happens next and how to watch.
         return JSONResponse(
             {
                 "instance": result["instance"],
@@ -5283,9 +5286,9 @@ def create_app(settings: Settings | None = None, contract: AppContract | None = 
                 "reason": reason,
                 "reconcile": {
                     "expectation": (
-                        "Desired state recorded in the facility source of truth. The "
-                        "platform's automation lane converges it (catalog launch); the "
-                        "drift check will flag the gap until then."
+                        "Desired state recorded in the facility source of truth. "
+                        "It shows as pending reconciliation until something deploys "
+                        "it — today, that's Provision."
                     ),
                     "watch": "/api/media-workloads",
                 },

@@ -417,6 +417,30 @@ def test_clear_flips_tag_with_writer_token_and_c5(monkeypatch):
     assert "dmf-catalog" in tag_names and "app:mxl-videotestsrc" in tag_names
 
 
+def test_clear_reconcile_expectation_names_no_nonexistent_actor(monkeypatch):
+    # dmfdeploy/dmfdeploy#411: this string used to promise "the platform's
+    # automation lane converges it" and that "the drift check will flag the
+    # gap until then" — neither exists (zero AWX schedules registered
+    # anywhere, and the drift playbook has no job template, so nothing runs
+    # it automatically either). Pinned verbatim: this exact string is also
+    # what the frontend persists into the Activity audit record, so a
+    # regression here silently corrupts that history too.
+    _patch_recorder(
+        monkeypatch,
+        [_service("mxl-videotestsrc", ["dmf-catalog", "app:mxl-videotestsrc", "lifecycle:bootstrapped"])],
+    )
+    client = _writer_client()
+    resp = client.post("/api/media-workloads/mxl-videotestsrc/clear", json={"reason": "ready for demo"})
+    assert resp.status_code == 200
+    body = resp.json()
+    assert body["reconcile"]["expectation"] == (
+        "Desired state recorded in the facility source of truth. "
+        "It shows as pending reconciliation until something deploys "
+        "it — today, that's Provision."
+    )
+    assert "automation lane" not in body["reconcile"]["expectation"].lower()
+
+
 # ---------------------------------------------------------------------------
 # WP-D (G26): NetBox-derived per-instance MXL sidecar coords — SSRF gate,
 # scoped resolve, TTL cache, and live_view exposure (no coord leak).
