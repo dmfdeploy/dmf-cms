@@ -2,6 +2,7 @@ import { describe, expect, it } from 'vitest'
 import {
   FLOW_STEPS,
   classifyDraftFlow,
+  classifyForwardExit,
   classifyWorkloadFlow,
   isStepOpenable,
   lifecycleBadge,
@@ -396,5 +397,80 @@ describe('the draft flow', () => {
       expect(steps.configure).toBe('locked')
       expect(steps.finalise).toBe('locked')
     }
+  })
+})
+
+// ─────────────────────────────────────────────────────────────────────────
+// classifyForwardExit (dmfdeploy#412) — one test per state-table row.
+// ─────────────────────────────────────────────────────────────────────────
+describe('classifyForwardExit: the forward exit out of Configure', () => {
+  // Trustworthy + not running any job — the baseline every other test below
+  // starts from and deliberately violates exactly one fact of, same style
+  // as purgeEligibleWorkload's sibling tests elsewhere in this suite.
+  const TRUSTED: WorkloadLifecycleInput = {
+    lifecycle: 'configure',
+    membersDataTrustworthy: true,
+  }
+
+  it('row: inventory read loading/failed/stale (untrustworthy) → none, even while otherwise operating', () => {
+    expect(classifyForwardExit({ lifecycle: 'operate', membersDataTrustworthy: false })).toBe(
+      'none',
+    )
+  })
+
+  it('row: provision job pending (a job in flight) → none, even once the position has reached configure', () => {
+    expect(classifyForwardExit({ ...TRUSTED, launching: true })).toBe('none')
+    // Not only the provision write — ANY job in flight suppresses, because
+    // Configure can be selected while a different stage's job runs (see
+    // classifyForwardExit's own docstring on Provision's clear-for-deployment).
+    expect(classifyForwardExit({ ...TRUSTED, switching: true })).toBe('none')
+    expect(classifyForwardExit({ ...TRUSTED, tearingDown: true })).toBe('none')
+  })
+
+  // BASELINE NOTE (fix round 2, gate P3): the configure branch these two
+  // tests exercise (`if (input.lifecycle === 'configure') { return
+  // input.anyMemberObservedRunning ? 'none' : 'view-status' }`) has been
+  // byte-identical since fix round 0 (commit ea5535b) through the current
+  // tip — rounds 1 and 2 touched the operate branch, the docstring, and the
+  // UI copy, never this one. So these two ARE mutation-discriminating
+  // against origin/main (classifyForwardExit did not exist there — a whole-
+  // revert throws `TypeError: classifyForwardExit is not a function`, see
+  // round 0's report) but are REGRESSION GUARDS, not new-behaviour tests,
+  // with respect to fix round 0/1/2 specifically — restated explicitly here
+  // per the instruction that every mutation claim name its baseline.
+  it('row: position is configure, running not yet observed → "View workload status" (never a deploy-outcome claim)', () => {
+    expect(classifyForwardExit({ ...TRUSTED, anyMemberObservedRunning: false })).toBe(
+      'view-status',
+    )
+  })
+
+  it('row: running but configuration not yet complete → none (continue Configure, no success claim)', () => {
+    expect(classifyForwardExit({ ...TRUSTED, anyMemberObservedRunning: true })).toBe('none')
+  })
+
+  // FIX ROUND (dmfdeploy#412 adversarial gate): a trusted operating read is
+  // ONE state, 'live' — never split on instance.live_view. See
+  // classifyForwardExit's own docstring for why live_view cannot honestly
+  // distinguish a preview claim: it is sidecar-URL resolvability, not
+  // reachability, and not a preview fact in either direction. This test
+  // asserts the collapse directly — 'live' regardless of what live_view
+  // says on any instance — rather than duplicating one case per input
+  // shape, which is exactly what produced the earlier defect.
+  it('row: trusted read reports the workload operating → "Open live view", regardless of live_view', () => {
+    expect(classifyForwardExit({ lifecycle: 'operate', membersDataTrustworthy: true })).toBe(
+      'live',
+    )
+  })
+
+  it('row: failed or unknown outcome → none (the failure surface + its recovery action stay put)', () => {
+    expect(classifyForwardExit({ lifecycle: 'unknown', membersDataTrustworthy: true })).toBe(
+      'none',
+    )
+  })
+
+  it('the position not yet at configure (still provision) → none — deployment progress is the whole story', () => {
+    expect(classifyForwardExit({ lifecycle: 'provision', membersDataTrustworthy: true })).toBe(
+      'none',
+    )
   })
 })

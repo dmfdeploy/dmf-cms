@@ -378,3 +378,106 @@ export function lifecycleBadge(input: WorkloadLifecycleInput): LifecycleBadge {
   const label = RESTING_GRAMMAR[input.lifecycle]
   return { label, grammar: input.lifecycle === 'unknown' ? 'unknown' : 'resting' }
 }
+
+// ─────────────────────────────────────────────────────────────────────────
+// Forward exit out of Configure (dmfdeploy#412)
+// ─────────────────────────────────────────────────────────────────────────
+
+/**
+ * What the guided flow's LAST CONSTRUCTIVE STEP (Configure) offers as its
+ * own forward exit, now that Finalise & Review is no longer the array-
+ * position "next" step out of it (WorkloadDetail.tsx's FORWARD_STEPS —
+ * Finalise stays reachable from the rail and from Previous; it is a
+ * lifecycle action, not the next constructive step). This is an EXIT from
+ * the setup surface to the existing Operate route — never a sixth flow
+ * step, never labelled "Next": FLOW_STEPS above is untouched by this, and
+ * so is the ban on Operate ever joining it.
+ *
+ *   'none'         — no success affordance. Every branch that reaches this
+ *                     is one where claiming otherwise would sometimes be a
+ *                     lie: the read this would rest on isn't trustworthy
+ *                     yet (loading/failed/stale), a job is in flight
+ *                     (whichever one — see the busy check below), the
+ *                     workload hasn't reached Configure's own position yet,
+ *                     its position is unknown, or it is running but not yet
+ *                     fully configured. Continuing whatever the active
+ *                     stage already shows IS the affordance in every one of
+ *                     these; inventing a second one that is sometimes false
+ *                     is worse than none (issue #412 acceptance criterion:
+ *                     this half matters as much as the affordance itself).
+ *   'view-status'  — the position is configure — active intent exists per
+ *                     the backend's ADR-0046 derivation — but nothing has
+ *                     been OBSERVED running yet. Worth a look; not yet
+ *                     claiming the workload operates. Says nothing about HOW
+ *                     it reached configure: active intent can mean a deploy
+ *                     that hasn't converged yet, one that failed, or —
+ *                     dmfdeploy#411 — a clear-for-deployment with no
+ *                     converger ever picking it up. classifyForwardExit has
+ *                     no job-outcome input — workloadLifecycle.ts's
+ *                     WorkloadLifecycleInput carries membersDataTrustworthy,
+ *                     the three job flags, `lifecycle`, and
+ *                     anyMemberObservedRunning; no deploy result among them
+ *                     — so it must not guess at one.
+ *
+ *                     FIX ROUND (dmfdeploy#412 gate, round 2): an earlier
+ *                     version of this line and its matching UI copy said
+ *                     "the deploy succeeded" — a claim this function cannot
+ *                     support and, per the backend's own docstring on
+ *                     `configure` ("active intent exists
+ *                     but observed/flow incomplete"), is sometimes false.
+ *   'live'         — a TRUSTED read reports the workload operating. This
+ *                     asserts ONLY the operating position — never a preview
+ *                     claim, in either direction.
+ *
+ * FIX ROUND (dmfdeploy#412 adversarial gate): an earlier version of this
+ * function split the operating case into 'live-view'/'live-status', keyed on
+ * whether any instance's `live_view` was true, and the UI worded the
+ * false branch as "a preview is not [available]". That was a defect of
+ * exactly the class this issue exists to prevent: `live_view` is not a
+ * preview fact. It is `sidecar_base_url(...) is not None`
+ * (media_workloads.py) — whether an instance's NetBox-stamped sidecar
+ * coordinates compose into a URL that passes the SSRF allowlist (DNS-label
+ * shape, namespace/port allowlist, service-identity match). That check
+ * never probes the sidecar and never inspects a function role; it is
+ * RESOLVABILITY, not reachability, and not preview availability. The actual
+ * per-instance preview fact — MxlInstanceStatus.preview (types.ts),
+ * `available`/`reason`-gated, resolved by an actual status fetch — lives on
+ * a different type entirely, and resolving it is what the Operate route
+ * already does per instance (LivePreviewBox.tsx's useLivePreview). Every
+ * instance reporting live_view:false does not establish preview absence
+ * either — a read that never resolved anything is not evidence of absence.
+ * The fix is not to go fetch that status here (scope creep, and the fact
+ * belongs at the destination, not this exit); it is to stop claiming
+ * anything about previews at all. `instances` is no longer a parameter of
+ * this function for exactly that reason — there is nothing left here that
+ * legitimately reads it.
+ *
+ * "Trusted" reuses the SAME notion store/headerSlot.ts's TRUST side table
+ * is built from (WorkloadLifecycleInput.membersDataTrustworthy), rather
+ * than minting a second, weaker one — checked FIRST (Art. 9, unhappy path
+ * first): every branch below it is moot on an untrustworthy read.
+ *
+ * The busy check comes next, and deliberately covers ALL THREE job flags,
+ * not only a provision write: the operator's task while any job runs is to
+ * watch it close (workloadLifecycle.ts's stageActions applies the identical
+ * suppression, for the identical reason), and Configure can legitimately be
+ * the SELECTED step while a DIFFERENT stage's job is in flight — Provision's
+ * clear-for-deployment keeps running after the position has moved past it
+ * (see stageActions' own note on that member-state-keyed action).
+ */
+export type ForwardExit = 'none' | 'view-status' | 'live'
+
+export function classifyForwardExit(input: WorkloadLifecycleInput): ForwardExit {
+  if (!input.membersDataTrustworthy) return 'none'
+  if (input.launching || input.switching || input.tearingDown) return 'none'
+
+  if (input.lifecycle === 'configure') {
+    return input.anyMemberObservedRunning ? 'none' : 'view-status'
+  }
+  if (input.lifecycle === 'operate') return 'live'
+  // 'provision': nothing has run yet — deployment progress (ProvisionStage's
+  // own surface) is the whole story. 'unknown': the backend declined to
+  // place the workload; whatever failure surface + recovery action the
+  // active stage already renders stays exactly as is, not duplicated here.
+  return 'none'
+}

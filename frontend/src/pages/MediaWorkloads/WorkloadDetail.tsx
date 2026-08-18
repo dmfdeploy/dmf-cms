@@ -10,10 +10,12 @@ import { useTopbarMessageStore } from '../../store/topbarMessage'
 import { classifyWorkloadForHeaderSlot, buildHeaderSlotRail, useRegisterHeaderSlot } from '../../store/headerSlot'
 import {
   FLOW_STEPS,
+  classifyForwardExit,
   isStepOpenable,
   lifecycleBadge,
   type FlowStepId,
   type FlowStepState,
+  type ForwardExit,
 } from '../../lib/workloadFlow'
 import type { MediaWorkload, SwitchSourceResult } from '../../api/types'
 import FlowStep from './FlowStep'
@@ -113,6 +115,22 @@ export const LOCKED_REASON: Record<FlowStepId, string> = {
   finalise:
     'Nothing is running for this workload yet, so there is nothing to tear down. This step opens once Provision has deployed it.',
 }
+
+/**
+ * dmfdeploy#412: the array-position adjacency Next/Previous walk. FLOW_STEPS
+ * itself is untouched (still five steps, in this order, no 'operate' — the
+ * hard constraint) — this is narrower: Finalise & Review is no longer the
+ * "next" constructive step out of Configure. It stays fully reachable from
+ * the rail and from Previous (Finalise's own Previous still resolves to
+ * Configure via FLOW_STEPS below, unaffected), because it is a lifecycle
+ * action an operator can take at any time a workload runs, not a step that
+ * gates anything after it. FORWARD_STEPS is FLOW_STEPS minus Finalise for
+ * exactly this one purpose, computed once — see WorkloadWizard's `nextStep`
+ * for the only place it is read, and lib/workloadFlow.ts's
+ * classifyForwardExit for what now offers forward progress out of Configure
+ * instead of a Next that used to land on Teardown/Delete.
+ */
+const FORWARD_STEPS: FlowStepId[] = FLOW_STEPS.filter((id) => id !== 'finalise')
 
 /**
  * The wizard's default-selection priority order (spec A, "Initial
@@ -357,6 +375,19 @@ function WorkloadWizard({
   const flow = classifyWorkloadForHeaderSlot(input, workload.instances)
   const { steps, current, offFlow, undetermined } = flow
   const badge = lifecycleBadge(input)
+  // dmfdeploy#412: what Configure's forward exit offers right now — see
+  // lib/workloadFlow.ts's classifyForwardExit for the full state table and
+  // why each branch is honest. Computed off the SAME live `input` every
+  // other affordance on this page reads (not `displaySteps`'/`settledStepsRef`'s
+  // frozen-during-a-poll value): row 1 of that table requires a stale or
+  // in-flight read to withhold the affordance itself, not merely delay it —
+  // the opposite of the #392 freeze this page applies to step selection.
+  // Takes only `input` — no `workload.instances` — since the fix-round gate
+  // (dmfdeploy#412): the earlier version read instance.live_view here to
+  // pick between two operating-state labels, which is exactly the preview
+  // claim classifyForwardExit's own docstring now explains live_view cannot
+  // honestly support.
+  const forwardExit = classifyForwardExit(input)
 
   // A fragment aimed at a step selects+focuses that step on arrival. The
   // Operate page's "request configuration change" link is the one caller.
@@ -453,9 +484,30 @@ function WorkloadWizard({
 
   const activeIndex = FLOW_STEPS.indexOf(activeStep)
   const prevStep = activeIndex > 0 ? FLOW_STEPS[activeIndex - 1] : null
-  const nextStep = activeIndex < FLOW_STEPS.length - 1 ? FLOW_STEPS[activeIndex + 1] : null
+  // dmfdeploy#412: forward adjacency walks FORWARD_STEPS (FLOW_STEPS minus
+  // Finalise), not FLOW_STEPS itself — see that constant's own comment.
+  // Previous is untouched (still FLOW_STEPS-based), so Finalise's own
+  // Previous still lands back on Configure exactly as before.
+  const forwardIndex = FORWARD_STEPS.indexOf(activeStep)
+  const nextStep = forwardIndex !== -1 && forwardIndex < FORWARD_STEPS.length - 1
+    ? FORWARD_STEPS[forwardIndex + 1]
+    : null
   const canPrevious = !jobInFlight && prevStep !== null && steps[prevStep] !== 'locked'
   const canNext = !jobInFlight && nextStep !== null && steps[nextStep] !== 'locked'
+  // dmfdeploy#412 FIX ROUND 3: nextStep === null is no longer one meaning.
+  // It is true on Finalise & Review (forwardIndex === -1, off FORWARD_STEPS
+  // entirely — genuinely the last step of FLOW_STEPS) AND on Configure
+  // (forwardIndex is FORWARD_STEPS' last index — no further constructive
+  // step, but the flow keeps going: Finalise & Review is still ahead,
+  // still rail-reachable). The shared fallback used to say "This is the
+  // last step." on both, which is false on Configure and, paired with
+  // ConfigureForwardExit's 'none' rendering nothing, told the operator the
+  // journey ended at Configure when it does not. isLastFlowStep is derived
+  // from FLOW_STEPS' own length, not a hardcoded `activeStep === 'finalise'`
+  // — it stays correct if FLOW_STEPS' shape ever changes, the same
+  // brittleness FORWARD_STEPS' own comment already flags for the
+  // media-specifics rule.
+  const isLastFlowStep = activeIndex === FLOW_STEPS.length - 1
 
   const jobOwnerLabel = jobOwner ? STEP_LABEL[jobOwner] : null
   const jobReasonText = jobOwnerLabel
@@ -469,7 +521,9 @@ function WorkloadWizard({
   const nextReason = jobInFlight
     ? jobReasonText
     : nextStep === null
-      ? 'This is the last step.'
+      ? isLastFlowStep
+        ? 'This is the last step.'
+        : 'There is no next step to configure. Finalise & Review stays reachable at any time from the steps above.'
       : 'This step is locked.'
 
   const selectStep = (step: FlowStepId) => {
@@ -675,6 +729,66 @@ function WorkloadWizard({
       >
         {stageBody[activeStep]}
       </FlowStep>
+
+      {/* dmfdeploy#412: the exit this issue adds — rendered ONLY while
+          Configure is the selected step, because Configure is the last
+          constructive step FORWARD_STEPS walks to (above). Not a sixth
+          step, not inside FlowStep's own Previous/Next footer (which never
+          says "Next" here any more — nextStep is null for Configure, see
+          FORWARD_STEPS), and not a persistent banner: it is specifically
+          the exit at the point the old array-position Next used to land on
+          Teardown/Delete. */}
+      {activeStep === 'configure' && <ConfigureForwardExit exit={forwardExit} slug={workload.slug} />}
+    </div>
+  )
+}
+
+/**
+ * The state-gated forward exit out of Configure (dmfdeploy#412) — see
+ * lib/workloadFlow.ts's classifyForwardExit for what each `exit` value
+ * means and why. 'none' renders nothing: every state that reaches 'none'
+ * (untrustworthy read, a job in flight, not yet at Configure's position,
+ * position unknown, running but not yet fully configured) already has its
+ * own honest surface elsewhere on this page — Configure's own content, a
+ * stage's own progress/failure display, or the busy reason text FlowStep
+ * already renders — and a claim here would be exactly the sometimes-false
+ * success affordance the issue's acceptance criteria rule out.
+ *
+ * Neither `label` nor `description` below asserts anything about whether a
+ * preview exists (FIX ROUND, dmfdeploy#412 adversarial gate round 1) — see
+ * classifyForwardExit's own docstring for why instance.live_view cannot
+ * honestly support that claim in either direction. "Open live view" names
+ * the destination ROUTE (that is what the console already calls it), not a
+ * promise about what is on it.
+ *
+ * Nor does 'view-status's description assert anything about a JOB OUTCOME
+ * (FIX ROUND, round 2) — see classifyForwardExit's own docstring on
+ * 'view-status' for why the classifier has no job-outcome input to draw
+ * that from. It states only that the position is configure and nothing has
+ * been observed running yet, never that a deploy "succeeded".
+ */
+function ConfigureForwardExit({ exit, slug }: { exit: ForwardExit; slug: string }) {
+  if (exit === 'none') return null
+
+  const to = `/media-workloads/${encodeURIComponent(slug)}/operate`
+  const COPY: Record<Exclude<ForwardExit, 'none'>, { label: string; description: string }> = {
+    'view-status': {
+      label: 'View workload status',
+      description: 'This workload has not been observed running yet.',
+    },
+    live: {
+      label: 'Open live view',
+      description: 'A trusted read reports this workload operating.',
+    },
+  }
+  const { label, description } = COPY[exit]
+
+  return (
+    <div className="panel mt-4 border-white/10 px-4 py-3 text-sm text-muted">
+      {description}{' '}
+      <Link to={to} className="text-accent hover:underline">
+        {label} →
+      </Link>
     </div>
   )
 }
