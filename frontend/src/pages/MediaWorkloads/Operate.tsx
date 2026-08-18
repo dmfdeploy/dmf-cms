@@ -1,10 +1,11 @@
 import { useCallback, useMemo, useState, useEffect } from 'react'
 import { Link, useNavigate, useParams } from 'react-router-dom'
 import { useCatalog, useCurrentUser, useMediaWorkloadsGrouped, useInstanceTopology } from '../../api/hooks'
-import type { MediaWorkloadInstance } from '../../api/types'
+import type { CatalogEntry, MediaWorkloadInstance } from '../../api/types'
 import { classifyWorkloadForHeaderSlot, buildHeaderSlotRail, useRegisterHeaderSlot } from '../../store/headerSlot'
 import { buildWorkloadLifecycleInput, type WorkloadLifecycleInput } from '../../lib/workloadLifecycle'
 import type { FlowStepId } from '../../lib/workloadFlow'
+import { topologySourceLabel } from '../../lib/labels'
 import { LOCKED_REASON } from './WorkloadDetail'
 import WorkloadTile from './WorkloadTile'
 import InstanceLiveModal from './InstanceLiveModal'
@@ -93,13 +94,28 @@ export default function WorkloadOperate() {
   // Operate stage panel used:
   // catalog display_name, then the function key, then the instance id, so a
   // catalog miss degrades to something true rather than a blank label.
-  const displayNames = useMemo(() => {
-    const map = new Map<string, string>()
-    for (const entry of catalogData?.entries ?? []) map.set(entry.key, entry.display_name)
+  //
+  // umbrella #401: extends this chain, doesn't replace it — a topology-
+  // spawned source (recorded via topology_parent_key/topology_source_id,
+  // the launcher's own NetBox tags, read generically in
+  // media_workloads.py) renders as its parent entry's topology_source_noun
+  // plus its source id, BEFORE the ordinary display_name lookup even runs
+  // (an ordinary catalog-key match on its own function_key would never hit
+  // anyway — §3.3 forbids a per-source catalog entry). Falls back to the
+  // raw function_key when the noun is absent — never FUNCTION_NOUNS or any
+  // other hardcoded name.
+  const catalogByKey = useMemo(() => {
+    const map = new Map<string, CatalogEntry>()
+    for (const entry of catalogData?.entries ?? []) map.set(entry.key, entry)
     return map
   }, [catalogData?.entries])
-  const nameFor = (i: MediaWorkloadInstance) =>
-    displayNames.get(i.function_key ?? '') ?? i.function_key ?? i.instance
+  const nameFor = (i: MediaWorkloadInstance) => {
+    if (i.topology_source_id) {
+      const parent = i.topology_parent_key ? catalogByKey.get(i.topology_parent_key) : undefined
+      return topologySourceLabel(parent?.topology_source_noun, i.function_key ?? i.instance, i.topology_source_id)
+    }
+    return catalogByKey.get(i.function_key ?? '')?.display_name ?? i.function_key ?? i.instance
+  }
 
   // Arc 4 WP-3 (umbrella #347): the rail is present here too, Operate
   // selected, its five stage entries navigating rather than locally

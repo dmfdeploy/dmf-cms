@@ -191,3 +191,118 @@ describe('DesignStage — InstanceComposition topology retained-error honesty', 
     })
   })
 })
+
+// umbrella #401 — a topology-spawned source instance has no catalog entry
+// of its own by design (dmf-media §3.3), so an exact catalog-key join on
+// its own function_key always misses. It resolves instead through
+// topology_parent_key/topology_source_id — the launcher's own recorded
+// NetBox tags (dmf-runbooks), read generically server-side and threaded
+// through unchanged. These three tests are dmf-cms's T1-T3.
+describe('DesignStage — topology-spawned source resolution (umbrella #401)', () => {
+  function topologySpawnedWorkload(instanceOverrides: Record<string, unknown> = {}): MediaWorkload {
+    return workload({
+      functions: [
+        { function_key: 'mxl-videotest-view-source-a', count: 1, running: 1, reconcile_pending: 0 },
+      ],
+      instances: [
+        {
+          instance: 'mxl-videotest-view-source-a',
+          netbox_id: 2,
+          function_key: 'mxl-videotest-view-source-a',
+          live_view: false,
+          requested_state: 'active',
+          observed_state: 'running',
+          reconcile_pending: false,
+          placement: { node: null, ports: [], protocol: null },
+          workload_assignment: 'ok',
+          topology_parent_key: 'mxl-videotest-view',
+          topology_source_id: 'source-a',
+          ...instanceOverrides,
+        },
+      ],
+    })
+  }
+
+  it('T1: resolves through its recorded parent tag — renders the source noun + source id, no removed-function warning', async () => {
+    vi.stubGlobal('fetch', vi.fn(async () => json({})))
+    const queryClient = new QueryClient({ defaultOptions: { queries: { retry: false } } })
+    renderStage(queryClient, {
+      workload: topologySpawnedWorkload(),
+      catalogEntries: [
+        catalogEntry({
+          key: 'mxl-videotest-view',
+          display_name: 'MXL Test-Pattern Viewer',
+          topology_source_noun: 'MXL Test-Pattern Source',
+        }),
+      ],
+    })
+    expect(await screen.findByText('MXL Test-Pattern Source · source-a')).toBeTruthy()
+    expect(screen.queryByText(/may have been removed/)).toBeNull()
+    // The raw spawned key never renders on its own — it only ever appears
+    // composed with the noun above.
+    expect(screen.queryByText('mxl-videotest-view-source-a')).toBeNull()
+  })
+
+  it('T2 (regression guard, umbrella #339): a genuinely unknown function key — no topology tags, no catalog entry — still warns', async () => {
+    vi.stubGlobal('fetch', vi.fn(async () => json({})))
+    const queryClient = new QueryClient({ defaultOptions: { queries: { retry: false } } })
+    renderStage(queryClient, {
+      workload: workload({
+        functions: [{ function_key: 'mystery-fn', count: 1, running: 1, reconcile_pending: 0 }],
+        instances: [
+          {
+            instance: 'mystery-a',
+            netbox_id: 3,
+            function_key: 'mystery-fn',
+            live_view: false,
+            requested_state: 'active',
+            observed_state: 'running',
+            reconcile_pending: false,
+            placement: { node: null, ports: [], protocol: null },
+            workload_assignment: 'ok',
+            topology_parent_key: null,
+            topology_source_id: null,
+          },
+        ],
+      }),
+      catalogEntries: [catalogEntry()], // present, but keyed for a different function entirely
+    })
+    expect(await screen.findByText('mystery-fn')).toBeTruthy()
+    expect(screen.getByText(/may have been removed/)).toBeTruthy()
+  })
+
+  it('T3: tags present but the topology declares no source noun — falls back to the raw function_key, never a hardcoded name', async () => {
+    vi.stubGlobal('fetch', vi.fn(async () => json({})))
+    const queryClient = new QueryClient({ defaultOptions: { queries: { retry: false } } })
+    renderStage(queryClient, {
+      workload: topologySpawnedWorkload(),
+      catalogEntries: [
+        catalogEntry({
+          key: 'mxl-videotest-view',
+          display_name: 'MXL Test-Pattern Viewer',
+          topology_source_noun: null,
+        }),
+      ],
+    })
+    expect(await screen.findByText('mxl-videotest-view-source-a · source-a')).toBeTruthy()
+    // Still resolved (the tag is present) — no false "removed" warning even
+    // though the noun itself is absent.
+    expect(screen.queryByText(/may have been removed/)).toBeNull()
+  })
+
+  it('the recorded tag alone is resolving — suppresses the warning even when the parent entry is not (yet) in the separate catalog read', async () => {
+    // Two independent reads (useMediaWorkloadsGrouped, useCatalog) can be
+    // momentarily out of step. The instance's OWN recorded fact
+    // (topology_parent_key/topology_source_id) is what "resolved" means
+    // here — not whether this render's catalogEntries happens to contain
+    // the parent entry too.
+    vi.stubGlobal('fetch', vi.fn(async () => json({})))
+    const queryClient = new QueryClient({ defaultOptions: { queries: { retry: false } } })
+    renderStage(queryClient, {
+      workload: topologySpawnedWorkload(),
+      catalogEntries: [], // parent entry not present in THIS read
+    })
+    await screen.findByText('mxl-videotest-view-source-a · source-a')
+    expect(screen.queryByText(/may have been removed/)).toBeNull()
+  })
+})

@@ -83,6 +83,34 @@ def test_entry_with_no_provision_block_at_all_is_null(monkeypatch):
     assert body["provision_demand"] is None
 
 
+def test_entry_topology_source_noun_passthrough(monkeypatch):
+    # umbrella #401 — T4, JSON-serialization layer: /api/catalog surfaces
+    # CatalogEntry.topology_source_noun verbatim, alongside display_name.
+    entry = CatalogEntry(
+        key="mxl-videotest-view",
+        display_name="MXL Test-Pattern View",
+        summary="Renders a test-pattern flow.",
+        topology_ref="topology-params.j1.yaml",
+        topology_source_noun="MXL Test-Pattern Source",
+    )
+    monkeypatch.setattr("dmf_cms.main.load_catalog_entries", _entries(entry))
+    resp = _client().get("/api/catalog")
+    assert resp.status_code == 200, resp.text
+    body = next(e for e in resp.json()["entries"] if e["key"] == "mxl-videotest-view")
+    assert body["topology_source_noun"] == "MXL Test-Pattern Source"
+
+
+def test_entry_without_topology_source_noun_is_null(monkeypatch):
+    # An entry with no topology at all — the common case — is null, not
+    # an empty string or an omitted key.
+    entry = CatalogEntry(key="nmos-cpp", display_name="NMOS IS-04/05", summary="x")
+    monkeypatch.setattr("dmf_cms.main.load_catalog_entries", _entries(entry))
+    resp = _client().get("/api/catalog")
+    assert resp.status_code == 200, resp.text
+    body = next(e for e in resp.json()["entries"] if e["key"] == "nmos-cpp")
+    assert body["topology_source_noun"] is None
+
+
 def test_malformed_quantity_is_null_and_does_not_raise(monkeypatch):
     # "9999" (bare integer, no 'm' suffix) is refused catalog grammar per
     # capacity.parse_catalog_cpu — a likely-forgotten-suffix author error,

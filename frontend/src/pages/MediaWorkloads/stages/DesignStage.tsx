@@ -3,6 +3,7 @@ import type { CatalogEntry, MediaWorkload } from '../../../api/types'
 import type { StageState } from '../../../lib/workloadLifecycle'
 import StageCard from './StageCard'
 import { settleQuery } from '../../../lib/queryState'
+import { topologySourceLabel } from '../../../lib/labels'
 
 /**
  * Design — read-only from catalog SoT (never mutating): the selected
@@ -33,8 +34,33 @@ export default function DesignStage({
   catalogFailed: boolean
   state: StageState
 }) {
+  // umbrella #401: a topology-spawned source's function_key never matches
+  // any catalog entry's own key by design (§3.3 forbids per-source catalog
+  // entries) — that used to read as "removed from the catalog", which is
+  // false. The resolving fact lives on the instance itself, recorded by
+  // the launcher as a NetBox tag (topology_parent_key/topology_source_id,
+  // read generically in media_workloads.py — dmf-cms never constructs or
+  // parses an instance name to get here). Built once per function_key
+  // (every instance sharing a function_key carries the identical
+  // recorded fact, since it names the SAME topology-spawned relationship).
+  const topologyByFunctionKey = new Map<string, { parentKey: string; sourceId: string }>()
+  for (const inst of workload.instances) {
+    if (inst.function_key && inst.topology_parent_key && inst.topology_source_id) {
+      topologyByFunctionKey.set(inst.function_key, {
+        parentKey: inst.topology_parent_key,
+        sourceId: inst.topology_source_id,
+      })
+    }
+  }
+
   const entries = workload.functions
-    .map((fn) => ({ fn, entry: catalogEntries.find((e) => e.key === fn.function_key) }))
+    .map((fn) => {
+      const topology = topologyByFunctionKey.get(fn.function_key)
+      // Resolves through the recorded parent tag when topology-spawned;
+      // otherwise the ordinary catalog-key join, unchanged.
+      const entry = catalogEntries.find((e) => e.key === (topology?.parentKey ?? fn.function_key))
+      return { fn, entry, topology }
+    })
     // Deterministic order: same sort key the rest of Media Workloads uses.
     .sort((a, b) => a.fn.function_key.localeCompare(b.fn.function_key))
 
@@ -65,24 +91,37 @@ export default function DesignStage({
             </p>
           ) : (
             <ul className="mt-2 space-y-3">
-              {entries.map(({ fn, entry }) => (
+              {entries.map(({ fn, entry, topology }) => (
                 <li key={fn.function_key} className="border-t border-white/5 pt-3 first:border-t-0 first:pt-0">
                   <div className="flex flex-wrap items-baseline gap-2">
                     <span className="font-medium text-text">
-                      {entry?.display_name ?? fn.function_key}
+                      {topology
+                        ? topologySourceLabel(entry?.topology_source_noun, fn.function_key, topology.sourceId)
+                        : (entry?.display_name ?? fn.function_key)}
                     </span>
                     <span className="text-xs text-muted">
                       {fn.running}/{fn.count} instance{fn.count !== 1 ? 's' : ''}
                     </span>
                   </div>
-                  {entry?.summary && <p className="mt-1 text-xs text-muted">{entry.summary}</p>}
-                  {!entry && !catalogFailed && (
+                  {/* A topology-spawned source's own summary/EBU details, below,
+                      are the PARENT entry's (the viewer template's) — showing
+                      them under a source's own row would misattribute the
+                      parent's description to this row, so both stay gated on
+                      !topology alongside the entry lookup they came from. */}
+                  {entry?.summary && !topology && <p className="mt-1 text-xs text-muted">{entry.summary}</p>}
+                  {/* umbrella #401: a topology-spawned instance resolves through
+                      its recorded parent tag, never through an exact catalog-key
+                      match — so it must never trip the "removed from catalog"
+                      warning below, which is written for a key that is
+                      genuinely absent (umbrella #339's real case). */}
+                  {!entry && !topology && !catalogFailed && (
                     <p className="mt-1 text-xs text-amber-200/80">
                       This function key isn&apos;t in the current catalog — it may have been
                       removed since this workload was deployed.
                     </p>
                   )}
                   {entry &&
+                    !topology &&
                     (entry.ebu_layer || entry.ebu_vertical || entry.ebu_media_function_type || entry.ebu_lifecycle_owner) && (
                       <details className="mt-1 text-xs text-muted">
                         <summary className="cursor-pointer select-none opacity-80 hover:opacity-100">
