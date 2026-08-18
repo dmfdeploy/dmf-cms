@@ -2,6 +2,7 @@ import { useCallback, useState } from 'react'
 import { Link } from 'react-router-dom'
 import { useQueryClient } from '@tanstack/react-query'
 import { JobStatusLine, OperationStatusLine } from './stages/JobProgress'
+import type { Operation } from '../../api/types'
 
 /**
  * The gap between "the deploy was accepted" and "the workload exists"
@@ -138,6 +139,27 @@ export default function WorkloadMaterializing({
   const handleLaunched = useCallback((id: number) => setJobId(id), [])
   const handleOperationError = useCallback(() => setOperationFailed(true), [])
 
+  // umbrella #403: a deploy is a WATCHED action (useOperationStatus's own
+  // _WATCHED_TERMINAL_STATES) — it keeps running right past the transient
+  // `launched` state handleLaunched depends on, toward one of the real
+  // terminal states below, whether or not `launched` itself was ever
+  // observed. Without this, a missed poll tick left this page rendering
+  // "Deploy accepted…" over a status line that had already stopped polling,
+  // forever. A terminal operation still carrying a job id is handed to the
+  // SAME jobId path handleLaunched already feeds — the launcher's own job
+  // is the honest source for what actually happened (successful/failed/…,
+  // the jobFailed/jobSucceeded copy below already covers it), not a second,
+  // parallel notion of "done" invented here. Only the identity-unknown case
+  // (no job id was ever assigned) falls back to the operation-failed copy —
+  // the one case where there is no job to hand off to.
+  const handleOperationTerminal = useCallback((operation: Operation) => {
+    if (operation.job_id !== null) {
+      setJobId(operation.job_id)
+    } else {
+      setOperationFailed(true)
+    }
+  }, [])
+
   // A finished job is the moment the record is most likely to exist, so ask
   // the inventory again rather than waiting out its poll interval. This
   // component keeps rendering either way — the parent swaps it out only
@@ -226,6 +248,7 @@ export default function WorkloadMaterializing({
               operationId={launch.operationId}
               onLaunched={handleLaunched}
               onError={handleOperationError}
+              onTerminal={handleOperationTerminal}
             />
           ) : jobId !== null ? (
             <JobStatusLine

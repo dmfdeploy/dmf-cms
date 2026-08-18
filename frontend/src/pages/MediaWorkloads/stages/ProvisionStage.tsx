@@ -241,6 +241,24 @@ export default function ProvisionStage({
     void queryClient.invalidateQueries({ queryKey: ['catalog'] })
   }
 
+  // umbrella #403: same shared-component fix as FinaliseStage's
+  // handleOpTerminal — a deploy is a WATCHED action too (useOperationStatus's
+  // own _WATCHED_TERMINAL_STATES), so it keeps running past `launched`
+  // toward a real terminal state regardless of whether that transient
+  // moment was ever observed. Without this, a missed `launched` tick left
+  // `track[key].opId` set forever: `busy` never fell and Deploy never came
+  // back for this entry. Provision has no persistent review area of its own
+  // (this level of feedback — the status line's own text for a beat before
+  // the entry clears — is the same one onOpError below already gives a
+  // deploy that errors out from a normally-observed `error` state; this
+  // isn't a new standard for the stage, just closing the same gap for the
+  // states `error` alone didn't cover).
+  const handleOpTerminal = (key: string) => {
+    setTrack((prev) => ({ ...prev, [key]: EMPTY_TRACK }))
+    void queryClient.invalidateQueries({ queryKey: ['media-workloads-grouped'] })
+    void queryClient.invalidateQueries({ queryKey: ['catalog'] })
+  }
+
   if (state === 'not-applicable') {
     return (
       <StageCard label="Provision" state={state}>
@@ -300,6 +318,7 @@ export default function ProvisionStage({
               }}
               onOpLaunched={(jobId) => setTrack((prev) => ({ ...prev, [entry.key]: { jobId, opId: null } }))}
               onOpError={() => setTrack((prev) => ({ ...prev, [entry.key]: EMPTY_TRACK }))}
+              onOpTerminal={() => handleOpTerminal(entry.key)}
               onJobComplete={() => handleJobComplete(entry.key)}
             />
           ))}
@@ -355,6 +374,7 @@ function ProvisionEntry({
   onDismissError,
   onOpLaunched,
   onOpError,
+  onOpTerminal,
   onJobComplete,
 }: {
   entry: CatalogEntry
@@ -378,6 +398,9 @@ function ProvisionEntry({
   onDismissError: () => void
   onOpLaunched: (jobId: number) => void
   onOpError: () => void
+  /** umbrella #403: see ProvisionStage's handleOpTerminal — this entry
+   *  doesn't need the settled operation itself, only that one reached. */
+  onOpTerminal: () => void
   onJobComplete: () => void
 }) {
   const [arming, setArming] = useState(false)
@@ -502,7 +525,12 @@ function ProvisionEntry({
 
       {track.opId != null && (
         <div className="mt-2">
-          <OperationStatusLine operationId={track.opId} onLaunched={onOpLaunched} onError={onOpError} />
+          <OperationStatusLine
+            operationId={track.opId}
+            onLaunched={onOpLaunched}
+            onError={onOpError}
+            onTerminal={onOpTerminal}
+          />
         </div>
       )}
       {track.jobId != null && (
