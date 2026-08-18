@@ -13,17 +13,24 @@
  * banner ("A Finalise & Review job is in progress") stayed up long after the
  * cluster was confirmed clean, with no self-recovery.
  *
- * T1/T2/T3 exercise the real defect through FinaliseStage/WorkloadDetail —
+ * T1/T2/T3 exercise the real defect through FinaliseStage/WorkloadSetup —
  * the busy flag and the honesty of what the operator is shown are both
  * properties of that integration, not of OperationStatusLine in isolation.
  * T4 pins the shared component's label table directly, mirroring
  * jobProgressHonesty.test.tsx's own style for OperationStatusLine.
+ *
+ * GUARD LABEL (dmfdeploy#414 gate, round 1): every test in this file is a
+ * GUARD pinning the pre-#414 umbrella #403 fix described above, unchanged
+ * by this arc — only T1-T3's mount route moved, from the bare slug to
+ * /setup. Baseline: the pre-#414 commit on `main`, where these same
+ * assertions passed identically against WorkloadDetail.tsx at the bare
+ * slug.
  */
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import { cleanup, fireEvent, render, screen, waitFor, within } from '@testing-library/react'
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query'
 import { MemoryRouter, Route, Routes } from 'react-router-dom'
-import WorkloadDetail from '../pages/MediaWorkloads/WorkloadDetail'
+import WorkloadSetup from '../pages/MediaWorkloads/WorkloadSetup'
 import { OperationStatusLine } from '../pages/MediaWorkloads/stages/JobProgress'
 import HeaderSlotProbe from './testUtils/HeaderSlotProbe'
 import type { CatalogEntry, MediaWorkload, MediaWorkloadsGroupedResponse } from '../api/types'
@@ -56,9 +63,9 @@ function renderDetail() {
   const queryClient = new QueryClient({ defaultOptions: { queries: { retry: false } } })
   render(
     <QueryClientProvider client={queryClient}>
-      <MemoryRouter initialEntries={['/media-workloads/studio-a']}>
+      <MemoryRouter initialEntries={['/media-workloads/studio-a/setup']}>
         <Routes>
-          <Route path="/media-workloads/:slug" element={<WorkloadDetail />} />
+          <Route path="/media-workloads/:slug/setup" element={<WorkloadSetup />} />
         </Routes>
         <HeaderSlotProbe />
       </MemoryRouter>

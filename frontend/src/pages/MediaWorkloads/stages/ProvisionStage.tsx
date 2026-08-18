@@ -70,7 +70,7 @@ export default function ProvisionStage({
   // onto settleQuery — behavior-preserving (user is only ever read via
   // `?? 'unknown'` audit-trail fallbacks below, which already degrade
   // honestly for ANY reason `user` is undefined, same reasoning as
-  // Operate.tsx's catalogData — but the shared primitive is still the
+  // WorkloadHome.tsx's catalogData — but the shared primitive is still the
   // shape a new consumer should copy).
   const { data: user } = settleQuery(useCurrentUser())
   const deployMutation = useDeployCatalog()
@@ -166,7 +166,7 @@ export default function ProvisionStage({
   //
   // P1b only covered the PENDING half of that lifecycle: the fallback was
   // keyed to `deployMutation.isPending` alone. On REJECTION, isPending flips
-  // false in THIS stage's own render before the PARENT (WorkloadDetail) has
+  // false in THIS stage's own render before the PARENT (WorkloadSetup) has
   // re-derived its `actions` prop to include 'deploy' again — that only
   // happens once this component's own passive onBusyChange effect below
   // fires and the parent re-renders, one commit later. In the render

@@ -386,7 +386,7 @@ export function lifecycleBadge(input: WorkloadLifecycleInput): LifecycleBadge {
 /**
  * What the guided flow's LAST CONSTRUCTIVE STEP (Configure) offers as its
  * own forward exit, now that Finalise & Review is no longer the array-
- * position "next" step out of it (WorkloadDetail.tsx's FORWARD_STEPS —
+ * position "next" step out of it (WorkloadSetup.tsx's FORWARD_STEPS —
  * Finalise stays reachable from the rail and from Previous; it is a
  * lifecycle action, not the next constructive step). This is an EXIT from
  * the setup surface to the existing Operate route — never a sixth flow
@@ -480,4 +480,61 @@ export function classifyForwardExit(input: WorkloadLifecycleInput): ForwardExit 
   // place the workload; whatever failure surface + recovery action the
   // active stage already renders stays exactly as is, not duplicated here.
   return 'none'
+}
+
+// ─────────────────────────────────────────────────────────────────────────
+// Cold entry at the workload's home (dmfdeploy#414)
+// ─────────────────────────────────────────────────────────────────────────
+
+/**
+ * What the bare workload URL — the workload's home (dmfdeploy#414 Addendum
+ * 2) — may honestly render. The route NEVER redirects: an unconditional
+ * redirect would guess a destination on a read the console cannot yet stand
+ * behind, and would make the same bookmark mean two different things
+ * depending on timing. This classifier is what decides which of the three
+ * honest renderings applies instead.
+ *
+ *   'live'       — a TRUSTED read reports the workload operating. Renders
+ *                   the live view — the same content the retired Operate
+ *                   route rendered.
+ *   'setup'      — a TRUSTED read reports a real workload that has not
+ *                   reached Operate, with nothing observed running for it
+ *                   yet — the "isn't running yet, continue setup" cold-entry
+ *                   state, with its one CTA into the guided flow.
+ *   'unresolved' — every other case: the read itself cannot be stood behind
+ *                   (loading, errored, stale, degraded, or the backend could
+ *                   not place the workload at all — 'unknown'), OR the read
+ *                   is trustworthy but genuinely ambiguous (backend position
+ *                   is still `configure` yet something is already observed
+ *                   running — not "operating" per the backend's own
+ *                   derivation, and not "nothing running" either, so a
+ *                   'setup' CTA would misstate the second half of that
+ *                   sentence). Renders an honest unresolved state with NO
+ *                   affordance asserting setup is the right next action —
+ *                   inventing one here would be exactly the sometimes-false
+ *                   success affordance dmfdeploy#412 exists to rule out.
+ *
+ * "Trusted" reuses the same notion classifyForwardExit and
+ * store/headerSlot.ts's TRUST side table already build from
+ * (WorkloadLifecycleInput.membersDataTrustworthy) — checked FIRST (Art. 9,
+ * unhappy path first), same discipline as classifyForwardExit.
+ *
+ * Deliberately a SEPARATE classifier from classifyForwardExit rather than a
+ * reuse of its `ForwardExit` union: that function answers a narrower
+ * question scoped to Configure's own exit (and never returns anything for
+ * `lifecycle === 'provision'`, which Home must still classify — a fresh
+ * record with nothing provisioned yet is exactly the first 'setup' case).
+ * Both read the same `WorkloadLifecycleInput` fields with the same
+ * trustworthy-first discipline, so they cannot disagree about what the
+ * workload actually is, only about which question each answers.
+ */
+export type HomeState = 'live' | 'setup' | 'unresolved'
+
+export function classifyHomeState(input: WorkloadLifecycleInput): HomeState {
+  if (!input.membersDataTrustworthy) return 'unresolved'
+  if (input.lifecycle === 'operate') return 'live'
+  if (input.lifecycle === 'unknown') return 'unresolved'
+  // 'provision' or 'configure': a trustworthy record short of Operate.
+  if (input.anyMemberObservedRunning) return 'unresolved'
+  return 'setup'
 }

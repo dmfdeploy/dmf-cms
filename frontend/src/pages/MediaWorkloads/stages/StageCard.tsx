@@ -27,7 +27,7 @@ import { InsideFlowStep } from '../FlowStep'
  * this arc — one wrapper deciding its own chrome is a smaller, more
  * reviewable change than five components each losing their outer element,
  * and it leaves the panels renderable with full chrome if anything ever
- * mounts them outside a flow step. (Nothing does today: WorkloadDetail is
+ * mounts them outside a flow step. (Nothing does today: WorkloadSetup is
  * the only caller. CreateWorkload deliberately does NOT reuse them — a
  * draft has no MediaWorkload to hand them — it renders its own draft
  * equivalents and only references these files in comments.)

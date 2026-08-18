@@ -7,6 +7,7 @@ import { useSetHeaderActionSlotNode } from '../store/headerActionSlot'
 import { useSetViewAs, useClearViewAs, useFacilityDetail, useMediaWorkloadsGrouped } from '../api/hooks'
 import NotificationBell from './NotificationBell'
 import LifecycleStrip from '../pages/MediaWorkloads/LifecycleStrip'
+import { workloadHomePath, workloadSetupPath } from '../lib/routes'
 import logoSvg from '../assets/dmfdeploy-icon-white.svg'
 
 /**
@@ -33,10 +34,13 @@ interface BreadcrumbTrail {
   crumbs: Crumb[]
   /**
    * The workload slug parsed from the URL when the current route is a
-   * workload-detail route (…/:slug or …/:slug/operate, "new" excluded) —
-   * otherwise ''. This is the same route-shape test the header slot (Arc 4
-   * WP-2) gates its second row on, exposed here rather than recomputed a
-   * second time, so there is exactly one place that decides "is this a
+   * workload-detail route (…/:slug or …/:slug/setup, "new" excluded) —
+   * otherwise ''. dmfdeploy#414: the old `…/:slug/operate` shape is gone
+   * (that route is now a compatibility redirect to the bare slug, handled
+   * entirely in App.tsx — it never reaches this breadcrumb as its own
+   * shape). This is the same route-shape test the header slot (Arc 4 WP-2)
+   * gates its second row on, exposed here rather than recomputed a second
+   * time, so there is exactly one place that decides "is this a
    * workload-detail route".
    */
   workloadSlug: string
@@ -83,9 +87,20 @@ function useBreadcrumbTrail(pathname: string): BreadcrumbTrail {
       crumbs.push({ label: 'Create media workload', href: '/media-workloads/new' })
     } else if (segments[1]) {
       const slug = segments[1]
-      crumbs.push({ label: workload?.name || slug, href: `/media-workloads/${slug}` })
-      if (segments[2] === 'operate') {
-        crumbs.push({ label: 'Operate', href: `/media-workloads/${slug}/operate` })
+      // dmfdeploy#414 H5: the workload crumb always links HOME (the bare
+      // slug is the workload's canonical identity) — never to whatever
+      // route the operator happens to be on. On the home route itself this
+      // crumb is also the LAST one, so it renders as the current-page label
+      // rather than a link (see the render loop below); its `href` is only
+      // ever followed from a route that isn't home, i.e. from Setup.
+      crumbs.push({ label: workload?.name || slug, href: workloadHomePath(slug) })
+      // dmfdeploy#414 H5: replaces the deleted Operate special-case crumb.
+      // The old `…/:slug/operate` shape no longer reaches this function at
+      // all (it is a compatibility redirect in App.tsx, resolved before any
+      // route the breadcrumb reads settles) — so there is no equivalent
+      // branch to keep for it, only this one new branch for Setup.
+      if (segments[2] === 'setup') {
+        crumbs.push({ label: 'Setup', href: workloadSetupPath(slug) })
       }
     }
     return { crumbs, workloadSlug }
@@ -276,10 +291,12 @@ export default function Topbar() {
 
       {/* Header slot, row 2 (Arc 4 WP-2): workload-detail routes only, a
           single non-wrapping row that scrolls horizontally at narrow
-          widths rather than wrapping to a third line. WorkloadDetail/Operate
-          register a rail MODEL here (store/headerSlot.ts) — this file is
-          the only place that turns it into pixels, via the same
-          LifecycleStrip component the page used to render inline. Reshaping
+          widths rather than wrapping to a third line. dmfdeploy#414 renamed
+          both registrants — WorkloadSetup.tsx (formerly WorkloadDetail.tsx)
+          and WorkloadHome.tsx (formerly Operate.tsx) — register a rail
+          MODEL here (store/headerSlot.ts) — this file is the only place
+          that turns it into pixels, via the same LifecycleStrip component
+          the page used to render inline. Reshaping
           that component's own layout to fit a single row is WP-3's job, not
           this one's.
 
@@ -325,7 +342,7 @@ export default function Topbar() {
           className="relative flex flex-nowrap items-center gap-3 border-b border-border px-4 py-2"
         >
           <div className="min-w-0 flex-1 overflow-x-auto">
-            <LifecycleStrip {...slotContent.rail} slug={slotContent.slug} />
+            <LifecycleStrip {...slotContent.rail} />
           </div>
           {/* Promoted primary action mount point (Arc 4 WP-3 spec B): a
               stage's own entry control (button + ReasonConfirm, with its

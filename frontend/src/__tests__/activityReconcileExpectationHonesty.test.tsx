@@ -4,7 +4,7 @@
  * Activity audit record (store/activity.ts) and renders it in the History
  * lane — across reloads, since the store is localStorage-backed. The old
  * string told the operator "the platform's automation lane converges it";
- * no such lane exists. This drives the REAL click path — WorkloadDetail's
+ * no such lane exists. This drives the REAL click path — WorkloadSetup's
  * Provision stage, mocked at the HTTP boundary with the exact JSON shape
  * the fixed backend now returns (pinned in test_media_workloads.py's
  * test_clear_reconcile_expectation_names_no_nonexistent_actor) — through to
@@ -26,12 +26,18 @@
  * `setState`, which defeated the first attempt at that). It also now
  * asserts on actor/role, not just reconcile_expectation, since the record's
  * whole point is C5 accountability, not only honest copy.
+ *
+ * GUARD LABEL (dmfdeploy#414 gate, round 1): this test is a GUARD pinning
+ * the pre-#414 #411 fix described above, unchanged by this arc — only the
+ * mount route moved, from the bare slug to /setup. Baseline: the pre-#414
+ * commit on `main`, where this same assertion passed identically against
+ * WorkloadDetail.tsx at the bare slug.
  */
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { cleanup, fireEvent, render, screen, waitFor, within } from '@testing-library/react'
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query'
 import { MemoryRouter, Route, Routes } from 'react-router-dom'
-import WorkloadDetail from '../pages/MediaWorkloads/WorkloadDetail'
+import WorkloadSetup from '../pages/MediaWorkloads/WorkloadSetup'
 import HistoryLane from '../pages/Activity/HistoryLane'
 import HeaderSlotProbe from './testUtils/HeaderSlotProbe'
 import { useActivityStore } from '../store/activity'
@@ -141,9 +147,9 @@ function renderDetail() {
   const queryClient = new QueryClient({ defaultOptions: { queries: { retry: false } } })
   render(
     <QueryClientProvider client={queryClient}>
-      <MemoryRouter initialEntries={['/media-workloads/studio-a']}>
+      <MemoryRouter initialEntries={['/media-workloads/studio-a/setup']}>
         <Routes>
-          <Route path="/media-workloads/:slug" element={<WorkloadDetail />} />
+          <Route path="/media-workloads/:slug/setup" element={<WorkloadSetup />} />
         </Routes>
         <HeaderSlotProbe />
       </MemoryRouter>

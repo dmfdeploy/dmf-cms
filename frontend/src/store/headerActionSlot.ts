@@ -14,7 +14,7 @@ import { create } from 'zustand'
  * {label, onClick, disabled} button, enough for a click, not for the WHOLE
  * loop the ruling requires (arming, ReasonConfirm, pending, error, terminal
  * result). Building that loop out of data passed through a store would mean
- * re-deriving, in WorkloadDetail, the exact runtime eligibility + mutation
+ * re-deriving, in WorkloadSetup, the exact runtime eligibility + mutation
  * state each stage already owns — a second copy of logic the stage is the
  * only correct owner of. A portal keeps the owning component the SAME
  * component; only its mount point moves. The descriptor, having no producer,
@@ -26,7 +26,7 @@ import { create } from 'zustand'
  * the CURRENT route (see Topbar.tsx's showSlotRow, unchanged) — and the one
  * caller of this store's node, a stage's own entry component, only exists
  * while WorkloadWizard is mounted, which is keyed on `workload.slug`
- * (WorkloadDetail.tsx) and therefore torn down — taking any portal it
+ * (WorkloadSetup.tsx) and therefore torn down — taking any portal it
  * created with it — before a different workload's wizard mounts. There is no
  * window where a promoted control from workload A can portal into a node
  * still labelled with workload B: React unmounts A's tree (running the

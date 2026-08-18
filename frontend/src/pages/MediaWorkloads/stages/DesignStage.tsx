@@ -176,7 +176,7 @@ export default function DesignStage({
  */
 function InstanceComposition({ instance }: { instance: string }) {
   // fix-round 5 (PR #81, codex sibling sweep): this was the unfixed twin of
-  // Operate.tsx's InstanceActiveSource — same seam, same missing check. An
+  // WorkloadHome.tsx's InstanceActiveSource — same seam, same missing check. An
   // errored read is unknown, not absence: a failed refetch can retain the
   // prior successful data while isError flips true (useInstanceTopology has
   // retry:false, and ConfigureStage's switch control calls topology.refetch()

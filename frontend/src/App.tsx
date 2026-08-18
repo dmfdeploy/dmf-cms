@@ -1,5 +1,5 @@
 import { useEffect } from 'react'
-import { Routes, Route, Navigate, useLocation } from 'react-router-dom'
+import { Routes, Route, Navigate, useLocation, useParams } from 'react-router-dom'
 import { useCurrentUser } from './api/hooks'
 import { useAuthStore } from './store/auth'
 import Shell from './components/Shell'
@@ -7,9 +7,10 @@ import ProtectedRoute from './components/ProtectedRoute'
 import Workspace from './pages/Workspace'
 import Facility from './pages/Facility'
 import FacilityDetail from './pages/Facility/Detail'
-import WorkloadDetail from './pages/MediaWorkloads/WorkloadDetail'
-import WorkloadOperate from './pages/MediaWorkloads/Operate'
+import WorkloadHome from './pages/MediaWorkloads/WorkloadHome'
+import WorkloadSetup from './pages/MediaWorkloads/WorkloadSetup'
 import CreateWorkload from './pages/MediaWorkloads/CreateWorkload'
+import { workloadHomePath } from './lib/routes'
 import Activity from './pages/Activity'
 import Monitoring from './pages/Monitoring'
 import MediaWorkloads from './pages/MediaWorkloads'
@@ -99,20 +100,55 @@ export default function App() {
             a dynamic one regardless of order, so "new" can never be swallowed
             as a slug. */}
         <Route path="/media-workloads/new" element={<ProtectedRoute><CreateWorkload /></ProtectedRoute>} />
-        {/* Arc B (#285): the workload surface is the guided sequential flow —
-            the five orchestration stages, gated, under the regrouped
-            vocabulary strip (five flow stages + Operate under its Control
-            label). Catalog and Activity content relocated here in S1. */}
-        <Route path="/media-workloads/:slug" element={<ProtectedRoute><WorkloadDetail /></ProtectedRoute>} />
-        {/* Arc B (#285): Operate left the flow page entirely (operator
-            direction 2026-08-01). It sits in the Control vertical (operator
-            ruling 2026-08-02), not the orchestration flow; its surface is
-            monitoring, so it gets its own route rather than a step. */}
-        <Route path="/media-workloads/:slug/operate" element={<ProtectedRoute><WorkloadOperate /></ProtectedRoute>} />
+        {/* dmfdeploy#414 — THE ROUTE CONTRACT (operator ruling: "the bare
+            workload URL is the workload's home"). Supersedes the Arc B
+            contract this block used to carry (bare slug = the guided flow;
+            Operate on its own `/operate` route) — see
+            `docs/design/DMF Console Glossary.md`'s wording-pass log and the
+            Arc 4 plan's own superseded-record note for where that's
+            recorded.
+              /media-workloads/:slug          -> WorkloadHome (the live view)
+              /media-workloads/:slug/setup    -> WorkloadSetup (the guided flow)
+              /media-workloads/:slug/operate  -> compatibility redirect, below
+            lib/routes.ts's workloadHomePath/workloadSetupPath are the ONLY
+            sanctioned way to construct either path from a slug elsewhere in
+            this app (dmfdeploy#414 H3) — a route pattern here is the one
+            place a literal path STRING is allowed to exist at all. */}
+        <Route path="/media-workloads/:slug" element={<ProtectedRoute><WorkloadHome /></ProtectedRoute>} />
+        <Route path="/media-workloads/:slug/setup" element={<ProtectedRoute><WorkloadSetup /></ProtectedRoute>} />
+        {/* dmfdeploy#414 H2/migration: the old `/operate` URL stays reachable
+            so older bookmarks and runbook copies fail gracefully, but it
+            must not remain a second live implementation — it is nothing but
+            a redirect to home, `replace` so the alias never enters browser
+            history (a back button press from home must not bounce the
+            operator forward onto this URL again — see OperateRedirect's own
+            docstring and the alias's history-behaviour test). */}
+        <Route
+          path="/media-workloads/:slug/operate"
+          element={<ProtectedRoute><OperateRedirect /></ProtectedRoute>}
+        />
         <Route path="/admin" element={<ProtectedRoute><Admin /></ProtectedRoute>} />
         <Route path="/settings" element={<ProtectedRoute><Settings /></ProtectedRoute>} />
         <Route path="*" element={<Navigate to="/" replace />} />
       </Route>
     </Routes>
   )
+}
+
+/**
+ * The compatibility alias for the retired `/operate` route (dmfdeploy#414).
+ * A plain, unconditional redirect to home — it reads no workload state and
+ * makes no decision, unlike WorkloadHome's own cold-entry classification,
+ * because a URL-shape alias is not a place to guess at anything: the
+ * destination route (WorkloadHome) is what decides live/setup-cold-entry/
+ * unresolved, exactly as it would for any other visit to the bare slug.
+ * `replace`, not a plain push: an alias that pushed a new history entry
+ * would let the browser's own back button return the operator TO the alias
+ * URL, which would immediately redirect them forward again — a bounce loop
+ * the whole point of `replace` is to rule out (pinned in
+ * railRouteContract.test.tsx's compatibility-alias history test).
+ */
+function OperateRedirect() {
+  const { slug } = useParams<{ slug: string }>()
+  return <Navigate to={workloadHomePath(slug ?? '')} replace />
 }

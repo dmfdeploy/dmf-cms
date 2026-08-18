@@ -7,14 +7,22 @@
  * under reduced motion); the fixed 16:9 box that never resizes on a dropped
  * frame; the live modal open/close; and the C5 clear-for-deployment flow from a
  * tile (reason required + Activity record).
+ *
+ * GUARD LABEL (dmfdeploy#414 gate, round 1): every test in this file is a
+ * GUARD pinning the pre-#414 behaviours described above, unchanged by this
+ * arc — only the mount route moved: renderSetupPage() now mounts /setup
+ * (was the bare slug), renderHomePage() now mounts the bare slug directly
+ * with WorkloadHome (was /operate with the retired Operate.tsx). Baseline:
+ * the pre-#414 commit on `main`, where these same assertions passed
+ * identically at the old routes.
  */
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { act, cleanup, render, screen, fireEvent, within } from '@testing-library/react'
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query'
 import { MemoryRouter, Route, Routes } from 'react-router-dom'
 import MediaWorkloads, { degradedReasonCopy } from '../pages/MediaWorkloads'
-import WorkloadDetail from '../pages/MediaWorkloads/WorkloadDetail'
-import WorkloadOperate from '../pages/MediaWorkloads/Operate'
+import WorkloadSetup from '../pages/MediaWorkloads/WorkloadSetup'
+import WorkloadHome from '../pages/MediaWorkloads/WorkloadHome'
 import HeaderSlotProbe from './testUtils/HeaderSlotProbe'
 import { assertNoInteractiveDescendant } from './testUtils/domAssertions'
 import {
@@ -205,19 +213,24 @@ function mkFetch(opts: HarnessOpts) {
 // reviewed behaviour a relocation quietly loses if nothing keeps watching.
 //
 // ARC B moved a subset AGAIN, for the same reason and with the same
-// treatment. Operate left the workload flow page onto its own monitoring
+// treatment: Operate left the workload flow page onto its own monitoring
 // route (operator direction 2026-08-01), taking the tile grid, the live
-// modal and every polling bound with it — so those blocks now mount
-// renderOperatePage() and the switch/clear blocks stay here. Nothing was
-// deleted in the move: if a bound below stops being asserted, it is because
-// someone removed it deliberately, not because a page got renamed.
-function renderPage() {
+// modal and every polling bound with it.
+//
+// DMFDEPLOY#414 moved it a THIRD time, same treatment again: the retired
+// Operate route is now WorkloadHome.tsx at the bare slug — the workload's
+// home — and the guided flow (what these tests call "setup") moved to its
+// own `/setup` route. renderHomePage() mounts the live-view blocks;
+// renderSetupPage() mounts the switch/clear blocks. Nothing was deleted in
+// either move: if a bound below stops being asserted, it is because someone
+// removed it deliberately, not because a page got renamed.
+function renderSetupPage() {
   const queryClient = new QueryClient({ defaultOptions: { queries: { retry: false } } })
   render(
     <QueryClientProvider client={queryClient}>
-      <MemoryRouter initialEntries={['/media-workloads/test']}>
+      <MemoryRouter initialEntries={['/media-workloads/test/setup']}>
         <Routes>
-          <Route path="/media-workloads/:slug" element={<WorkloadDetail />} />
+          <Route path="/media-workloads/:slug/setup" element={<WorkloadSetup />} />
         </Routes>
         <HeaderSlotProbe />
       </MemoryRouter>
@@ -226,17 +239,17 @@ function renderPage() {
 }
 
 /**
- * The Operate route — where the live view, the modal and every polling bound
- * moved in Arc B. Mounted at the real path so useParams resolves the slug
- * exactly as the app does.
+ * The workload's home (dmfdeploy#414) — where the live view, the modal and
+ * every polling bound live now. Mounted at the real bare-slug path so
+ * useParams resolves the slug exactly as the app does.
  */
-function renderOperatePage(slug = 'test') {
+function renderHomePage(slug = 'test') {
   const queryClient = new QueryClient({ defaultOptions: { queries: { retry: false } } })
   render(
     <QueryClientProvider client={queryClient}>
-      <MemoryRouter initialEntries={[`/media-workloads/${slug}/operate`]}>
+      <MemoryRouter initialEntries={[`/media-workloads/${slug}`]}>
         <Routes>
-          <Route path="/media-workloads/:slug/operate" element={<WorkloadOperate />} />
+          <Route path="/media-workloads/:slug" element={<WorkloadHome />} />
         </Routes>
         <HeaderSlotProbe />
       </MemoryRouter>
@@ -309,7 +322,7 @@ describe('grid: deterministic order + display-name join', () => {
         inst({ instance: 'mxl-b', function_key: 'unknown-fn' }),
       ],
     })
-    renderOperatePage()
+    renderHomePage()
 
     // display_name from catalog for known keys; fallback to function_key.
     expect(await screen.findAllByText('MXL Video Test View')).toHaveLength(2)
@@ -332,7 +345,7 @@ describe('polling bounds (codex P2/P3)', () => {
   it('does not poll status or render a live thumbnail when the tab is hidden', async () => {
     Object.defineProperty(document, 'visibilityState', { value: 'hidden', configurable: true })
     const { statusCalls } = mkFetch({})
-    renderOperatePage()
+    renderHomePage()
 
     await screen.findByText('MXL Video Test View')
     // No live thumbnail (placeholder shown instead) and status never fetched.
@@ -344,7 +357,7 @@ describe('polling bounds (codex P2/P3)', () => {
     // First: motion allowed (matchMedia absent -> not reduced).
     vi.useFakeTimers()
     mkFetch({})
-    renderOperatePage()
+    renderHomePage()
     await settle() // settle initial status fetch
 
     const img = screen.getByAltText(/Live preview of/) as HTMLImageElement
@@ -367,7 +380,7 @@ describe('polling bounds (codex P2/P3)', () => {
     }))
     vi.useFakeTimers()
     const rm = mkFetch({})
-    renderOperatePage()
+    renderHomePage()
     await settle()
 
     const img2 = screen.getByAltText(/Live preview of/) as HTMLImageElement
@@ -386,7 +399,7 @@ describe('polling bounds (codex P2/P3)', () => {
       inst({ instance: `mxl-${String(i).padStart(2, '0')}` }),
     )
     const cap = mkFetch({ instances: many })
-    renderOperatePage()
+    renderHomePage()
     await settle()
 
     const imgs = screen.getAllByAltText(/Live preview of/) as HTMLImageElement[]
@@ -416,7 +429,7 @@ describe('polling bounds (codex P2/P3)', () => {
     const h = mkFetch({
       instances: [inst({ instance: 'mxl-a' }), inst({ instance: 'mxl-b' })],
     })
-    renderOperatePage()
+    renderHomePage()
     await settle()
     await settle(STATUS_POLL_MS * 2)
     const bBefore = h.statusCalls['mxl-b'] ?? 0
@@ -439,7 +452,7 @@ describe('polling bounds (codex P2/P3)', () => {
   it('never hits the retired legacy aggregate on the live path', async () => {
     vi.useFakeTimers()
     const h = mkFetch({})
-    renderOperatePage()
+    renderHomePage()
     await settle()
     await settle(STATUS_POLL_MS * 3)
 
@@ -461,7 +474,7 @@ describe('polling bounds (codex P2/P3)', () => {
 describe('fixed 16:9 box (hard gate 5)', () => {
   it('swaps a dropped frame for a placeholder without removing the aspect box', async () => {
     mkFetch({})
-    renderOperatePage()
+    renderHomePage()
     const img = (await screen.findByAltText(/Live preview of/)) as HTMLImageElement
     const box = img.parentElement as HTMLElement
     expect(box.className).toContain('aspect-video')
@@ -477,7 +490,7 @@ describe('fixed 16:9 box (hard gate 5)', () => {
 describe('live modal', () => {
   it('opens on tile click and closes on Escape', async () => {
     mkFetch({})
-    renderOperatePage()
+    renderHomePage()
     const tile = (await screen.findByText('MXL Video Test View')).closest('[role="button"]')!
     fireEvent.click(tile)
 
@@ -493,7 +506,7 @@ describe('live modal', () => {
 
   it('moves focus into the dialog on open (aria-modal focus management)', async () => {
     mkFetch({})
-    renderOperatePage()
+    renderHomePage()
     const tile = (await screen.findByText('MXL Video Test View')).closest('[role="button"]')!
     fireEvent.click(tile)
     const dialog = await screen.findByRole('dialog')
@@ -505,7 +518,7 @@ describe('live modal', () => {
     expect(MODAL_STATUS_POLL_MS).toBe(200) // the flow stats/head index must tick at 200ms, not slower
     vi.useFakeTimers()
     const h = mkFetch({})
-    renderOperatePage()
+    renderHomePage()
     await settle()
 
     const tile = screen.getByText('MXL Video Test View').closest('[role="button"]')!
@@ -538,7 +551,7 @@ describe('clear-for-deployment on the Provision stage (C5)', () => {
         reconcile: { expectation: 'converging', watch: '' },
       },
     })
-    renderPage()
+    renderSetupPage()
 
     fireEvent.click(await screen.findByRole('button', { name: 'Clear for deployment' }))
     // Armed; nothing sent yet.
@@ -598,7 +611,7 @@ function topologyMxlA(overrides: Record<string, unknown> = {}) {
 describe('switch source on the Configure stage (umbrella #201 WP5)', () => {
   it('renders no switch control when the instance carries no topology', async () => {
     mkFetch({})
-    renderPage()
+    renderSetupPage()
     await screen.findByRole('navigation', { name: 'Media workload lifecycle' })
     openStep('Configure')
     expect(screen.queryByRole('button', { name: 'Switch source' })).toBeNull()
@@ -606,7 +619,7 @@ describe('switch source on the Configure stage (umbrella #201 WP5)', () => {
 
   it('lists the topology\'s OTHER sources only, and shows the current one before arming', async () => {
     mkFetch({ topology: topologyMxlA() })
-    renderPage()
+    renderSetupPage()
     await screen.findByRole('navigation', { name: 'Media workload lifecycle' })
     openStep('Configure')
 
@@ -630,7 +643,7 @@ describe('switch source on the Configure stage (umbrella #201 WP5)', () => {
         observed_at: freshObservedAt(),
       }),
     })
-    renderPage()
+    renderSetupPage()
     await screen.findByRole('navigation', { name: 'Media workload lifecycle' })
     openStep('Configure')
 
@@ -651,7 +664,7 @@ describe('switch source on the Configure stage (umbrella #201 WP5)', () => {
         observed_at: null,
       }),
     })
-    renderPage()
+    renderSetupPage()
     await screen.findByRole('navigation', { name: 'Media workload lifecycle' })
     openStep('Configure')
 
@@ -674,7 +687,7 @@ describe('switch source on the Configure stage (umbrella #201 WP5)', () => {
         observed_at: staleObservedAt(),
       }),
     })
-    renderPage()
+    renderSetupPage()
     await screen.findByRole('navigation', { name: 'Media workload lifecycle' })
     openStep('Configure')
 
@@ -708,7 +721,7 @@ describe('switch source on the Configure stage (umbrella #201 WP5)', () => {
         role: 'engineer',
       },
     })
-    renderPage()
+    renderSetupPage()
     await screen.findByRole('navigation', { name: 'Media workload lifecycle' })
     openStep('Configure')
 
@@ -760,7 +773,7 @@ describe('switch source on the Configure stage (umbrella #201 WP5)', () => {
         role: 'engineer',
       },
     })
-    renderPage()
+    renderSetupPage()
     await screen.findByRole('navigation', { name: 'Media workload lifecycle' })
     openStep('Configure')
 
@@ -801,7 +814,7 @@ describe('switch source on the Configure stage (umbrella #201 WP5)', () => {
         role: 'engineer',
       },
     })
-    renderPage()
+    renderSetupPage()
     await screen.findByRole('navigation', { name: 'Media workload lifecycle' })
     openStep('Configure')
 
@@ -833,7 +846,7 @@ describe('switch source on the Configure stage (umbrella #201 WP5)', () => {
   it('goes stale reactively while armed, disabling Confirm and blocking the POST', async () => {
     vi.useFakeTimers()
     const { switchCalls } = mkFetch({ topology: topologyMxlA() })
-    renderPage()
+    renderSetupPage()
     await settle() // let the grouped/catalog fetch resolve so the tile renders
 
     await settle(0) // let the Configure stage's topology fetch resolve
@@ -873,7 +886,7 @@ describe('switch source on the Configure stage (umbrella #201 WP5)', () => {
 describe('grouped endpoint + degraded rendering (P3)', () => {
   it('requests /api/media-workloads/grouped (not the flat endpoint)', async () => {
     const { fetchMock } = mkFetch({})
-    renderPage()
+    renderSetupPage()
     // Anchored on the flow page's own rail rather than a tile display name:
     // the tiles moved to the Operate route in Arc B, and this test is about
     // which inventory endpoint the page reads, not about tiles. The
@@ -944,7 +957,7 @@ describe('grouped endpoint + degraded rendering (P3)', () => {
 // tile badge, the "Create media workload" entry point, and the Unassigned
 // group's disposal explanation. All three render on the LIST page, so these
 // tests drive renderListPage() (like the grouped/degraded describe above),
-// not renderPage() (which mounts WorkloadDetail at a fixed slug).
+// not renderSetupPage() (which mounts WorkloadSetup at a fixed slug).
 //
 // mkFetch's harness bakes a single workload named 'test' into the grouped
 // response, which cannot express multiple workloads or a distinct
@@ -1318,7 +1331,7 @@ describe('bounds are universal, including the fallback panel (GATE-S1-RV)', () =
     Object.defineProperty(document, 'visibilityState', { value: 'hidden', configurable: true })
     vi.useFakeTimers()
     const h = mkFetch({ instances: [inst({ instance: 'mxl-a', live_view: false })] })
-    renderOperatePage()
+    renderHomePage()
     await settle()
     await settle(STATUS_POLL_MS * 3)
 

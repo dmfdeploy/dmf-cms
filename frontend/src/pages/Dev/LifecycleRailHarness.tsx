@@ -1,7 +1,7 @@
 import { type FlowStepId } from '../../lib/workloadFlow'
 import type { WorkloadLifecycleInput } from '../../lib/workloadLifecycle'
 import LifecycleStrip from '../MediaWorkloads/LifecycleStrip'
-import { LOCKED_REASON } from '../MediaWorkloads/WorkloadDetail'
+import { LOCKED_REASON } from '../MediaWorkloads/WorkloadSetup'
 import { classifyWorkloadForHeaderSlot, buildHeaderSlotRail } from '../../store/headerSlot'
 
 /**
@@ -39,8 +39,18 @@ import { classifyWorkloadForHeaderSlot, buildHeaderSlotRail } from '../../store/
  * (via the tiny `fixtureInstances` helper below, or by hand for the one
  * specimen that needs mixed states), and classifyWorkloadForHeaderSlot
  * derives the counts itself, the same formula (`observed_state ===
- * 'running'` over `instances.length`) WorkloadDetail.tsx/Operate.tsx would
- * apply to a real workload's instances.
+ * 'running'` over `instances.length`) WorkloadSetup.tsx/WorkloadHome.tsx
+ * would apply to a real workload's instances.
+ *
+ * DMFDEPLOY#414: `activeChip` no longer accepts `'operate'` — Operate is no
+ * longer a rail entry at all (LifecycleStrip.tsx's own docstring), so there
+ * is nothing left for a chip value to select. The specimens that used to
+ * demonstrate the Operate-key tally divergence/convergence pair (formerly
+ * #6 and #7) are removed with it — that render rule no longer exists to
+ * demonstrate. Specimen #3 (still below) is repointed at what actually
+ * happens on an off-flow workload now: no tally anywhere on the five-key
+ * rail, because there is no longer a sixth key for the tally to compare
+ * against.
  */
 
 interface Specimen {
@@ -53,7 +63,7 @@ interface Specimen {
    *  derives running/total from this itself; nothing here states a count
    *  directly. See the file docstring's FIX ROUND note. */
   instances: { observed_state: string }[]
-  activeChip: FlowStepId | 'operate' | null
+  activeChip: FlowStepId | null
   jobOwnerLabel: string | null
   jobInFlight: boolean
 }
@@ -126,8 +136,8 @@ const SPECIMENS: Specimen[] = [
   {
     id: '3-operate-default',
     slug: 'harness-operate-default',
-    title: '3 · lifecycle=operate — WorkloadDetail\'s own real default selection (Finalise & Review)',
-    note: 'Same classifier input as specimens 6 and 7 (see OPERATE_HEALTHY) — offFlow is true, every flow step reads complete/open, no flow step is "current". activeChip mirrors WorkloadDetail.tsx\'s own defaultSelection ladder for an off-flow workload with no hash target ("if (offFlow) return \'finalise\'") — this is what an operator actually sees landing on a running workload\'s detail page, not a synthetic case. The tally should render on Operate (position), since the selected key (Finalise & Review) diverges from it.',
+    title: '3 · lifecycle=operate — WorkloadSetup\'s own real default selection (Finalise & Review), no tally anywhere',
+    note: 'offFlow is true, every flow step reads complete/open, no flow step is "current". activeChip mirrors WorkloadSetup.tsx\'s own defaultSelection ladder for an off-flow workload with no hash target ("if (offFlow) return \'finalise\'") — this is what an operator actually sees landing on the setup route for a running workload, not a synthetic case. dmfdeploy#414: Operate is no longer a rail entry, so there is no sixth key for the position tally to land on either — none of the five keys shows one, even though Finalise & Review (the selection) genuinely diverges from the workload\'s real position (Operate, off this rail entirely). That divergence is stated in prose instead, on WorkloadSetup\'s own offFlow banner, not on this rail.',
     input: OPERATE_HEALTHY,
     instances: OPERATE_HEALTHY_INSTANCES,
     activeChip: 'finalise',
@@ -162,34 +172,12 @@ const SPECIMENS: Specimen[] = [
     id: '5-unknown',
     slug: 'harness-unknown',
     title: '5 · lifecycle=unknown — 2 record, 3 locked, no tally anywhere',
-    note: 'The backend could not place this workload. Design/Plan render as "record" (readable, no claim of completion) — the only two steps that survive an undetermined position; Provision/Configure/Finalise all lock with a stated reason. current is null and offFlow is false, so no flow key AND Operate both carry no tally — there is no position to mark. membersDataTrustworthy is left unset on this specimen\'s input (an unknown-lifecycle workload has no member-state read worth trusting) — this is NOT a "TRUST lookup miss": classifyWorkloadForHeaderSlot always runs `TRUST.set(classified, { trustworthy: input.membersDataTrustworthy ?? false, ... })`, so the omitted field is stored as an explicit `false`, same as any other optional WorkloadLifecycleInput field defaulting via `?? false`. instances here are deliberately non-zero (3 running of 5) anyway, so this specimen still doubles as a live proof that the REAL pipeline withholds the count on that stored false, not a hand-asserted one: it should read "Count unavailable" regardless of what the instances array actually says.',
+    note: 'The backend could not place this workload. Design/Plan render as "record" (readable, no claim of completion) — the only two steps that survive an undetermined position; Provision/Configure/Finalise all lock with a stated reason. current is null, so no flow key carries a tally — there is no position to mark. membersDataTrustworthy is left unset on this specimen\'s input (an unknown-lifecycle workload has no member-state read worth trusting) — this is NOT a "TRUST lookup miss": classifyWorkloadForHeaderSlot always runs `TRUST.set(classified, { trustworthy: input.membersDataTrustworthy ?? false, ... })`, so the omitted field is stored as an explicit `false`, same as any other optional WorkloadLifecycleInput field defaulting via `?? false`. instances here are deliberately non-zero (3 running of 5) anyway, so this specimen still doubles as a live proof that the REAL pipeline withholds the count on that stored false, not a hand-asserted one: it should read "Count unavailable" regardless of what the instances array actually says.',
     input: {
       lifecycle: 'unknown',
     },
     instances: fixtureInstances(3, 5),
     activeChip: 'design',
-    jobOwnerLabel: null,
-    jobInFlight: false,
-  },
-  {
-    id: '6-divergence',
-    slug: 'harness-divergence',
-    title: '6 · DIVERGENCE — lifecycle=operate, activeChip=design',
-    note: 'Same classifier input as specimen 3/7 (OPERATE_HEALTHY) — only activeChip differs. Position (Operate) and selection (Design) diverge, so the tally bar MUST be visible on the Operate key. Pairs with specimen 7 below to isolate the tally\'s render rule to exactly one variable.',
-    input: OPERATE_HEALTHY,
-    instances: OPERATE_HEALTHY_INSTANCES,
-    activeChip: 'design',
-    jobOwnerLabel: null,
-    jobInFlight: false,
-  },
-  {
-    id: '7-convergence',
-    slug: 'harness-convergence',
-    title: '7 · CONVERGENCE — lifecycle=operate, activeChip=operate',
-    note: 'Identical classifier input to specimen 6 — only activeChip differs, and it now matches the position exactly (this is literally what Operate.tsx always passes as activeChip in production). The tally bar MUST be absent here — the illuminated Operate key already says "this is where you are".',
-    input: OPERATE_HEALTHY,
-    instances: OPERATE_HEALTHY_INSTANCES,
-    activeChip: 'operate',
     jobOwnerLabel: null,
     jobInFlight: false,
   },
@@ -260,7 +248,7 @@ function SpecimenRow({ specimen }: { specimen: Specimen }) {
                 use for the real header slot content — rail is the genuine
                 HeaderSlotRailModel buildHeaderSlotRail produced above, not
                 a hand-assembled prop bag. */}
-            <LifecycleStrip {...rail} slug={specimen.slug} />
+            <LifecycleStrip {...rail} />
           </div>
         </div>
       </div>

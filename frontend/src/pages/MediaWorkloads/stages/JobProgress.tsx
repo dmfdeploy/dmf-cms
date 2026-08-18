@@ -58,6 +58,7 @@ export function OperationStatusLine({
   onLaunched,
   onError,
   onTerminal,
+  onDoneChange,
 }: {
   operationId: string
   onLaunched: (jobId: number) => void
@@ -73,6 +74,25 @@ export function OperationStatusLine({
    * jobProgressHonesty.test.tsx, only ever needed onLaunched/onError.
    */
   onTerminal?: (operation: Operation) => void
+  /**
+   * dmfdeploy#414 gate, round 2 (P1): the raw "has this operation reached
+   * error or any OPERATION_TERMINAL_STATES" fact, reported the instant it is
+   * known — the operation-level twin of JobStatusLine's own `onDoneChange`
+   * below, and for the identical reason. onError/onTerminal above are
+   * deliberately PACED (1-3s: "long enough to actually read before the line
+   * clears", per the comment on that timer) so a human watching THIS line
+   * has time to read "Error"/"Rollback required"/… before whatever consumes
+   * the callback reacts to it. Round 1 fixed the JOB half of this arc's own
+   * defect class (a job-navigation lock reading a display-paced signal) but
+   * left the OPERATION half of the same lock reading onError/onTerminal
+   * directly — so a genuinely-terminal operation left the lock engaged
+   * (claiming a launch was still in flight) for up to 3 more seconds after
+   * the label right next to it had already switched to "Error" or "Failed".
+   * Same fix shape as onDoneChange: a separate effect, no setTimeout, so it
+   * cannot perturb the pacing above in either direction. Optional: existing
+   * callers (Provision's own OperationStatusLine usage) never needed it.
+   */
+  onDoneChange?: (done: boolean) => void
 }) {
   // fix-round 6 (PR #81, umbrella #385 codex sweep): this polls every 3s
   // while non-terminal, and `data` was the only thing read — a settled
@@ -117,6 +137,16 @@ export function OperationStatusLine({
       if (timer) clearTimeout(timer)
     }
   }, [operation, operationId, onLaunched, onError, onTerminal])
+
+  // dmfdeploy#414 gate, round 2 (P1): see onDoneChange's own docstring above.
+  // Deliberately its own effect, not folded into the one above — that one
+  // schedules the display's PACED handoff and must keep doing exactly that,
+  // unchanged; this one reports the unpaced fact as soon as `operation`
+  // itself changes. Recomputed fresh on every `operation` change rather than
+  // read off the timer, so it is never even indirectly gated by a delay.
+  useEffect(() => {
+    onDoneChange?.(operation != null && (operation.state === 'error' || OPERATION_TERMINAL_STATES.includes(operation.state)))
+  }, [operation, onDoneChange])
 
   if (!operation) {
     return (
@@ -165,11 +195,21 @@ export function JobStatusLine({
   // Catalog just lets the line disappear. Optional so Provision (which has
   // no review copy to keep) is unaffected.
   onStatusChange,
+  // dmfdeploy#414 gate, round 1 (P1): the raw `is_done` fact, reported the
+  // instant it changes — deliberately NOT the same signal as `onComplete`
+  // below, which fires only after a 2s deliberate read-the-outcome pacing
+  // delay. A caller gating a job-navigation LOCK (WorkloadMaterializing's
+  // ViewLiveExit) needs the honest "is a mutation still in flight" fact as
+  // soon as it is known, not paced for readability the way the query-
+  // invalidation trigger is. Optional: existing callers (Provision,
+  // Finalise & Review) only ever needed onComplete/onStatusChange.
+  onDoneChange,
 }: {
   entryKey: string
   jobId: number
   onComplete: (key: string) => void
   onStatusChange?: (status: string) => void
+  onDoneChange?: (done: boolean) => void
 }) {
   // fix-round 6 (PR #81, umbrella #385 codex sweep): same shape as
   // OperationStatusLine above — a settled failed refetch (this polls every
@@ -179,6 +219,10 @@ export function JobStatusLine({
   useEffect(() => {
     if (jobStatus?.status) onStatusChange?.(jobStatus.status)
   }, [jobStatus?.status, onStatusChange])
+
+  useEffect(() => {
+    onDoneChange?.(Boolean(jobStatus?.is_done))
+  }, [jobStatus?.is_done, onDoneChange])
 
   useEffect(() => {
     if (!jobStatus?.is_done) return

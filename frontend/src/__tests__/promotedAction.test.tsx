@@ -5,11 +5,19 @@
  * already disprove (both would render one). An App/Shell integration test
  * on purpose (same reasoning as railRouteContract.test.tsx): the promotion
  * mechanism is a portal from a stage component into a DOM node Topbar
- * publishes (store/headerActionSlot.ts) — a WorkloadDetail-only render
- * (workloadDetailStageWedge.test.tsx and friends) never mounts Topbar, so
+ * publishes (store/headerActionSlot.ts) — a WorkloadSetup-only render
+ * (workloadSetupStageWedge.test.tsx and friends) never mounts Topbar, so
  * the portal target never exists there and every one of THOSE tests
  * exercises PromotedAction's inline fallback instead, unchanged. This file
  * is what actually proves the promoted path.
+ *
+ * GUARD LABEL (dmfdeploy#414 gate, round 1): every test in this file is a
+ * GUARD pinning the pre-#414 Arc 4 WP-3 spec B promotion contract described
+ * above, unchanged by this arc — only the mount route moved, from the bare
+ * slug to /setup (Provision no longer mounts at the bare slug at all,
+ * dmfdeploy#414's own route inversion — see App.tsx). Baseline: the
+ * pre-#414 commit on `main`, where these same assertions passed
+ * identically against WorkloadDetail.tsx at the bare slug.
  */
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import { useState } from 'react'
@@ -134,7 +142,7 @@ afterEach(() => {
 describe('exactly one eligible deploy entry promotes into the header', () => {
   it('mounts the Deploy button in the header row, and the body says where it went', async () => {
     stubFetch([catalogEntry()])
-    renderAppAt('/media-workloads/studio-a')
+    renderAppAt('/media-workloads/studio-a/setup')
 
     await screen.findByRole('navigation', { name: 'Media workload lifecycle' })
     const provision = provisionSection()
@@ -155,7 +163,7 @@ describe('exactly one eligible deploy entry promotes into the header', () => {
 describe('two eligible deploy entries: neither promotes', () => {
   it('renders both Deploy buttons inline, and the header carries no Deploy button', async () => {
     stubFetch([catalogEntry(), catalogEntry({ key: 'viewer', display_name: 'MXL Viewer' })])
-    renderAppAt('/media-workloads/studio-a')
+    renderAppAt('/media-workloads/studio-a/setup')
 
     await screen.findByRole('navigation', { name: 'Media workload lifecycle' })
     const provision = provisionSection()
@@ -170,7 +178,7 @@ describe('two eligible deploy entries: neither promotes', () => {
 describe('the promoted control carries the WHOLE loop, including persistent failure', () => {
   it('arms, confirms, and keeps a refused deploy legible in the header popover past the transient echo', async () => {
     stubFetch([catalogEntry()], () => json({ error: 'reason-required' }, 400))
-    renderAppAt('/media-workloads/studio-a')
+    renderAppAt('/media-workloads/studio-a/setup')
 
     await screen.findByRole('navigation', { name: 'Media workload lifecycle' })
     const header = headerRow()
@@ -221,7 +229,7 @@ describe('FIX ROUND P1b: the promoted control stays in the header WHILE the writ
       await gate
       return json({ error: 'reason-required' }, 400)
     })
-    renderAppAt('/media-workloads/studio-a')
+    renderAppAt('/media-workloads/studio-a/setup')
 
     await screen.findByRole('navigation', { name: 'Media workload lifecycle' })
     const header = headerRow()
@@ -254,7 +262,7 @@ describe('FIX ROUND P1b: the promoted control stays in the header WHILE the writ
 describe('FIX ROUND P1a: the armed panel is anchored to stay inside the viewport', () => {
   it('positions relative to the header row, not to its own mount span (which collapses to zero width when its only child is the out-of-flow panel)', async () => {
     stubFetch([catalogEntry()])
-    renderAppAt('/media-workloads/studio-a')
+    renderAppAt('/media-workloads/studio-a/setup')
 
     await screen.findByRole('navigation', { name: 'Media workload lifecycle' })
     const header = headerRow()
@@ -290,7 +298,7 @@ describe('FIX ROUND P1a: the armed panel is anchored to stay inside the viewport
 // FIX ROUND (P3 round 3, P2-3 — two independent reviewers, same lines): the
 // P1b latch above only covers the PENDING window. On REJECTION,
 // deployMutation.isPending flips false in ProvisionStage's own render
-// before WorkloadDetail (the parent) has re-derived its `actions` prop to
+// before WorkloadSetup (the parent) has re-derived its `actions` prop to
 // include 'deploy' again — that only happens once ProvisionStage's own
 // passive onBusyChange effect fires and the parent re-renders, one commit
 // later. In the render between those two things, the P1b-only latch
@@ -298,7 +306,7 @@ describe('FIX ROUND P1a: the armed panel is anchored to stay inside the viewport
 // now-erroring panel falls back to the page body for exactly that one
 // committed render before snapping back once the parent catches up.
 //
-// Racing a real WorkloadDetail for that one-commit window would mean
+// Racing a real WorkloadSetup for that one-commit window would mean
 // racing `waitFor`'s poll against a transient frame it could step right
 // over — not a reliable regression guard. This drives ProvisionStage
 // directly instead, with a controlled `actions` prop whose `onBusyChange`
@@ -321,7 +329,7 @@ function ProvisionStageHarness({ workload }: { workload: MediaWorkload }) {
       state="available"
       actions={actions}
       // Deliberately a no-op — see the block comment above. A real
-      // WorkloadDetail eventually calls back with `false` and recomputes
+      // WorkloadSetup eventually calls back with `false` and recomputes
       // `actions` to include 'deploy' again; this harness models that
       // catch-up NEVER happening.
       onBusyChange={() => {}}

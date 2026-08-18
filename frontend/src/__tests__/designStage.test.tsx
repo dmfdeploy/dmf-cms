@@ -2,9 +2,10 @@
  * DesignStage (fix-round 5, PR #81, codex sibling sweep) — two defects:
  *
  *  1. InstanceComposition (the topology-derived "composed of…" line) was
- *     the unfixed twin of Operate.tsx's InstanceActiveSource: no isError
- *     check, so a settled failed refetch kept naming a retained (possibly
- *     stale) active source as current.
+ *     the unfixed twin of Operate.tsx's InstanceActiveSource (dmfdeploy#414
+ *     renamed that file WorkloadHome.tsx; the component itself is
+ *     unrenamed): no isError check, so a settled failed refetch kept
+ *     naming a retained (possibly stale) active source as current.
  *  2. A failed useCatalog read left `catalogEntries` empty exactly like a
  *     genuinely-empty catalog — every function's join then missed, and
  *     EVERY item rendered "this function key isn't in the current catalog…
@@ -180,9 +181,10 @@ describe('DesignStage — InstanceComposition topology retained-error honesty', 
       await queryClient.refetchQueries({ queryKey: ['media-workloads-topology', 'mxl-a'] })
     })
 
-    // The row withdraws entirely — same contract as Operate.tsx's already-
-    // fixed InstanceActiveSource: an errored read is unknown, not a stale
-    // "still current" claim, so it says nothing rather than something wrong.
+    // The row withdraws entirely — same contract as WorkloadHome.tsx's
+    // already-fixed InstanceActiveSource (Operate.tsx at the time this fix
+    // landed): an errored read is unknown, not a stale "still current"
+    // claim, so it says nothing rather than something wrong.
     // waitFor: the observer's re-render notification can land a tick after
     // the refetch promise itself settles.
     await waitFor(() => {

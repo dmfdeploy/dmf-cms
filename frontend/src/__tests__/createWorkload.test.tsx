@@ -1,6 +1,6 @@
 /**
  * Create Media Workload — the draft leg of the guided sequential flow
- * (umbrella #285 addendum). Harness copied from workloadDetail.test.tsx:
+ * (umbrella #285 addendum). Harness copied from workloadSetup.test.tsx:
  * MSW-free, a fresh react-query QueryClient per render, fetch stubbed via
  * vi.stubGlobal.
  *
@@ -31,13 +31,23 @@
  *   - the draft's DATA (not the wizard's own navigation position) survives
  *     navigating away and back within the tab, via a non-persisted store,
  *     and is architecturally incapable of surviving a reload.
+ *
+ * GUARD LABEL (dmfdeploy#414 gate, round 1): every test in this file is a
+ * GUARD pinning the pre-#414 WP-3 spec C draft-wizard contract described
+ * above, EXCEPT the two describe blocks explicitly marked "dmfdeploy#414"
+ * below ("the destination never denies a just-launched workload"'s two new
+ * "View live" lock tests, and the H1 destination-route change baked into
+ * renderCreate() itself) — those pin THIS arc's own new behaviour, not a
+ * guard. Baseline for the guards: the pre-#414 commit on `main`, where
+ * these same assertions passed identically with the destination mounted at
+ * the bare slug rather than /setup.
  */
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import { cleanup, fireEvent, render, screen, waitFor, within } from '@testing-library/react'
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query'
 import { MemoryRouter, Route, Routes } from 'react-router-dom'
 import CreateWorkload from '../pages/MediaWorkloads/CreateWorkload'
-import WorkloadDetail from '../pages/MediaWorkloads/WorkloadDetail'
+import WorkloadSetup from '../pages/MediaWorkloads/WorkloadSetup'
 import { readLaunchState } from '../pages/MediaWorkloads/WorkloadMaterializing'
 import HeaderSlotProbe from './testUtils/HeaderSlotProbe'
 import { useDraftWorkloadStore } from '../store/draftWorkload'
@@ -87,6 +97,18 @@ interface FetchOpts {
   jobStatus?: Record<number, { status: string; is_done: boolean }>
   /** Operation status the destination polls, for the async launch path. */
   operation?: Record<string, unknown>
+  /** dmfdeploy#414 gate, round 3: HTTP status the grouped-inventory read
+   *  returns, simulating a persistently failing read (WorkloadSetup's own
+   *  `error` branch). */
+  groupedStatus?: number
+  /** dmfdeploy#414 gate, round 3: the `configured` flag the grouped-
+   *  inventory read reports (WorkloadSetup's own unconfigured branch). */
+  groupedConfigured?: boolean
+  /** dmfdeploy#414 gate, round 3: never resolves the grouped-inventory
+   *  read, pinning the query in `isLoading` for the whole test — the exact
+   *  race the gate found (a launch handoff reaching WorkloadSetup while its
+   *  own read has not resolved even once). */
+  groupedPending?: boolean
 }
 
 function mkFetch(opts: FetchOpts = {}) {
@@ -133,8 +155,13 @@ function mkFetch(opts: FetchOpts = {}) {
     }
     if (url.endsWith('/api/media-workloads/grouped')) {
       calls.grouped += 1
+      // dmfdeploy#414 gate, round 3: checked before the ordinary response
+      // below, same shape as catalogGate above — a promise that never
+      // settles pins isLoading indefinitely rather than racing a real delay.
+      if (opts.groupedPending) return new Promise<Response>(() => {})
+      if (opts.groupedStatus) return json({ error: 'boom' }, opts.groupedStatus)
       return json({
-        configured: true,
+        configured: opts.groupedConfigured ?? true,
         degraded: false,
         scope: [],
         workloads,
@@ -183,7 +210,7 @@ function mkFetch(opts: FetchOpts = {}) {
 // finished while hiding the actual bug — the real page had no idea a launch
 // had just happened and rendered "Workload not found" for the workload the
 // operator had just created. The stub was the reason the defect shipped, so
-// the harness now mounts the REAL WorkloadDetail and the journey is asserted
+// the harness now mounts the REAL WorkloadSetup and the journey is asserted
 // end to end.
 function renderCreate() {
   const queryClient = new QueryClient({ defaultOptions: { queries: { retry: false } } })
@@ -192,7 +219,7 @@ function renderCreate() {
       <MemoryRouter initialEntries={['/media-workloads/new']}>
         <Routes>
           <Route path="/media-workloads/new" element={<CreateWorkload />} />
-          <Route path="/media-workloads/:slug" element={<WorkloadDetail />} />
+          <Route path="/media-workloads/:slug/setup" element={<WorkloadSetup />} />
         </Routes>
         <HeaderSlotProbe />
       </MemoryRouter>
@@ -212,7 +239,7 @@ function renderCreate() {
 // five numbered, coloured lifecycle stages — see CreateWorkload.tsx's file
 // docstring). `.closest()` with a selector list returns the nearest
 // ancestor matching either half, so one helper covers both step shapes —
-// the same fix workloadDetailStageWedge.test.tsx's `stageSection()` already
+// the same fix workloadSetupStageWedge.test.tsx's `stageSection()` already
 // applies for the real wizard's FlowStep-only case.
 function stepSection(label: string): HTMLElement {
   const heading = screen.getByRole('heading', { name: label, level: 2 })
@@ -264,7 +291,7 @@ async function reachDesign(name = 'Studio A') {
  * controls are UNCONDITIONAL and live in the same container as a step's
  * (locked-or-not) content, so a locked step still has buttons in it now —
  * just none that DO anything. Mirrors the identical discipline
- * workloadDetail.test.tsx's Design-step assertion already uses for the real
+ * workloadSetup.test.tsx's Design-step assertion already uses for the real
  * wizard's own nav chrome.
  */
 function onlyNavButtons(section: HTMLElement): boolean {
@@ -289,7 +316,7 @@ afterEach(() => {
 describe('EBU taxonomy on the draft template picker', () => {
   it('keeps layer/vertical/function-type/lifecycle-owner behind a closed System details disclosure', async () => {
     // Arc 4 WP-3 (umbrella #347): same contract as the real workload's
-    // Design step (workloadDetail.test.tsx) — see that test's own comment
+    // Design step (workloadSetup.test.tsx) — see that test's own comment
     // for what a jsdom-based test can and cannot prove about a closed
     // <details>'s accessibility. This pins the draft's own TemplatePicker,
     // which renders the identical disclosure independently.
@@ -622,7 +649,7 @@ describe('Provision: the deploy POST', () => {
     expect(confirm.disabled).toBe(false)
     fireEvent.click(confirm)
 
-    // The destination is the REAL WorkloadDetail. The workload does not exist
+    // The destination is the REAL WorkloadSetup. The workload does not exist
     // yet — the launcher has not stamped the tag — so what must appear is the
     // materializing state, never a not-found.
     await screen.findByText('Deploy accepted.')
@@ -1050,6 +1077,27 @@ function workloadFixture(): MediaWorkload {
   }
 }
 
+/**
+ * dmfdeploy#414 gate, round 3: renders WorkloadSetup directly with a launch
+ * handoff already in router state, bypassing armAndConfirm() — the create
+ * journey's own fetch mock has no way to control the grouped read's
+ * TIMING/OUTCOME independently of the deploy call, and that is exactly what
+ * these tests need to hold open (isLoading forever, or force error/
+ * unconfigured) while the launch handoff is what's actually under test.
+ */
+function renderSetupWithLaunch(launch: Record<string, unknown>, slug = 'studio-a') {
+  const queryClient = new QueryClient({ defaultOptions: { queries: { retry: false } } })
+  render(
+    <QueryClientProvider client={queryClient}>
+      <MemoryRouter initialEntries={[{ pathname: `/media-workloads/${slug}/setup`, state: { launch } }]}>
+        <Routes>
+          <Route path="/media-workloads/:slug/setup" element={<WorkloadSetup />} />
+        </Routes>
+      </MemoryRouter>
+    </QueryClientProvider>,
+  )
+}
+
 describe('the destination never denies a just-launched workload', () => {
   it('renders the materializing state, not "Workload not found"', async () => {
     mkFetch({ workloads: [] })
@@ -1071,9 +1119,9 @@ describe('the destination never denies a just-launched workload', () => {
     const queryClient = new QueryClient({ defaultOptions: { queries: { retry: false } } })
     render(
       <QueryClientProvider client={queryClient}>
-        <MemoryRouter initialEntries={['/media-workloads/ghost']}>
+        <MemoryRouter initialEntries={['/media-workloads/ghost/setup']}>
           <Routes>
-            <Route path="/media-workloads/:slug" element={<WorkloadDetail />} />
+            <Route path="/media-workloads/:slug/setup" element={<WorkloadSetup />} />
           </Routes>
         </MemoryRouter>
       </QueryClientProvider>,
@@ -1105,6 +1153,178 @@ describe('the destination never denies a just-launched workload', () => {
     // It became the actual flow page, not a third state.
     expect(screen.getByRole('navigation', { name: 'Media workload lifecycle' })).toBeTruthy()
   }, 15000)
+
+  // dmfdeploy#414 gate, round 1 (P1): the setup exit here is the SAME
+  // shared ViewLiveExit WorkloadSetup.tsx's loading-safe branches use, and
+  // it obeys the identical job-navigation lock — while the launch job is
+  // genuinely still being polled, "View live" would send the operator into
+  // home's own not-found/unresolved reading for the workload they just
+  // created, since the launcher has not stamped its identity into NetBox
+  // yet. NEW test — the earlier round shipped this exit always-active,
+  // reasoned (wrongly) as safe because leaving does not cancel the launch
+  // job server-side. Of the tests in this describe block, this is the one
+  // that discriminates round 1's fix on its own: it checks BOTH the locked
+  // state and the release, so a baseline that never locked at all (round 1's
+  // actual bug) fails it. The FAILED-terminal test right after it checks
+  // only a single unlocked state and is labelled a guard accordingly (round
+  // 2 gate correction); the operation-level test further below is round 2's
+  // own discriminating test, labelled where it sits.
+  it('the "View live" exit stays locked while the launch job is polling, then unlocks once it settles', async () => {
+    const h = mkFetch({ workloads: [], jobStatus: { 900: { status: 'running', is_done: false } } })
+    await armAndConfirm()
+    await screen.findByText('Deploy accepted.')
+
+    // Locked: inert text naming the reason, never a disabled link.
+    expect(screen.queryByRole('link', { name: 'View live' })).toBeNull()
+    expect(screen.getByText(/View live — The launch job is in progress/)).toBeTruthy()
+
+    h.setJobStatus(900, { status: 'successful', is_done: true })
+
+    // Unlocked the moment the job reaches a terminal state — even though
+    // the workload has not yet appeared in the inventory (still
+    // materialising, still says "Deploy accepted."). The job-status poll
+    // (JobProgress.tsx) runs on a 2s interval, longer than waitFor's 1s
+    // default — same reasoning workloadSetup.test.tsx's own
+    // ViewLiveExit-settles test already documents for the identical class
+    // of wait.
+    await waitFor(() => expect(screen.getByRole('link', { name: 'View live' })).toBeTruthy(), {
+      timeout: 5000,
+    })
+    expect(screen.queryByText(/View live — /)).toBeNull()
+  }, 10000)
+
+  // dmfdeploy#414 gate, round 2 (P2): GUARD, relabelled — this was carried
+  // over from round 1 under the same "NEW test" framing as the one above,
+  // but on its own it does not discriminate the fix from its absence. The
+  // pre-round-1 baseline (ViewLiveExit always rendered the active Link,
+  // unconditionally) would ALSO show the Link here, since that baseline
+  // never withheld it for ANY job state — a test that only checks the
+  // unlocked case cannot tell "correctly unlocked" apart from "never
+  // locked at all". The test immediately above already proves the lock
+  // exists AND releases (checks both states); this one only extends that
+  // already-proven mechanism to the FAILED-terminal case rather than
+  // independently proving anything new. Kept as a guard because the
+  // FAILED-vs-successful distinction is still worth pinning on its own.
+  //
+  // Re-checked against round 2's P1 fix (the operation-level raw-terminal
+  // signal, JobProgress.tsx): this test drives armAndConfirm()'s SYNC
+  // deploy path (job_id present in the launch handoff from the very
+  // first render, no operationId), so OperationStatusLine never mounts and
+  // the new operationDone signal never leaves its initial `false` — this
+  // case is governed entirely by jobDone (round 1) both before and after
+  // round 2's change. It does not become newly discriminating; still a
+  // guard.
+  it('unlocks on a FAILED terminal job too, not only a successful one', async () => {
+    mkFetch({ workloads: [], jobStatus: { 900: { status: 'failed', is_done: true } } })
+    await armAndConfirm()
+    await screen.findByText(/did not succeed/, {}, { timeout: 4000 })
+
+    // A real failure is something to go and look at, not a reason to keep
+    // the operator here — see ViewLiveExit.tsx's own docstring.
+    expect(screen.getByRole('link', { name: 'View live' })).toBeTruthy()
+  })
+
+  // dmfdeploy#414 gate, round 2 (P1): round 1's fix above covered the JOB
+  // half of this lock (jobDone, fed by JobStatusLine's unpaced
+  // onDoneChange) but left the OPERATION half reading operationFailed —
+  // set from OperationStatusLine's onError callback, which is deliberately
+  // PACED (3s, "long enough to actually read before the line clears", per
+  // that timer's own comment) so a human watching the status line has time
+  // to read "Error" before whatever consumes the callback reacts. That left
+  // the exit locked, still claiming "wait for its outcome", for up to 3
+  // more seconds after the status line right next to it had already
+  // switched to "Error" — the identical defect class as round 1's P1, one
+  // layer down. NEW test: it asserts the unlock is observable WHILE the
+  // heading is still "Provisioning", i.e. strictly before the paced flip to
+  // "Launch failed" — a fix that reads only the paced signal cannot pass
+  // this, since operationFailed (and therefore the heading) does not exist
+  // yet at that point. Mutation-verified: reverting jobInFlight to ignore
+  // operationDone reproduces the failure this test exists to catch.
+  it('the "View live" exit unlocks on a raw operation error before the paced failure heading catches up', async () => {
+    mkFetch({
+      workloads: [],
+      deployResult: { operation_id: 'op-err2', state: 'launching' },
+      operation: { operation_id: 'op-err2', state: 'error', job_id: null, error: 'no capacity' },
+    })
+    await armAndConfirm()
+    // Anchors on the materializing view specifically, before checking the
+    // lock. Before dmfdeploy#414 gate round 3's fix, WorkloadSetup's own
+    // isLoading branch reached an (unconditionally active) "View live"
+    // link on the very first render — before the grouped read had resolved
+    // even once — so checking for the link without anchoring here could
+    // have matched THAT link instead of this one. Round 3 hoisted the
+    // launch-handoff check ahead of isLoading (see WorkloadSetup.tsx), so
+    // that branch is no longer reachable while `launch` is present at
+    // all — the anchor stays as defensive test hygiene, not because the
+    // race it used to guard against can still happen.
+    await screen.findByText('Deploy accepted.')
+
+    // Caught early — well inside the 3s pace on the failure heading below —
+    // so this cannot be passing merely because both eventually happen.
+    await waitFor(() => expect(screen.getByRole('link', { name: 'View live' })).toBeTruthy(), {
+      timeout: 1500,
+    })
+    expect(screen.getByRole('heading', { name: 'Provisioning' })).toBeTruthy()
+    expect(screen.queryByRole('heading', { name: 'Launch failed' })).toBeNull()
+
+    // The paced heading catches up afterwards, on its own unchanged
+    // schedule — this only needs to show the two are no longer coupled, not
+    // re-prove the heading transition other tests already cover.
+    await waitFor(() => expect(screen.getByRole('heading', { name: 'Launch failed' })).toBeTruthy(), {
+      timeout: 4000,
+    })
+  }, 10000)
+
+  // dmfdeploy#414 gate, round 3 (P1): a THIRD instance of the same defect
+  // shape as the two rounds above — reasoning correct about one path,
+  // silently wrong about the path that bypasses it. WorkloadSetup's own
+  // isLoading/error/unconfigured early returns sat ABOVE the launch-handoff
+  // check that routes to WorkloadMaterializing, and every one of them
+  // rendered ExitRow — the loading-safe exit with no jobInFlight at all,
+  // reasoned (correctly, but incompletely) as safe because "no job of THIS
+  // wizard's own can be in flight before its workload record resolves".
+  // True about the wizard's own jobs; false about a HANDED-OFF launch,
+  // which has its own job/operation in flight regardless of what this
+  // page's read is doing. Three gate rounds and a green CI run all missed
+  // this — it was found by the review harness, on a path none of them
+  // enumerated. Fixed by hoisting the launch-handoff check ahead of all
+  // three (WorkloadSetup.tsx). All three tests below must fail against
+  // 39f4e0f — the commit these gate rounds had been squashing into before
+  // this fix landed.
+  it('the exit is locked, not active, while the grouped read is still loading for a launch handoff', async () => {
+    mkFetch({ groupedPending: true, operation: { operation_id: 'op-load', state: 'launching', job_id: null } })
+    renderSetupWithLaunch({ entryKey: 'crosspoint', operationId: 'op-load' })
+
+    // The grouped read never resolves for the lifetime of this test, so
+    // reaching the materializing view (and its lock) at all proves it did
+    // not wait on isLoading to clear — the old code could only have reached
+    // "Loading workload…" here, forever.
+    await screen.findByText('Deploy accepted.')
+    expect(screen.queryByRole('link', { name: 'View live' })).toBeNull()
+    expect(screen.getByText(/View live — /)).toBeTruthy()
+  })
+
+  it('the exit is locked, not active, when the grouped read is persistently failing for a launch handoff', async () => {
+    mkFetch({ groupedStatus: 500, operation: { operation_id: 'op-err3', state: 'launching', job_id: null } })
+    renderSetupWithLaunch({ entryKey: 'crosspoint', operationId: 'op-err3' })
+
+    await screen.findByText('Deploy accepted.')
+    // Proves the ERROR branch's own copy never rendered — this is the
+    // materializing view, not WorkloadSetup's "could not be loaded" panel.
+    expect(screen.queryByText(/could not be loaded right now/)).toBeNull()
+    expect(screen.queryByRole('link', { name: 'View live' })).toBeNull()
+    expect(screen.getByText(/View live — /)).toBeTruthy()
+  })
+
+  it('the exit is locked, not active, when the environment reports unconfigured for a launch handoff', async () => {
+    mkFetch({ groupedConfigured: false, operation: { operation_id: 'op-unconf', state: 'launching', job_id: null } })
+    renderSetupWithLaunch({ entryKey: 'crosspoint', operationId: 'op-unconf' })
+
+    await screen.findByText('Deploy accepted.')
+    expect(screen.queryByText(/not configured for this environment/)).toBeNull()
+    expect(screen.queryByRole('link', { name: 'View live' })).toBeNull()
+    expect(screen.getByText(/View live — /)).toBeTruthy()
+  })
 })
 
 describe('a launch job that does not succeed surfaces, and stops promising a workload', () => {
@@ -1441,11 +1661,11 @@ describe('readLaunchState narrows untrusted router state', () => {
       <QueryClientProvider client={queryClient}>
         <MemoryRouter
           initialEntries={[
-            { pathname: '/media-workloads/studio-a', state: { launch: { entryKey: 'mxl-viewer' } } },
+            { pathname: '/media-workloads/studio-a/setup', state: { launch: { entryKey: 'mxl-viewer' } } },
           ]}
         >
           <Routes>
-            <Route path="/media-workloads/:slug" element={<WorkloadDetail />} />
+            <Route path="/media-workloads/:slug/setup" element={<WorkloadSetup />} />
           </Routes>
         </MemoryRouter>
       </QueryClientProvider>,

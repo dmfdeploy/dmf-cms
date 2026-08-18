@@ -28,33 +28,40 @@ import FinaliseStage from './stages/FinaliseStage'
 import { settleQuery } from '../../lib/queryState'
 import PageHeading from '../../components/PageHeading'
 import { usePageTitle } from '../../hooks/usePageTitle'
+import { workloadHomePath } from '../../lib/routes'
+import ViewLiveExit from './ViewLiveExit'
 
 /**
- * Workload detail — the WIZARD (umbrella #347 WO-D1, operator direction
- * 2026-08-02: "the workload detail page becomes a wizard — one lifecycle
- * step visible at a time, Next/Previous, the EBU-colored rail as the
- * prominent navigation spine"). VERBATIM HISTORICAL QUOTE, not a live
- * description — FIX ROUND (codex gate — P3): flagged explicitly here,
- * rather than only 30 lines down, because a reader skimming just the
- * opening could otherwise take "EBU-colored" as current. It stopped being
- * accurate at the Arc 4 WP-2 ruling (see point 2 below and
- * LifecycleStrip.tsx's own docstring): colour tracks SELECTION now, not EBU
- * stage identity, and as of dmf-cms#391 Pass 1 the rail is neutral/
- * selection-coloured only — the six EBU stage hues are retired as key
- * fills entirely.
+ * WorkloadSetup — the guided flow, at its own `/setup` route (dmfdeploy#414,
+ * superseding the route contract umbrella #285/#347 shipped, where this
+ * page owned the bare slug). H5's naming decision, made once and carried
+ * everywhere it needs to agree: setup is a MODE the operator is working
+ * IN, not the workload's identity — so the component name, the page title,
+ * and the breadcrumb (Topbar.tsx) all say "Setup" explicitly, and the bare
+ * slug (WorkloadHome.tsx) carries the workload's own name alone, with no
+ * mode suffix, because that route IS the workload's canonical identity.
+ *
+ * THE EXIT (dmfdeploy#414 point 3). Every branch below renders a
+ * plainly-labelled "View live" control back to the workload's home — see
+ * ViewLiveExit's own docstring for why it renders beside PageHeading rather
+ * than through the header action slot Provision's promoted control uses.
+ *
+ * EVERYTHING BELOW THIS POINT ABOUT THE WIZARD ITSELF IS UNCHANGED BY
+ * dmfdeploy#414: one step mounted at a time, the rail as selector, a job
+ * owning its panel while in flight. Retained verbatim from before this
+ * file's own dmfdeploy#414 rename:
  *
  * Arc B (umbrella #285) rebuilt S1's six-stacked-cards page into a folding
  * accordion: every step mounted, one pinned open, the rest behind a
- * per-step Review/Hide toggle. The operator's verdict this round was
+ * per-step Review/Hide toggle. The operator's verdict that round was
  * narrower than that rebuild — not "wrong model", but "still too much page
- * at once" — so this arc replaces the PRESENTATION again, once more leaving
- * every piece of SUBSTANCE underneath it untouched: the state machine, the
- * honesty states, and the busy-suppression invariants all carry forward
- * exactly as lib/workloadFlow.ts and lib/workloadLifecycle.ts already
- * derive them. Nothing here re-derives a lifecycle position or adds a UI
- * classifier.
+ * at once" — so that arc replaced the PRESENTATION, leaving every piece of
+ * SUBSTANCE underneath it untouched: the state machine, the honesty states,
+ * and the busy-suppression invariants all carry forward exactly as
+ * lib/workloadFlow.ts and lib/workloadLifecycle.ts already derive them.
+ * Nothing here re-derives a lifecycle position or adds a UI classifier.
  *
- * WHAT CHANGED THIS ROUND:
+ * WHAT CHANGED THAT ROUND:
  *
  * 1. EXACTLY ONE STEP IS MOUNTED. `selectedStep` is presentation state,
  *    entirely separate from the flow's derived state — it is never
@@ -67,20 +74,21 @@ import { usePageTitle } from '../../hooks/usePageTitle'
  * 2. THE RAIL IS THE SELECTOR. LifecycleStrip.tsx's five orchestration
  *    chips are the wizard's navigation, with the selected chip carrying its
  *    own inverted fill distinct from the workload's actual backend-derived
- *    position (its own same-line marker). Operate remains outside the
- *    flow, in the Control group, as a route link. Arc 4 WP-3 (umbrella
- *    #347) moved the rail itself out of this page's render tree into the
- *    header slot — this page still owns and derives every fact it needs
- *    (steps/current/offFlow/selection/locked reasons/job state), it just
- *    registers that into store/headerSlot.ts via useRegisterHeaderSlot
- *    instead of rendering <LifecycleStrip> inline. Colour is no longer
- *    EBU stage identity either — see LifecycleStrip.tsx's own docstring
- *    for the rail-treatment ruling.
+ *    position (its own same-line marker). dmfdeploy#414: Operate is no
+ *    longer a sixth rail entry of any kind — the Control group that used to
+ *    hold it is deleted outright (LifecycleStrip.tsx's own docstring). Arc 4
+ *    WP-3 (umbrella #347) moved the rail itself out of this page's render
+ *    tree into the header slot — this page still owns and derives every
+ *    fact it needs (steps/current/offFlow/selection/locked reasons/job
+ *    state), it just registers that into store/headerSlot.ts via
+ *    useRegisterHeaderSlot instead of rendering <LifecycleStrip> inline.
+ *    Colour is no longer EBU stage identity either — see LifecycleStrip's
+ *    own docstring for the rail-treatment ruling.
  *
  * 3. A JOB OWNS ITS PANEL. Firing a mutation synchronously marks its owning
  *    step AND flips the corresponding busy flag (`startJob`, called from the
  *    stage's own click handler, not from a busy-effect one render later) so
- *    Previous/Next/every rail selector/the Operate link go inert with a
+ *    Previous/Next/every rail selector/the View live exit go inert with a
  *    stated reason for exactly as long as that job is in flight — never a
  *    window, not even one render, where navigation could strand the
  *    operator away from the job they started. The stage's own onBusyChange
@@ -132,6 +140,58 @@ export const LOCKED_REASON: Record<FlowStepId, string> = {
  */
 const FORWARD_STEPS: FlowStepId[] = FLOW_STEPS.filter((id) => id !== 'finalise')
 
+/** ViewLiveExit (shared, see ViewLiveExit.tsx), right-aligned, for the
+ *  loading-safe branches ahead of the wizard's own data — loading/error/
+ *  unconfigured/not-found.
+ *
+ *  dmfdeploy#414 gate, round 3: this used to claim "no job of THIS wizard's
+ *  own can be in flight before its workload record resolves, so these
+ *  callers never pass jobInFlight" — true about jobs THIS WIZARD starts,
+ *  but stated as if it were the whole story, and it wasn't: a HANDED-OFF
+ *  launch (Create's router-state handoff) has its own job/operation running
+ *  from the moment this page mounts, regardless of what these four
+ *  branches' own read is doing, and none of that was ever "this wizard's
+ *  own". That gap is what round 3 fixed — not by passing jobInFlight here,
+ *  but by making the launch handoff decide the render OUTRIGHT, ahead of
+ *  every branch that reaches this function (see WorkloadSetup's own
+ *  launch-handoff check, now first). By construction, none of these four
+ *  callers can EVER be reached while a launch handoff is unresolved — the
+ *  hoisted check already returned WorkloadMaterializing for that case, so
+ *  `launch` is always null by the time control reaches here.
+ *
+ *  That leaves one more question worth asking explicitly rather than
+ *  leaving it implicit again: could a job the WIZARD ITSELF already
+ *  started (Provision/Configure/Finalise, further down this file) still be
+ *  in flight if a LATER poll flips this page back into the error or
+ *  unconfigured branch (both driven by useMediaWorkloadsGrouped, which
+ *  keeps refetching every 15s the whole time the wizard is mounted)? Yes,
+ *  structurally — WorkloadWizard is a distinct child component, unmounted
+ *  outright when WorkloadSetup's own top-level render swaps to one of
+ *  these branches, taking its local launching/switching/tearingDown state
+ *  with it (GATE-D1.4's own documented equivalence: "the wizard's local
+ *  overlay was never anything more than an optimistic echo of [the
+ *  backend]," lost on remount exactly as a reload would lose it — an
+ *  accepted design, not a gap this round reopens). The question that
+ *  actually matters is not whether that overlay is lost — it already is,
+ *  by design — but whether an unlocked exit sends the operator somewhere
+ *  DISHONEST while it's gone. It does not: the destination
+ *  (WorkloadHome.tsx) reads the SAME grouped query through the SAME
+ *  isGroupedReadTrustworthy formula (`!isError && !isFetching &&
+ *  configured === true && !degraded`) this page's own error/unconfigured
+ *  branches are driven by, so an untrustworthy read on THIS page produces
+ *  an untrustworthy read on THAT one too — landing classifyHomeState on
+ *  'unresolved', an honest "can't confirm right now," never the false
+ *  'not found' the launch-handoff bug actually produced. Unlocked is
+ *  correct here for a different reason than "nothing can be in flight" —
+ *  it is "nothing DISHONEST is reachable even if something is." */
+function ExitRow({ slug }: { slug: string }) {
+  return (
+    <div className="flex justify-end">
+      <ViewLiveExit slug={slug} />
+    </div>
+  )
+}
+
 /**
  * The wizard's default-selection priority order (spec A, "Initial
  * selection"): an openable hash target first, then the backend position,
@@ -156,7 +216,7 @@ function defaultSelection(
   return 'design'
 }
 
-export default function WorkloadDetail() {
+export default function WorkloadSetup() {
   const { slug } = useParams<{ slug: string }>()
   const { state: routerState } = useLocation()
   // Present only when the operator arrived straight from Create. It is the
@@ -168,8 +228,69 @@ export default function WorkloadDetail() {
   const workload = data?.workloads.find((w) => w.slug === slug)
   // Unconditional (hooks must run every render): the slug is an honest
   // fallback before the workload record resolves, same provenance rule the
-  // breadcrumb already applies (Topbar.tsx's useBreadcrumbTrail).
-  usePageTitle(workload?.name ?? slug)
+  // breadcrumb already applies (Topbar.tsx's useBreadcrumbTrail). H5: the
+  // "— Setup" suffix is unconditional too — the route the operator is on
+  // says Setup regardless of what state the read is in.
+  usePageTitle(`${workload?.name ?? slug} — Setup`)
+
+  // dmfdeploy#414 gate, round 3 (P1): checked BEFORE isLoading/error/
+  // unconfigured below, not after — this used to sit where the old
+  // `!workload` not-found check still sits, past all three. That let a
+  // launch handoff reach one of THOSE branches first whenever the grouped
+  // query had not yet resolved (the ordinary case on a first-ever mount:
+  // Create navigates here with `launch` in router state while
+  // useMediaWorkloadsGrouped's very first fetch is still in flight), and
+  // every one of those branches renders ExitRow — the loading-safe exit
+  // that carries no jobInFlight at all, on the (previously true) premise
+  // that no job of THIS wizard's own could be running yet. That premise
+  // says nothing about a HANDED-OFF launch, which has its own job/operation
+  // already running the instant this page mounts — so the operator got a
+  // live "View live" link straight past WorkloadMaterializing's lock, for
+  // a workload NetBox does not know about yet. Same defect shape as the
+  // two fix-rounds before this one: reasoning correct about one path
+  // (nothing of the wizard's own can be in flight before its record
+  // resolves — still true), silently wrong about the path that bypasses it
+  // (a launch handoff's job is in flight regardless of what this page's
+  // OWN read is doing).
+  //
+  // Hoisting means a launch handoff now decides the render outright,
+  // ahead of isLoading/error/unconfigured — deliberately, not just
+  // ahead of the not-found check it used to sit next to. With a launch in
+  // hand, WorkloadMaterializing IS the true view no matter what this page's
+  // grouped read is doing, because it does not depend on that read at all:
+  // it polls the launch's own job/operation endpoints directly, and its
+  // copy already states an honest "not yet visible" rather than any
+  // specific reason. Concretely:
+  //   - isLoading: `workload` is necessarily undefined here too (data
+  //     itself has not arrived), so hoisting means a fresh navigation from
+  //     Create shows the materializing story INSTEAD of a bare "Loading
+  //     workload…" spinner while the very query it's raising a launch
+  //     against is still in flight for the first time. More informative,
+  //     not less, and the exit gets its real lock immediately instead of a
+  //     placeholder unlocked one.
+  //   - error: a persistently failing grouped read no longer forces the
+  //     operator through "could not be loaded, retrying" for a workload
+  //     they just launched — they see materializing's own honest waiting
+  //     copy instead, still correctly locked, until either the read
+  //     recovers and finds the record or the launch job itself resolves.
+  //   - unconfigured (data.configured === false): reaching this WITH a
+  //     fresh launch in hand is not realistically reachable (the deploy
+  //     that produced the launch handoff had to succeed through the same
+  //     feature), but hoisting costs nothing here either — the same
+  //     honest waiting copy is still preferable to declaring the
+  //     environment unconfigured moments after a deploy that evidently
+  //     worked.
+  // None of this reopens per-site reasoning about whether a DIFFERENT job
+  // — one the wizard itself started, further down this page, after
+  // mounting past this check — could be in flight when the read later
+  // errors or reports unconfigured: it cannot reach the same JSX position
+  // this check occupies, because a launch handoff and an already-mounted
+  // wizard are mutually exclusive render paths (see ExitRow's own comment
+  // below for why the wizard's OWN job racing the same two branches is a
+  // different question, asked and answered there, not here).
+  if (!workload && launch) {
+    return <WorkloadMaterializing slug={slug ?? ''} launch={launch} />
+  }
 
   if (isLoading) {
     return (
@@ -178,7 +299,8 @@ export default function WorkloadDetail() {
             h1 at all — distinct from the !workload branch below, which
             already carries its own visible "Workload not found" heading and
             must not also get this one. */}
-        <PageHeading>{workload?.name ?? slug}</PageHeading>
+        <PageHeading>{`${workload?.name ?? slug} — Setup`}</PageHeading>
+        <ExitRow slug={slug ?? ''} />
         <p className="text-muted">Loading workload…</p>
       </div>
     )
@@ -187,7 +309,8 @@ export default function WorkloadDetail() {
   if (error != null) {
     return (
       <div className="flex-1 overflow-y-auto p-6">
-        <PageHeading>{workload?.name ?? slug}</PageHeading>
+        <PageHeading>{`${workload?.name ?? slug} — Setup`}</PageHeading>
+        <ExitRow slug={slug ?? ''} />
         <div className="panel border border-amber-500/20 bg-amber-500/10 px-4 py-3 text-sm text-amber-200">
           This workload could not be loaded right now. Retrying automatically.
         </div>
@@ -198,7 +321,8 @@ export default function WorkloadDetail() {
   if (data && !data.configured) {
     return (
       <div className="flex-1 overflow-y-auto p-6">
-        <PageHeading>{workload?.name ?? slug}</PageHeading>
+        <PageHeading>{`${workload?.name ?? slug} — Setup`}</PageHeading>
+        <ExitRow slug={slug ?? ''} />
         <div className="panel border border-amber-500/20 bg-amber-500/10 px-4 py-3 text-sm text-amber-200">
           Media Workloads is not configured for this environment.
         </div>
@@ -206,19 +330,19 @@ export default function WorkloadDetail() {
     )
   }
 
-  // A workload that is ABSENT because it was just launched is not a
-  // not-found (GATE-B P1). Create hands the launch through router state, and
-  // until the launcher stamps the tag this page owes the operator the
-  // materializing story — deploy accepted, job running, record pending — not
-  // a flat denial that the thing they just created exists.
-  if (!workload && launch) {
-    return <WorkloadMaterializing slug={slug ?? ''} launch={launch} />
-  }
-
+  // The launch-handoff check that used to sit here (GATE-B P1: a workload
+  // ABSENT because it was just launched is not a not-found) now runs FIRST,
+  // ahead of isLoading/error/unconfigured above — see that check's own
+  // comment (dmfdeploy#414 gate, round 3) for why. By construction, reaching
+  // this point means `launch` was never present in the first place: the
+  // hoisted check already returned for every render where it was.
   if (!workload) {
     return (
       <div className="flex-1 overflow-y-auto p-6">
-        <h1 className="text-lg font-semibold text-text">Workload not found</h1>
+        <div className="flex flex-wrap items-center justify-between gap-3">
+          <h1 className="text-lg font-semibold text-text">Workload not found</h1>
+          <ExitRow slug={slug ?? ''} />
+        </div>
         <div className="panel mt-4 border border-amber-500/20 bg-amber-500/10 px-4 py-3 text-sm text-amber-200">
           No workload named &quot;{slug}&quot; is in your scope right now.
         </div>
@@ -332,12 +456,12 @@ function WorkloadWizard({
   const jobInFlight = launching || switching || tearingDown
 
   // FIX ROUND (WP-3 spec B gate, P2-3; strengthened P3-5): built through the
-  // ONE shared constructor Operate.tsx now also uses
+  // ONE shared constructor WorkloadHome.tsx now also uses
   // (lib/workloadLifecycle.ts's buildWorkloadLifecycleInput) — member-state/
   // purgeable-entity facts can no longer drift between the two routes
   // reading the same workload. `groupedRead`/`userRead` stay THIS
   // component's own query results to gather (each route holds its own query
-  // instances) — see `groupedRead`'s own prop docstring in WorkloadDetail()
+  // instances) — see `groupedRead`'s own prop docstring in WorkloadSetup()
   // below for why that half specifically is threaded down rather than
   // re-queried here — but buildWorkloadLifecycleInput runs the shared
   // formulas on them now, not this call site (P3-5: a boolean handed in
@@ -390,10 +514,10 @@ function WorkloadWizard({
   const forwardExit = classifyForwardExit(input)
 
   // A fragment aimed at a step selects+focuses that step on arrival. The
-  // Operate page's "request configuration change" link is the one caller.
-  // It only changes the initial selection — a locked step is never selected
-  // by it (defaultSelection's isStepOpenable guard), so a crafted fragment
-  // can never reach a control the gate closed.
+  // home page's (WorkloadHome.tsx) "request configuration change" link is
+  // the one caller. It only changes the initial selection — a locked step is
+  // never selected by it (defaultSelection's isStepOpenable guard), so a
+  // crafted fragment can never reach a control the gate closed.
   const requestedStep = hash.replace(/^#/, '')
 
   // umbrella #392 fix round: groupedRead.isFetching/userQuery.isFetching
@@ -632,11 +756,14 @@ function WorkloadWizard({
 
   return (
     <div className="flex-1 overflow-y-auto p-6">
-      <PageHeading>{workload.name}</PageHeading>
+      <PageHeading>{`${workload.name} — Setup`}</PageHeading>
       {/* The lifecycle badge — resting-grammar label + degraded flag — moved
           here from the retired hero: it is state anchored to the flow
           surface, not page chrome. The workload's display name lives in the
-          topbar breadcrumb now (Shell). */}
+          topbar breadcrumb now (Shell). dmfdeploy#414: the setup exit
+          shares this same row, at its far end — see ViewLiveExit's own
+          docstring for why it lives here rather than in the header action
+          slot Provision's promoted control uses. */}
       <div className="flex flex-wrap items-center justify-between gap-3">
         <span
           className="badge text-sm"
@@ -651,6 +778,7 @@ function WorkloadWizard({
           {badge.label}
           {workload.health === 'degraded' ? ' · degraded' : ''}
         </span>
+        <ViewLiveExit slug={workload.slug} jobInFlight={jobInFlight} jobReasonText={jobReasonText} />
       </div>
 
       {/* The rail itself now lives in the header slot (Topbar), registered
@@ -674,20 +802,15 @@ function WorkloadWizard({
 
       {offFlow && (
         <div className="panel mt-4 border-white/10 px-4 py-3 text-sm text-muted">
-          {/* WP-3 taxonomy sweep (umbrella #347): this used to name the EBU
-              "Control vertical" here — true, but expert-tier vocabulary that
-              does not belong at default level (Art. 3). The rail's own
-              "Control" group label stays (a navigation grouping, not the
-              taxonomy term), and the grouping fact this sentence needs to
-              convey — Operate isn't a step in this flow — survives without
-              naming the ontology it comes from. */}
-          This workload is operating. Operate isn&apos;t a step in this flow — its
-          surface is observational, so it lives on its own page —{' '}
-          <Link
-            to={`/media-workloads/${encodeURIComponent(workload.slug)}/operate`}
-            className="text-accent hover:underline"
-          >
-            open the monitoring view
+          {/* dmfdeploy#414: this used to point at the retired /operate
+              route and name the EBU "Control vertical"/rail Control group,
+              both gone now (LifecycleStrip.tsx no longer has one). The fact
+              this sentence still needs to convey — Operate isn't a step in
+              this flow — survives without naming either. */}
+          This workload is operating. This flow isn&apos;t where a running workload is
+          watched — its live view is the workload&apos;s own home —{' '}
+          <Link to={workloadHomePath(workload.slug)} className="text-accent hover:underline">
+            open the live view
           </Link>
           . The steps below stay reviewable, and Finalise &amp; Review is where it ends.
         </div>
@@ -770,7 +893,7 @@ function WorkloadWizard({
 function ConfigureForwardExit({ exit, slug }: { exit: ForwardExit; slug: string }) {
   if (exit === 'none') return null
 
-  const to = `/media-workloads/${encodeURIComponent(slug)}/operate`
+  const to = workloadHomePath(slug)
   const COPY: Record<Exclude<ForwardExit, 'none'>, { label: string; description: string }> = {
     'view-status': {
       label: 'View workload status',

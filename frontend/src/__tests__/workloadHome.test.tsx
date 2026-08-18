@@ -1,28 +1,31 @@
 /**
- * Operate's own monitoring route (umbrella #285, operator direction
- * 2026-08-01: "Operate leaves this page entirely").
+ * WorkloadHome — the bare workload URL, and the workload's home
+ * (dmfdeploy#414, superseding the retired Operate route this file used to
+ * cover at umbrella #285's `/operate`).
  *
  * What this file has to prove, beyond "it renders": the live view and the
- * requested/observed pair survive the relocation off WorkloadDetail intact
- * (same tile, same badges, same titles — Art. 1's provenance distinction is
- * not allowed to blur in the move); Active Source is genuinely conditional
- * per instance, never an empty box for a producer with no topology; the
- * "Request a configuration change" affordance is a real navigation, never a
- * mutation wearing a link's clothes; and its copy never drifts into
- * wording that reads as this page controlling the flow live. The last one
- * is the point of the whole item, per the work order, so it gets its own
- * scoped guard rather than riding along inside a snapshot.
+ * requested/observed pair survive BOTH relocations intact (off WorkloadSetup
+ * originally, then off the retired /operate route onto the bare slug — same
+ * tile, same badges, same titles throughout: Art. 1's provenance distinction
+ * is not allowed to blur in either move); Active Source is genuinely
+ * conditional per instance, never an empty box for a producer with no
+ * topology; the "Request a configuration change" affordance is a real
+ * navigation, never a mutation wearing a link's clothes; its copy never
+ * drifts into wording that reads as this page controlling the flow live; and
+ * — new with dmfdeploy#414 — the cold-entry states a trusted-but-not-yet-
+ * operating read produces, and the legacy hash sweep that keeps a
+ * pre-inversion `/:slug#<step>` bookmark landing on the right place.
  */
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import { cleanup, render, screen, waitFor, within } from '@testing-library/react'
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query'
-import { MemoryRouter, Route, Routes } from 'react-router-dom'
-import WorkloadOperate from '../pages/MediaWorkloads/Operate'
+import { MemoryRouter, Route, Routes, useLocation } from 'react-router-dom'
+import WorkloadHome from '../pages/MediaWorkloads/WorkloadHome'
 import HeaderSlotProbe from './testUtils/HeaderSlotProbe'
 import { REQUESTED_TITLE, OBSERVED_TITLE } from '../pages/MediaWorkloads/stateBadges'
 import type { CatalogEntry, MediaWorkload, MediaWorkloadInstance, UserIdentity } from '../api/types'
 
-// ---- fixtures (same shapes as workloadDetail.test.tsx) -----------------
+// ---- fixtures (same shapes as workloadSetup.test.tsx) -----------------
 
 function catalogEntry(overrides: Partial<CatalogEntry> = {}): CatalogEntry {
   return {
@@ -112,8 +115,8 @@ interface FetchOpts {
   /** FIX ROUND P2-3: /api/me response — defaults to a bare {} (no role),
    *  which isPurgeAuthorized fails closed on, matching every pre-fix-round
    *  test in this file (they never exercised delete-permanently). Override
-   *  to prove Operate's rail now reads purge-eligibility consistently with
-   *  WorkloadDetail's. */
+   *  to prove this route's rail now reads purge-eligibility consistently with
+   *  WorkloadSetup's. */
   user?: UserIdentity
 }
 
@@ -172,13 +175,13 @@ function mkFetch(opts: FetchOpts = {}) {
   return { calls, fetchMock }
 }
 
-function renderOperate(slug = 'studio-a') {
+function renderHome(slug = 'studio-a') {
   const queryClient = new QueryClient({ defaultOptions: { queries: { retry: false } } })
   render(
     <QueryClientProvider client={queryClient}>
-      <MemoryRouter initialEntries={[`/media-workloads/${slug}/operate`]}>
+      <MemoryRouter initialEntries={[`/media-workloads/${slug}`]}>
         <Routes>
-          <Route path="/media-workloads/:slug/operate" element={<WorkloadOperate />} />
+          <Route path="/media-workloads/:slug" element={<WorkloadHome />} />
         </Routes>
         {/* Test-only stand-in for Topbar's own header-slot rendering — see
             HeaderSlotProbe's own docstring. Existing tests in this file never
@@ -194,7 +197,7 @@ function renderOperate(slug = 'studio-a') {
   return queryClient
 }
 
-// Scope to a labelled <section>, same technique workloadDetail.test.tsx uses
+// Scope to a labelled <section>, same technique workloadSetup.test.tsx uses
 // via its own heading-based stageSection helper — robust regardless of how
 // aria-label maps to an implicit role in this jsdom/RTL version.
 function section(label: string): HTMLElement {
@@ -227,7 +230,7 @@ describe('designed states', () => {
         return json({ entries: [] })
       }),
     )
-    renderOperate()
+    renderHome()
     expect(screen.getByText('Loading workload…')).toBeTruthy()
     release()
     await screen.findByText(/The monitoring surface for this workload/)
@@ -235,7 +238,7 @@ describe('designed states', () => {
 
   it('states the grouped inventory is unreachable, never a raw error', async () => {
     mkFetch({ errorStatus: 500 })
-    renderOperate()
+    renderHome()
     expect(
       await screen.findByText(/This workload could not be loaded right now\. Retrying automatically\./),
     ).toBeTruthy()
@@ -243,13 +246,13 @@ describe('designed states', () => {
 
   it('states Media Workloads is not configured for this environment', async () => {
     mkFetch({ configured: false, workload: null })
-    renderOperate()
+    renderHome()
     expect(await screen.findByText(/Media Workloads is not configured for this environment/)).toBeTruthy()
   })
 
   it('renders an honest not-found state for an unknown slug', async () => {
     mkFetch({ workload: null })
-    renderOperate('does-not-exist')
+    renderHome('does-not-exist')
     expect(await screen.findByText('Workload not found')).toBeTruthy()
     expect(screen.getByText(/No workload named "does-not-exist"/)).toBeTruthy()
     const back = screen.getByRole('link', { name: /Back to Media Workloads/ })
@@ -258,10 +261,170 @@ describe('designed states', () => {
 
   it('renders the no-instances-yet state instead of an empty live view', async () => {
     mkFetch({ workload: workload({ instances: [], functions: [] }) })
-    renderOperate()
+    renderHome()
     await screen.findByText(/The monitoring surface for this workload/)
-    expect(await screen.findByText(/Nothing is running yet for this workload/)).toBeTruthy()
+    // dmfdeploy#414: reworded off "Operate will show live state" — Operate
+    // is no longer a named destination this copy can point at (this page IS
+    // that destination already).
+    expect(await screen.findByText(/Nothing is currently observed running for this workload/)).toBeTruthy()
     expect(screen.queryByRole('heading', { name: 'Live view' })).toBeNull()
+  })
+})
+
+// ---------------------------------------------------------------------------
+// dmfdeploy#414: cold entry at home, gated on lib/workloadFlow.ts's
+// classifyHomeState. Never a redirect — one of three honest renderings.
+// ---------------------------------------------------------------------------
+
+describe('cold entry (dmfdeploy#414)', () => {
+  it('lifecycle=provision, nothing observed running, trustworthy: "Continue setup" — never claims setup is right on an unresolved read', async () => {
+    mkFetch({
+      workload: workload({
+        lifecycle: 'provision',
+        instances: [instance({ requested_state: 'bootstrapped', observed_state: 'unknown' })],
+      }),
+    })
+    renderHome()
+    expect(
+      await screen.findByText("This workload isn't running yet. Continue setup to provision it."),
+    ).toBeTruthy()
+    const cta = screen.getByRole('link', { name: 'Continue setup' })
+    expect(cta.getAttribute('href')).toBe('/media-workloads/studio-a/setup')
+    // Never the live view, and never the unresolved copy at the same time.
+    expect(screen.queryByText(/The monitoring surface for this workload/)).toBeNull()
+    expect(screen.queryByText(/isn't clear enough right now/)).toBeNull()
+  })
+
+  it('lifecycle=configure, nothing observed running, trustworthy: copy says "configuring", not "provision it" (already provisioned)', async () => {
+    mkFetch({
+      workload: workload({
+        lifecycle: 'configure',
+        instances: [instance({ requested_state: 'active', observed_state: 'unknown' })],
+      }),
+    })
+    renderHome()
+    expect(
+      await screen.findByText("This workload isn't running yet. Continue setup to finish configuring it."),
+    ).toBeTruthy()
+    expect(screen.getByRole('link', { name: 'Continue setup' })).toBeTruthy()
+  })
+
+  it('lifecycle=unknown: honest unresolved state, no affordance asserting setup is the right next action', async () => {
+    mkFetch({ workload: workload({ lifecycle: 'unknown', instances: [] }) })
+    renderHome()
+    expect(
+      await screen.findByText("This workload's status isn't clear enough right now to recommend a next step."),
+    ).toBeTruthy()
+    expect(screen.queryByRole('link', { name: 'Continue setup' })).toBeNull()
+    expect(screen.queryByText(/The monitoring surface for this workload/)).toBeNull()
+  })
+
+  it('a degraded (untrustworthy) read: unresolved, not a guessed setup CTA, even though lifecycle=provision', async () => {
+    mkFetch({ workload: workload({ lifecycle: 'provision' }), degraded: true })
+    renderHome()
+    expect(
+      await screen.findByText("This workload's status isn't clear enough right now to recommend a next step."),
+    ).toBeTruthy()
+    expect(screen.queryByRole('link', { name: 'Continue setup' })).toBeNull()
+  })
+
+  // The genuinely ambiguous case classifyHomeState's own docstring names:
+  // position short of Operate, yet something is already observed running.
+  // Not "nothing running" (a setup CTA would misstate that) and not a
+  // trusted Operate position either (the backend hasn't said so) — folded
+  // into unresolved rather than guessed in either direction.
+  it('lifecycle=configure WITH something already observed running: unresolved, neither "nothing running" nor "live"', async () => {
+    mkFetch({
+      workload: workload({
+        lifecycle: 'configure',
+        instances: [instance({ requested_state: 'active', observed_state: 'running' })],
+      }),
+    })
+    renderHome()
+    expect(
+      await screen.findByText("This workload's status isn't clear enough right now to recommend a next step."),
+    ).toBeTruthy()
+    expect(screen.queryByRole('link', { name: 'Continue setup' })).toBeNull()
+    expect(screen.queryByText(/The monitoring surface for this workload/)).toBeNull()
+  })
+
+  it('lifecycle=operate always renders live, regardless of the running-instance count', async () => {
+    mkFetch({ workload: workload({ lifecycle: 'operate', instances: [] }) })
+    renderHome()
+    await screen.findByText(/The monitoring surface for this workload/)
+    expect(screen.queryByRole('link', { name: 'Continue setup' })).toBeNull()
+    expect(screen.queryByText(/isn't clear enough right now/)).toBeNull()
+  })
+})
+
+// ---------------------------------------------------------------------------
+// dmfdeploy#414 H2: the legacy hash sweep. `/:slug#<step>` used to drive
+// stage selection on the pre-inversion flow page; post-inversion this route
+// is home, which has no stage concept — a recognised legacy flow-step hash
+// redirects to the equivalent /setup URL rather than silently dropping it.
+// ---------------------------------------------------------------------------
+
+function LocationProbe() {
+  const location = useLocation()
+  return <div data-testid="location">{location.pathname}{location.hash}</div>
+}
+
+describe('legacy hash redirect (dmfdeploy#414 H2)', () => {
+  function renderHomeAtHash(hash: string, slug = 'studio-a') {
+    const queryClient = new QueryClient({ defaultOptions: { queries: { retry: false } } })
+    render(
+      <QueryClientProvider client={queryClient}>
+        <MemoryRouter initialEntries={[`/media-workloads/${slug}${hash}`]}>
+          <Routes>
+            <Route path="/media-workloads/:slug" element={<WorkloadHome />} />
+            <Route path="/media-workloads/:slug/setup" element={<div>setup route reached</div>} />
+          </Routes>
+          <LocationProbe />
+        </MemoryRouter>
+      </QueryClientProvider>,
+    )
+  }
+
+  it.each(['design', 'plan', 'provision', 'configure', 'finalise'])(
+    'redirects /:slug#%s to /:slug/setup#%s',
+    async (step) => {
+      mkFetch({ workload: workload({ lifecycle: 'operate' }) })
+      renderHomeAtHash(`#${step}`)
+      // Redirects before any data-dependent branch — never renders home's
+      // own content at all.
+      await screen.findByText('setup route reached')
+      expect(screen.queryByText(/The monitoring surface for this workload/)).toBeNull()
+    },
+  )
+
+  // dmfdeploy#414 gate, round 2 (P2): GUARD, relabelled — round 1 added the
+  // getByTestId('location') assertions in both tests below and reported
+  // them as new-behaviour evidence for "left alone means PRESERVED, not
+  // merely didn't-navigate". On re-check that framing doesn't hold: home
+  // never calls `navigate`/`<Navigate>` on these two paths at all, and a
+  // MemoryRouter's location is untouched by construction unless something
+  // explicitly navigates it — the hash surviving is a property of NOT
+  // redirecting, not a separate fact this code affirmatively decides. The
+  // component could not strip the hash here even if it wanted to without
+  // adding code that does not exist. Kept as guards (the location value is
+  // still worth pinning byte-for-byte so a future change that DOES start
+  // touching history here gets caught), just not "new #414 behaviour with
+  // mutation evidence" — the redirect-DOES-happen table test above this
+  // block is what actually exercises H2's new logic, and remains that way.
+  it('does NOT redirect an unrecognised hash — home renders normally, hash left alone', async () => {
+    mkFetch({ workload: workload({ lifecycle: 'operate' }) })
+    renderHomeAtHash('#some-other-fragment')
+    await screen.findByText(/The monitoring surface for this workload/)
+    expect(screen.queryByText('setup route reached')).toBeNull()
+    expect(screen.getByTestId('location').textContent).toBe('/media-workloads/studio-a#some-other-fragment')
+  })
+
+  it('does NOT redirect when there is no hash at all', async () => {
+    mkFetch({ workload: workload({ lifecycle: 'operate' }) })
+    renderHomeAtHash('')
+    await screen.findByText(/The monitoring surface for this workload/)
+    expect(screen.queryByText('setup route reached')).toBeNull()
+    expect(screen.getByTestId('location').textContent).toBe('/media-workloads/studio-a')
   })
 })
 
@@ -270,7 +433,7 @@ describe('designed states', () => {
 describe('the live view', () => {
   it('renders the running workload\'s instance via the shared tile', async () => {
     mkFetch({ workload: workload() })
-    renderOperate()
+    renderHome()
     await screen.findByText(/The monitoring surface for this workload/)
 
     const live = section('Live view')
@@ -280,7 +443,7 @@ describe('the live view', () => {
 
   it('renders the requested/observed pair with the intent-vs-observed distinction intact', async () => {
     mkFetch({ workload: workload() })
-    renderOperate()
+    renderHome()
     await screen.findByText(/The monitoring surface for this workload/)
 
     const live = section('Live view')
@@ -319,7 +482,7 @@ describe('the live view', () => {
         }),
       ],
     })
-    renderOperate()
+    renderHome()
     await screen.findByText(/The monitoring surface for this workload/)
 
     const live = section('Live view')
@@ -343,7 +506,7 @@ describe('active source', () => {
       catalog: [catalogEntry({ key: 'viewer', display_name: 'MXL Viewer' })],
       topology: { 'viewer-1': freshTopology() },
     })
-    renderOperate()
+    renderHome()
     await screen.findByText(/The monitoring surface for this workload/)
 
     const active = await screen.findByRole('heading', { name: 'Active source' })
@@ -369,7 +532,7 @@ describe('active source', () => {
       topology: { 'viewer-1': freshTopology() },
       topologyFailAfter: { 'viewer-1': 1 },
     })
-    const queryClient = renderOperate()
+    const queryClient = renderHome()
     await screen.findByText(/The monitoring surface for this workload/)
 
     const active = await screen.findByRole('heading', { name: 'Active source' })
@@ -413,12 +576,12 @@ describe('active source', () => {
       topology: { 'viewer-1': freshTopology() },
       workloadAfter: { reads: 1, workload: wlAfter },
     })
-    const queryClient = renderOperate()
+    const queryClient = renderHome()
     await screen.findByText(/The monitoring surface for this workload/)
 
     await screen.findByRole('heading', { name: 'Active source' })
     // The section itself (the aria-label="Active source" panel in
-    // Operate.tsx) is a named region — assert on the region, not just its
+    // WorkloadHome.tsx) is a named region — assert on the region, not just its
     // heading, or a fix that hides/renames the heading while leaving the
     // section (and its empty panel chrome) mounted would still pass this
     // test.
@@ -441,7 +604,7 @@ describe('active source', () => {
     // Default fixture instance is a plain crosspoint producer — the
     // topology endpoint 404s for it (no `topology` fixture supplied).
     mkFetch({ workload: workload() })
-    renderOperate()
+    renderHome()
     await screen.findByText(/The monitoring surface for this workload/)
 
     // Give the topology query a tick to resolve (it 404s quickly) before
@@ -456,19 +619,19 @@ describe('active source', () => {
 describe('request configuration change', () => {
   it('is a real navigation link to the flow\'s Configure step, not a button that posts', async () => {
     mkFetch({ workload: workload() })
-    renderOperate()
+    renderHome()
     await screen.findByText(/The monitoring surface for this workload/)
 
     const request = section('Request a configuration change')
     const link = within(request).getByRole('link', { name: /Go to Configure/ })
     expect(link.tagName).toBe('A')
-    expect(link.getAttribute('href')).toBe('/media-workloads/studio-a#configure')
+    expect(link.getAttribute('href')).toBe('/media-workloads/studio-a/setup#configure')
     expect(within(request).queryAllByRole('button')).toHaveLength(0)
   })
 
   it('never issues a POST from this affordance', async () => {
     const { calls } = mkFetch({ workload: workload() })
-    renderOperate()
+    renderHome()
     await screen.findByText(/The monitoring surface for this workload/)
     const posts = calls.filter((c) => c.init?.method === 'POST')
     expect(posts).toHaveLength(0)
@@ -476,7 +639,7 @@ describe('request configuration change', () => {
 
   it('copy guard: never reads as live flow control', async () => {
     mkFetch({ workload: workload() })
-    renderOperate()
+    renderHome()
     await screen.findByText(/The monitoring surface for this workload/)
 
     const request = section('Request a configuration change')
@@ -493,13 +656,13 @@ describe('request configuration change', () => {
 // allMembersBootstrapped/anyMemberObservedRunning/membersDataTrustworthy/
 // purgeAuthorized/isPurgeableEntity all silently absent — read as
 // false/withheld regardless of the real workload, so a purge-eligible
-// workload could show Finalise & Review OPEN on WorkloadDetail and LOCKED
+// workload could show Finalise & Review OPEN on WorkloadSetup and LOCKED
 // here. Both routes now build through the same buildWorkloadLifecycleInput
 // constructor; this proves the two routes agree, not just that each one
 // individually renders something.
 // ---------------------------------------------------------------------------
 
-describe('FIX ROUND P2-3: the rail agrees with WorkloadDetail for a purge-eligible workload', () => {
+describe('FIX ROUND P2-3: the rail agrees with WorkloadSetup for a purge-eligible workload', () => {
   const OPERATOR: UserIdentity = {
     subject: 'ops',
     display_name: 'Ops',
@@ -513,7 +676,7 @@ describe('FIX ROUND P2-3: the rail agrees with WorkloadDetail for a purge-eligib
   }
 
   function purgeEligibleWorkload(): MediaWorkload {
-    // Same shape workloadDetail.test.tsx's own purgeEligibleWorkload uses:
+    // Same shape workloadSetup.test.tsx's own purgeEligibleWorkload uses:
     // every member bootstrapped (nothing cleared to run), none observed
     // running.
     return workload({
@@ -524,27 +687,29 @@ describe('FIX ROUND P2-3: the rail agrees with WorkloadDetail for a purge-eligib
 
   it('does not lock Finalise & Review when the workload is purge-eligible and the operator is authorized', async () => {
     mkFetch({ workload: purgeEligibleWorkload(), user: OPERATOR })
-    renderOperate()
-    await screen.findByText(/The monitoring surface for this workload/)
-
+    renderHome()
+    // dmfdeploy#414: this fixture (lifecycle=provision, nothing observed
+    // running) now classifies as the 'setup' cold-entry state, not 'live' —
+    // the rail registers regardless of that (it is gated on the read being
+    // usable, not on home state), so wait on the rail itself, which is what
+    // this test actually concerns.
     const strip = await screen.findByRole('navigation', { name: 'Media workload lifecycle' })
     // A locked chip renders as an inert <div>, never a <button> — see
     // LifecycleStrip.tsx. Before this fix, a purge-eligible workload still
     // read as Finalise-locked here (allMembersBootstrapped/
     // anyMemberObservedRunning/membersDataTrustworthy/purgeAuthorized were
-    // all silently absent), the same shape workloadDetail.test.tsx's own
+    // all silently absent), the same shape workloadSetup.test.tsx's own
     // "locked steps are always prose in the rail" pins as the WRONG state
     // for this workload.
     expect(
       within(strip).getByRole('button', { name: 'Finalise & Review' }),
-      'Finalise & Review must be a real button (not-locked), same as WorkloadDetail reads this workload',
+      'Finalise & Review must be a real button (not-locked), same as WorkloadSetup reads this workload',
     ).toBeTruthy()
   })
 
-  it('withholds it the same way WorkloadDetail does when the operator is not authorized', async () => {
+  it('withholds it the same way WorkloadSetup does when the operator is not authorized', async () => {
     mkFetch({ workload: purgeEligibleWorkload(), user: { ...OPERATOR, role: 'viewer', real_role: 'viewer' } })
-    renderOperate()
-    await screen.findByText(/The monitoring surface for this workload/)
+    renderHome()
 
     // stageActions('finalise', ...) has NO action to offer without
     // purgeAuthorized (running(input) is false for lifecycle: 'provision'),
@@ -572,7 +737,7 @@ describe('FIX ROUND P2-3: the rail agrees with WorkloadDetail for a purge-eligib
 describe('the header rail during a failed background refetch (PR #90 review, dmf-cms#391)', () => {
   it('withdraws the rail from the Topbar when a background refetch fails with retained data', async () => {
     mkFetch({ workload: workload(), groupedFailAfter: 1 })
-    const queryClient = renderOperate()
+    const queryClient = renderHome()
     await screen.findByText(/The monitoring surface for this workload/)
 
     // First (successful) read settles — the rail is present, with a real

@@ -10,7 +10,7 @@
  * mutation/state ownership across a component-mount boundary in two ways at
  * once: (1) ConfigureStage's own child InstanceSwitchControl UNMOUNTS when
  * its instance leaves `workload.instances` — the wizard's parent selection
- * does not follow it; (2) WorkloadDetail now marks job ownership
+ * does not follow it; (2) WorkloadSetup now marks job ownership
  * SYNCHRONOUSLY from the stage's own click handler (`startJob`), not solely
  * from the child's busy-effect a render later. This single scenario proves
  * both: mount Configure -> begin a switch on one of two instances (pending)
@@ -21,12 +21,22 @@
  * recomputes through the CURRENT member list, not the stale pending Set, so
  * navigation unlocks instead of wedging forever (the #344 fix, proved at the
  * integration level this time, not just the unit level).
+ *
+ * GUARD LABEL (dmfdeploy#414 gate, round 1): the umbrella #347 WO-D1
+ * Acceptance Criterion 1 contract this file pins is a GUARD, unchanged by
+ * dmfdeploy#414 — only the mount route moved, from the bare slug to
+ * /setup. Baseline: the pre-#414 commit on `main`, where these same
+ * assertions passed identically against WorkloadDetail.tsx at the bare
+ * slug (as workloadDetailWizard.test.tsx, this file's pre-#414 name). The
+ * two "View live" exit assertions inline in the test below are the ONE
+ * exception — NEW dmfdeploy#414 coverage added in this arc, not part of
+ * the original #347 guard, marked inline where they appear.
  */
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import { cleanup, fireEvent, render, screen, waitFor, within } from '@testing-library/react'
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query'
 import { MemoryRouter, Route, Routes } from 'react-router-dom'
-import WorkloadDetail from '../pages/MediaWorkloads/WorkloadDetail'
+import WorkloadSetup from '../pages/MediaWorkloads/WorkloadSetup'
 import HeaderSlotProbe from './testUtils/HeaderSlotProbe'
 import type { CatalogEntry, MediaWorkload, MediaWorkloadInstance, MediaWorkloadsGroupedResponse } from '../api/types'
 
@@ -163,9 +173,9 @@ function renderDetail() {
   const queryClient = new QueryClient({ defaultOptions: { queries: { retry: false } } })
   render(
     <QueryClientProvider client={queryClient}>
-      <MemoryRouter initialEntries={['/media-workloads/studio-a']}>
+      <MemoryRouter initialEntries={['/media-workloads/studio-a/setup']}>
         <Routes>
-          <Route path="/media-workloads/:slug" element={<WorkloadDetail />} />
+          <Route path="/media-workloads/:slug/setup" element={<WorkloadSetup />} />
         </Routes>
         <HeaderSlotProbe />
       </MemoryRouter>
@@ -225,8 +235,11 @@ describe('mount -> pending -> membership change -> unwedge (Acceptance Criterion
     expect(within(configureSection).queryByRole('button', { name: '← Previous' })).toBeNull()
     expect(within(configureSection).queryByRole('button', { name: 'Next →' })).toBeNull()
     expect(within(configureSection).getAllByText(/A Configure job is in progress/).length).toBeGreaterThan(0)
-    // The Control:Operate route link is also inert while the job runs.
-    expect(within(rail()).queryByRole('link', { name: 'Operate' })).toBeNull()
+    // dmfdeploy#414: the setup exit (WorkloadSetup.tsx's ViewLiveExit) is
+    // also inert while the job runs — it obeys the same job-navigation lock
+    // every other seam here does.
+    expect(screen.queryByRole('link', { name: 'View live' })).toBeNull()
+    expect(screen.getByText(/View live — A Configure job is in progress/)).toBeTruthy()
 
     // 4. CHANGE MEMBERSHIP through a GENUINE query invalidation — the same
     // path the 15s poll takes, not a hand-forced rerender. viewer-1 (the
@@ -250,22 +263,22 @@ describe('mount -> pending -> membership change -> unwedge (Acceptance Criterion
 
     // 5c. TERMINAL OUTCOME UNLOCKS NAVIGATION: Previous/Next are live
     // buttons again on the (still-mounted) Configure panel, and the rail
-    // selector + Operate link are both real controls again.
+    // selector + the setup exit are both real controls again.
     const configureAfter = stageSection('Configure')
     expect(within(configureAfter).queryByRole('button', { name: '← Previous' })).not.toBeNull()
-    expect(within(rail()).getByRole('link', { name: 'Operate' })).toBeTruthy()
+    expect(screen.getByRole('link', { name: 'View live' })).toBeTruthy()
 
     h.releaseSwitch()
   })
 })
 
 // GATE-D1 P1.1's dedicated synchronous-lock proof lives in
-// workloadDetailJobLock.test.tsx, not here: a version of this test built on
+// workloadSetupJobLock.test.tsx, not here: a version of this test built on
 // the REAL ConfigureStage (fireEvent.click, then assert with no
 // await/waitFor at all) turned out not to discriminate — RTL's act()
 // wrapping flushes the child's onBusyChange effect cascade synchronously
 // enough, in this harness, that the busy flag was already true whether or
 // not startJob set it itself. The isolated file replaces the stage with a
-// fake that never calls onBusyChange at all, so only WorkloadDetail's own
+// fake that never calls onBusyChange at all, so only WorkloadSetup's own
 // startJob can possibly set the flag — proven red before the fix, green
 // after.

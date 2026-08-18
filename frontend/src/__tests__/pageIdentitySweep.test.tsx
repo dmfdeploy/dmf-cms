@@ -17,7 +17,7 @@
  *      "Workspace · DMF Console", so a loose check would miss a real
  *      regression there).
  *   2. The THREE states that already carried their own visible <h1> before
- *      this arc (WorkloadDetail's and Operate's "Workload not found",
+ *      this arc (WorkloadSetup's and WorkloadHome's "Workload not found",
  *      WorkloadMaterializing's "Launch failed"/"Provisioning") still render
  *      exactly one — proving PageHeading was never ALSO mounted alongside
  *      them (PageHeading.tsx's own documented invariant).
@@ -32,9 +32,24 @@
  * Route components are rendered DIRECTLY (QueryClientProvider + MemoryRouter
  * only, no <App/>/<Shell/>/<Sidebar/>/<Topbar/>) — the established per-page
  * convention in this suite (adminUsers.test.tsx, facility.test.tsx,
- * workloadDetail.test.tsx). Neither Shell nor Topbar renders an <h1>
+ * workloadSetup.test.tsx). Neither Shell nor Topbar renders an <h1>
  * (confirmed by inspection), so this doesn't hide anything the fuller
  * App-level render in nav.test.tsx/railRouteContract.test.tsx would catch.
+ *
+ * DMFDEPLOY#414: the old Operate route case is gone — /operate is now a
+ * bare compatibility redirect (App.tsx's OperateRedirect) with no page
+ * identity of its own to pin here; railRouteContract.test.tsx covers its
+ * redirect behaviour instead. In its place: a Workload home case (the bare
+ * slug, formerly WorkloadDetail's route, now WorkloadHome.tsx) and a new
+ * Workload setup case (the guided flow's own `/setup` route, WorkloadSetup.tsx).
+ *
+ * GUARD LABEL (dmfdeploy#414 gate, round 1): every case in this file OTHER
+ * than "Workload home"/"Workload setup" (added by #414, above) and the two
+ * WorkloadSetup/WorkloadHome-specific rows inside sections 2 and 3 (renamed
+ * from WorkloadDetail/Operate, content unchanged) is a GUARD pinning the
+ * pre-#414 WP-4 stage 2 contract described above, entirely untouched by
+ * this arc. Baseline: the pre-#414 commit on `main`, where these same
+ * assertions passed identically.
  */
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import { cleanup, render, screen, waitFor } from '@testing-library/react'
@@ -48,8 +63,8 @@ import Catalog from '../pages/Catalog'
 import Monitoring from '../pages/Monitoring'
 import MediaWorkloads from '../pages/MediaWorkloads'
 import CreateWorkload from '../pages/MediaWorkloads/CreateWorkload'
-import WorkloadDetail from '../pages/MediaWorkloads/WorkloadDetail'
-import WorkloadOperate from '../pages/MediaWorkloads/Operate'
+import WorkloadSetup from '../pages/MediaWorkloads/WorkloadSetup'
+import WorkloadHome from '../pages/MediaWorkloads/WorkloadHome'
 import Admin from '../pages/Admin'
 import Settings from '../pages/Settings'
 import type {
@@ -299,15 +314,15 @@ describe('every routed page renders exactly one h1 with the title usePageTitle p
       title: 'Create media workload · DMF Console',
     },
     {
-      name: 'Workload detail (/media-workloads/:slug)',
-      run: () => renderRoute('/media-workloads/:slug', '/media-workloads/studio-a', <WorkloadDetail />),
+      name: 'Workload home (/media-workloads/:slug)',
+      run: () => renderRoute('/media-workloads/:slug', '/media-workloads/studio-a', <WorkloadHome />),
       title: 'studio-a · DMF Console',
     },
     {
-      name: 'Workload Operate (/media-workloads/:slug/operate)',
+      name: 'Workload setup (/media-workloads/:slug/setup)',
       run: () =>
-        renderRoute('/media-workloads/:slug/operate', '/media-workloads/studio-a/operate', <WorkloadOperate />),
-      title: 'studio-a — Operate · DMF Console',
+        renderRoute('/media-workloads/:slug/setup', '/media-workloads/studio-a/setup', <WorkloadSetup />),
+      title: 'studio-a — Setup · DMF Console',
     },
     {
       name: 'Admin (/admin)',
@@ -336,16 +351,16 @@ describe('every routed page renders exactly one h1 with the title usePageTitle p
 // ---------------------------------------------------------------------------
 
 describe('states that already carry their own visible h1 are not doubled', () => {
-  it('WorkloadDetail: "Workload not found" is the only heading', async () => {
+  it('WorkloadSetup: "Workload not found" is the only heading', async () => {
     stubFetch({ '/api/media-workloads/grouped': json(grouped([])) })
-    renderRoute('/media-workloads/:slug', '/media-workloads/does-not-exist', <WorkloadDetail />)
+    renderRoute('/media-workloads/:slug/setup', '/media-workloads/does-not-exist/setup', <WorkloadSetup />)
     expect(await screen.findByText('Workload not found')).toBeTruthy()
     expect(screen.getAllByRole('heading', { level: 1 })).toHaveLength(1)
   })
 
-  it('Operate: "Workload not found" is the only heading', async () => {
+  it('WorkloadHome: "Workload not found" is the only heading', async () => {
     stubFetch({ '/api/media-workloads/grouped': json(grouped([])) })
-    renderRoute('/media-workloads/:slug/operate', '/media-workloads/does-not-exist/operate', <WorkloadOperate />)
+    renderRoute('/media-workloads/:slug', '/media-workloads/does-not-exist', <WorkloadHome />)
     expect(await screen.findByText('Workload not found')).toBeTruthy()
     expect(screen.getAllByRole('heading', { level: 1 })).toHaveLength(1)
   })
@@ -353,9 +368,9 @@ describe('states that already carry their own visible h1 are not doubled', () =>
   it('WorkloadMaterializing: "Provisioning" is the only heading (deploy accepted, workload not yet in the inventory)', async () => {
     stubFetch({ '/api/media-workloads/grouped': json(grouped([])) })
     renderRoute(
-      '/media-workloads/:slug',
-      '/media-workloads/studio-a',
-      <WorkloadDetail />,
+      '/media-workloads/:slug/setup',
+      '/media-workloads/studio-a/setup',
+      <WorkloadSetup />,
       { launch: { entryKey: 'crosspoint', jobId: 42 } },
     )
     expect(await screen.findByText('Deploy accepted.')).toBeTruthy()
@@ -372,9 +387,9 @@ describe('states that already carry their own visible h1 are not doubled', () =>
       }),
     })
     renderRoute(
-      '/media-workloads/:slug',
-      '/media-workloads/studio-a',
-      <WorkloadDetail />,
+      '/media-workloads/:slug/setup',
+      '/media-workloads/studio-a/setup',
+      <WorkloadSetup />,
       { launch: { entryKey: 'crosspoint', operationId: 'op-1' } },
     )
     // WorkloadMaterializing's own onError path is a deliberate 3s-delayed
@@ -401,9 +416,16 @@ describe('loading/degraded/unauthenticated branches get a page identity too (reb
     expect(screen.getAllByRole('heading', { level: 1 })).toHaveLength(1)
   })
 
-  it('WorkloadDetail: the loading branch has an h1', async () => {
+  it('WorkloadSetup: the loading branch has an h1', async () => {
     stubFetch({ '/api/media-workloads/grouped': pending() })
-    renderRoute('/media-workloads/:slug', '/media-workloads/studio-a', <WorkloadDetail />)
+    renderRoute('/media-workloads/:slug/setup', '/media-workloads/studio-a/setup', <WorkloadSetup />)
+    expect(await screen.findByText('Loading workload…')).toBeTruthy()
+    expect(screen.getAllByRole('heading', { level: 1 })).toHaveLength(1)
+  })
+
+  it('WorkloadHome: the loading branch has an h1', async () => {
+    stubFetch({ '/api/media-workloads/grouped': pending() })
+    renderRoute('/media-workloads/:slug', '/media-workloads/studio-a', <WorkloadHome />)
     expect(await screen.findByText('Loading workload…')).toBeTruthy()
     expect(screen.getAllByRole('heading', { level: 1 })).toHaveLength(1)
   })

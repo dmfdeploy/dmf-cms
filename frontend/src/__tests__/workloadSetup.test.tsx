@@ -19,14 +19,25 @@
  *
  * The wizard-specific navigation contract (Previous/Next/rail selection
  * gating, job ownership, membership-change-while-pending) has its own
- * dedicated regression suite in workloadDetailWizard.test.tsx — that file is
- * this WO's required Acceptance Criterion 1 test.
+ * dedicated regression suite in workloadSetupWizard.test.tsx (dmfdeploy#414
+ * renamed from workloadDetailWizard.test.tsx) — that file is this WO's
+ * required Acceptance Criterion 1 test.
+ *
+ * GUARD LABEL (dmfdeploy#414 gate, round 1): every test in this file is a
+ * GUARD pinning pre-#414 wizard behaviour (umbrella #347 WO-D1 and the
+ * fix-round history each test's own comment cites) that dmfdeploy#414 did
+ * not change — only the mount route moved, from the bare slug to /setup.
+ * Baseline: the pre-#414 commit on `main` (immediately before this arc's
+ * own branch), where these same assertions passed identically against
+ * WorkloadDetail.tsx at the bare slug. Sections explicitly titled
+ * "(dmfdeploy#414)" are the exception — those pin THIS arc's own new
+ * behaviour and are not guards.
  */
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import { cleanup, fireEvent, render, screen, waitFor, within } from '@testing-library/react'
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query'
 import { MemoryRouter, Route, Routes } from 'react-router-dom'
-import WorkloadDetail from '../pages/MediaWorkloads/WorkloadDetail'
+import WorkloadSetup from '../pages/MediaWorkloads/WorkloadSetup'
 import MediaWorkloads from '../pages/MediaWorkloads'
 import HeaderSlotProbe from './testUtils/HeaderSlotProbe'
 import type {
@@ -313,9 +324,9 @@ function renderDetail(slug = 'studio-a') {
   const queryClient = new QueryClient({ defaultOptions: { queries: { retry: false } } })
   render(
     <QueryClientProvider client={queryClient}>
-      <MemoryRouter initialEntries={[`/media-workloads/${slug}`]}>
+      <MemoryRouter initialEntries={[`/media-workloads/${slug}/setup`]}>
         <Routes>
-          <Route path="/media-workloads/:slug" element={<WorkloadDetail />} />
+          <Route path="/media-workloads/:slug/setup" element={<WorkloadSetup />} />
         </Routes>
         <HeaderSlotProbe />
       </MemoryRouter>
@@ -372,9 +383,9 @@ afterEach(() => {
   vi.unstubAllGlobals()
 })
 
-// ---- rail: all six stages, every state -------------------------------
+// ---- rail: exactly five keys, every state -----------------------------
 
-describe('the flow is five steps under a six-stage vocabulary', () => {
+describe('the rail is exactly the five orchestration steps (dmfdeploy#414)', () => {
   it('names all five orchestration steps in the rail for every backend lifecycle value, including unknown', async () => {
     for (const lifecycle of ['provision', 'configure', 'operate', 'unknown'] as const) {
       cleanup()
@@ -393,67 +404,31 @@ describe('the flow is five steps under a six-stage vocabulary', () => {
     }
   })
 
-  it('names all six lifecycle stages in the vocabulary strip, verbatim, Operate included', async () => {
-    mkFetch({ workload: workload({ lifecycle: 'provision' }) })
-    renderDetail()
-    const strip = await findRail()
-    for (const label of [
-      'Design',
-      'Plan',
-      'Provision',
-      'Configure',
-      'Operate',
-      'Finalise & Review',
-    ]) {
-      expect(within(strip).getByText(label), `${label} missing from the strip`).toBeTruthy()
-    }
-  })
-
-  it('makes the Operate chip a link out to the monitoring surface, not a step', async () => {
+  // dmfdeploy#414: supersedes the pre-#414 "names all six lifecycle stages
+  // in the vocabulary strip, verbatim, Operate included" test — the Arc 4
+  // WP-2 ruling that promoted Operate into the rail's vocabulary at all is
+  // itself superseded (see `docs/design/DMF Console Glossary.md`'s
+  // wording-pass log). Operate is not merely un-selectable now; it is not
+  // present in the rail's accessibility tree in any form.
+  it('renders NOTHING that reads as a sixth key — no Operate text, link, or group, anywhere in the rail', async () => {
     mkFetch({ workload: workload({ lifecycle: 'operate' }) })
     renderDetail()
     const strip = await findRail()
-    const operate = within(strip).getByRole('link', { name: 'Operate' })
-    expect(operate.getAttribute('href')).toBe('/media-workloads/studio-a/operate')
-  })
 
-  it('regroups the strip into five orchestration chips plus a Control group holding Operate', async () => {
-    // Per the operator's 2026-08-02 ruling: Operate is not a sixth step of
-    // the orchestration flow, it sits in the Control vertical. The strip
-    // must render that as a visible group split, not just a flat six.
-    mkFetch({ workload: workload({ lifecycle: 'provision' }) })
-    renderDetail()
-    const strip = await findRail()
+    expect(within(strip).queryByText('Operate')).toBeNull()
+    expect(within(strip).queryByRole('link', { name: 'Operate' })).toBeNull()
+    expect(within(strip).queryByRole('link')).toBeNull()
+    expect(within(strip).queryByLabelText('Control')).toBeNull()
+    expect(within(strip).queryByRole('group')).toBeNull()
 
-    // Pass 1 crosspoint-bus redesign (dmf-cms#391) removed the visible
-    // uppercase "Control" text label that used to sit at the start of the
-    // Control/Operate group; the group's accessible identity now rests
-    // entirely on role="group" aria-label="Control". This replaces the old
-    // getByText('Control') visible-text check (which no longer has anything
-    // to find) with a getByLabelText('Control') check that the group still
-    // exists and is still labelled "Control" via its aria-label.
-    expect(within(strip).getByLabelText('Control'), 'Control group missing its aria-label').toBeTruthy()
-
-    // FIX ROUND (codex gate, P3): this used to say each chip's label and
-    // state word "share one line/span" — the state word is gone entirely
-    // as of the Pass 1 crosspoint-bus redesign (dmf-cms#391); a chip's
-    // label is now the ONLY text it carries. Querying by aria-label rather
-    // than plain text is still the right approach regardless — it is the
-    // explicit, unambiguous isolator this suite already relies on
-    // elsewhere, not a workaround for text sharing a line that no longer
-    // happens — and reading labels off the DOM in document order still
-    // proves the same chip-ordering property. Operate itself is not in
-    // this list: its accessible name comes from its visible text content,
-    // not an aria-label, so it is checked separately below.
-    const knownLabels = ['Design', 'Plan', 'Provision', 'Configure', 'Finalise & Review', 'Control']
+    // Exactly five aria-labelled keys, nothing more — the same explicit,
+    // unambiguous isolator the pre-#414 version of this suite used to prove
+    // chip ordering, now also proving there is no sixth.
+    const knownLabels = ['Design', 'Plan', 'Provision', 'Configure', 'Finalise & Review']
     const chipLabels = Array.from(strip.querySelectorAll('[aria-label]'))
       .map((el) => el.getAttribute('aria-label'))
-      .filter((label): label is string => knownLabels.includes(label ?? ''))
+      .filter((label): label is string => label !== null)
     expect(chipLabels).toEqual(knownLabels)
-
-    const operateLink = within(strip).getByRole('link', { name: 'Operate' })
-    const controlGroup = within(strip).getByLabelText('Control')
-    expect(controlGroup.contains(operateLink), 'Operate must sit inside the Control group').toBe(true)
   })
 
   it('keeps EBU/layer/vertical taxonomy out of the default-level accessibility tree, reachable only behind System details', async () => {
@@ -519,7 +494,7 @@ describe('the flow is five steps under a six-stage vocabulary', () => {
     expect(summary.closest('details')).toBe(disclosure)
   })
 
-  it('marks the workload as operating and points at monitoring rather than losing it', async () => {
+  it('marks the workload as operating and points home rather than losing it', async () => {
     // `current` is null at Operate exactly as it is on an undetermined
     // position, so the page must distinguish the two. This is the
     // off-flow half; the undetermined half is asserted below.
@@ -529,7 +504,10 @@ describe('the flow is five steps under a six-stage vocabulary', () => {
 
     const panel = screen.getByText(/This workload is operating/)
     expect(panel).toBeTruthy()
-    expect(screen.getByRole('link', { name: 'open the monitoring view' })).toBeTruthy()
+    // dmfdeploy#414: the retired /operate route is gone — this now points
+    // at the workload's home (the bare slug), not a "monitoring view" link.
+    const link = screen.getByRole('link', { name: 'open the live view' })
+    expect(link.getAttribute('href')).toBe('/media-workloads/studio-a')
     expect(screen.queryByText(/could not place this workload/)).toBeNull()
 
     // Operate isn't a step in this flow, not a lifecycle stage — the panel
@@ -1036,9 +1014,9 @@ describe('an unknown slug', () => {
     const queryClient = new QueryClient({ defaultOptions: { queries: { retry: false } } })
     render(
       <QueryClientProvider client={queryClient}>
-        <MemoryRouter initialEntries={['/media-workloads/does-not-exist']}>
+        <MemoryRouter initialEntries={['/media-workloads/does-not-exist/setup']}>
           <Routes>
-            <Route path="/media-workloads/:slug" element={<WorkloadDetail />} />
+            <Route path="/media-workloads/:slug/setup" element={<WorkloadSetup />} />
           </Routes>
         </MemoryRouter>
       </QueryClientProvider>,
@@ -1054,16 +1032,17 @@ describe('a #configure deep link when Configure is locked (GATE-D1 P2.6)', () =>
   it('leaves the initial-ladder selection unchanged, announces the lock reason, and mounts no Configure control', async () => {
     // lifecycle=provision with no bootstrapped members: Configure is
     // locked (nothing has been deployed yet, so there is no source to
-    // select) — Operate.tsx's "request configuration change" link is the
-    // one real caller of this hash, and this proves a stale/crafted one
-    // aimed at a locked step cannot reach it.
+    // select) — WorkloadHome.tsx's "request configuration change" link is
+    // the one real caller of this hash (now aimed at /setup#configure,
+    // dmfdeploy#414), and this proves a stale/crafted one aimed at a
+    // locked step cannot reach it.
     mkFetch({ workload: workload({ lifecycle: 'provision' }) })
     const queryClient = new QueryClient({ defaultOptions: { queries: { retry: false } } })
     render(
       <QueryClientProvider client={queryClient}>
-        <MemoryRouter initialEntries={['/media-workloads/studio-a#configure']}>
+        <MemoryRouter initialEntries={['/media-workloads/studio-a/setup#configure']}>
           <Routes>
-            <Route path="/media-workloads/:slug" element={<WorkloadDetail />} />
+            <Route path="/media-workloads/:slug/setup" element={<WorkloadSetup />} />
           </Routes>
           <HeaderSlotProbe />
         </MemoryRouter>
@@ -1092,6 +1071,141 @@ describe('a #configure deep link when Configure is locked (GATE-D1 P2.6)', () =>
     // non-interactive item with its own stated reason.
     const rail = screen.getByRole('navigation', { name: 'Media workload lifecycle' })
     expect(within(rail).queryByRole('button', { name: 'Configure' })).toBeNull()
+  })
+})
+
+// dmfdeploy#414 gate, round 1 (P2): the locked case above proves the hash
+// CANNOT reach a closed gate — it says nothing about what happens when the
+// gate is open, so the deep link's own happy path was unpinned.
+//
+// dmfdeploy#414 gate, round 2 (P2): GUARD, relabelled — round 1 called this
+// a "NEW test", which overstated it. The hash-selection ladder itself
+// (FLOW_STEPS membership, the initial-selection precedence, the hash-focus
+// contract) is pre-#414 behaviour, unowned by this change — it lived on
+// WorkloadDetail.tsx before the rename and #414 did not touch it. What IS
+// new here is only the URL this test drives it through (/setup instead of
+// the old bare-slug route); the ladder's own OPEN-gate outcome is the same
+// baseline WorkloadDetail.tsx always had. Kept, because a route rename that
+// silently broke the hash contract underneath it would be exactly the kind
+// of regression this arc's own H2/H3 hazards exist to catch — but it pins
+// continuity across the rename, not new #414 logic.
+describe('a #configure deep link when Configure is OPEN (GATE-D1 P2.6)', () => {
+  it('selects and focuses Configure directly — the hash wins the initial-selection ladder outright', async () => {
+    // lifecycle=operate: running(input) is true, so Configure bears
+    // switch-source and reads 'open'. Off-flow's own default (no hash)
+    // would land on Finalise & Review instead — asserted absent below, so
+    // this proves the HASH is what selected Configure, not the ladder.
+    mkFetch({ workload: workload({ lifecycle: 'operate' }) })
+    const queryClient = new QueryClient({ defaultOptions: { queries: { retry: false } } })
+    render(
+      <QueryClientProvider client={queryClient}>
+        <MemoryRouter initialEntries={['/media-workloads/studio-a/setup#configure']}>
+          <Routes>
+            <Route path="/media-workloads/:slug/setup" element={<WorkloadSetup />} />
+          </Routes>
+          <HeaderSlotProbe />
+        </MemoryRouter>
+      </QueryClientProvider>,
+    )
+    await screen.findByRole('navigation', { name: 'Media workload lifecycle' })
+
+    expect(await screen.findByRole('heading', { name: 'Configure', level: 2 })).toBeTruthy()
+    expect(screen.queryByRole('heading', { name: 'Finalise & Review', level: 2 })).toBeNull()
+    // No lock announcement — the hash reached a real, openable step.
+    expect(screen.queryByRole('status')).toBeNull()
+
+    // Genuinely FOCUSED, not merely mounted — the same hash-focus contract
+    // workloadSetupCrossWorkload.test.tsx's own hash-focus-consumption
+    // tests pin for the cross-workload case, exercised here for the
+    // single-workload one.
+    const panel = screen
+      .getByRole('heading', { name: 'Configure', level: 2 })
+      .closest('[data-step-state]')
+    expect(document.activeElement).toBe(panel)
+  })
+})
+
+// ---- dmfdeploy#414 point 3: the setup exit ----------------------------
+
+describe('the "View live" setup exit', () => {
+  it('is present, plainly labelled, and points home — never a bare icon', async () => {
+    mkFetch({ workload: workload({ lifecycle: 'provision' }) })
+    renderDetail()
+    await findRail()
+    const link = screen.getByRole('link', { name: 'View live' })
+    expect(link.getAttribute('href')).toBe('/media-workloads/studio-a')
+  })
+
+  it('is present on the loading-safe state, ahead of the workload record resolving', async () => {
+    // Gate the grouped read open so the loading branch is observable rather
+    // than a race — the exit must not depend on the wizard's own data.
+    let release: () => void = () => {}
+    const gate = new Promise<void>((r) => { release = r })
+    mkFetch({
+      workload: workload({ lifecycle: 'provision' }),
+      groupedDelayAfter: 0,
+      groupedGate: gate,
+    })
+    renderDetail()
+    expect(await screen.findByText('Loading workload…')).toBeTruthy()
+    const link = screen.getByRole('link', { name: 'View live' })
+    expect(link.getAttribute('href')).toBe('/media-workloads/studio-a')
+    release()
+  })
+
+  it('is present on the not-found state', async () => {
+    mkFetch({})
+    const queryClient = new QueryClient({ defaultOptions: { queries: { retry: false } } })
+    render(
+      <QueryClientProvider client={queryClient}>
+        <MemoryRouter initialEntries={['/media-workloads/does-not-exist/setup']}>
+          <Routes>
+            <Route path="/media-workloads/:slug/setup" element={<WorkloadSetup />} />
+          </Routes>
+        </MemoryRouter>
+      </QueryClientProvider>,
+    )
+    await screen.findByText('Workload not found')
+    const link = screen.getByRole('link', { name: 'View live' })
+    expect(link.getAttribute('href')).toBe('/media-workloads/does-not-exist')
+  })
+
+  it('obeys the job-navigation lock: goes inert with a stated reason while a job is in flight, never a disabled control', async () => {
+    const { deploy } = mkFetch({ workload: workload({ lifecycle: 'provision' }) })
+    renderDetail()
+    await findRail()
+
+    // Real link before any job starts.
+    expect(screen.getByRole('link', { name: 'View live' })).toBeTruthy()
+
+    const provisionSection = stageSection('Provision')
+    fireEvent.click(await within(provisionSection).findByRole('button', { name: '▶ Deploy' }))
+    fireEvent.change(within(provisionSection).getByPlaceholderText(REASON_PLACEHOLDER), {
+      target: { value: 'go' },
+    })
+    fireEvent.click(within(provisionSection).getByRole('button', { name: 'Confirm deploy' }))
+
+    // startJob sets jobInFlight synchronously in the same click handler
+    // (the wizard's own "zero window" guarantee — see WorkloadSetup.tsx's
+    // file docstring point 3) — waitFor here only absorbs Testing
+    // Library's own act()/microtask settling, the same caution this file's
+    // other job-in-flight assertions already apply.
+    await waitFor(() => {
+      expect(screen.queryByRole('link', { name: 'View live' })).toBeNull()
+      expect(screen.queryByRole('button', { name: 'View live' })).toBeNull()
+      expect(screen.getByText(/View live — A Provision job is in progress/)).toBeTruthy()
+    })
+
+    await within(provisionSection).findByText(/job #501/)
+    expect(deploy).toHaveLength(1)
+    // Once the job settles, the exit is a real link again — the job-status
+    // poll (JobProgress.tsx) runs on a 2s interval, longer than
+    // waitFor's 1s default, so this needs its own explicit timeout; the
+    // point being proved (suppression LIFTS, not just applies) mirrors this
+    // file's own "a job in flight suppresses navigation everywhere" test.
+    await waitFor(() => expect(screen.getByRole('link', { name: 'View live' })).toBeTruthy(), {
+      timeout: 3000,
+    })
   })
 })
 
@@ -1539,8 +1653,9 @@ describe('delete-permanently gate: authorization (umbrella dmfdeploy/dmfdeploy#3
 // groupedRead.isFetching by design — membersDataTrustworthy, and therefore
 // stageActions('finalise')'s delete-permanently branch, correctly go empty
 // for the duration of every background refetch, exactly like the #378a/b/c
-// gates above. Before this fix, WorkloadDetail.tsx's activeStep/selectedStep
-// persisted that MOMENTARY dip as if it were a durable lock (the very next
+// gates above. Before this fix, WorkloadDetail.tsx's (dmfdeploy#414 renamed
+// this file WorkloadSetup.tsx) activeStep/selectedStep persisted that
+// MOMENTARY dip as if it were a durable lock (the very next
 // render's effect wrote the fallback into state unconditionally), so a
 // refetch that resolved a heartbeat later still left the operator bounced to
 // Provision — and FinaliseStage's purgeAllowed-gated form unmounted on the
