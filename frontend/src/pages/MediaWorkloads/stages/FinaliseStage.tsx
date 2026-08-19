@@ -10,7 +10,14 @@ import {
 } from '../../../api/hooks'
 import { useActivityStore } from '../../../store/activity'
 import ReasonConfirm from '../../../components/ReasonConfirm'
-import type { CatalogEntry, MediaWorkload, Operation, SwitchSourceResult, UserIdentity } from '../../../api/types'
+import type {
+  CatalogEntry,
+  MediaWorkload,
+  MediaWorkloadsGroupedResponse,
+  Operation,
+  SwitchSourceResult,
+  UserIdentity,
+} from '../../../api/types'
 import type { StageActionId, StageState } from '../../../lib/workloadLifecycle'
 import StageCard from './StageCard'
 import { JobStatusLine, OperationStatusLine } from './JobProgress'
@@ -68,6 +75,7 @@ export default function FinaliseStage({
   lastSwitchResult,
   onJobStart,
   user,
+  onLeaveFlow,
 }: {
   workload: MediaWorkload
   state: StageState
@@ -92,6 +100,21 @@ export default function FinaliseStage({
    * same discipline as membersDataTrustworthy above it.
    */
   user: UserIdentity | undefined
+  /**
+   * dmfdeploy#418 FIX ROUND (P1-1, adversarial gate). Called SYNCHRONOUSLY,
+   * immediately before either of this component's two navigate() calls
+   * (the purge terminal effect and leaveAfterTeardown, both below) — never
+   * after, never in a `.then`. WorkloadSetup.tsx owns the ref this sets and
+   * has the full race this closes in its own docstring: navigate() commits
+   * through a react-router transition (low priority), the grouped-read
+   * refetch this SAME action invalidates does not, and a settled read that
+   * wins that race can hand the step-recovery ladder up in WorkloadSetup
+   * fresh data to misclassify before the route ever leaves /setup. This
+   * flag is what tells that ladder the flow is already leaving, so it
+   * never acts on that data at all — scheduling-independent by
+   * construction, not by out-racing the scheduler.
+   */
+  onLeaveFlow: () => void
 }) {
   // fix-round 5 (PR #81, codex sibling sweep): `catalogFailed` threaded into
   // the absence claim below — see ProvisionStage.tsx's identical fix for
@@ -214,21 +237,59 @@ export default function FinaliseStage({
     // On any OTHER terminal state (run_failed, error, ...) this stays put —
     // purgeReview above already renders the failure, and the workload is
     // presumably still there for the operator to look at or retry.
-    //
-    // RACE SAFETY (dmfdeploy#418, same argument as leaveAfterTeardown): this
-    // effect body is what ALSO fires the two invalidateQueries calls above.
-    // navigate() and invalidateQueries() are both synchronous calls in this
-    // one effect invocation — no `await` between them — so the route change
-    // is committed in this same render/commit cycle, unmounting
-    // WorkloadWizard well before the invalidated grouped-inventory query's
-    // own network round-trip could ever resolve. The step-recovery ladder
-    // this issue is about only has a window to misclassify Finalise once a
-    // SETTLED read reports the workload gone; a settled read cannot arrive
-    // faster than an already-committed route change.
     if (purgeOp.state === 'run_complete') {
+      // FIX ROUND (P1-2, adversarial gate). invalidateQueries above only
+      // MARKS ['media-workloads-grouped'] stale and starts a refetch — it
+      // does not wait for it, and TanStack Query retains the PRE-purge
+      // payload as `data` for the whole time that refetch is in flight
+      // (settleQuery's own docstring: this is deliberate, Art. 5 "the
+      // screen stays still" behaviour, correct for every OTHER consumer of
+      // this query). Navigating straight to /media-workloads on top of
+      // that retained payload would show the collection still listing the
+      // workload the operator just watched get deleted — worse if that
+      // refetch then FAILS, since MediaWorkloads/index.tsx's own honest
+      // design keeps showing retained content behind a notice rather than
+      // blanking the page, which here means the deleted tile stays
+      // indefinitely: an affordance asserting a state the backend has not
+      // (yet, or ever) re-confirmed, the exact defect class this codebase
+      // spends the most review rounds on, reintroduced by the fix for it.
+      //
+      // `purge_verified_at` is not a guess at that state — it is stamped
+      // ONLY after a fresh, unscoped NetBox re-read confirms no Service
+      // anywhere still carries this workload's own `workload:<slug>` tag
+      // and the tag object itself no longer exists (dmf_cms/main.py's
+      // finalise-purge watcher, media_workloads.purge_residue_present) —
+      // the EXACT membership test list_workloads_grouped uses to place a
+      // workload in `workloads[]` in the first place. A truthy
+      // purge_verified_at is therefore the backend's own positive proof
+      // that THIS slug cannot legitimately appear in that array anymore,
+      // not an inference this component is making on its own. Writing it
+      // straight into the cache makes the collection view consistent with
+      // an ESTABLISHED fact the instant it mounts, with no read to wait on
+      // and no risk tied to whether that read ever lands. invalidateQueries
+      // above still runs regardless — this is a bridge to the confirmed
+      // truth, not a replacement for eventually re-confirming it.
+      if (purgeOp.purge_verified_at) {
+        queryClient.setQueryData<MediaWorkloadsGroupedResponse>(['media-workloads-grouped'], (prev) =>
+          prev ? { ...prev, workloads: prev.workloads.filter((w) => w.slug !== workload.slug) } : prev,
+        )
+      }
+      // FIX ROUND (P1-1, adversarial gate correction): navigate() and
+      // invalidateQueries() being synchronous calls in this one effect
+      // invocation does NOT mean the route change commits in this same
+      // cycle — react-router 7's <BrowserRouter> wraps its own state
+      // update in React.startTransition (main.tsx passes no
+      // `useTransitions` override), a LOW-PRIORITY commit, while a settled
+      // query notification lands at normal priority and can preempt it.
+      // Calling navigate() synchronously only guarantees the history push
+      // is synchronous, not that this tree re-renders at the new location
+      // before anything else does. onLeaveFlow() is what actually closes
+      // that window — see its own prop docstring, and WorkloadSetup.tsx's
+      // `leavingFlowRef` for the full mechanism.
+      onLeaveFlow()
       navigate('/media-workloads')
     }
-  }, [purgeOp, queryClient, navigate])
+  }, [purgeOp, queryClient, navigate, onLeaveFlow, workload.slug])
 
   const entries = (catalogData?.entries ?? []).filter((e) => functionKeys.includes(e.key))
 
@@ -290,15 +351,20 @@ export default function FinaliseStage({
   // either way (a still-running sibling is not a lie) — a documented scope
   // line, not a silently-swallowed case.
   //
-  // RACE SAFETY: this function's two call sites (handleJobComplete,
-  // handleOpTerminal below) are also where the grouped-inventory
-  // invalidation already fires. navigate() and invalidateQueries() are both
-  // synchronous calls in the SAME handler invocation — no `await` between
-  // them — so the route change commits in this render, unmounting
-  // WorkloadWizard before that invalidation's own network round-trip could
-  // ever land a settled read for the ladder described above to act on. The
-  // ladder needs a settled read to misclassify Finalise; a settled read
-  // cannot arrive faster than an already-committed route change.
+  // FIX ROUND (P1-1, adversarial gate correction). This function's two call
+  // sites (handleJobComplete, handleOpTerminal below) also fire the
+  // grouped-inventory invalidation, and navigate() + invalidateQueries()
+  // being synchronous calls in the SAME handler invocation was previously
+  // read here as proof the route change commits before that invalidation's
+  // refetch could land a settled read for the ladder to act on. That is
+  // false: react-router 7's <BrowserRouter> wraps its own route-state
+  // update in React.startTransition (main.tsx passes no `useTransitions`
+  // override) — a LOW-PRIORITY commit — while a settled query notification
+  // lands at normal priority and can preempt it. Synchronous CALL ORDER
+  // says nothing about RENDER-COMMIT order between two independently
+  // scheduled updates. onLeaveFlow() below is what actually closes that
+  // window — see its own prop docstring and WorkloadSetup.tsx's
+  // `leavingFlowRef` for the mechanism that replaces this reasoning.
   const leaveAfterTeardown = (finishedKey: string, succeeded: boolean) => {
     if (!succeeded) return
     const stillInFlight =
@@ -307,6 +373,7 @@ export default function FinaliseStage({
       purgeOpId !== null ||
       functionKeys.some((key) => key !== finishedKey && activeTrack(trackRef.current[key]))
     if (stillInFlight) return
+    onLeaveFlow()
     navigate(workloadHomePath(workload.slug))
   }
 

@@ -186,15 +186,21 @@ describe('Finalise & Review: delete permanently drives to a real completion', ()
     expect(purgeRecord?.actor).toBe('ops')
     expect(purgeRecord?.role).toBe('operator')
 
-    // Confirmed-absent provenance renders, sourced from the terminal
-    // Operation's own purge_verified_at — never fabricated locally. Briefly:
-    // dmfdeploy#418 (below) leaves this route once run_complete lands, so
-    // this is the one moment this text is on screen at all — genuinely
-    // present, not merely raced past, since `finalise` is a still-live DOM
-    // reference at the point this awaits it.
-    await within(finalise).findByText(/Deleted permanently — confirmed absent/)
-    expect(within(finalise).getByText(/2026-08-03T12:00:00Z/)).toBeTruthy()
-
+    // dmfdeploy#418 FIX ROUND (P2, adversarial gate): this used to also
+    // assert the confirmed-absent provenance text ("Deleted permanently —
+    // confirmed absent…") rendered here, on the premise that navigate() and
+    // invalidateQueries() being synchronous calls meant the route committed
+    // before anything else could. That premise is false (see P1-1's fix,
+    // FinaliseStage's own onLeaveFlow) — the text is a transient render
+    // artifact of an unmount that is now genuinely raced against a route
+    // transition, not a contract this page owes the operator (they are
+    // leaving for the collection view either way), and pinning it here
+    // would break the moment that race's timing shifts under an unrelated
+    // change. The contract that DOES matter — did the flow actually leave,
+    // for the right destination — is the route assertion below, which is
+    // what the rest of this test (and workloadSetupTerminalLanding.test.tsx,
+    // end to end) pins.
+    //
     // dmfdeploy#418: on run_complete the flow now leaves /setup for the
     // COLLECTION view — a deleted workload's own home would itself be a
     // "Workload not found", the exact dead end that issue exists to remove.

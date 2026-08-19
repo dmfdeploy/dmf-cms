@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState, type ReactNode } from 'react'
+import { useCallback, useEffect, useRef, useState, type MutableRefObject, type ReactNode } from 'react'
 import { Link, useLocation, useParams } from 'react-router-dom'
 import { useCatalog, useCurrentUser, useMediaWorkloadsGrouped } from '../../api/hooks'
 import {
@@ -233,6 +233,80 @@ export default function WorkloadSetup() {
   // says Setup regardless of what state the read is in.
   usePageTitle(`${workload?.name ?? slug} — Setup`)
 
+  // dmfdeploy#418 FIX ROUND (P1-1, adversarial gate). A terminal Finalise
+  // action (a successful teardown, or a purge reaching run_complete) calls
+  // navigate() SYNCHRONOUSLY, in the same handler that invalidates
+  // ['media-workloads-grouped'] — but under react-router 7's declarative
+  // <BrowserRouter> (main.tsx passes no `useTransitions` prop, so its
+  // default applies), the route's own state update is wrapped in
+  // React.startTransition (chunk-KS7C4IRE.mjs's BrowserRouter `setState`) —
+  // a LOW-PRIORITY commit. Calling navigate() synchronously only means the
+  // history entry is pushed synchronously; it says nothing about when
+  // React actually re-renders this tree with the new location. The
+  // invalidated query's own refetch settling is NOT wrapped in a
+  // transition, so a NORMAL-priority re-render from that settle can land —
+  // and commit — before the low-priority route change does, while this
+  // page is still mounted at the old URL.
+  //
+  // What that stray render can show is worse than a single bug: two
+  // DIFFERENT dead ends depending on which terminal action raced it.
+  //   - Teardown: the freshly-settled workload reclassifies (lifecycle
+  //     already moved to `provision`, the member's own tag hasn't caught
+  //     up) — Finalise locks, defaultSelection's fallback lands on
+  //     `current`, and the flow silently re-selects Provision. This is
+  //     dmfdeploy#416's own shape, reopened by a different door.
+  //   - Delete permanently: the SAME settle (or, once P1-2's own cache
+  //     patch below lands, this component's OWN synchronous write to the
+  //     SAME query key) can make `workload` resolve to `undefined` before
+  //     the route ever leaves /setup — landing on the `!workload` branch's
+  //     "Workload not found" for a workload that is not missing, it is
+  //     mid-navigation to the one place that correctly explains its
+  //     absence.
+  //
+  // Reordering calls, dropping the `void` on invalidateQueries, or any
+  // other call-order tweak cannot close this: it is a SCHEDULING PRIORITY
+  // gap between two independently-scheduled updates, not a call-order one.
+  // `leavingFlowRef` closes it without racing the scheduler at all: it is a
+  // plain ref (not state), set to `true` synchronously by `handleLeaveFlow`
+  // in the SAME handler that calls navigate() (threaded down to
+  // FinaliseStage as `onLeaveFlow`, called immediately before its two
+  // navigate() sites). Because it is read directly during render — not
+  // through an effect, which would itself be subject to the same priority
+  // ordering — ANY subsequent render of this component, regardless of
+  // which update triggered it or which priority React gave that update,
+  // sees the ref already `true`. The short-circuit below then renders
+  // WorkloadWizard from the LAST GOOD `{workload, groupedRead}` snapshot
+  // instead of re-deriving from whatever the live read now says, so none
+  // of isLoading/error/unconfigured/`!workload` can supersede the wizard
+  // while a navigation this page itself started is still pending. This is
+  // "prevented", not "raced and usually wins" — the ladder never sees new
+  // data to misclassify in the first place, which is why WorkloadWizard's
+  // own step-recovery effect (further down) needs its own, narrower
+  // version of the same guard: `userQuery`/local job-busy flags are
+  // WorkloadWizard's own hooks/state, outside what this snapshot freezes,
+  // and could otherwise still flip a step's openability from a source this
+  // freeze doesn't reach.
+  const leavingFlowRef = useRef(false)
+  const lastGoodRenderRef = useRef<{
+    workload: MediaWorkload
+    groupedRead: { isError: boolean; isFetching: boolean; configured?: boolean; degraded?: boolean }
+  } | null>(null)
+  const handleLeaveFlow = useCallback(() => {
+    leavingFlowRef.current = true
+  }, [])
+
+  if (leavingFlowRef.current && lastGoodRenderRef.current) {
+    return (
+      <WorkloadWizard
+        key={lastGoodRenderRef.current.workload.slug}
+        workload={lastGoodRenderRef.current.workload}
+        groupedRead={lastGoodRenderRef.current.groupedRead}
+        leavingFlowRef={leavingFlowRef}
+        onLeaveFlow={handleLeaveFlow}
+      />
+    )
+  }
+
   // dmfdeploy#414 gate, round 3 (P1): checked BEFORE isLoading/error/
   // unconfigured below, not after — this used to sit where the old
   // `!workload` not-found check still sits, past all three. That let a
@@ -372,6 +446,14 @@ export default function WorkloadSetup() {
   // INTENDED equivalence, not a regression: the backend is what's actually
   // running the job, and the wizard's local overlay was never anything
   // more than an optimistic echo of it.
+  // dmfdeploy#418 FIX ROUND (P1-1): the snapshot `leavingFlowRef`'s own
+  // short-circuit above reads once a navigation this page started is
+  // pending — refreshed on every render that reaches this far (i.e. every
+  // render NOT already leaving), so it is always the most recent good read
+  // going into whatever render first sets `leavingFlowRef.current`.
+  const groupedReadSnapshot = { isError, isFetching, configured: data?.configured, degraded: data?.degraded }
+  lastGoodRenderRef.current = { workload, groupedRead: groupedReadSnapshot }
+
   return (
     <WorkloadWizard
       key={workload.slug}
@@ -386,7 +468,9 @@ export default function WorkloadSetup() {
       // the raw read down instead, so buildWorkloadLifecycleInput is the
       // only place that formula runs (see its own docstring for why the
       // boolean-shaped seam was the actual gap).
-      groupedRead={{ isError, isFetching, configured: data?.configured, degraded: data?.degraded }}
+      groupedRead={groupedReadSnapshot}
+      leavingFlowRef={leavingFlowRef}
+      onLeaveFlow={handleLeaveFlow}
     />
   )
 }
@@ -409,6 +493,8 @@ export default function WorkloadSetup() {
 function WorkloadWizard({
   workload,
   groupedRead,
+  leavingFlowRef,
+  onLeaveFlow,
 }: {
   workload: MediaWorkload
   // umbrella #347: freshness of the SAME grouped read `workload` itself came
@@ -418,6 +504,16 @@ function WorkloadWizard({
   // pre-reduced boolean — buildWorkloadLifecycleInput below now runs
   // isGroupedReadTrustworthy itself, so this component doesn't call it.
   groupedRead: { isError: boolean; isFetching: boolean; configured?: boolean; degraded?: boolean }
+  // dmfdeploy#418 FIX ROUND (P1-1): owned by WorkloadSetup, not this
+  // component — see that component's own docstring on `leavingFlowRef` for
+  // the full race this closes. Threaded through (not re-created here) so
+  // WorkloadSetup's own short-circuit and this component's step-recovery
+  // guard below are reading the exact same flag, set by the exact same
+  // synchronous call.
+  leavingFlowRef: MutableRefObject<boolean>
+  // Called synchronously by FinaliseStage, immediately before either of its
+  // two navigate() call sites — see its own onLeaveFlow prop docstring.
+  onLeaveFlow: () => void
 }) {
   const { hash } = useLocation()
   // fix-round 5 (PR #81, codex sibling sweep): isError threaded down to
@@ -560,10 +656,32 @@ function WorkloadWizard({
   if (!dataUnsettled) settledStepsRef.current = steps
   const displaySteps = dataUnsettled ? settledStepsRef.current : steps
 
-  const activeStep =
+  // dmfdeploy#418 FIX ROUND (P1-1): while `leavingFlowRef.current` is true
+  // (set synchronously by onLeaveFlow, below FinaliseStage's own two
+  // navigate() sites — see WorkloadSetup's own docstring on
+  // `leavingFlowRef` for the full race), the step-recovery fallback below
+  // is never even EVALUATED against fresh classification — `lastStepRef`
+  // pins whatever step was actually showing the instant leaving began, and
+  // every render after that reuses it verbatim. This is the belt to
+  // WorkloadSetup's own braces: that parent-level snapshot already stops
+  // `workload`/`groupedRead` from changing under this component during the
+  // same window, which independently prevents `steps` from reclassifying —
+  // but `userQuery` above is THIS component's own hook, not part of that
+  // snapshot, and `launching`/`switching`/`tearingDown` are THIS
+  // component's own state, cleared one render AFTER the job that just
+  // completed (FinaliseStage's onBusyChange effect, not synchronously with
+  // the handler that called onLeaveFlow) — either can still flip a step's
+  // openability from a source the parent's freeze does not reach. Pinning
+  // the OUTPUT here, not just the two inputs the parent controls, is what
+  // makes this "cannot fire" rather than "one layer of raciness removed".
+  const lastStepRef = useRef<FlowStepId | null>(null)
+  const rawActiveStep =
     selectedStep !== null && isStepOpenable(displaySteps[selectedStep])
       ? selectedStep
       : defaultSelection(displaySteps, current, offFlow, requestedStep)
+  const activeStep =
+    leavingFlowRef.current && lastStepRef.current !== null ? lastStepRef.current : rawActiveStep
+  lastStepRef.current = activeStep
 
   // React's sanctioned "derived state" pattern: persist the computed
   // fallback into state so a later query refresh that keeps the operator's
@@ -576,9 +694,18 @@ function WorkloadWizard({
   // so this effect only ever fires on a REAL divergence (a settled,
   // still-locked classification, or the initial null->selection mount,
   // which should commit immediately regardless of fetch state).
+  //
+  // dmfdeploy#418 FIX ROUND (P1-1): also skipped while leaving, for the
+  // same reason the computation above is pinned — persisting a fallback
+  // into `selectedStep` here would be the SAME misclassification the
+  // pinned `activeStep` above already refuses to compute, just delayed one
+  // tick. The precondition, not the classification: nothing in
+  // lib/workloadFlow.ts or stageActions() changes, and this effect still
+  // fires exactly as before for every case that isn't a pending departure.
   useEffect(() => {
+    if (leavingFlowRef.current) return
     if (activeStep !== selectedStep) setSelectedStep(activeStep)
-  }, [activeStep, selectedStep])
+  }, [activeStep, selectedStep, leavingFlowRef])
 
   // The job owner is cleared once the job settles (any of the three busy
   // flags falls) — the START is synchronous (via startJob below); the END
@@ -755,6 +882,10 @@ function WorkloadWizard({
         // FinaliseStage subscribing to useCurrentUser() itself — see that
         // prop's own docstring for why a second subscriber is the bug.
         user={userQuery.data}
+        // dmfdeploy#418 FIX ROUND (P1-1): threaded straight through from
+        // WorkloadSetup — see that component's own docstring on
+        // `leavingFlowRef` for what this closes.
+        onLeaveFlow={onLeaveFlow}
       />
     ),
   }
