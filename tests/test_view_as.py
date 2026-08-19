@@ -13,6 +13,7 @@ server-side. Two layers of coverage:
 from fastapi.testclient import TestClient
 
 import dmf_cms.main as main
+from dmf_cms.authentik import AuthentikAPIError
 from dmf_cms.main import create_app
 from dmf_cms.security import (
     UserIdentity,
@@ -46,14 +47,23 @@ def _admin_identity(groups=ADMIN) -> UserIdentity:
 # --------------------------------------------------------------------------
 
 def test_effective_user_applies_valid_admin_downgrade():
+    real = _admin_identity()
     session: dict = {}
-    store_user(session, _admin_identity())
+    store_user(session, real)
     session["view_as"] = "viewer"
     eff = effective_user(session)
     assert eff is not None
     assert eff.role == "viewer"
     # groups are NOT altered — same groups, lower role (ADR-0028-safe)
     assert eff.groups == ADMIN
+    # view-as downgrades role ONLY — subject/email/display_name survive
+    # unchanged. This is the property self-scoped endpoints (e.g. POST
+    # /api/admin/invitations, dmfdeploy/dmfdeploy#423) rely on: a downgraded
+    # admin still self-scopes to their OWN identity, never a blank or
+    # substituted one.
+    assert eff.subject == real.subject
+    assert eff.email == real.email
+    assert eff.display_name == real.display_name
     # the real identity is untouched
     assert session_user(session).role == "admin"
 
@@ -287,6 +297,107 @@ def test_invitations_configured_mints_only_for_the_caller(monkeypatch):
     assert resp2.status_code == 200
     assert len(calls) == 2
     assert calls[1] == caller_kwargs
+
+    # Nor can a query string — a different injection vector than a JSON
+    # body, and a future regression that reads request.query_params instead
+    # of the body would sail through the body-only assertion above.
+    resp3 = client.post(
+        "/api/admin/invitations?username=someone-else&email=someone-else@example.invalid",
+    )
+    assert resp3.status_code == 200
+    assert len(calls) == 3
+    assert calls[2] == caller_kwargs
+
+    # Nor can a client-supplied identity header — the caller's identity
+    # comes from the server-side session (effective_user), never from
+    # request headers, so spoofing one must change nothing.
+    resp4 = client.post(
+        "/api/admin/invitations",
+        headers={
+            "X-Forwarded-User": "someone-else",
+            "X-Remote-User": "someone-else",
+        },
+    )
+    assert resp4.status_code == 200
+    assert len(calls) == 4
+    assert calls[3] == caller_kwargs
+
+
+def test_invitations_downgraded_admin_mints_for_the_admins_own_identity(monkeypatch):
+    # Positive counterpart to the GATE-G24-R2 403 assertion removed from
+    # test_view_as_enforced_on_direct_admin_endpoints: a real admin who has
+    # downgraded via view-as still REACHES this endpoint (it never needed
+    # the admin capability) and still mints for their OWN identity, not
+    # "viewer" and not blank — effective_user's role-only downgrade
+    # (test_effective_user_applies_valid_admin_downgrade) is what this
+    # rests on.
+    calls: list[dict] = []
+
+    def fake_create_invitation(**kwargs):
+        calls.append(kwargs)
+        return {
+            "enrollment_url": "https://auth.example.invalid/if/flow/enroll/xyz/",
+            "expires": "2026-01-01T00:00:00Z",
+        }
+
+    monkeypatch.setattr(main, "create_invitation", fake_create_invitation)
+
+    settings = Settings(
+        runtime_mode="local",
+        dev_login_enabled=True,
+        dev_groups=ADMIN,
+        media_tenancy=MediaTenancySettings(mode="single"),
+        authentik=AuthentikSettings(api_url="http://authentik.test", api_token="tok"),
+    )
+    client = TestClient(create_app(settings=settings))
+    client.get("/auth/login", follow_redirects=False)  # dev login -> session, real admin
+
+    set_resp = client.post("/api/me/view-as", json={"role": "viewer"})
+    assert set_resp.status_code == 200
+    assert client.get("/api/me").json()["role"] == "viewer"  # effective role is now viewer
+
+    resp = client.post("/api/admin/invitations")
+    assert resp.status_code == 200, resp.text
+    assert len(calls) == 1
+    # dev-login identity fields come from settings.dev_username/dev_email/
+    # dev_display_name regardless of dev_groups — the ADMIN's own identity.
+    assert calls[0]["username"] == "operator"
+    assert calls[0]["email"] == "operator@example.invalid"
+    assert calls[0]["display_name"] == "DMF Operator"
+
+
+def test_invitations_sanitizes_authentik_error_for_the_client(monkeypatch, caplog):
+    # Finding 1 (WO-423 fix round 1): before this change only an admin could
+    # reach this branch; now any authenticated role can, so a raw Authentik
+    # response body reaching the client is a disclosure this PR introduced,
+    # not a pre-existing issue. Match the AWX error paths elsewhere in this
+    # module (main.py's "Log raw error server-side only, sanitize for
+    # client" pattern): the real status code is not disclosure and stays,
+    # the body text is.
+    SECRET_DETAIL = "internal flow instance detail: secret-xyz"
+
+    def fake_create_invitation(**kwargs):
+        raise AuthentikAPIError(502, SECRET_DETAIL)
+
+    monkeypatch.setattr(main, "create_invitation", fake_create_invitation)
+
+    settings = Settings(
+        runtime_mode="local",
+        dev_login_enabled=True,
+        dev_groups=ENGINEER,
+        media_tenancy=MediaTenancySettings(mode="single"),
+        authentik=AuthentikSettings(api_url="http://authentik.test", api_token="tok"),
+    )
+    client = TestClient(create_app(settings=settings))
+    client.get("/auth/login", follow_redirects=False)  # dev login -> session
+
+    with caplog.at_level("ERROR"):
+        resp = client.post("/api/admin/invitations")
+
+    assert resp.status_code == 502  # status code preserved — not disclosure
+    assert SECRET_DETAIL not in resp.text
+    # ...but logged server-side, not silently dropped.
+    assert any(SECRET_DETAIL in record.getMessage() for record in caplog.records)
 
 
 def test_view_as_group_surface_still_reachable_when_downgraded():
