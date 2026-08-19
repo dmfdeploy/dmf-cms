@@ -3014,7 +3014,13 @@ def create_app(settings: Settings | None = None, contract: AppContract | None = 
                 "expires": result["expires"],
             })
         except AuthentikAPIError as exc:
-            return JSONResponse({"error": f"authentik API error: {exc.body}"}, status_code=exc.status)
+            # Log raw error server-side only, sanitize for client (matches
+            # the AWX error paths elsewhere in this module). This gate was
+            # just lowered from admin to viewer (dmfdeploy/dmfdeploy#423),
+            # so a raw Authentik response body reaching the client is no
+            # longer bounded by an admin-trust assumption.
+            logger.error("Authentik API error minting passkey invitation for %s: %s", user.subject, exc.body)
+            return JSONResponse({"error": "authentik API error"}, status_code=exc.status)
 
     # ------------------------------------------------------------------
     # Async operation tracking endpoints
