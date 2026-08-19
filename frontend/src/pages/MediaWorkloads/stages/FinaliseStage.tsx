@@ -76,6 +76,7 @@ export default function FinaliseStage({
   onJobStart,
   user,
   onLeaveFlow,
+  leaving,
 }: {
   workload: MediaWorkload
   state: StageState
@@ -115,6 +116,30 @@ export default function FinaliseStage({
    * construction, not by out-racing the scheduler.
    */
   onLeaveFlow: () => void
+  /**
+   * dmfdeploy#418 FIX ROUND 3 (adversarial gate, operator's harness). True
+   * for exactly the window `leavingFlowRef.current` covers — set the
+   * instant onLeaveFlow() above fires, cleared only once the pending
+   * departure commits or is superseded (WorkloadSetup.tsx's own
+   * `leavingFlowRef` docstring). Read directly off that ref at render time
+   * in WorkloadWizard, the same way `activeStep` already is there — NOT
+   * derived from `busy`/`teardownMutation.isPending`/`purgeOpId`, because
+   * the finding this round closes is precisely that those clear FIRST: the
+   * mutation settles, this component's own `onBusyChange(busy)` effect
+   * reports it, WorkloadWizard's `tearingDown` flips back to false, and
+   * `stageActions('finalise', input)` recomputes — against the FROZEN
+   * pre-action `workload`/`groupedRead` WorkloadSetup's own snapshot holds
+   * during this window, the exact read that offered the destructive
+   * control in the first place. Left ungated, the Teardown/Delete-
+   * permanently ladder below would silently re-arm for a workload that was
+   * just torn down or purged, fully clickable, before navigate() actually
+   * lands. `leaving` short-circuits BOTH ladders ahead of every other
+   * branch (`allowed`, `purgeAllowed`, `purgeArming`, `purgeOpId`) so no
+   * destructive control can mount at all during this window — unmounted,
+   * not merely disabled, and the copy that replaces it says the true thing
+   * (the flow is leaving) rather than misreporting "not offered".
+   */
+  leaving: boolean
 }) {
   // fix-round 5 (PR #81, codex sibling sweep): `catalogFailed` threaded into
   // the absence claim below — see ProvisionStage.tsx's identical fix for
@@ -448,7 +473,17 @@ export default function FinaliseStage({
       <div className="space-y-4">
         <div>
           <h3 className="text-xs uppercase tracking-wide text-muted">Teardown</h3>
-          {state === 'not-applicable' ? (
+          {leaving ? (
+            // dmfdeploy#418 FIX ROUND 3: checked ahead of every other branch
+            // here, including `state === 'not-applicable'` — see `leaving`'s
+            // own prop docstring for why this must be unconditional. No
+            // FinaliseEntry mounts while this is true, so neither its
+            // Teardown button nor an already-armed ReasonConfirm's own
+            // Confirm button is reachable.
+            <p className="mt-1 text-muted">
+              Leaving this flow to show the latest status — actions here are unavailable while it does.
+            </p>
+          ) : state === 'not-applicable' ? (
             <p className="mt-1 text-muted">Nothing is running yet, so there is nothing to tear down.</p>
           ) : entries.length === 0 ? (
             <p className={`mt-1 ${catalogFailed ? 'text-amber-200/80' : 'text-muted'}`}>
@@ -485,7 +520,18 @@ export default function FinaliseStage({
 
         <div className="border-t border-white/5 pt-3">
           <h3 className="text-xs uppercase tracking-wide text-muted">Delete permanently</h3>
-          {purgeOpId != null ? (
+          {leaving ? (
+            // dmfdeploy#418 FIX ROUND 3: same short-circuit as Teardown
+            // above, and for the same reason — see `leaving`'s own prop
+            // docstring. By construction `purgeOpId` is already null by the
+            // time `leaving` goes true (the purge terminal effect clears it
+            // before calling onLeaveFlow()), so this never hides a genuine
+            // in-flight "Deleting…" readout, only the button/ReasonConfirm
+            // ladder underneath it.
+            <p className="mt-1 text-muted">
+              Leaving this flow to show the latest status — actions here are unavailable while it does.
+            </p>
+          ) : purgeOpId != null ? (
             <div className="mt-2 text-xs">
               <p className="text-muted">
                 Deleting <span className="font-mono">{workload.slug}</span> permanently…

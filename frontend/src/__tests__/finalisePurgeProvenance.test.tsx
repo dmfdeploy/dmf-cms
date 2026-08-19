@@ -70,6 +70,7 @@ function renderIsolated(workload: MediaWorkload) {
           onJobStart={() => {}}
           user={OPERATOR}
           onLeaveFlow={() => {}}
+          leaving={false}
         />
       </MemoryRouter>
     </QueryClientProvider>,

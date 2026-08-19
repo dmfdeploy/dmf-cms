@@ -924,6 +924,14 @@ function WorkloadWizard({
         // WorkloadSetup — see that component's own docstring on
         // `leavingFlowRef` for what this closes.
         onLeaveFlow={onLeaveFlow}
+        // dmfdeploy#418 FIX ROUND 3 (adversarial gate). Read directly off
+        // the ref at render time — the same live read `activeStep` above
+        // already relies on, not a value threaded through `input`/`actions`
+        // (both of which this round's finding is precisely that they go
+        // stale-but-permissive during this exact window). See
+        // FinaliseStage's own `leaving` prop docstring for the full
+        // mechanism this closes.
+        leaving={leavingFlowRef.current}
       />
     ),
   }
