@@ -2979,11 +2979,16 @@ def create_app(settings: Settings | None = None, contract: AppContract | None = 
 
     @app.post("/api/admin/invitations")
     async def create_passkey_invitation(request: Request):
-        # Admin-surface action: gate on the effective admin role (GATE-G24 —
-        # closes both a pre-existing under-gate, where any authenticated user
-        # could reach it, and the view-as escape). effective_user keeps the
-        # caller's subject/email/display_name; view-as only lowers the role.
-        user, err = _require_min_role(request, "admin")
+        # Self-scoped action, not admin surface: the handler below takes no
+        # request body and no target-user parameter, minting an invitation
+        # only for the caller's own subject/email/display_name. There is no
+        # cross-user reach here for a role floor to protect, so this gate
+        # exists solely to require an authenticated session (viewer is the
+        # floor of ROLE_ORDER, and current_role() already falls back to it).
+        # The view-as concern GATE-G24 raised does not apply: view-as only
+        # lowers effective_user.role, never subject/email/display_name, so a
+        # downgraded admin still mints an invitation for themselves alone.
+        user, err = _require_min_role(request, "viewer")
         if err is not None:
             return err
 
