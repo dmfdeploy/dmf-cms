@@ -12,6 +12,7 @@ server-side. Two layers of coverage:
 
 from fastapi.testclient import TestClient
 
+import dmf_cms.main as main
 from dmf_cms.main import create_app
 from dmf_cms.security import (
     UserIdentity,
@@ -20,11 +21,12 @@ from dmf_cms.security import (
     session_user,
     store_user,
 )
-from dmf_cms.settings import MediaTenancySettings, NetboxSettings, Settings
+from dmf_cms.settings import AuthentikSettings, MediaTenancySettings, NetboxSettings, Settings
 
 
 ADMIN = ("dmf-console-admin",)
 OPERATOR = ("dmf-console-operator",)
+ENGINEER = ("dmf-console-engineer",)
 VIEWER = ("dmf-console-viewer",)
 ADMIN_PLUS_MEDIA = ("dmf-console-admin", "media-engineers")
 
@@ -205,15 +207,86 @@ def test_view_as_enforced_on_direct_admin_endpoints():
         "/api/admin/groups",
     ):
         assert client.get(path).status_code == 403, path
-    # the invitations POST is also on the admin surface (GATE-G24-R2)
-    assert client.post("/api/admin/invitations").status_code == 403
 
 
-def test_admin_invitations_requires_admin_role():
-    # Pre-existing under-gate closed by WP-B: a non-admin (real operator) is
-    # 403, not merely blocked later by an unconfigured-Authentik 503.
-    client = _client(groups=OPERATOR)
-    assert client.post("/api/admin/invitations").status_code == 403
+def test_invitations_open_to_any_authenticated_role_unconfigured_authentik():
+    # dmfdeploy/dmfdeploy#423: the endpoint is self-scoped (no request body,
+    # no target-user param), so the gate only requires an authenticated
+    # session (viewer floor), not admin. With Authentik unconfigured (the
+    # default here) a caller who PASSES the gate hits the next branch and
+    # gets 503 "authentik API not configured" — NOT 403. Pin that a
+    # non-admin gets exactly 503, so a future regression that re-tightens
+    # the gate to admin (which would surface as 403 here) is caught, and a
+    # broken handler (which would surface as 500 or 200) is caught too.
+    for groups in (ENGINEER, VIEWER):
+        client = _client(groups=groups)
+        resp = client.post("/api/admin/invitations")
+        assert resp.status_code == 503, (groups, resp.text)
+        assert resp.status_code != 403, (groups, resp.text)
+    # Admin behaviour is unchanged: still reaches the handler (503 here too,
+    # same unconfigured Authentik — not blocked earlier by the gate).
+    admin_client = _client(groups=ADMIN)
+    assert admin_client.post("/api/admin/invitations").status_code == 503
+
+
+def test_invitations_requires_authentication():
+    # No dev-login call — no session established — still 401, gate change
+    # notwithstanding.
+    settings = Settings(
+        runtime_mode="local",
+        dev_login_enabled=True,
+        dev_groups=VIEWER,
+        media_tenancy=MediaTenancySettings(mode="single"),
+    )
+    client = TestClient(create_app(settings=settings))
+    assert client.post("/api/admin/invitations").status_code == 401
+
+
+def test_invitations_configured_mints_only_for_the_caller(monkeypatch):
+    # Configured path: a non-admin (engineer) gets 200 + enrollment_url, and
+    # the invitation is minted for the CALLER's own identity regardless of
+    # what a request body claims — this is the safety property the whole
+    # gate-lowering rests on, so it must be pinned, not assumed.
+    calls: list[dict] = []
+
+    def fake_create_invitation(**kwargs):
+        calls.append(kwargs)
+        return {
+            "enrollment_url": "https://auth.example.invalid/if/flow/enroll/abc/",
+            "expires": "2026-01-01T00:00:00Z",
+        }
+
+    monkeypatch.setattr(main, "create_invitation", fake_create_invitation)
+
+    settings = Settings(
+        runtime_mode="local",
+        dev_login_enabled=True,
+        dev_groups=ENGINEER,
+        media_tenancy=MediaTenancySettings(mode="single"),
+        authentik=AuthentikSettings(api_url="http://authentik.test", api_token="tok"),
+    )
+    client = TestClient(create_app(settings=settings))
+    client.get("/auth/login", follow_redirects=False)  # dev login -> session
+
+    resp = client.post("/api/admin/invitations")
+    assert resp.status_code == 200, resp.text
+    assert resp.json()["enrollment_url"] == "https://auth.example.invalid/if/flow/enroll/abc/"
+    assert len(calls) == 1
+    caller_kwargs = calls[0]
+    assert caller_kwargs["username"] == "operator"  # settings.dev_username default
+    assert caller_kwargs["email"] == "operator@example.invalid"
+    assert caller_kwargs["display_name"] == "DMF Operator"
+
+    # A request body cannot redirect who the invitation is minted for — the
+    # handler takes no body at all, so this must be byte-for-byte identical
+    # to the no-body call above.
+    resp2 = client.post(
+        "/api/admin/invitations",
+        json={"username": "someone-else", "email": "someone-else@example.invalid"},
+    )
+    assert resp2.status_code == 200
+    assert len(calls) == 2
+    assert calls[1] == caller_kwargs
 
 
 def test_view_as_group_surface_still_reachable_when_downgraded():
