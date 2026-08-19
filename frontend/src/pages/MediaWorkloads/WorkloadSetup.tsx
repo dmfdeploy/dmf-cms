@@ -704,8 +704,13 @@ function WorkloadWizard({
     emitTopbarMessage(`${STEP_LABEL[step]} job for ${workload.name} started`)
   }
 
+  // dmfdeploy#416: displaySteps, not live `steps` — the one consumer on this
+  // page that had not yet moved onto the latched value #392 introduced (see
+  // displaySteps' own comment above). Reading live `steps` here meant a
+  // background poll could assert this step is closed, and announce that
+  // (role="status" aria-live="polite" below) while it is genuinely open.
   const requestedIsLocked =
-    FLOW_STEPS.includes(requestedStep as FlowStepId) && steps[requestedStep as FlowStepId] === 'locked'
+    FLOW_STEPS.includes(requestedStep as FlowStepId) && displaySteps[requestedStep as FlowStepId] === 'locked'
 
   const stageBody: Record<FlowStepId, ReactNode> = {
     design: (
