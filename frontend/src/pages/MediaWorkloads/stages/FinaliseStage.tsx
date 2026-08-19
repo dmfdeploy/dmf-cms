@@ -226,18 +226,48 @@ export default function FinaliseStage({
     setPurgeOpId(null)
     void queryClient.invalidateQueries({ queryKey: ['media-workloads-grouped'] })
     void queryClient.invalidateQueries({ queryKey: ['catalog'] })
-    // dmfdeploy#418: on a genuine success, leave the flow for the
-    // COLLECTION view — not the workload's own home. Unlike a completed
-    // Teardown (leaveAfterTeardown below), the workload itself no longer
-    // exists once a purge completes: its home would itself be a "Workload
-    // not found", the same dead end the issue's own third comment settled
-    // against reproducing at a different URL. `/media-workloads` is the
-    // nearest surface that still meaningfully exists.
+    // dmfdeploy#418 FIX ROUND 2 (P1, adversarial gate). `purgeOp.state ===
+    // 'run_complete'` is the job's own terminal signal — it is NOT Art. 1's
+    // absence proof. Only `purge_verified_at` is that (see its own comment
+    // below): stamped ONLY after a fresh, unscoped NetBox re-read positively
+    // confirms no Service anywhere still carries this workload's own
+    // `workload:<slug>` tag. Round 1 of this fix gated the CACHE write below
+    // on `purge_verified_at` but left leaving the flow — onLeaveFlow() and
+    // navigate() — unconditional on `state` alone, on the premise that the
+    // cache write was the only place a false claim could leak. It wasn't:
+    // the Review section further down used to render "Deleted permanently —
+    // confirmed absent by a fresh source read" for ANY `run_complete`,
+    // `purge_verified_at` or not, and leaving the flow moved the operator
+    // off the only surface that renders that text at all — so an
+    // unverified `run_complete` both asserted a proof it did not have AND
+    // hid the only place that assertion could be caught. Both are gated on
+    // the SAME condition now, not just the cache write.
     //
-    // On any OTHER terminal state (run_failed, error, ...) this stays put —
-    // purgeReview above already renders the failure, and the workload is
-    // presumably still there for the operator to look at or retry.
-    if (purgeOp.state === 'run_complete') {
+    // The backend's own finalise-purge watcher (dmf_cms/main.py) should
+    // fail closed to run_failed/run_status_unknown rather than ever emit an
+    // unverified run_complete — but a UI that only tells the truth when its
+    // backend behaves well is not fail-closed, so this stays gated here
+    // regardless of whether that backend invariant holds.
+    //
+    // On any OTHER terminal outcome (run_failed, error, or an UNVERIFIED
+    // run_complete) this stays put — the Review section renders whatever
+    // the backend actually recorded, honestly (its own updated branching,
+    // further down), and the workload is presumably still there for the
+    // operator to look at or retry.
+    if (purgeOp.state === 'run_complete' && purgeOp.purge_verified_at) {
+      // dmfdeploy#418 FIX ROUND 2 hardening. onLeaveFlow() now runs BEFORE
+      // the cache write below, not after. The previous order was safe on
+      // the CURRENT runtime only because nothing can render between two
+      // synchronous statements in one effect body — true here only because
+      // TanStack Query 5.100.7's notifyManager schedules its own observer
+      // notification on a setTimeout(0) tick, not synchronously inside
+      // setQueryData, which is an implementation detail of a dependency
+      // this codebase does not control, not a guarantee it should rest on.
+      // Setting the guard FIRST removes the dependency on that detail
+      // entirely: the ref is true before either of this effect's own writes
+      // below can be observed by any re-render, by construction.
+      onLeaveFlow()
+
       // FIX ROUND (P1-2, adversarial gate). invalidateQueries above only
       // MARKS ['media-workloads-grouped'] stale and starts a refetch — it
       // does not wait for it, and TanStack Query retains the PRE-purge
@@ -254,26 +284,19 @@ export default function FinaliseStage({
       // (yet, or ever) re-confirmed, the exact defect class this codebase
       // spends the most review rounds on, reintroduced by the fix for it.
       //
-      // `purge_verified_at` is not a guess at that state — it is stamped
-      // ONLY after a fresh, unscoped NetBox re-read confirms no Service
-      // anywhere still carries this workload's own `workload:<slug>` tag
-      // and the tag object itself no longer exists (dmf_cms/main.py's
-      // finalise-purge watcher, media_workloads.purge_residue_present) —
-      // the EXACT membership test list_workloads_grouped uses to place a
-      // workload in `workloads[]` in the first place. A truthy
-      // purge_verified_at is therefore the backend's own positive proof
-      // that THIS slug cannot legitimately appear in that array anymore,
-      // not an inference this component is making on its own. Writing it
-      // straight into the cache makes the collection view consistent with
-      // an ESTABLISHED fact the instant it mounts, with no read to wait on
-      // and no risk tied to whether that read ever lands. invalidateQueries
-      // above still runs regardless — this is a bridge to the confirmed
-      // truth, not a replacement for eventually re-confirming it.
-      if (purgeOp.purge_verified_at) {
-        queryClient.setQueryData<MediaWorkloadsGroupedResponse>(['media-workloads-grouped'], (prev) =>
-          prev ? { ...prev, workloads: prev.workloads.filter((w) => w.slug !== workload.slug) } : prev,
-        )
-      }
+      // A truthy purge_verified_at (checked in the `if` above) is the
+      // backend's own positive proof that THIS slug cannot legitimately
+      // appear in that array anymore, not an inference this component is
+      // making on its own. Writing it straight into the cache makes the
+      // collection view consistent with an ESTABLISHED fact the instant it
+      // mounts, with no read to wait on and no risk tied to whether that
+      // read ever lands. invalidateQueries above still runs regardless —
+      // this is a bridge to the confirmed truth, not a replacement for
+      // eventually re-confirming it.
+      queryClient.setQueryData<MediaWorkloadsGroupedResponse>(['media-workloads-grouped'], (prev) =>
+        prev ? { ...prev, workloads: prev.workloads.filter((w) => w.slug !== workload.slug) } : prev,
+      )
+
       // FIX ROUND (P1-1, adversarial gate correction): navigate() and
       // invalidateQueries() being synchronous calls in this one effect
       // invocation does NOT mean the route change commits in this same
@@ -283,10 +306,9 @@ export default function FinaliseStage({
       // query notification lands at normal priority and can preempt it.
       // Calling navigate() synchronously only guarantees the history push
       // is synchronous, not that this tree re-renders at the new location
-      // before anything else does. onLeaveFlow() is what actually closes
-      // that window — see its own prop docstring, and WorkloadSetup.tsx's
-      // `leavingFlowRef` for the full mechanism.
-      onLeaveFlow()
+      // before anything else does. onLeaveFlow() (moved above, this round)
+      // is what actually closes that window — see its own prop docstring,
+      // and WorkloadSetup.tsx's `leavingFlowRef` for the full mechanism.
       navigate('/media-workloads')
     }
   }, [purgeOp, queryClient, navigate, onLeaveFlow, workload.slug])
@@ -579,16 +601,30 @@ export default function FinaliseStage({
               )}
               {purgeReview && (
                 <div className="text-xs">
-                  {purgeReview.state === 'run_complete' ? (
+                  {purgeReview.state === 'run_complete' && purgeReview.purge_verified_at ? (
                     <>
                       <p className="text-green-400">
                         Deleted permanently — confirmed absent by a fresh source read.
                       </p>
-                      {purgeReview.purge_verified_at && (
-                        <p className="mt-1 font-mono text-muted/70">
-                          verified {purgeReview.purge_verified_at}
-                        </p>
-                      )}
+                      <p className="mt-1 font-mono text-muted/70">
+                        verified {purgeReview.purge_verified_at}
+                      </p>
+                    </>
+                  ) : purgeReview.state === 'run_complete' ? (
+                    <>
+                      {/* dmfdeploy#418 FIX ROUND 2 (P1, adversarial gate).
+                          run_complete alone is the JOB's terminal signal, not
+                          Art. 1's absence proof (see the terminal effect's
+                          own comment above) — a backend anomaly that reports
+                          run_complete without purge_verified_at must not
+                          read as the confirmed-absent success above, even
+                          though the job itself finished. */}
+                      <p className="text-amber-300">
+                        Delete permanently finished, but a fresh source read has not
+                        confirmed this workload&apos;s absence — its removal is unverified.
+                        Reload to check the latest status before treating it as gone.
+                      </p>
+                      <p className="mt-1 font-mono text-muted/70">request {purgeReview.request_id}</p>
                     </>
                   ) : (
                     <>

@@ -286,14 +286,52 @@ export default function WorkloadSetup() {
   // WorkloadWizard's own hooks/state, outside what this snapshot freezes,
   // and could otherwise still flip a step's openability from a source this
   // freeze doesn't reach.
+  //
+  // FIX ROUND 2 addendum (P2, adversarial gate): this ref alone answers
+  // "is a departure pending", not "a departure FROM WHICH workload" — see
+  // `leavingFlowSlugRef` immediately below for the gap that left open and
+  // the scoping fix for it.
   const leavingFlowRef = useRef(false)
+  // dmfdeploy#418 FIX ROUND 2 (P2, adversarial gate). WHICH workload's
+  // departure set `leavingFlowRef.current` — see the reset check right
+  // below the short-circuit for why a bare boolean isn't enough.
+  // WorkloadSetup itself is not keyed by workload identity (only
+  // WorkloadWizard, further down, is — GATE-D1.4's own `key={workload.slug}`
+  // note): a route change from THIS workload's /setup to a DIFFERENT
+  // workload's /setup is just a `:slug` param change, which React does not
+  // remount this component for, so the SAME instance — and the SAME
+  // `leavingFlowRef`, never reset by the original P1-1 fix — survives it.
+  // If a pending departure (a terminal Finalise action's navigate(), a
+  // low-priority transition) is SUPERSEDED before it commits — Back, or a
+  // direct navigation to another workload's own /setup route — the ref
+  // stays true forever with nothing to ever flip it back, and the
+  // short-circuit below keeps returning `lastGoodRenderRef`'s frozen
+  // snapshot of the ORIGINAL workload under the NEW workload's URL.
+  const leavingFlowSlugRef = useRef<string | null>(null)
   const lastGoodRenderRef = useRef<{
     workload: MediaWorkload
     groupedRead: { isError: boolean; isFetching: boolean; configured?: boolean; degraded?: boolean }
   } | null>(null)
   const handleLeaveFlow = useCallback(() => {
     leavingFlowRef.current = true
-  }, [])
+    leavingFlowSlugRef.current = slug ?? null
+  }, [slug])
+
+  // dmfdeploy#418 FIX ROUND 2 (P2 correction). A pending departure is only
+  // still "in flight" while this component is still rendering the SAME slug
+  // it started from. Once useParams reports a DIFFERENT slug, the original
+  // navigate() got superseded rather than fulfilled (the intended
+  // destinations — the collection view, or the departed workload's own
+  // home — are never this route at all, so reaching this route again with a
+  // NEW slug can only mean something else navigated here first) — the
+  // guard's job is over, and holding it any longer would pin the wrong
+  // workload's data under the URL that now names a different one. Releasing
+  // it here lets the render below fall through to a FRESH classification
+  // for the workload the URL actually names now.
+  if (leavingFlowRef.current && leavingFlowSlugRef.current !== (slug ?? null)) {
+    leavingFlowRef.current = false
+    leavingFlowSlugRef.current = null
+  }
 
   if (leavingFlowRef.current && lastGoodRenderRef.current) {
     return (

@@ -260,6 +260,75 @@ describe('Finalise & Review: delete permanently drives to a real completion', ()
     expect(within(finalise).queryByText(/[Rr]etrying/)).toBeNull()
   })
 
+  it(
+    'does NOT leave the flow and renders an honest unverified outcome when run_complete arrives without purge_verified_at',
+    async () => {
+      // dmfdeploy#418 FIX ROUND 2 (P1, adversarial gate). The backend's own
+      // finalise-purge watcher SHOULD fail closed to run_failed/
+      // run_status_unknown rather than ever emit this combination — but the
+      // frontend must not assume it always will (a UI that only tells the
+      // truth when its backend behaves well is not fail-closed). This
+      // fixture deliberately carries `state: 'run_complete'` with
+      // `purge_verified_at: null`, the exact anomaly the round 1 fix left
+      // unguarded: it gated the CACHE write on `purge_verified_at`, but left
+      // leaving the flow (onLeaveFlow/navigate) and the Review section's
+      // confirmed-absent copy gated on `state` alone.
+      const wl = eligibleWorkload()
+      const grouped: MediaWorkloadsGroupedResponse = {
+        configured: true, degraded: false, scope: [],
+        workloads: [wl], invalid_instances: [],
+      }
+      vi.stubGlobal(
+        'fetch',
+        vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
+          const url = (typeof input === 'string' ? input : (input as Request).url).toString()
+          if (url.endsWith('/api/me')) return json(OPERATOR)
+          if (url.endsWith('/api/catalog')) return json({ entries: [] })
+          if (url.endsWith('/api/media-workloads/grouped')) return json(grouped)
+          if (url.match(/\/api\/media-workloads\/studio-a\/purge$/) && (init?.method ?? 'GET') === 'POST') {
+            return json({
+              operation_id: 'op-4', action: 'finalise-purge', target: 'studio-a', state: 'launching',
+              job_id: null, error: null, created_at: 't0', updated_at: 't0', request_id: 'req-purge-4',
+            })
+          }
+          if (url.endsWith('/api/operations/op-4')) {
+            return json({
+              operation_id: 'op-4', action: 'finalise-purge', target: 'studio-a', state: 'run_complete',
+              job_id: 4242, error: null, l3_outcome: 'success',
+              purge_verified_at: null, created_at: 't0', updated_at: 't1', request_id: 'req-purge-4',
+            })
+          }
+          return json({})
+        }),
+      )
+
+      renderDetail()
+      await screen.findByRole('navigation', { name: 'Media workload lifecycle' })
+      fireEvent.click(await waitFor(() => within(rail()).getByRole('button', { name: 'Finalise & Review' })))
+      const finalise = stageSection('Finalise & Review')
+
+      fireEvent.click(await within(finalise).findByRole('button', { name: '🗑 Delete permanently' }))
+      fireEvent.change(within(finalise).getByPlaceholderText(/Reason \(required/), { target: { value: 'go' } })
+      fireEvent.change(within(finalise).getByPlaceholderText('studio-a'), { target: { value: 'studio-a' } })
+      fireEvent.click(within(finalise).getByRole('button', { name: 'Delete permanently' }))
+
+      await within(finalise).findByText(/its removal is unverified/, {}, { timeout: 8000 })
+      // Never the confirmed-absent success copy — the job finished, but
+      // absence was never confirmed by a fresh source read.
+      expect(within(finalise).queryByText(/confirmed absent/)).toBeNull()
+
+      // THE DISCRIMINATOR: still on /setup, and Finalise & Review is still
+      // what's rendered — an unverified run_complete must not move the
+      // operator off the only surface that shows this outcome. Must fail
+      // against the round-1 code, where `state === 'run_complete'` alone
+      // was enough to call onLeaveFlow()/navigate('/media-workloads').
+      await act(async () => {})
+      expect(screen.queryByTestId('location')).toBeNull()
+      expect(screen.getByRole('heading', { name: 'Finalise & Review', level: 2 })).toBeTruthy()
+    },
+    15000,
+  )
+
   it('is NOT offered while a member is observed running', async () => {
     const runningMember = eligibleWorkload({
       instances: [

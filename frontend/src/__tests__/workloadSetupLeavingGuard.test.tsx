@@ -29,7 +29,7 @@
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import { act, cleanup, fireEvent, render, screen, waitFor, within } from '@testing-library/react'
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query'
-import { MemoryRouter, Route, Routes } from 'react-router-dom'
+import { Link, MemoryRouter, Route, Routes } from 'react-router-dom'
 import WorkloadSetup from '../pages/MediaWorkloads/WorkloadSetup'
 import HeaderSlotProbe from './testUtils/HeaderSlotProbe'
 import { workloadHomePath } from '../lib/routes'
@@ -91,6 +91,18 @@ function postTeardownWorkload(): MediaWorkload {
       placement: { node: 'node-1', ports: [], protocol: null }, workload_assignment: 'ok',
     }],
     functions: [{ function_key: 'crosspoint', count: 1, running: 0, reconcile_pending: 0 }],
+  }
+}
+
+// A second, distinct workload for the P2 (fix round 2) guard-SCOPE test
+// below — deliberately a different slug/name than every `studio-a` fixture
+// above, so PageHeading's `${workload.name} — Setup` text is an unambiguous
+// discriminator between "rendering studio-a's frozen snapshot" and
+// "rendering studio-b's own, live data".
+function otherWorkload(): MediaWorkload {
+  return {
+    slug: 'studio-b', name: 'studio-b', lifecycle: 'operate', health: 'ok',
+    instances: [], functions: [],
   }
 }
 
@@ -287,6 +299,110 @@ describe('WorkloadSetup leaving guard (dmfdeploy#418 P1-1): cannot fire, not rac
 
       expect(screen.queryByRole('heading', { name: 'Workload not found' })).toBeNull()
       expect(screen.getByRole('heading', { name: 'Finalise & Review', level: 2 })).toBeTruthy()
+    },
+    15000,
+  )
+})
+
+/**
+ * dmfdeploy#418 FIX ROUND 2 (P2, adversarial gate). The guard above proves
+ * `leavingFlowRef` prevents a stray reclassification while a departure is
+ * pending. It does NOT, on its own, prove the guard ever releases —
+ * WorkloadSetup is not keyed by workload identity (only WorkloadWizard,
+ * further down that file, is), so the SAME instance — and the SAME ref —
+ * survives a navigation from one workload's own /setup route to another's.
+ * A departure that gets SUPERSEDED before its own navigate() actually
+ * commits (Back, or a direct link to a different workload's own /setup)
+ * used to leave `leavingFlowRef.current` permanently `true` with nothing to
+ * ever reset it, pinning the FIRST workload's frozen snapshot under the
+ * SECOND workload's URL forever.
+ *
+ * THE APPROACH here is deliberately the mirror image of the guard test
+ * above: `navigate()` is mocked to a no-op for this whole file (see the top
+ * of it), which means the INTENDED destination of a terminal Finalise
+ * action never actually happens in this suite — the operator visibly never
+ * leaves /setup. That is exactly what makes this file able to model a
+ * superseded navigation cleanly: trigger the departure (pins the ref to
+ * studio-a), then drive a REAL router transition — a <Link> click, exactly
+ * as workloadSetupCrossWorkload.test.tsx's own cross-workload tests do — to
+ * a DIFFERENT workload's own /setup route, and check which workload's data
+ * renders under that URL.
+ */
+describe('WorkloadSetup leaving guard SCOPE (dmfdeploy#418 P2, fix round 2): pinned only to the departing workload', () => {
+  it(
+    "a superseded navigation to a different workload's own /setup route releases the pin instead of keeping the departed workload's snapshot",
+    async () => {
+      let jobDone = false
+      vi.stubGlobal(
+        'fetch',
+        vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
+          const url = (typeof input === 'string' ? input : (input as Request).url).toString()
+          if (url.endsWith('/api/me')) return json(identity())
+          if (url.endsWith('/api/catalog')) return json({ entries: [catalogEntry()] })
+          if (url.endsWith('/api/media-workloads/grouped')) {
+            const grouped: MediaWorkloadsGroupedResponse = {
+              configured: true, degraded: false, scope: [],
+              workloads: [operatingWorkload(), otherWorkload()], invalid_instances: [],
+            }
+            return json(grouped)
+          }
+          if (url.match(/\/api\/catalog\/crosspoint\/teardown$/) && (init?.method ?? 'GET') === 'POST') {
+            return json({ job_id: 901, status: 'launched', request_id: 'req-td-2' })
+          }
+          if (url.match(/\/api\/catalog\/crosspoint\/status\/901$/)) {
+            return json({ job_id: 901, status: jobDone ? 'successful' : 'running', is_done: jobDone, is_running: !jobDone })
+          }
+          return json({})
+        }),
+      )
+
+      render(
+        <QueryClientProvider client={new QueryClient({ defaultOptions: { queries: { retry: false } } })}>
+          <MemoryRouter initialEntries={['/media-workloads/studio-a/setup']}>
+            <nav>
+              <Link to="/media-workloads/studio-b/setup">go to B</Link>
+            </nav>
+            <Routes>
+              <Route path="/media-workloads/:slug/setup" element={<WorkloadSetup />} />
+            </Routes>
+            <HeaderSlotProbe />
+          </MemoryRouter>
+        </QueryClientProvider>,
+      )
+      await screen.findByRole('navigation', { name: 'Media workload lifecycle' })
+      const finalise = await screen.findByRole('heading', { name: 'Finalise & Review', level: 2 })
+      const finaliseSection = finalise.closest('[data-step-state]') as HTMLElement
+
+      fireEvent.click(await within(finaliseSection).findByRole('button', { name: /Teardown/ }))
+      fireEvent.change(within(finaliseSection).getAllByRole('textbox')[0], { target: { value: 'go' } })
+      fireEvent.click(within(finaliseSection).getByRole('button', { name: /Confirm teardown/ }))
+      await within(finaliseSection).findByText(/job #901/)
+
+      jobDone = true
+      // handleJobComplete fires: onLeaveFlow() pins `leavingFlowRef` (AND,
+      // this round, `leavingFlowSlugRef`) to studio-a, then navigate() —
+      // mocked to a no-op in this file, so the operator never actually
+      // leaves /setup. The pending departure is about to be SUPERSEDED
+      // below, not fulfilled — the real-world shape of the bug.
+      await waitFor(() => expect(navigateSpy).toHaveBeenCalledWith(workloadHomePath('studio-a')), { timeout: 8000 })
+
+      // THE SUPERSEDING NAVIGATION: a genuine router transition (Back, or a
+      // direct link — react-router does not distinguish) to a DIFFERENT
+      // workload's own /setup route. The SAME WorkloadSetup instance is
+      // reused (only the :slug param differs — no remount), so a
+      // `leavingFlowRef` that never resets pins studio-a's frozen snapshot
+      // under studio-b's URL, forever.
+      fireEvent.click(screen.getByRole('link', { name: 'go to B' }))
+
+      // THE DISCRIMINATOR: PageHeading renders `${workload.name} — Setup`
+      // straight off whichever workload actually got selected to render —
+      // studio-a's frozen snapshot (pre-fix) vs. studio-b's own live data
+      // (fixed). Must fail against the pre-scoping code, where this stays
+      // "studio-a — Setup" forever once the ref is pinned.
+      await waitFor(() =>
+        expect(screen.getByRole('heading', { name: 'studio-b — Setup', level: 1 })).toBeTruthy(),
+      )
+      expect(screen.queryByRole('heading', { name: 'studio-a — Setup', level: 1 })).toBeNull()
     },
     15000,
   )
