@@ -207,17 +207,7 @@ export function JobStatusLine({
 }: {
   entryKey: string
   jobId: number
-  /**
-   * dmfdeploy#418: widened to also report the job's own terminal `status`
-   * ('successful'/'failed'/'error'/'canceled', from the SAME poll response
-   * that flipped `is_done`) — Finalise & Review's own completion handler
-   * needs to tell a genuine success apart from any other terminal outcome,
-   * and this is the one place that already reads it at the moment it
-   * matters. Non-breaking for Provision's own `onComplete` (declared with
-   * no parameters at all): a callback with fewer parameters than the type
-   * it is assigned to simply ignores the extra one.
-   */
-  onComplete: (key: string, status: string) => void
+  onComplete: (key: string) => void
   onStatusChange?: (status: string) => void
   onDoneChange?: (done: boolean) => void
 }) {
@@ -236,12 +226,7 @@ export function JobStatusLine({
 
   useEffect(() => {
     if (!jobStatus?.is_done) return
-    // dmfdeploy#418: `status` read from THIS SAME response — the one that
-    // just flipped `is_done` true — never a later poll, so it is the
-    // terminal status this completion actually reports, not whatever the
-    // job was doing before.
-    const status = jobStatus.status
-    const timer = setTimeout(() => onComplete(entryKey, status), 2000)
+    const timer = setTimeout(() => onComplete(entryKey), 2000)
     return () => clearTimeout(timer)
   }, [jobStatus?.is_done, onComplete, entryKey])
 

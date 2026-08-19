@@ -1,5 +1,4 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
-import { useNavigate } from 'react-router-dom'
 import { useQueryClient } from '@tanstack/react-query'
 import {
   isOperation,
@@ -15,7 +14,6 @@ import type { StageActionId, StageState } from '../../../lib/workloadLifecycle'
 import StageCard from './StageCard'
 import { JobStatusLine, OperationStatusLine } from './JobProgress'
 import { settleQuery } from '../../../lib/queryState'
-import { workloadHomePath } from '../../../lib/routes'
 
 /**
  * Finalise & Review — the teardown action, relocated from
@@ -103,9 +101,6 @@ export default function FinaliseStage({
   const purgeMutation = usePurgeWorkload()
   const recordAwxWrite = useActivityStore((s) => s.recordAwxWrite)
   const queryClient = useQueryClient()
-  // dmfdeploy#418: the leaving-the-flow seam below — see leaveAfterTeardown
-  // and the purgeOp terminal effect, both further down.
-  const navigate = useNavigate()
 
   const [track, setTrack] = useState<Record<string, EntryTrack>>({})
   const [lastJob, setLastJob] = useState<{ entryKey: string; jobId: number; status: string } | null>(null)
@@ -203,32 +198,7 @@ export default function FinaliseStage({
     setPurgeOpId(null)
     void queryClient.invalidateQueries({ queryKey: ['media-workloads-grouped'] })
     void queryClient.invalidateQueries({ queryKey: ['catalog'] })
-    // dmfdeploy#418: on a genuine success, leave the flow for the
-    // COLLECTION view — not the workload's own home. Unlike a completed
-    // Teardown (leaveAfterTeardown below), the workload itself no longer
-    // exists once a purge completes: its home would itself be a "Workload
-    // not found", the same dead end the issue's own third comment settled
-    // against reproducing at a different URL. `/media-workloads` is the
-    // nearest surface that still meaningfully exists.
-    //
-    // On any OTHER terminal state (run_failed, error, ...) this stays put —
-    // purgeReview above already renders the failure, and the workload is
-    // presumably still there for the operator to look at or retry.
-    //
-    // RACE SAFETY (dmfdeploy#418, same argument as leaveAfterTeardown): this
-    // effect body is what ALSO fires the two invalidateQueries calls above.
-    // navigate() and invalidateQueries() are both synchronous calls in this
-    // one effect invocation — no `await` between them — so the route change
-    // is committed in this same render/commit cycle, unmounting
-    // WorkloadWizard well before the invalidated grouped-inventory query's
-    // own network round-trip could ever resolve. The step-recovery ladder
-    // this issue is about only has a window to misclassify Finalise once a
-    // SETTLED read reports the workload gone; a settled read cannot arrive
-    // faster than an already-committed route change.
-    if (purgeOp.state === 'run_complete') {
-      navigate('/media-workloads')
-    }
-  }, [purgeOp, queryClient, navigate])
+  }, [purgeOp, queryClient])
 
   const entries = (catalogData?.entries ?? []).filter((e) => functionKeys.includes(e.key))
 
@@ -259,62 +229,10 @@ export default function FinaliseStage({
     }))
   }
 
-  // dmfdeploy#418: on a successful teardown that leaves nothing else of
-  // THIS wizard's finalise work in flight, leave the guided flow for the
-  // workload's own home — the surface that answers "what is running now?",
-  // which after a teardown is the honest "nothing" (home already has a
-  // designed cold-entry state for exactly that, dmfdeploy#414 Part A).
-  // Without this, the flow used to silently re-select Provision instead —
-  // traced to source in this issue's own third comment: once the busy
-  // window closes, the backend position has already moved past Finalise,
-  // and in the window before every member's tag has caught up,
-  // stageActions('finalise') is momentarily empty in a SETTLED read, so the
-  // step classifies locked and the recovery ladder bounces the operator to
-  // Provision. That mechanism is NOT a transiently-unsettled read (unlike
-  // dmfdeploy#416) — the classifier is behaving correctly throughout — so
-  // nothing in lib/workloadFlow.ts or the ladder itself changes; the fix is
-  // where the flow sends the operator after the action, which is here.
-  //
-  // Does not fire on failure — teardownError/lastOpOutcome below need to
-  // stay visible for the operator to read and possibly retry, and nothing
-  // about a failed teardown moved the backend position anyway (so there is
-  // no ladder window to pre-empt in that case).
-  //
-  // Checks whether anything ELSE this stage owns is still in flight — the
-  // SAME formula `busy` above is built from, with `finishedKey` excluded
-  // (it is about to clear) — so a multi-function teardown only leaves once
-  // its LAST entry finishes, not its first. Deliberately does not track
-  // whether an EARLIER sibling entry in the same multi-entry batch failed:
-  // the issue's own scenario (and every existing test fixture) is a
-  // single-function teardown, and home would still show the true state
-  // either way (a still-running sibling is not a lie) — a documented scope
-  // line, not a silently-swallowed case.
-  //
-  // RACE SAFETY: this function's two call sites (handleJobComplete,
-  // handleOpTerminal below) are also where the grouped-inventory
-  // invalidation already fires. navigate() and invalidateQueries() are both
-  // synchronous calls in the SAME handler invocation — no `await` between
-  // them — so the route change commits in this render, unmounting
-  // WorkloadWizard before that invalidation's own network round-trip could
-  // ever land a settled read for the ladder described above to act on. The
-  // ladder needs a settled read to misclassify Finalise; a settled read
-  // cannot arrive faster than an already-committed route change.
-  const leaveAfterTeardown = (finishedKey: string, succeeded: boolean) => {
-    if (!succeeded) return
-    const stillInFlight =
-      teardownMutation.isPending ||
-      purgeMutation.isPending ||
-      purgeOpId !== null ||
-      functionKeys.some((key) => key !== finishedKey && activeTrack(trackRef.current[key]))
-    if (stillInFlight) return
-    navigate(workloadHomePath(workload.slug))
-  }
-
-  const handleJobComplete = (key: string, status: string) => {
+  const handleJobComplete = (key: string) => {
     setTrack((prev) => ({ ...prev, [key]: EMPTY_TRACK }))
     void queryClient.invalidateQueries({ queryKey: ['media-workloads-grouped'] })
     void queryClient.invalidateQueries({ queryKey: ['catalog'] })
-    leaveAfterTeardown(key, status === 'successful')
   }
 
   // umbrella #403: OperationStatusLine's onTerminal — the operation reached
@@ -330,7 +248,6 @@ export default function FinaliseStage({
     setLastOpOutcome({ entryKey: key, operation })
     void queryClient.invalidateQueries({ queryKey: ['media-workloads-grouped'] })
     void queryClient.invalidateQueries({ queryKey: ['catalog'] })
-    leaveAfterTeardown(key, operation.state === 'run_complete')
   }
 
   const handlePurge = async (reason: string) => {
@@ -386,7 +303,7 @@ export default function FinaliseStage({
                     onOpError={() => setTrack((prev) => ({ ...prev, [entry.key]: EMPTY_TRACK }))}
                     onOpTerminal={(operation) => handleOpTerminal(entry.key, operation)}
                     onStatusChange={statusCallbackFor(entry.key)}
-                    onJobComplete={(status) => handleJobComplete(entry.key, status)}
+                    onJobComplete={() => handleJobComplete(entry.key)}
                   />
                 )
               })}
@@ -567,9 +484,7 @@ function FinaliseEntry({
   onOpError: () => void
   onOpTerminal: (operation: Operation) => void
   onStatusChange: (status: string) => void
-  // dmfdeploy#418: widened to carry the job's own terminal status through
-  // to handleJobComplete — see JobStatusLine's onComplete for why.
-  onJobComplete: (status: string) => void
+  onJobComplete: () => void
 }) {
   const [arming, setArming] = useState(false)
   const inFlight = track.jobId !== null || track.opId !== null
@@ -640,7 +555,7 @@ function FinaliseEntry({
           <JobStatusLine
             entryKey={entry.key}
             jobId={track.jobId}
-            onComplete={(_key, status) => onJobComplete(status)}
+            onComplete={onJobComplete}
             onStatusChange={onStatusChange}
           />
         </div>
