@@ -26,7 +26,7 @@
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import { act, cleanup, fireEvent, render, screen, waitFor, within } from '@testing-library/react'
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query'
-import { MemoryRouter, Route, Routes } from 'react-router-dom'
+import { MemoryRouter, Route, Routes, useLocation } from 'react-router-dom'
 import WorkloadSetup from '../pages/MediaWorkloads/WorkloadSetup'
 import HeaderSlotProbe from './testUtils/HeaderSlotProbe'
 import { useActivityStore } from '../store/activity'
@@ -54,6 +54,11 @@ const OPERATOR: UserIdentity = {
   authentik_configured: true,
 }
 
+function LocationProbe() {
+  const location = useLocation()
+  return <div data-testid="location">{location.pathname}</div>
+}
+
 function renderDetail() {
   const queryClient = new QueryClient({ defaultOptions: { queries: { retry: false } } })
   render(
@@ -61,6 +66,12 @@ function renderDetail() {
       <MemoryRouter initialEntries={['/media-workloads/studio-a/setup']}>
         <Routes>
           <Route path="/media-workloads/:slug/setup" element={<WorkloadSetup />} />
+          {/* dmfdeploy#418: a successful purge now leaves this route for the
+              collection view — a minimal probe route (this file's own scope
+              is FinaliseStage/purge mechanics, not the collection page
+              itself; workloadSetupTerminalLanding.test.tsx renders the real
+              one and proves the landing end to end). */}
+          <Route path="/media-workloads" element={<LocationProbe />} />
         </Routes>
         <HeaderSlotProbe />
       </MemoryRouter>
@@ -176,14 +187,25 @@ describe('Finalise & Review: delete permanently drives to a real completion', ()
     expect(purgeRecord?.role).toBe('operator')
 
     // Confirmed-absent provenance renders, sourced from the terminal
-    // Operation's own purge_verified_at — never fabricated locally.
+    // Operation's own purge_verified_at — never fabricated locally. Briefly:
+    // dmfdeploy#418 (below) leaves this route once run_complete lands, so
+    // this is the one moment this text is on screen at all — genuinely
+    // present, not merely raced past, since `finalise` is a still-live DOM
+    // reference at the point this awaits it.
     await within(finalise).findByText(/Deleted permanently — confirmed absent/)
     expect(within(finalise).getByText(/2026-08-03T12:00:00Z/)).toBeTruthy()
 
-    // The absence claim itself: the refreshed grouped read no longer lists
-    // the workload — the completion effect's own invalidateQueries call is
-    // what makes this refetch happen, not a locally-asserted "it's gone".
-    await waitFor(() => expect(screen.getByText(/Workload not found/)).toBeTruthy())
+    // dmfdeploy#418: on run_complete the flow now leaves /setup for the
+    // COLLECTION view — a deleted workload's own home would itself be a
+    // "Workload not found", the exact dead end that issue exists to remove.
+    // This file's own scope stays FinaliseStage/purge mechanics, so the
+    // destination is proved by ROUTE only, via the minimal probe route
+    // above; the fuller proof — that the REFRESHED grouped read is what the
+    // collection view itself no longer lists the workload from, sourced
+    // from the SAME invalidateQueries call this test already pins above,
+    // not a locally-asserted "it's gone" — renders the REAL collection page
+    // in workloadSetupTerminalLanding.test.tsx.
+    await waitFor(() => expect(screen.getByTestId('location').textContent).toBe('/media-workloads'))
   })
 
   it('renders the failure honestly (never a fake success) when the operation does not complete cleanly', async () => {
