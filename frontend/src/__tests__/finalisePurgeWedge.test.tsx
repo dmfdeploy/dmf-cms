@@ -232,6 +232,102 @@ describe('Finalise & Review: delete permanently drives to a real completion', ()
     expect(within(finalise).queryByText(/[Rr]etrying/)).toBeNull()
   })
 
+  // umbrella #407: failed_rollback_required and rollback_incomplete are in
+  // useOperationStatus's own _WATCHED_TERMINAL_STATES (so polling stops
+  // there) but were MISSING from FinaliseStage's separate, hand-maintained
+  // PURGE_TERMINAL_STATES — so the completion effect (FinaliseStage.tsx)
+  // never fired for either one: purgeOpId stayed set forever (busy stuck
+  // permanently, no self-recovery), and purgeReview was never populated, so
+  // the operator was never shown what actually happened. These guard the
+  // fix: PURGE_TERMINAL_STATES now derives from the same
+  // _WATCHED_TERMINAL_STATES useOperationStatus itself polls to, so the two
+  // sets cannot drift apart again the same way. 'error' is included too —
+  // mutation-tested while fixing #407 (breaking just the union's 'error'
+  // member, leaving everything else correct) and found genuinely
+  // UNCOVERED by every pre-existing test in this suite: the whole 677-test
+  // frontend suite stayed green with 'error' silently dropped. It is the
+  // one member of the union that is NOT itself a member of the exported
+  // _WATCHED_TERMINAL_STATES (see that derivation's own comment in
+  // FinaliseStage.tsx), so it is also the one case none of the other two
+  // could have caught by construction.
+  it.each([
+    {
+      state: 'failed_rollback_required' as const,
+      error: null,
+      l3_outcome: 'rollback-required-manual',
+      expectedText: /did not complete — rollback-required-manual/,
+    },
+    {
+      state: 'rollback_incomplete' as const,
+      error: null,
+      l3_outcome: null,
+      // Neither error nor l3_outcome is set — the review falls all the way
+      // back to the bare state name, the third leg of `error ?? l3_outcome
+      // ?? state` (Art. 8: whatever the backend actually recorded, never a
+      // fake success, never silently swallowed).
+      expectedText: /did not complete — rollback_incomplete/,
+    },
+    {
+      state: 'error' as const,
+      error: 'launch-failed:awx-unreachable',
+      l3_outcome: null,
+      expectedText: /did not complete — launch-failed:awx-unreachable/,
+    },
+  ])(
+    'closes out a delete-permanently operation that settles at $state — clears the busy state and renders the outcome honestly',
+    async ({ state, error, l3_outcome, expectedText }) => {
+      const wl = eligibleWorkload()
+      const grouped: MediaWorkloadsGroupedResponse = {
+        configured: true, degraded: false, scope: [], workloads: [wl], invalid_instances: [],
+      }
+      vi.stubGlobal(
+        'fetch',
+        vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
+          const url = (typeof input === 'string' ? input : (input as Request).url).toString()
+          if (url.endsWith('/api/me')) return json(OPERATOR)
+          if (url.endsWith('/api/catalog')) return json({ entries: [] })
+          if (url.endsWith('/api/media-workloads/grouped')) return json(grouped)
+          if (url.match(/\/api\/media-workloads\/studio-a\/purge$/) && (init?.method ?? 'GET') === 'POST') {
+            return json({
+              operation_id: 'op-wedge', action: 'finalise-purge', target: 'studio-a', state: 'launching',
+              job_id: null, error: null, created_at: 't0', updated_at: 't0', request_id: 'req-purge-wedge',
+            })
+          }
+          if (url.endsWith('/api/operations/op-wedge')) {
+            return json({
+              operation_id: 'op-wedge', action: 'finalise-purge', target: 'studio-a', state,
+              job_id: 4242, error, l3_outcome, purge_verified_at: null,
+              created_at: 't0', updated_at: 't1', request_id: 'req-purge-wedge',
+            })
+          }
+          return json({})
+        }),
+      )
+
+      renderDetail()
+      await screen.findByRole('navigation', { name: 'Media workload lifecycle' })
+      fireEvent.click(await waitFor(() => within(rail()).getByRole('button', { name: 'Finalise & Review' })))
+      const finalise = stageSection('Finalise & Review')
+
+      fireEvent.click(await within(finalise).findByRole('button', { name: '🗑 Delete permanently' }))
+      fireEvent.change(within(finalise).getByPlaceholderText(/Reason \(required/), { target: { value: 'go' } })
+      fireEvent.change(within(finalise).getByPlaceholderText('studio-a'), { target: { value: 'studio-a' } })
+      fireEvent.click(within(finalise).getByRole('button', { name: 'Delete permanently' }))
+
+      // Busy panel shows while the operation is in flight.
+      await within(finalise).findByText(/Deleting.*permanently/)
+
+      // The completion effect fires: the review renders the honest outcome...
+      await within(finalise).findByText(expectedText)
+      // ...and NEVER a fake success.
+      expect(within(finalise).queryByText(/Deleted permanently/)).toBeNull()
+
+      // purgeOpId is cleared — the busy panel is gone (pre-fix, this never
+      // happened for either state: the busy panel stayed forever).
+      expect(within(finalise).queryByText(/Deleting.*permanently/)).toBeNull()
+    },
+  )
+
   it('is NOT offered while a member is observed running', async () => {
     const runningMember = eligibleWorkload({
       instances: [
