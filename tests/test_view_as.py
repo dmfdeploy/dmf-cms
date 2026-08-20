@@ -425,6 +425,52 @@ def test_invitations_sanitizes_authentik_error_for_the_client(monkeypatch, caplo
     assert any(SECRET_DETAIL in record.getMessage() for record in caplog.records)
 
 
+def test_invitations_authentik_error_audit_line_sanitizes_actor_and_body(monkeypatch, caplog):
+    # umbrella dmf-cms#108 fix-round 4: this log line (main.py, the ERROR
+    # path right below the one the test above exercises) was PR #107's own
+    # fix (15109be) moving exc.body OUT of the JSON-encoded HTTP response
+    # (where control characters were already escaped) and INTO this %s
+    # log line — closing a disclosure vector and opening an injection one
+    # in the same edit. Both fields are externally influenced: actor
+    # (user.subject, an OIDC claim — dev-login username stands in here)
+    # and exc.body, which is upstream-supplied by Authentik (or anything
+    # able to shape its error responses) — the most directly
+    # third-party-controlled value in this whole sweep.
+    import logging
+
+    hostile_body = "flow instance detail\nFORGED actor=admin"
+
+    def fake_create_invitation(**kwargs):
+        raise AuthentikAPIError(502, hostile_body)
+
+    monkeypatch.setattr(main, "create_invitation", fake_create_invitation)
+
+    settings = Settings(
+        runtime_mode="local",
+        dev_login_enabled=True,
+        dev_groups=ENGINEER,
+        dev_username="ops\nFORGED actor=root",
+        media_tenancy=MediaTenancySettings(mode="single"),
+        authentik=AuthentikSettings(api_url="http://authentik.test", api_token="tok"),
+    )
+    client = TestClient(create_app(settings=settings))
+    client.get("/auth/login", follow_redirects=False)
+
+    with caplog.at_level(logging.ERROR, logger="dmf_cms.main"):
+        resp = client.post("/api/admin/invitations")
+
+    assert resp.status_code == 502
+    lines = [
+        r.getMessage() for r in caplog.records
+        if r.getMessage().startswith("Authentik API error minting passkey invitation")
+    ]
+    assert len(lines) == 1
+    line = lines[0]
+    assert "\n" not in line
+    assert "\r" not in line
+    assert "FORGED" in line
+
+
 def test_view_as_group_surface_still_reachable_when_downgraded():
     # Risk 3 (documented): groups stay real, so an admin who is ALSO in
     # media-engineers still reaches the Media Workloads surface as view-as

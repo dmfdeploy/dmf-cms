@@ -122,6 +122,7 @@ from .catalog import CatalogEntry, load_catalog_entries, get_lifecycle_status, l
 from .catalog import _netbox_service_names as _catalog_service_names
 from .contracts import AppContract, load_app_contract
 from . import l3_detail_tokens
+from .log_safety import sanitize_audit_field
 from .operations import (
     Operation,
     OperationStore,
@@ -939,66 +940,13 @@ def _facility_busy_check(
     return None
 
 
-_AUDIT_CONTROL_CHAR_RE = re.compile(r"[\x00-\x1f\x7f]")
-_AUDIT_CONTROL_ESCAPES = {"\n": "\\n", "\r": "\\r", "\t": "\\t"}
-
-
-def _sanitize_audit_field(value: str | None) -> str:
-    """Escape control characters out of a value bound for the audit line.
-
-    umbrella dmf-cms#108 fix-round 1: every externally-influenced field in
-    ``_audit_awx_write``'s record — ``target`` (a raw, unvalidated path
-    parameter on several routes — e.g. ``workflow_name``/catalog ``key`` —
-    reaching this call on early-return audit paths BEFORE the value is
-    ever looked up or validated), ``workload``, ``capacity``, and
-    ``actor`` (``user.subject``, an OIDC claim) — used to reach this ONE
-    ``%s``-formatted log call unescaped. A value containing a literal CR
-    or LF split the single physical audit line into two, or forged the
-    START of a second, fabricated line reading as though it came from a
-    different call (a hostile ``actor`` value can literally spell
-    ``actor=admin`` on its own forged line) — on whatever reads dmf-cms's
-    stdout: journalctl, ``kubectl logs``, a SIEM ingesting line-delimited
-    log. Reachable by an operator+ role (or lower, on some pre-gate call
-    sites), even with AWX left unconfigured. That is a forged entry in
-    the record ADR-0028 C5 depends on. ``reason`` already escapes safely
-    via ``%r`` (``repr``) at the call site below; every OTHER free-text-ish
-    field routes through here instead.
-
-    Escapes rather than strips: an audit record exists to be a complete,
-    honest account of what was requested, and silently dropping bytes
-    would misrepresent that — ``reason``'s existing ``repr()`` escaping
-    already sets the "show exactly what was sent, escaped, never edited"
-    precedent this follows. Only the C0 control range + DEL is in scope
-    (this is about staying on ONE physical stdout line, not general text
-    sanitization) — ordinary values (the overwhelming majority: catalog
-    keys, workload slugs, IdP subjects) contain none of these and pass
-    through completely UNCHANGED, so the ``target=%s``-shaped assertions
-    across the existing suite (19, across 10 files) are unaffected.
-
-    PER-SITE, NOT A LOGGING FILTER (umbrella dmf-cms#108 fix-round 3,
-    evaluated and rejected explicitly): a ``logging.Filter`` that
-    control-character-escaped every record's formatted message, installed
-    once on the "dmf_cms" handler, would look like it closes this whole
-    class in one place instead of one call site at a time. It is the
-    wrong fix here: this codebase has roughly a dozen ``logger.exception``
-    / ``exc_info=True`` call sites across main.py and drain.py, and their
-    tracebacks — the primary debugging artifact for an unexpected crash —
-    are formatted by the handler AFTER the record's own message, from the
-    SAME record. A blanket filter escaping the rendered output would
-    mangle every one of those tracebacks into a single escaped line,
-    destroying exactly the thing ``logger.exception`` exists to preserve.
-    Sanitizing per-site, only the specific externally-influenced value
-    being interpolated (never the message template, never exception
-    text), is what keeps tracebacks intact while still closing the
-    injection path. Do not "simplify" this into a filter later without
-    solving that problem first.
-    """
-    if not value:
-        return ""
-    return _AUDIT_CONTROL_CHAR_RE.sub(
-        lambda m: _AUDIT_CONTROL_ESCAPES.get(m.group(), f"\\x{ord(m.group()):02x}"),
-        value,
-    )
+# umbrella dmf-cms#108 fix-round 4: moved to log_safety.py, its own module
+# with no imports of anything else in this package, so leaf modules main.py
+# itself imports FROM (catalog.py, media_workloads.py, switch_source.py)
+# can use the SAME sanitizer without a circular import. Aliased back to
+# this name so none of this module's many existing call sites needed
+# touching. See log_safety.sanitize_audit_field for the full reasoning.
+_sanitize_audit_field = sanitize_audit_field
 
 
 def _audit_awx_write(
@@ -2094,7 +2042,13 @@ async def _watch_job_operation(app: FastAPI, operation_id: str, job_id: int, act
                 consecutive_failures += 1
                 logger.warning(
                     "job watch: get_job failed for operation %s (job %s, target %s), attempt %d/3",
-                    operation_id, job_id, key, consecutive_failures,
+                    # umbrella dmf-cms#108 fix-round 4: key is externally
+                    # influenced — for action="launch" it's the raw
+                    # workflow_name path parameter, the SAME value
+                    # fix-round 1 first caught unsanitized in the audit
+                    # line, threaded through to this watcher regardless of
+                    # whether it corresponds to anything real.
+                    operation_id, job_id, _sanitize_audit_field(key), consecutive_failures,
                 )
                 if consecutive_failures >= 3:
                     ops_store.update(
@@ -2154,7 +2108,7 @@ async def _watch_job_operation(app: FastAPI, operation_id: str, job_id: int, act
                         except Exception:
                             logger.exception(
                                 "finalise-purge: post-job source read failed for operation %s (slug %s)",
-                                operation_id, key,
+                                operation_id, _sanitize_audit_field(key),
                             )
                             ops_store.update(
                                 operation_id, state=OperationState.RUN_STATUS_UNKNOWN,
@@ -2262,7 +2216,8 @@ async def _watch_job_operation(app: FastAPI, operation_id: str, job_id: int, act
         # never into op.error, which is a PUBLIC field surfaced through
         # /api/operations/{id} to any authenticated user.
         logger.exception(
-            "job watch: unexpected crash for operation %s (job %s, target %s)", operation_id, job_id, key,
+            "job watch: unexpected crash for operation %s (job %s, target %s)",
+            operation_id, job_id, _sanitize_audit_field(key),
         )
         ops_store.update(
             operation_id,
@@ -3203,7 +3158,22 @@ def create_app(settings: Settings | None = None, contract: AppContract | None = 
             # just lowered from admin to viewer (dmfdeploy/dmfdeploy#423),
             # so a raw Authentik response body reaching the client is no
             # longer bounded by an admin-trust assumption.
-            logger.error("Authentik API error minting passkey invitation for %s: %s", user.subject, exc.body)
+            #
+            # umbrella dmf-cms#108 fix-round 4: that same PR #107 fix round
+            # (15109be) moved exc.body OUT of the HTTP response (JSON-
+            # encoded, so control characters were already escaped there)
+            # and INTO this log line (not JSON, %s-formatted) — closing a
+            # disclosure vector and opening an injection one in the same
+            # edit. Both fields here are externally influenced: user.subject
+            # is an OIDC claim, and exc.body is upstream-supplied — the ONE
+            # value in this whole sweep that a third party (Authentik, or
+            # anything able to shape its error responses) controls most
+            # directly, not merely something dmf-cms passes through
+            # unvalidated.
+            logger.error(
+                "Authentik API error minting passkey invitation for %s: %s",
+                _sanitize_audit_field(user.subject), _sanitize_audit_field(exc.body),
+            )
             return JSONResponse({"error": "authentik API error"}, status_code=exc.status)
 
     # ------------------------------------------------------------------

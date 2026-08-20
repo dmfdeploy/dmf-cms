@@ -296,6 +296,34 @@ def test_watcher_gives_up_after_three_consecutive_failures(monkeypatch):
     assert updated.error == "job-watch-lost"
 
 
+def test_watcher_get_job_failure_line_sanitizes_key(monkeypatch, caplog):
+    # umbrella dmf-cms#108 fix-round 4: `key` is externally influenced —
+    # for action="launch" specifically it's the raw, unvalidated
+    # workflow_name path parameter, the SAME value fix-round 1 first
+    # caught unsanitized in the audit line — threaded through to this
+    # watcher regardless of whether it corresponds to anything real in
+    # AWX. This is the "job watch: get_job failed" line; the sibling
+    # "job watch: unexpected crash" line (same key, different failure
+    # shape) is covered separately below.
+    import logging
+
+    def always_fail(**k):
+        raise TimeoutError("boom")
+
+    app, ops_store = _fake_app()
+    hostile_key = "dmf-provision\ninjected-workflow-name"
+    op = ops_store.create("launch", hostile_key)
+    monkeypatch.setattr(main, "get_job", always_fail)
+    with caplog.at_level(logging.WARNING, logger="dmf_cms.main"):
+        _run_watcher(app, op.operation_id, 111, "launch", hostile_key)
+
+    lines = [r.getMessage() for r in caplog.records if r.getMessage().startswith("job watch: get_job failed")]
+    assert len(lines) == 3  # one per consecutive-failure attempt (1/3, 2/3, 3/3)
+    for line in lines:
+        assert "\n" not in line
+        assert "injected-workflow-name" in line
+
+
 def test_watcher_gives_up_on_timeout_without_calling_get_job(monkeypatch):
     def boom(**k):
         raise AssertionError("get_job must not be called once the watch deadline has passed")
@@ -523,6 +551,24 @@ def test_watcher_malformed_get_job_response_is_terminalized_not_stranded(monkeyp
     updated = ops_store.get(op.operation_id)
     assert updated.state == OperationState.RUN_FAILED  # never started -> conservative default
     assert updated.error == "job-watch-crashed"
+
+
+def test_watcher_crash_line_sanitizes_key(monkeypatch, caplog):
+    # umbrella dmf-cms#108 fix-round 4: same key, the other logger call
+    # this outer except block owns.
+    import logging
+
+    app, ops_store = _fake_app()
+    hostile_key = "dmf-provision\ninjected-workflow-name"
+    op = ops_store.create("launch", hostile_key)
+    monkeypatch.setattr(main, "get_job", lambda **k: [])  # malformed -> ValueError -> outer except
+    with caplog.at_level(logging.ERROR, logger="dmf_cms.main"):
+        _run_watcher(app, op.operation_id, 111, "launch", hostile_key)
+
+    lines = [r.getMessage() for r in caplog.records if r.getMessage().startswith("job watch: unexpected crash")]
+    assert len(lines) == 1
+    assert "\n" not in lines[0]
+    assert "injected-workflow-name" in lines[0]
 
 
 def test_watcher_get_job_response_missing_status_is_terminalized(monkeypatch):
