@@ -441,6 +441,49 @@ def test_clear_reconcile_expectation_names_no_nonexistent_actor(monkeypatch):
     assert "automation lane" not in body["reconcile"]["expectation"].lower()
 
 
+def test_clear_audit_line_sanitizes_instance_and_actor(monkeypatch, caplog):
+    # umbrella dmf-cms#108 fix-round 2: this is the canonical ADR-0028 C5
+    # clear-for-deployment record — the one _audit_awx_write's own
+    # docstring says the AWX writes were modelled on — and it formats
+    # `instance` (a raw path parameter, unvalidated at this point: a
+    # nonexistent instance name still reaches this log line via the
+    # not-found outcome below) and `actor` (user.subject, an OIDC claim —
+    # dev-login's own username field stands in for it here) with plain
+    # %s, same injection shape fix-round 1 fixed in _audit_awx_write. A
+    # hostile instance name here never matches a real NetBox service, so
+    # this exercises the SAME not-found response path
+    # test_clear_out_of_scope_404_no_side_effect already covers — the
+    # audit call fires before the not-found branch, unconditionally.
+    import logging
+
+    from dmf_cms.settings import NetboxSettings, Settings
+
+    _patch_recorder(monkeypatch, [])
+    settings = Settings(
+        runtime_mode="local",
+        dev_login_enabled=True,
+        dev_groups=ENGINEER,
+        dev_username="ops\nFORGED actor=admin",
+        netbox=NetboxSettings(api_url="http://netbox.test", api_token="rtok", writer_token="wtok"),
+        media_tenancy=MediaTenancySettings(mode="single"),
+    )
+    client = TestClient(create_app(settings=settings))
+    client.get("/auth/login", follow_redirects=False)
+    with caplog.at_level(logging.INFO, logger="dmf_cms.main"):
+        resp = client.post(
+            "/api/media-workloads/hostile%0ainjected-instance/clear",
+            json={"reason": "go"},
+        )
+    assert resp.status_code == 404
+    lines = [r.getMessage() for r in caplog.records if r.getMessage().startswith("media-workloads clear:")]
+    assert len(lines) == 1
+    line = lines[0]
+    assert "\n" not in line
+    assert "\r" not in line
+    assert "hostile" in line and "injected-instance" in line
+    assert "FORGED" in line
+
+
 # ---------------------------------------------------------------------------
 # WP-D (G26): NetBox-derived per-instance MXL sidecar coords — SSRF gate,
 # scoped resolve, TTL cache, and live_view exposure (no coord leak).

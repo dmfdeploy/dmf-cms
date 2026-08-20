@@ -1962,6 +1962,73 @@ def test_auto_trigger_identity_unknown_when_deploy_op_has_no_run_id(monkeypatch)
     assert updated.auto_rollback == "identity-unknown"
 
 
+def test_auto_trigger_dispatch_audit_line_sanitizes_run_id(monkeypatch, caplog):
+    # umbrella dmf-cms#108 fix-round 2: run_id lands in this hand-assembled
+    # "awx write: ..." line's target=%s unescaped. On a fresh dispatch it
+    # is this console's own request_id (uuid4 hex), but on a REATTACH it
+    # is hydrated from an AWX job's own extra_vars — a different job
+    # template's launch, not necessarily this console's own — so it is
+    # not provably safe just because today's normal flow keeps it
+    # uuid4-shaped. Driven directly via ops_store.update (bypassing the
+    # AWX extraction machinery entirely — see _extract_run_id_from_job's
+    # own docstring for why that path can't be assumed first-party),
+    # matching this file's own established style for exercising this
+    # function (every existing test above already sets run_id this way).
+    import logging
+
+    app, ops_store = _fake_app(auto_rollback=True)
+    hostile_run_id = "a" * 16 + "\ninjected-run-id"
+    deploy_op = ops_store.create("deploy", "key1", request_id="a" * 32, initiator="alice")
+    ops_store.update(
+        deploy_op.operation_id, state=OperationState.FAILED_ROLLBACK_REQUIRED, job_id=1, run_id=hostile_run_id,
+    )
+    monkeypatch.setattr(main, "_spawn_rollback_task", lambda *a, **k: None)
+
+    with caplog.at_level(logging.INFO, logger="dmf_cms.main"):
+        asyncio.run(main._maybe_auto_trigger_rollback(app, deploy_op.operation_id, "key1"))
+
+    lines = [r.getMessage() for r in caplog.records if r.getMessage().startswith("awx write: action=rollback")]
+    assert len(lines) == 1
+    line = lines[0]
+    assert "\n" not in line
+    assert "\r" not in line
+    assert "injected-run-id" in line
+    assert "outcome=auto-triggered" in line
+
+
+def test_auto_trigger_reattach_audit_line_sanitizes_run_id(monkeypatch, caplog):
+    # Same defect, the OTHER call site: the already-in-progress
+    # (reattach) branch has its own separate logger.info call.
+    import logging
+
+    app, ops_store = _fake_app(auto_rollback=True)
+    hostile_run_id = "c" * 16 + "\ninjected-run-id"
+    # request_id stays uuid4-hex-shaped — that field is always
+    # server-generated in production (see the deploy endpoint's own
+    # `request_id = uuid.uuid4().hex`), never externally influenced; only
+    # run_id is under test here.
+    deploy_op = ops_store.create("deploy", "key1", request_id="c" * 32)
+    ops_store.update(
+        deploy_op.operation_id, state=OperationState.FAILED_ROLLBACK_REQUIRED, job_id=1, run_id=hostile_run_id,
+    )
+    _manual_op, created = ops_store.get_or_create(action="rollback", target=hostile_run_id, initiator="alice")
+    assert created is True
+    monkeypatch.setattr(main, "_spawn_rollback_task", lambda *a, **k: (_ for _ in ()).throw(
+        AssertionError("must not spawn a second rollback")
+    ))
+
+    with caplog.at_level(logging.INFO, logger="dmf_cms.main"):
+        asyncio.run(main._maybe_auto_trigger_rollback(app, deploy_op.operation_id, "key1"))
+
+    lines = [r.getMessage() for r in caplog.records if r.getMessage().startswith("awx write: action=rollback")]
+    assert len(lines) == 1
+    line = lines[0]
+    assert "\n" not in line
+    assert "\r" not in line
+    assert "injected-run-id" in line
+    assert "outcome=already-in-progress" in line
+
+
 def test_auto_trigger_identity_unknown_when_request_id_set_but_run_id_not_hydrated(monkeypatch):
     # The realistic version of the above: a deploy op DOES have a
     # request_id (this console's own dispatch bookkeeping) but its run_id

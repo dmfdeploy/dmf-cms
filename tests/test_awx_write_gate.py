@@ -267,14 +267,37 @@ def test_admin_view_as_viewer_audit_shows_real_role(monkeypatch, awx_spy, caplog
 # record into multiple physical lines on whatever reads dmf-cms's stdout
 # (forging what looks like a second, independent line), corrupting the
 # record ADR-0028 C5 depends on.
+#
+# fix-round 2: parametrized over three C0 characters, not just LF. A bare
+# CR alone (no LF) is a DISTINCT threat from LF: in any terminal-backed log
+# reader (kubectl logs, journalctl to a tty) CR returns the cursor to
+# column 0, so a hostile value can overwrite the VISIBLE part of the real
+# record and display forged content in its place — without ever emitting a
+# second physical line, so a test that only ever checks "\n not in line"
+# cannot see it. Confirmed the gap was real before parametrizing: a
+# sanitizer mutated to pass a bare CR through unescaped (`if value and "\r"
+# in value and "\n" not in value: return value`) made every test in this
+# file pass unchanged. NUL is included as a second, unrelated-to-CR/LF C0
+# character, since the fix claims to cover the whole C0 range, not just
+# the two whitespace controls.
 # --------------------------------------------------------------------------
 
-def test_audit_line_survives_a_hostile_workflow_name_as_one_physical_line(awx_spy, caplog):
+_HOSTILE_CONTROL_CHARS = [
+    pytest.param("\n", "%0a", "\\n", id="LF"),
+    pytest.param("\r", "%0d", "\\r", id="bare-CR"),
+    pytest.param("\x00", "%00", "\\x00", id="NUL"),
+]
+
+
+@pytest.mark.parametrize("control_char,url_encoded,escaped", _HOSTILE_CONTROL_CHARS)
+def test_audit_line_survives_a_hostile_workflow_name_as_one_physical_line(
+    awx_spy, caplog, control_char, url_encoded, escaped,
+):
     import logging
     client = _client(OPERATOR, awx=False)
     with caplog.at_level(logging.INFO, logger="dmf_cms.main"):
         resp = client.post(
-            "/api/workflows/dmf-provision%0ainjected-line/launch",
+            f"/api/workflows/dmf-provision{url_encoded}injected-line/launch",
             json={"reason": "hostile workflow_name"},
         )
     assert resp.status_code == 503
@@ -282,14 +305,15 @@ def test_audit_line_survives_a_hostile_workflow_name_as_one_physical_line(awx_sp
     # The value survives (escaped, not dropped — an audit record is a
     # complete account of what was requested) but the record stays exactly
     # ONE physical line: no raw control character rides through unescaped.
-    assert "\n" not in line
-    assert "\r" not in line
+    assert control_char not in line
     assert "dmf-provision" in line
     assert "injected-line" in line
+    assert escaped in line
     assert "outcome=awx-not-configured" in line
 
 
-def test_audit_line_sanitizes_actor_workload_and_capacity_too(monkeypatch, caplog):
+@pytest.mark.parametrize("control_char,_url_encoded,escaped", _HOSTILE_CONTROL_CHARS)
+def test_audit_line_sanitizes_actor_workload_and_capacity_too(monkeypatch, caplog, control_char, _url_encoded, escaped):
     # Direct call: the fix lives in _audit_awx_write itself, so every field
     # that function accepts external input through — not just `target` — is
     # covered by the same sanitizer. Exercised directly rather than hunting
@@ -306,17 +330,17 @@ def test_audit_line_sanitizes_actor_workload_and_capacity_too(monkeypatch, caplo
 
     request = _FakeRequest()
     user = UserIdentity(
-        subject="ops\nFORGED actor=admin", display_name="Ops", email="ops@dmf.example.com",
+        subject=f"ops{control_char}FORGED actor=admin", display_name="Ops", email="ops@dmf.example.com",
         role="operator", groups=(),
     )
     with caplog.at_level(logging.INFO, logger="dmf_cms.audit"):
         _audit_awx_write(
-            request, user, action="deploy", target="key\ninjected",
+            request, user, action="deploy", target=f"key{control_char}injected",
             request_id="r1", reason="fine", outcome="dispatched",
-            workload="wl\ninjected", capacity="cap\ninjected",
+            workload=f"wl{control_char}injected", capacity=f"cap{control_char}injected",
         )
     line = next(m for m in caplog.records if m.getMessage().startswith("awx write:")).getMessage()
-    assert "\n" not in line
-    assert "\r" not in line
+    assert control_char not in line
     # Escaped, not silently dropped.
     assert "FORGED" in line and "injected" in line
+    assert escaped in line

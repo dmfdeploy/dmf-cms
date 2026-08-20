@@ -2313,6 +2313,18 @@ async def _maybe_auto_trigger_rollback(app: FastAPI, operation_id: str, key: str
         request_id=fresh_request_id, initiator="system:auto-rollback",
     )
 
+    # umbrella dmf-cms#108 fix-round 2: run_id's provenance was checked, not
+    # assumed. On a FRESH dispatch it is this console's own request_id
+    # (uuid4 hex — see the l3_request_id extra_var call sites), but
+    # _extract_run_id_from_job (used when REATTACHING to an AWX job this
+    # console instance did not itself just launch — see that function's own
+    # docstring) hydrates it by reading extra_vars BACK OUT of AWX's job
+    # detail. That is a genuinely different trust boundary: a job template
+    # launched directly through AWX (not through this console) controls its
+    # own extra_vars, so a hostile l3_request_id/l3_run_id there is not
+    # ruled out by anything dmf-cms enforces. Sanitized for uniformity
+    # regardless — cheap, and it forecloses that edge case rather than
+    # relying on an assumption about a boundary this module does not own.
     if not created:
         # codex R2-8: reattached to an already-in-progress rollback (manual
         # or a racing auto-trigger) — the fresh_request_id we minted above
@@ -2322,7 +2334,7 @@ async def _maybe_auto_trigger_rollback(app: FastAPI, operation_id: str, key: str
         logger.info(
             "awx write: action=rollback actor=system:auto-rollback role=system real_role= "
             "request_id=%s target=%s reason=%r outcome=already-in-progress workload= capacity= linked_request_id=%s",
-            rollback_op.request_id, run_id, reason, deploy_op.request_id,
+            rollback_op.request_id, _sanitize_audit_field(run_id), reason, deploy_op.request_id,
         )
         return
 
@@ -2331,7 +2343,7 @@ async def _maybe_auto_trigger_rollback(app: FastAPI, operation_id: str, key: str
     logger.info(
         "awx write: action=rollback actor=system:auto-rollback role=system real_role= "
         "request_id=%s target=%s reason=%r outcome=auto-triggered workload= capacity= linked_request_id=%s",
-        fresh_request_id, run_id, reason, deploy_op.request_id,
+        fresh_request_id, _sanitize_audit_field(run_id), reason, deploy_op.request_id,
     )
 
     _spawn_rollback_task(app, rollback_op.operation_id, run_id, reason)
@@ -3415,7 +3427,7 @@ def create_app(settings: Settings | None = None, contract: AppContract | None = 
         # mirroring the clear-for-deployment record.
         logger.info(
             "view-as set: actor=%s real_role=%s view_as=%s request_id=%s",
-            real.subject,
+            _sanitize_audit_field(real.subject),
             real.role,
             role,
             request_id,
@@ -3438,7 +3450,7 @@ def create_app(settings: Settings | None = None, contract: AppContract | None = 
         request_id = uuid.uuid4().hex
         logger.info(
             "view-as cleared: actor=%s real_role=%s request_id=%s",
-            real.subject,
+            _sanitize_audit_field(real.subject),
             real.role,
             request_id,
         )
@@ -5411,10 +5423,10 @@ def create_app(settings: Settings | None = None, contract: AppContract | None = 
         # lane lands with #174; request_id correlates response <-> log.
         logger.info(
             "media-workloads clear: actor=%s role=%s request_id=%s instance=%s reason=%r outcome=%s",
-            user.subject,
+            _sanitize_audit_field(user.subject),
             user.role,
             request_id,
-            instance,
+            _sanitize_audit_field(instance),
             reason,
             result.get("error", "ok"),
         )
