@@ -939,6 +939,50 @@ def _facility_busy_check(
     return None
 
 
+_AUDIT_CONTROL_CHAR_RE = re.compile(r"[\x00-\x1f\x7f]")
+_AUDIT_CONTROL_ESCAPES = {"\n": "\\n", "\r": "\\r", "\t": "\\t"}
+
+
+def _sanitize_audit_field(value: str | None) -> str:
+    """Escape control characters out of a value bound for the audit line.
+
+    umbrella dmf-cms#108 fix-round 1: every externally-influenced field in
+    ``_audit_awx_write``'s record — ``target`` (a raw, unvalidated path
+    parameter on several routes — e.g. ``workflow_name``/catalog ``key`` —
+    reaching this call on early-return audit paths BEFORE the value is
+    ever looked up or validated), ``workload``, ``capacity``, and
+    ``actor`` (``user.subject``, an OIDC claim) — used to reach this ONE
+    ``%s``-formatted log call unescaped. A value containing a literal CR
+    or LF split the single physical audit line into two, or forged the
+    START of a second, fabricated line reading as though it came from a
+    different call (a hostile ``actor`` value can literally spell
+    ``actor=admin`` on its own forged line) — on whatever reads dmf-cms's
+    stdout: journalctl, ``kubectl logs``, a SIEM ingesting line-delimited
+    log. Reachable by an operator+ role (or lower, on some pre-gate call
+    sites), even with AWX left unconfigured. That is a forged entry in
+    the record ADR-0028 C5 depends on. ``reason`` already escapes safely
+    via ``%r`` (``repr``) at the call site below; every OTHER free-text-ish
+    field routes through here instead.
+
+    Escapes rather than strips: an audit record exists to be a complete,
+    honest account of what was requested, and silently dropping bytes
+    would misrepresent that — ``reason``'s existing ``repr()`` escaping
+    already sets the "show exactly what was sent, escaped, never edited"
+    precedent this follows. Only the C0 control range + DEL is in scope
+    (this is about staying on ONE physical stdout line, not general text
+    sanitization) — ordinary values (the overwhelming majority: catalog
+    keys, workload slugs, IdP subjects) contain none of these and pass
+    through completely UNCHANGED, so the ``target=%s``-shaped assertions
+    across the existing suite (19, across 10 files) are unaffected.
+    """
+    if not value:
+        return ""
+    return _AUDIT_CONTROL_CHAR_RE.sub(
+        lambda m: _AUDIT_CONTROL_ESCAPES.get(m.group(), f"\\x{ord(m.group()):02x}"),
+        value,
+    )
+
+
 def _audit_awx_write(
     request: Request,
     user: UserIdentity,
@@ -979,15 +1023,15 @@ def _audit_awx_write(
     audit_logger.info(
         "awx write: action=%s actor=%s role=%s real_role=%s request_id=%s target=%s reason=%r outcome=%s workload=%s capacity=%s",
         action,
-        user.subject,
+        _sanitize_audit_field(user.subject),
         user.role,
         real_role,
         request_id,
-        target,
+        _sanitize_audit_field(target),
         reason,
         outcome,
-        workload or "",
-        capacity or "",
+        _sanitize_audit_field(workload),
+        _sanitize_audit_field(capacity),
     )
 
 
