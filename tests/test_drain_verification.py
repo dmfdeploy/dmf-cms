@@ -868,3 +868,91 @@ def test_F9_no_contradictory_details_after_recheck(monkeypatch):
         body = resp.json()
         assert drain.DRAIN_VERIFIED_DETAIL in body["error"]
         assert drain.DRAIN_PENDING_DETAIL not in body["error"]
+
+
+# ---------------------------------------------------------------------------
+# umbrella dmf-cms#108 fix-round 3: run_id reaches THREE non-audit
+# logger.info/logger.exception calls inside _verify_drain_and_finalize
+# unescaped — the SAME run_id fix-round 2 sanitized at the auto-rollback
+# AUDIT call sites, on the SAME stdout stream. A forged line does not have
+# to originate from an audit call site to read as one once it shares the
+# stream. All three call _verify_drain_and_finalize directly (not the full
+# _watch_job_operation/get_job/get_job_events machinery — orthogonal to
+# what run_id sanitization is about) with a run_id carrying an embedded
+# newline.
+# ---------------------------------------------------------------------------
+
+_HOSTILE_RUN_ID = "a" * 16 + "\ninjected-run-id"
+
+
+def test_verify_drain_confirmed_line_sanitizes_run_id(monkeypatch, caplog):
+    import logging
+
+    app, ops_store = _fake_app()
+    _seed_run(ops_store, run_id=_HOSTILE_RUN_ID)
+    op = ops_store.create("rollback", _HOSTILE_RUN_ID)
+    _mock_drained(monkeypatch)  # ABSENT NetBox record -> drain-expected, both seams clean
+
+    with caplog.at_level(logging.INFO, logger="dmf_cms.main"):
+        asyncio.run(main._verify_drain_and_finalize(app, op.operation_id, _HOSTILE_RUN_ID))
+
+    lines = [
+        r.getMessage() for r in caplog.records
+        if r.getMessage().startswith("drain: monitoring surface confirmed drained")
+    ]
+    assert len(lines) == 1
+    assert "\n" not in lines[0]
+    assert "injected-run-id" in lines[0]
+
+
+def test_verify_drain_correlation_changed_line_sanitizes_run_id(monkeypatch, caplog):
+    import logging
+
+    app, ops_store = _fake_app()
+    _seed_run(ops_store, run_id=_HOSTILE_RUN_ID)
+    op = ops_store.create("rollback", _HOSTILE_RUN_ID)
+    _mock_drained(monkeypatch)
+    # Force the "else" branch (_mark_drain_verified refuses at finalize
+    # time) without needing a genuinely ambiguous correlation setup.
+    monkeypatch.setattr(main, "_mark_drain_verified", lambda *a, **k: False)
+
+    with caplog.at_level(logging.INFO, logger="dmf_cms.main"):
+        asyncio.run(main._verify_drain_and_finalize(app, op.operation_id, _HOSTILE_RUN_ID))
+
+    lines = [
+        r.getMessage() for r in caplog.records
+        if r.getMessage().startswith("drain: correlation changed mid-poll")
+    ]
+    assert len(lines) == 1
+    assert "\n" not in lines[0]
+    assert "injected-run-id" in lines[0]
+
+
+def test_verify_drain_crash_line_sanitizes_run_id(monkeypatch, caplog):
+    import logging
+
+    app, ops_store = _fake_app()
+    _seed_run(ops_store, run_id=_HOSTILE_RUN_ID)
+    op = ops_store.create("rollback", _HOSTILE_RUN_ID)
+    # Identity resolution (_prepare_drain_verification) needs to succeed
+    # and reach the poll loop's check_drained call for the except block
+    # under test to ever fire — without this, a real (failing, sandboxed)
+    # NetBox call makes resolution itself fail-closed to
+    # "drain-identity-unrecoverable" before check_drained is ever reached.
+    _mock_drained(monkeypatch)
+
+    def boom(*a, **k):
+        raise RuntimeError("seam exploded")
+
+    monkeypatch.setattr(drain, "check_drained", boom)
+
+    with caplog.at_level(logging.INFO, logger="dmf_cms.main"):
+        asyncio.run(main._verify_drain_and_finalize(app, op.operation_id, _HOSTILE_RUN_ID))
+
+    lines = [
+        r.getMessage() for r in caplog.records
+        if r.getMessage().startswith("drain: unexpected crash verifying operation")
+    ]
+    assert len(lines) == 1
+    assert "\n" not in lines[0]
+    assert "injected-run-id" in lines[0]

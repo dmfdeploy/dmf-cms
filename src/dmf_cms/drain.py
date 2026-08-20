@@ -181,6 +181,17 @@ def resolve_drain_targets(
             entry, netbox_url=netbox_url, netbox_token=netbox_token, ssl_verify=ssl_verify
         )
     except Exception:
+        # umbrella dmf-cms#108 fix-round 3: checked, not assumed —
+        # entry.key is NOT externally influenced. CatalogEntry is
+        # constructed in exactly one place in this codebase
+        # (catalog.load_catalog_entries, parsing the static YAML files
+        # under CATALOG_DIR at load time); no live request path ever
+        # builds one from caller-supplied text. Unlike main.py's
+        # _watch_job_operation `key` (a raw path parameter threaded
+        # through regardless of catalog validation) or run_id (hydrated
+        # from an AWX job this console may not have launched itself),
+        # this is this module's only format-arg logger call and it's
+        # config-derived — left unsanitized deliberately, not by omission.
         logger.warning(
             "drain: NetBox read failed while resolving drain targets for catalog key %s",
             entry.key, exc_info=True,
