@@ -94,6 +94,7 @@ import hashlib
 import json
 import logging
 import re
+import sys
 import time
 import urllib.error
 import uuid
@@ -164,6 +165,23 @@ from .security import (
 from .settings import Settings, load_settings
 
 logger = logging.getLogger(__name__)
+
+# umbrella #425 (ADR-0028 C5): the AWX-write audit record (_audit_awx_write
+# below) gets its OWN child logger, deliberately distinct from ordinary
+# `logger` application noise, so it can be filtered, routed, or retained
+# independently of that noise later without touching the audit contract
+# itself — nothing routes on the name differently today, this just keeps
+# the door open at near-zero cost. It stays printf-style like every other
+# call here, not structured JSON: 15+ existing tests already parse this
+# exact "awx write: action=... actor=..." shape via caplog (see e.g.
+# test_finalise_purge_endpoint.py's own regex), and restyling the one
+# record this issue is about into JSON while leaving every other log call
+# in this file printf-style would be a needless format split for no
+# reader; a real move to structured logging is a whole-codebase decision,
+# not this fix's to make. Being a CHILD of "dmf_cms" (see
+# _configure_logging below) means it inherits that logger's handler and
+# level for free — no separate setup needed here.
+audit_logger = logging.getLogger("dmf_cms.audit")
 
 
 # Below-warning alert severities floored out of the Workspace "Current
@@ -958,7 +976,7 @@ def _audit_awx_write(
     """
     real = session_user(request.session)
     real_role = real.role if (real is not None and request.session.get("view_as")) else ""
-    logger.info(
+    audit_logger.info(
         "awx write: action=%s actor=%s role=%s real_role=%s request_id=%s target=%s reason=%r outcome=%s workload=%s capacity=%s",
         action,
         user.subject,
@@ -2825,7 +2843,54 @@ def _switch_source_error_status_code(code: str) -> int:
     return 404 if code in ("receiver-not-found", "receiver-not-topology") else 422
 
 
+_APP_LOGGER_NAME = "dmf_cms"
+_STDOUT_HANDLER_NAME = "dmf_cms-stdout"
+
+
+def _configure_logging() -> None:
+    """Give the ``dmf_cms`` logger tree a handler so INFO+ reaches stdout.
+
+    umbrella #425: this module never configured logging anywhere, and
+    uvicorn's own default LOGGING_CONFIG only sets up the uvicorn /
+    uvicorn.error / uvicorn.access loggers — it leaves the root logger
+    without a handler. Every ``logger.info()`` call in this codebase
+    (``audit_logger`` above included — the C5 audit record
+    ``_audit_awx_write`` emits) therefore fell through to
+    ``logging.lastResort``, whose floor is WARNING: INFO records were
+    created and immediately dropped before reaching any stream. That is
+    why the audit line never appeared in a deployed pod's log despite the
+    code being correct and unit-tested (see dmfdeploy#425 — a caplog test
+    cannot see this defect, since caplog installs its own handler
+    independent of this one).
+
+    Attaches ONE handler to the "dmf_cms" package logger — the parent of
+    every ``getLogger(__name__)`` in this codebase — rather than one
+    handler per module, and rather than touching the root logger (so
+    nothing else sharing this process's logging tree is affected). uvicorn
+    itself is unaffected the other direction too: its dictConfig call
+    leaves ``disable_existing_loggers`` False and never mentions
+    "dmf_cms", so this handler survives regardless of whether it runs
+    before or after uvicorn configures its own loggers.
+
+    Idempotent by handler name: ``create_app()`` runs exactly once in a
+    real deployment, but the test suite calls it well over a hundred times
+    in the same process (one fixture-created app per test in many files).
+    Without this guard, each call would stack another handler onto
+    "dmf_cms" and every subsequent ``logger.info()`` would print once per
+    accumulated handler.
+    """
+    app_logger = logging.getLogger(_APP_LOGGER_NAME)
+    if any(h.get_name() == _STDOUT_HANDLER_NAME for h in app_logger.handlers):
+        return
+    handler = logging.StreamHandler(sys.stdout)
+    handler.set_name(_STDOUT_HANDLER_NAME)
+    handler.setFormatter(logging.Formatter("%(asctime)s %(levelname)s %(name)s: %(message)s"))
+    app_logger.addHandler(handler)
+    app_logger.setLevel(logging.INFO)
+
+
 def create_app(settings: Settings | None = None, contract: AppContract | None = None) -> FastAPI:
+    _configure_logging()
     settings = settings or load_settings()
     if settings.runtime_mode != "local":
         if settings.dev_login_enabled:
