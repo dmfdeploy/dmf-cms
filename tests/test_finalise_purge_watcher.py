@@ -113,6 +113,38 @@ def test_post_job_read_failure_is_run_status_unknown_never_assumed_clean(monkeyp
     assert updated.purge_verified_at is None
 
 
+def test_post_job_read_failure_line_sanitizes_key(monkeypatch, caplog):
+    # umbrella dmf-cms#108 fix-round 4: `key` (the workload slug here) is
+    # externally influenced — same defect class as the AWX audit line,
+    # same stdout stream, a different call site entirely.
+    import logging
+
+    app, ops_store = _fake_app()
+    hostile_key = "studio-a\ninjected-slug"
+    op = ops_store.create("finalise-purge", hostile_key)
+    monkeypatch.setattr(
+        main, "get_job",
+        lambda **k: {"status": "successful", "started": "t0", "finished": "t1", "event_processing_finished": True},
+    )
+    monkeypatch.setattr(main, "get_job_events_for_task", lambda **k: [])
+
+    def boom(*a, **k):
+        raise RuntimeError("netbox unreachable mid-verify")
+
+    monkeypatch.setattr(media_workloads, "purge_residue_present", boom)
+
+    with caplog.at_level(logging.ERROR, logger="dmf_cms.main"):
+        _run_watcher(app, op.operation_id, 111, hostile_key)
+
+    lines = [
+        r.getMessage() for r in caplog.records
+        if r.getMessage().startswith("finalise-purge: post-job source read failed")
+    ]
+    assert len(lines) == 1
+    assert "\n" not in lines[0]
+    assert "injected-slug" in lines[0]
+
+
 def test_job_failed_is_run_failed_with_refused_marker_detail_surfaced_no_reread(monkeypatch):
     app, ops_store = _fake_app()
     op = ops_store.create("finalise-purge", "studio-a")
