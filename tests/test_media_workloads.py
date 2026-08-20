@@ -256,6 +256,62 @@ def test_netbox_failure_degrades_never_500(monkeypatch):
     assert body["degraded"] is True and body["reason"] == "netbox-unreachable"
 
 
+def test_netbox_failure_log_line_sanitizes_hostile_body(monkeypatch, caplog):
+    # umbrella dmf-cms#108 fix-round 4: NetboxAPIError.body is upstream
+    # response content — whatever NetBox's own HTTP response body says,
+    # verbatim. This module has 8 sites following this exact pattern
+    # (a NetboxAPIError-specific except clause logging str(exc), which
+    # embeds .body via the exception's own __init__); this is the most
+    # directly reachable one (a plain GET, no write gate), not
+    # independently re-driven at each of the other 7.
+    import logging
+
+    def fake_request(*args, **kwargs):
+        raise netbox_module.NetboxAPIError(502, "boom\nFORGED media-workloads: NetBox query failed: pwned")
+
+    monkeypatch.setattr(netbox_module, "_request", fake_request)
+    client = _client(MediaTenancySettings(mode="single"))
+    with caplog.at_level(logging.WARNING, logger="dmf_cms.media_workloads"):
+        resp = client.get("/api/media-workloads")
+    assert resp.status_code == 200
+
+    lines = [
+        r.getMessage() for r in caplog.records
+        if r.getMessage().startswith("media-workloads: NetBox query failed")
+    ]
+    assert len(lines) == 1
+    assert "\n" not in lines[0]
+    assert "FORGED" in lines[0]
+
+
+def test_prometheus_overlay_failure_log_line_sanitizes_hostile_body(monkeypatch, caplog):
+    # umbrella dmf-cms#108 fix-round 4: same reasoning, the OTHER upstream
+    # service this module calls — PrometheusAPIError.body is Prometheus's
+    # own raw response body. Direct unit call (not the full endpoint):
+    # _observed_by_app is the simplest of the module's three Prometheus
+    # call sites and proves the same sanitize_audit_field(str(exc)) wiring
+    # the other two share.
+    import logging
+
+    from dmf_cms import media_workloads, prometheus as prometheus_module
+
+    def fake_query(*args, **kwargs):
+        raise prometheus_module.PrometheusAPIError(502, "boom\nFORGED media-workloads: prometheus overlay failed: pwned")
+
+    monkeypatch.setattr(prometheus_module, "query", fake_query)
+    with caplog.at_level(logging.WARNING, logger="dmf_cms.media_workloads"):
+        result = media_workloads._observed_by_app("http://prom.test")
+    assert result == {}
+
+    lines = [
+        r.getMessage() for r in caplog.records
+        if r.getMessage().startswith("media-workloads: prometheus overlay failed")
+    ]
+    assert len(lines) == 1
+    assert "\n" not in lines[0]
+    assert "FORGED" in lines[0]
+
+
 def test_netbox_unconfigured_is_degraded_payload():
     client = _client(MediaTenancySettings(mode="single"), netbox=False)
     body = client.get("/api/media-workloads").json()

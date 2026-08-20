@@ -333,6 +333,31 @@ def test_actuator_launch_exception_sets_launch_failed(monkeypatch):
     assert command.outcome is None
 
 
+def test_actuator_launch_exception_log_line_sanitizes_hostile_awx_body(monkeypatch, caplog):
+    # umbrella dmf-cms#108 fix-round 4: exc may be AWXAPIError, whose
+    # str() embeds AWX's own raw response body.
+    import logging
+
+    monkeypatch.setattr(awx, "lookup_job_template_by_name", lambda **k: {"id": 7})
+
+    def boom_launch(**k):
+        raise awx.AWXAPIError(502, "boom\nFORGED switch-source actuator: launch failed for command x: pwned")
+
+    monkeypatch.setattr(awx, "launch_job", boom_launch)
+    command = _pending_command()
+    with caplog.at_level(logging.WARNING, logger="dmf_cms.switch_source"):
+        asyncio.run(_actuator().execute(command, _TOPOLOGY_PARAMS))
+    assert command.status == SwitchStatus.FAILED_ROLLBACK_REQUIRED
+
+    lines = [
+        r.getMessage() for r in caplog.records
+        if r.getMessage().startswith("switch-source actuator: launch failed")
+    ]
+    assert len(lines) == 1
+    assert "\n" not in lines[0]
+    assert "FORGED" in lines[0]
+
+
 def test_actuator_successful_job_reaches_active(monkeypatch):
     monkeypatch.setattr(awx, "lookup_job_template_by_name", lambda **k: {"id": 7})
     monkeypatch.setattr(awx, "launch_job", lambda **k: 42)

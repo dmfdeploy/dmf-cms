@@ -25,6 +25,8 @@ import time
 import urllib.parse
 from typing import Any, Callable, Optional
 
+from .log_safety import sanitize_audit_field
+
 logger = logging.getLogger(__name__)
 
 # Aggregation contract from ADR-0037 §2: instances are ipam.Services carrying
@@ -245,7 +247,12 @@ def _observed_by_app(prometheus_url: str) -> dict[str, float]:
     try:
         rows = _prometheus.query(url=prometheus_url, expr='probe_success{job="netbox-probe"}')
     except Exception as exc:  # pragma: no cover - defensive
-        logger.warning("media-workloads: prometheus overlay failed: %s", exc)
+        # umbrella dmf-cms#108 fix-round 4: exc may be PrometheusAPIError/
+        # NetboxAPIError, whose str() embeds that service's own raw
+        # response body — upstream response content. Every
+        # sanitize_audit_field(str(exc)) call in this module follows the
+        # same reasoning; not re-explained at each one.
+        logger.warning("media-workloads: prometheus overlay failed: %s", sanitize_audit_field(str(exc)))
         return {}
     out: dict[str, float] = {}
     for row in rows or []:
@@ -275,7 +282,7 @@ def list_instances(
     try:
         services = _fetch_services(netbox_url, netbox_token, ssl_verify, tenant_slugs)
     except _netbox.NetboxAPIError as exc:
-        logger.warning("media-workloads: NetBox query failed: %s", exc)
+        logger.warning("media-workloads: NetBox query failed: %s", sanitize_audit_field(str(exc)))
         return {"degraded": True, "reason": "netbox-unreachable", "instances": [], "functions": []}
     except Exception as exc:
         logger.warning("media-workloads: unexpected NetBox error: %s", exc)
@@ -447,7 +454,7 @@ def _observed_by_identity(prometheus_url: str) -> dict[str, float]:
     try:
         rows = _prometheus.query(url=prometheus_url, expr='probe_success{job="netbox-probe"}')
     except Exception as exc:
-        logger.warning("media-workloads: identity prometheus overlay failed: %s", exc)
+        logger.warning("media-workloads: identity prometheus overlay failed: %s", sanitize_audit_field(str(exc)))
         return {}
     out: dict[str, float] = {}
     for row in rows or []:
@@ -536,7 +543,7 @@ def list_workloads_grouped(
     try:
         services = _fetch_services(netbox_url, netbox_token, ssl_verify, tenant_slugs)
     except _netbox.NetboxAPIError as exc:
-        logger.warning("media-workloads: NetBox query failed: %s", exc)
+        logger.warning("media-workloads: NetBox query failed: %s", sanitize_audit_field(str(exc)))
         return {"degraded": True, "reason": "netbox-unreachable", "workloads": [], "invalid_instances": []}
     except Exception as exc:
         logger.warning("media-workloads: unexpected NetBox error: %s", exc)
@@ -867,7 +874,7 @@ def resolve_purge_target(
     try:
         services = _fetch_services_complete(netbox_url, read_token, ssl_verify, tenant_slugs)
     except _netbox.NetboxAPIError as exc:
-        logger.warning("media-workloads: purge preflight lookup failed: %s", exc)
+        logger.warning("media-workloads: purge preflight lookup failed: %s", sanitize_audit_field(str(exc)))
         return {"error": "netbox-unreachable"}
     except RuntimeError as exc:
         logger.warning("media-workloads: purge preflight read incomplete: %s", exc)
@@ -900,7 +907,7 @@ def resolve_purge_target(
             api_url=netbox_url, api_token=read_token, ssl_verify=ssl_verify, name=tag_name,
         )
     except _netbox.NetboxAPIError as exc:
-        logger.warning("media-workloads: purge tag lookup failed: %s", exc)
+        logger.warning("media-workloads: purge tag lookup failed: %s", sanitize_audit_field(str(exc)))
         return {"error": "netbox-unreachable"}
     except Exception as exc:
         logger.warning("media-workloads: purge tag lookup unexpected error: %s", exc)
@@ -957,7 +964,7 @@ def resolve_purge_target(
         try:
             all_services = _fetch_services_complete(netbox_url, read_token, ssl_verify, None)
         except _netbox.NetboxAPIError as exc:
-            logger.warning("media-workloads: purge preflight authority-scope lookup failed: %s", exc)
+            logger.warning("media-workloads: purge preflight authority-scope lookup failed: %s", sanitize_audit_field(str(exc)))
             return {"error": "netbox-unreachable"}
         except RuntimeError as exc:
             logger.warning("media-workloads: purge preflight authority-scope read incomplete: %s", exc)
@@ -991,7 +998,7 @@ def resolve_purge_target(
         from . import prometheus as _prometheus
         rows = _prometheus.query(url=prometheus_url, expr='probe_success{job="netbox-probe"}')
     except Exception as exc:
-        logger.warning("media-workloads: purge observed-state overlay unreachable: %s", exc)
+        logger.warning("media-workloads: purge observed-state overlay unreachable: %s", sanitize_audit_field(str(exc)))
         return {"error": "observability-unavailable"}
 
     # Layer 1 — overlay integrity (FIX-A2b.4 P1-1, hardened FIX-A2b.5/
@@ -1136,7 +1143,7 @@ def clear_for_deployment(
     try:
         services = _fetch_services(netbox_url, read_token, ssl_verify, tenant_slugs)
     except _netbox.NetboxAPIError as exc:
-        logger.warning("media-workloads: clear lookup failed: %s", exc)
+        logger.warning("media-workloads: clear lookup failed: %s", sanitize_audit_field(str(exc)))
         return {"error": "netbox-unreachable"}
     except Exception as exc:
         logger.warning("media-workloads: clear lookup unexpected error: %s", exc)
@@ -1163,7 +1170,7 @@ def clear_for_deployment(
             payload={"tags": new_tags},
         )
     except _netbox.NetboxAPIError as exc:
-        logger.warning("media-workloads: clear PATCH failed: %s", exc)
+        logger.warning("media-workloads: clear PATCH failed: %s", sanitize_audit_field(str(exc)))
         return {"error": "netbox-unreachable"}
     except Exception as exc:
         logger.warning("media-workloads: clear PATCH unexpected error: %s", exc)
@@ -1246,7 +1253,7 @@ def resolve_sidecar_target(
     try:
         services = cache.get(tenant_slugs, _load) if cache is not None else _load()
     except _netbox.NetboxAPIError as exc:
-        logger.warning("media-workloads: sidecar lookup failed: %s", exc)
+        logger.warning("media-workloads: sidecar lookup failed: %s", sanitize_audit_field(str(exc)))
         return {"status": "unreachable"}
     except Exception as exc:
         logger.warning("media-workloads: sidecar lookup unexpected error: %s", exc)

@@ -13,6 +13,8 @@ from typing import Any, Optional
 
 import yaml
 
+from .log_safety import sanitize_audit_field
+
 logger = logging.getLogger(__name__)
 
 CATALOG_DIR = "/etc/dmf-cms/catalog/"
@@ -412,7 +414,11 @@ def _service_lifecycle_tag(
     try:
         result = _netbox._request(netbox_url, netbox_token, path, ssl_context=ctx)
     except _netbox.NetboxAPIError as exc:
-        logger.warning("catalog: NetBox query for %s failed: %s", service_name, exc)
+        # umbrella dmf-cms#108 fix-round 4: exc.str() embeds NetBox's own
+        # raw response body (upstream response content). service_name is
+        # NOT sanitized — it's catalog-config-derived (provision.netbox_
+        # service.name in a static YAML file), never live-request input.
+        logger.warning("catalog: NetBox query for %s failed: %s", service_name, sanitize_audit_field(str(exc)))
         return "error"
     except Exception as exc:
         logger.warning("catalog: unexpected error querying NetBox for %s: %s", service_name, exc)

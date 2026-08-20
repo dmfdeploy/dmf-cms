@@ -252,6 +252,47 @@ def test_operation_error_sanitization(enabled_settings):
             assert raw_error_body not in op.error
 
 
+def test_operation_error_log_line_sanitizes_hostile_awx_body(enabled_settings, caplog):
+    # umbrella dmf-cms#108 fix-round 4: this is the SERVER-SIDE log line
+    # (the SANITIZE FOR CLIENT comment right above it exists precisely
+    # because the sibling above only proved the CLIENT-facing op.error is
+    # clean — the log line is a separate %s-formatted call carrying
+    # exc.body raw). exc.body is upstream response content: whatever the
+    # AWX autoscale helper's own HTTP response body says, verbatim.
+    #
+    # This is the "launch" action's autoscale-error handler
+    # (main.py, "AWX autoscale error in launch operation"). The other four
+    # actions (deploy/teardown/rollback/finalise-purge) each have their own
+    # byte-identical except-block — same _sanitize_audit_field(exc.body)
+    # call, same reasoning — not independently re-driven end-to-end here.
+    import logging as _logging
+
+    from fastapi.testclient import TestClient
+    from dmf_cms.main import create_app
+    from dmf_cms.awx import AWXAutoscaleError
+
+    app = create_app(settings=enabled_settings)
+    with TestClient(app) as client:
+        client.get("/auth/login", follow_redirects=False)
+        hostile_body = "db.internal.example:5432\nFORGED AWX API error in launch operation x: pwned"
+        with patch("dmf_cms.main.ensure_awx_awake", side_effect=AWXAutoscaleError(500, hostile_body)):
+            response = client.post("/api/workflows/test-workflow/launch", json={"reason": "test"})
+            assert response.status_code == 202
+            op_id = response.json()["operation_id"]
+
+            with caplog.at_level(_logging.ERROR, logger="dmf_cms.main"):
+                op = _wait_for_state(app, op_id, OperationState.ERROR)
+            assert op is not None
+
+    lines = [
+        r.getMessage() for r in caplog.records
+        if r.getMessage().startswith("AWX autoscale error in launch operation")
+    ]
+    assert len(lines) == 1
+    assert "\n" not in lines[0]
+    assert "FORGED" in lines[0]
+
+
 # --------------------------------------------------------------------------
 # #134 — post-wake transient retry, runner level (deploy/teardown)
 # --------------------------------------------------------------------------

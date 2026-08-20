@@ -192,6 +192,36 @@ def test_pulls_all_repos_fail_is_unreachable_never_a_silent_empty(monkeypatch, c
     assert sum("dmf-cms" in r.message for r in caplog.records) >= 1
 
 
+def test_commits_per_repo_failure_log_line_sanitizes_hostile_full_name_and_body(monkeypatch, caplog):
+    # umbrella dmf-cms#108 fix-round 4: full_name is Forgejo response
+    # content (whoever can create a repo in the configured org/user names
+    # it), and ForgejoAPIError.body is Forgejo's own raw response body.
+    # Both are upstream response content, both land in this per-repo
+    # handler's log line. The commits/pulls outer (all-repos-fail) handler
+    # shares the identical sanitize_audit_field(str(exc)) call — not
+    # independently re-driven here.
+    hostile_repos = [
+        {"full_name": "dmfdeploy/dmf-cms\nFORGED actor=admin", "name": "dmf-cms"},
+    ]
+    monkeypatch.setattr(main_module.forgejo, "list_repos", lambda **kwargs: hostile_repos)
+    monkeypatch.setattr(
+        main_module.forgejo, "list_commits",
+        _raise(ForgejoAPIError(500, "boom\nFORGED recent changes: Forgejo commits fetch failed: pwned")),
+    )
+    with caplog.at_level("WARNING"):
+        body = _client().get("/api/changes/commits").json()
+    assert body == {"repos": [], "reason": "forgejo-unreachable"}
+
+    lines = [
+        r.getMessage() for r in caplog.records
+        if r.getMessage().startswith("recent changes: Forgejo commits fetch failed for")
+    ]
+    assert len(lines) == 1
+    assert "\n" not in lines[0]
+    assert "FORGED actor=admin" in lines[0]  # full_name survives, escaped
+    assert "FORGED recent changes" in lines[0]  # exc body survives, escaped
+
+
 def test_commits_mixed_success_is_partial_and_keeps_the_successful_rows(monkeypatch, caplog):
     monkeypatch.setattr(main_module.forgejo, "list_repos", lambda **kwargs: _TWO_REPOS)
 
