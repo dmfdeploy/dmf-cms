@@ -117,7 +117,18 @@ export function useLaunchWorkflow() {
 // them — it only newly lets a consumer that stays mounted (e.g. a
 // finalise-purge completion tracker) keep observing through to the
 // operation's REAL outcome.
-const _WATCHED_TERMINAL_STATES: OperationState[] = [
+// umbrella #407: exported so FinaliseStage's own purge-completion tracker
+// can derive its terminal set from this one instead of hand-restating it —
+// a second hand-maintained copy is exactly what drifted out of sync
+// (failed_rollback_required / rollback_incomplete were watched here but
+// missing from that copy) and the same drift can happen again as long as
+// two lists exist. Kept the leading underscore despite the export: several
+// other files already reference this constant BY THIS NAME in comments
+// (ProvisionStage.tsx, WorkloadMaterializing.tsx, JobProgress.tsx,
+// operationTerminalStall.test.tsx) as the source-of-truth anchor for "the
+// watched terminal set" — renaming it to drop the underscore would silently
+// stale those cross-file pointers for no behavioral benefit.
+export const _WATCHED_TERMINAL_STATES: OperationState[] = [
   'run_complete', 'run_failed', 'failed_rollback_required', 'rollback_incomplete', 'run_status_unknown',
 ]
 

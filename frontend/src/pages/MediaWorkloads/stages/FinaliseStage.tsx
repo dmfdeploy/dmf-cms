@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
 import { useQueryClient } from '@tanstack/react-query'
 import {
+  _WATCHED_TERMINAL_STATES,
   isOperation,
   useCatalog,
   useOperationStatus,
@@ -51,12 +52,22 @@ interface EntryTrack {
 
 const EMPTY_TRACK: EntryTrack = { jobId: null, opId: null }
 
-// umbrella #347: the SAME "watched terminal" set useOperationStatus itself
-// polls to (see that hook's own note) — repeated here only to know WHEN to
-// stop tracking a purge locally, not to re-derive polling behavior.
-const PURGE_TERMINAL_STATES: Operation['state'][] = [
-  'run_complete', 'run_failed', 'run_status_unknown', 'error',
-]
+// umbrella #347 / #407: DERIVED from hooks.ts's own _WATCHED_TERMINAL_STATES
+// — the terminal set useOperationStatus itself stops polling a purge
+// operation at — rather than a second hand-maintained copy (a hand copy is
+// exactly how #407 drifted: failed_rollback_required and
+// rollback_incomplete were watched but missing here, so a purge settling at
+// either one stopped polling with no update ever going to arrive, while
+// this effect's OLD literal list never fired either — busy forever, no
+// escape). 'error' is added back in as the one genuine extra member:
+// useOperationStatus stops polling on 'error' too, via its own separate
+// `if (data.state === 'error') return false` check ABOVE the
+// _WATCHED_TERMINAL_STATES.includes check, so it's not itself a member of
+// that list — but it IS a state polling stops at, so it belongs in the
+// union here. (The OTHER thing useOperationStatus stops polling at — a
+// plain 'launch' operation reaching 'launched' — does not apply to a
+// finalise-purge operation, whose action is never 'launch'.)
+const PURGE_TERMINAL_STATES: Operation['state'][] = [..._WATCHED_TERMINAL_STATES, 'error']
 
 export default function FinaliseStage({
   workload,
