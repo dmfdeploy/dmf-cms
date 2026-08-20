@@ -256,3 +256,67 @@ def test_admin_view_as_viewer_audit_shows_real_role(monkeypatch, awx_spy, caplog
         client.post("/api/workflows/dmf-provision/launch", json={"reason": "x"})
     line = next(m for m in _audit_lines(caplog) if "action=launch" in m)
     assert "role=admin" in line and "real_role=" in line
+
+
+# --------------------------------------------------------------------------
+# umbrella dmf-cms#108 fix-round 1: audit-line injection. `workflow_name` is
+# a raw path parameter, never validated, and reaches `target` on the
+# awx-not-configured audit path BEFORE any AWX-reachability check — so an
+# operator+ caller controls a value that lands unescaped in a %s-formatted
+# log line, even with AWX left dark. A CR/LF in it splits the single audit
+# record into multiple physical lines on whatever reads dmf-cms's stdout
+# (forging what looks like a second, independent line), corrupting the
+# record ADR-0028 C5 depends on.
+# --------------------------------------------------------------------------
+
+def test_audit_line_survives_a_hostile_workflow_name_as_one_physical_line(awx_spy, caplog):
+    import logging
+    client = _client(OPERATOR, awx=False)
+    with caplog.at_level(logging.INFO, logger="dmf_cms.main"):
+        resp = client.post(
+            "/api/workflows/dmf-provision%0ainjected-line/launch",
+            json={"reason": "hostile workflow_name"},
+        )
+    assert resp.status_code == 503
+    line = next(m for m in _audit_lines(caplog) if "action=launch" in m)
+    # The value survives (escaped, not dropped — an audit record is a
+    # complete account of what was requested) but the record stays exactly
+    # ONE physical line: no raw control character rides through unescaped.
+    assert "\n" not in line
+    assert "\r" not in line
+    assert "dmf-provision" in line
+    assert "injected-line" in line
+    assert "outcome=awx-not-configured" in line
+
+
+def test_audit_line_sanitizes_actor_workload_and_capacity_too(monkeypatch, caplog):
+    # Direct call: the fix lives in _audit_awx_write itself, so every field
+    # that function accepts external input through — not just `target` — is
+    # covered by the same sanitizer. Exercised directly rather than hunting
+    # for a live route that lets a hostile value reach `workload`/`capacity`
+    # specifically; `_audit_awx_write` is the one place all such routes
+    # converge, so this proves the fix at its actual source.
+    import logging
+
+    from dmf_cms.main import _audit_awx_write
+    from dmf_cms.security import UserIdentity
+
+    class _FakeRequest:
+        session: dict = {}
+
+    request = _FakeRequest()
+    user = UserIdentity(
+        subject="ops\nFORGED actor=admin", display_name="Ops", email="ops@dmf.example.com",
+        role="operator", groups=(),
+    )
+    with caplog.at_level(logging.INFO, logger="dmf_cms.audit"):
+        _audit_awx_write(
+            request, user, action="deploy", target="key\ninjected",
+            request_id="r1", reason="fine", outcome="dispatched",
+            workload="wl\ninjected", capacity="cap\ninjected",
+        )
+    line = next(m for m in caplog.records if m.getMessage().startswith("awx write:")).getMessage()
+    assert "\n" not in line
+    assert "\r" not in line
+    # Escaped, not silently dropped.
+    assert "FORGED" in line and "injected" in line
