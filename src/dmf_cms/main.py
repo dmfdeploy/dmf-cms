@@ -1025,7 +1025,9 @@ def _bootstrap_console_groups(settings: Settings) -> None:
             # OSError covers urllib URLError (DNS/TLS/connection). Group seeding is
             # best-effort at startup; a transient Authentik back-channel failure
             # must not crashloop the console.
-            logger.warning("Failed to ensure group %s: %s", name, exc)
+            # umbrella dmf-cms#108 fix-round 4: exc may be AuthentikAPIError,
+            # whose str() embeds its own raw response body.
+            logger.warning("Failed to ensure group %s: %s", name, _sanitize_audit_field(str(exc)))
 
     # Assign the bootstrap user (from dev login settings) to dmf-console-admin
     bootstrap_user = settings.dev_username
@@ -1042,7 +1044,9 @@ def _bootstrap_console_groups(settings: Settings) -> None:
             else:
                 logger.info("Bootstrap user '%s' already in dmf-console-admin or not found", bootstrap_user)
         except (AuthentikAPIError, OSError) as exc:
-            logger.warning("Failed to assign bootstrap user to dmf-console-admin: %s", exc)
+            logger.warning(
+                "Failed to assign bootstrap user to dmf-console-admin: %s", _sanitize_audit_field(str(exc)),
+            )
 
 
 @asynccontextmanager
@@ -1143,8 +1147,15 @@ async def _run_launch_operation(app: FastAPI, operation_id: str, workflow_name: 
             job_id=job_id,
         )
     except AWXAutoscaleError as exc:
-        # Log raw error server-side only, sanitize for client
-        logger.error("AWX autoscale error in launch operation %s: %s", operation_id, exc.body)
+        # Log raw error server-side only, sanitize for client. umbrella
+        # dmf-cms#108 fix-round 4: exc.body is upstream-supplied — AWX's
+        # (or the autoscale helper's) own raw response body — the same
+        # "upstream response content" category as the Authentik exc.body
+        # fixed above. Every one of this action's sibling handlers below
+        # (deploy/teardown/rollback/finalise-purge × autoscale/API-error)
+        # carries the identical pattern and gets the identical fix; not
+        # re-explained at each one.
+        logger.error("AWX autoscale error in launch operation %s: %s", operation_id, _sanitize_audit_field(exc.body))
         ops_store.update(
             operation_id,
             state=OperationState.ERROR,
@@ -1152,7 +1163,7 @@ async def _run_launch_operation(app: FastAPI, operation_id: str, workflow_name: 
         )
     except AWXAPIError as exc:
         # Log raw error server-side only, sanitize for client
-        logger.error("AWX API error in launch operation %s: %s", operation_id, exc.body)
+        logger.error("AWX API error in launch operation %s: %s", operation_id, _sanitize_audit_field(exc.body))
         ops_store.update(
             operation_id,
             state=OperationState.ERROR,
@@ -2484,7 +2495,7 @@ async def _run_deploy_operation(
         _spawn_job_watcher(app, operation_id, job_id, "deploy", key)
     except AWXAutoscaleError as exc:
         # Log raw error server-side only, sanitize for client
-        logger.error("AWX autoscale error in deploy operation %s: %s", operation_id, exc.body)
+        logger.error("AWX autoscale error in deploy operation %s: %s", operation_id, _sanitize_audit_field(exc.body))
         ops_store.update(
             operation_id,
             state=OperationState.ERROR,
@@ -2492,7 +2503,7 @@ async def _run_deploy_operation(
         )
     except AWXAPIError as exc:
         # Log raw error server-side only, sanitize for client
-        logger.error("AWX API error in deploy operation %s: %s", operation_id, exc.body)
+        logger.error("AWX API error in deploy operation %s: %s", operation_id, _sanitize_audit_field(exc.body))
         ops_store.update(
             operation_id,
             state=OperationState.ERROR,
@@ -2638,7 +2649,7 @@ async def _run_teardown_operation(
         _spawn_job_watcher(app, operation_id, job_id, "teardown", key)
     except AWXAutoscaleError as exc:
         # Log raw error server-side only, sanitize for client
-        logger.error("AWX autoscale error in teardown operation %s: %s", operation_id, exc.body)
+        logger.error("AWX autoscale error in teardown operation %s: %s", operation_id, _sanitize_audit_field(exc.body))
         ops_store.update(
             operation_id,
             state=OperationState.ERROR,
@@ -2646,7 +2657,7 @@ async def _run_teardown_operation(
         )
     except AWXAPIError as exc:
         # Log raw error server-side only, sanitize for client
-        logger.error("AWX API error in teardown operation %s: %s", operation_id, exc.body)
+        logger.error("AWX API error in teardown operation %s: %s", operation_id, _sanitize_audit_field(exc.body))
         ops_store.update(
             operation_id,
             state=OperationState.ERROR,
@@ -2734,10 +2745,10 @@ async def _run_rollback_operation(app: FastAPI, operation_id: str, run_id: str, 
         ops_store.update(operation_id, state=OperationState.LAUNCHED, job_id=job_id, run_id=l3_request_id)
         _spawn_job_watcher(app, operation_id, job_id, "rollback", run_id)
     except AWXAutoscaleError as exc:
-        logger.error("AWX autoscale error in rollback operation %s: %s", operation_id, exc.body)
+        logger.error("AWX autoscale error in rollback operation %s: %s", operation_id, _sanitize_audit_field(exc.body))
         ops_store.update(operation_id, state=OperationState.ERROR, error="AWX wake failed")
     except AWXAPIError as exc:
-        logger.error("AWX API error in rollback operation %s: %s", operation_id, exc.body)
+        logger.error("AWX API error in rollback operation %s: %s", operation_id, _sanitize_audit_field(exc.body))
         ops_store.update(operation_id, state=OperationState.ERROR, error="AWX API error while rolling back")
     except urllib.error.URLError as exc:
         logger.error("AWX unreachable in rollback operation %s: %s", operation_id, exc.reason)
@@ -2825,10 +2836,10 @@ async def _run_finalise_purge_operation(
         ops_store.update(operation_id, state=OperationState.LAUNCHED, job_id=job_id, run_id=l3_request_id)
         _spawn_job_watcher(app, operation_id, job_id, "finalise-purge", slug)
     except AWXAutoscaleError as exc:
-        logger.error("AWX autoscale error in finalise-purge operation %s: %s", operation_id, exc.body)
+        logger.error("AWX autoscale error in finalise-purge operation %s: %s", operation_id, _sanitize_audit_field(exc.body))
         ops_store.update(operation_id, state=OperationState.ERROR, error="AWX wake failed")
     except AWXAPIError as exc:
-        logger.error("AWX API error in finalise-purge operation %s: %s", operation_id, exc.body)
+        logger.error("AWX API error in finalise-purge operation %s: %s", operation_id, _sanitize_audit_field(exc.body))
         ops_store.update(operation_id, state=OperationState.ERROR, error="AWX API error while purging")
     except urllib.error.URLError as exc:
         logger.error("AWX unreachable in finalise-purge operation %s: %s", operation_id, exc.reason)
@@ -3076,7 +3087,16 @@ def create_app(settings: Settings | None = None, contract: AppContract | None = 
                 if end_session:
                     landing = end_session
             except Exception as exc:  # discovery fetch / parse is best-effort
-                logger.warning("logout: could not build end-session URL, using plain landing: %s", exc)
+                # umbrella dmf-cms#108 fix-round 4: genuinely ambiguous, not
+                # a clean *APIError.body case — discovery_document uses a
+                # raw urlopen, so exc is typically an HTTPError (whose str()
+                # is a short status/reason phrase) or a JSONDecodeError
+                # (whose message can echo a snippet of the fetched body).
+                # Sanitized per the "ambiguous -> sanitize" rule.
+                logger.warning(
+                    "logout: could not build end-session URL, using plain landing: %s",
+                    _sanitize_audit_field(str(exc)),
+                )
         return HTMLResponse(
             content=(
                 f'<!doctype html><html><head><meta charset="utf-8">'
@@ -3729,7 +3749,11 @@ def create_app(settings: Settings | None = None, contract: AppContract | None = 
                 prometheus.list_alerts, url=settings.prometheus.url
             )
         except Exception as exc:
-            logger.warning("workspace health: alert fetch failed: %s", exc)
+            # umbrella dmf-cms#108 fix-round 4: exc may be PrometheusAPIError
+            # (raised by prometheus.list_alerts), whose str() embeds its own
+            # raw response body — upstream response content, same category
+            # as the AWX/Authentik .body sites above.
+            logger.warning("workspace health: alert fetch failed: %s", _sanitize_audit_field(str(exc)))
             return JSONResponse(
                 {
                     "configured": True,
@@ -3942,7 +3966,9 @@ def create_app(settings: Settings | None = None, contract: AppContract | None = 
                 for s in sites
             ]
         except Exception as exc:
-            logger.warning("facility summary: NetBox read failed: %s", exc)
+            # umbrella dmf-cms#108 fix-round 4: exc may be NetboxAPIError,
+            # whose str() embeds NetBox's own raw response body.
+            logger.warning("facility summary: NetBox read failed: %s", _sanitize_audit_field(str(exc)))
             return JSONResponse(
                 {"reason": "netbox-unreachable", "site_count": 0, "device_count": 0, "sites": []}
             )
@@ -4002,7 +4028,9 @@ def create_app(settings: Settings | None = None, contract: AppContract | None = 
             skipped_devices = sum(1 for d in devices_data if not isinstance(d, dict))
             devices_reason = "netbox-rows-unparseable" if skipped_devices else ""
         except Exception as exc:
-            logger.warning("facility devices: NetBox read failed: %s", exc)
+            # umbrella dmf-cms#108 fix-round 4: exc may be NetboxAPIError,
+            # whose str() embeds NetBox's own raw response body.
+            logger.warning("facility devices: NetBox read failed: %s", _sanitize_audit_field(str(exc)))
             return JSONResponse({"reason": "netbox-unreachable", "devices": []})
 
         return JSONResponse({"reason": devices_reason, "devices": devices})
@@ -4112,7 +4140,12 @@ def create_app(settings: Settings | None = None, contract: AppContract | None = 
             # signature. Anything else is an honest unreachable.
             refused = settings.awx_autoscale.enabled and is_connection_refused(exc)
             reason = "awx-not-running" if refused else "awx-unreachable"
-            logger.warning("recent changes: AWX job fetch failed (%s): %s", reason, exc)
+            # umbrella dmf-cms#108 fix-round 4: exc may be AWXAPIError,
+            # whose str() embeds AWX's own raw response body. reason is an
+            # internal literal ("awx-not-running"/"awx-unreachable").
+            logger.warning(
+                "recent changes: AWX job fetch failed (%s): %s", reason, _sanitize_audit_field(str(exc)),
+            )
             return JSONResponse({"jobs": [], "reason": reason})
 
     @app.get("/api/changes/commits")
@@ -4185,8 +4218,15 @@ def create_app(settings: Settings | None = None, contract: AppContract | None = 
                     })
                 except Exception as exc:
                     failed_repos += 1
+                    # umbrella dmf-cms#108 fix-round 4: full_name is Forgejo
+                    # response content (whoever can create a repo in the
+                    # configured Forgejo org/user names it — dmf-cms doesn't
+                    # constrain that character set), and exc may be
+                    # ForgejoAPIError, whose str() embeds Forgejo's own raw
+                    # response body. Both are upstream response content.
                     logger.warning(
-                        "recent changes: Forgejo commits fetch failed for %s: %s", full_name, exc
+                        "recent changes: Forgejo commits fetch failed for %s: %s",
+                        _sanitize_audit_field(full_name), _sanitize_audit_field(str(exc)),
                     )
 
             if failed_repos == 0:
@@ -4197,7 +4237,8 @@ def create_app(settings: Settings | None = None, contract: AppContract | None = 
                 reason = "forgejo-unreachable"
             return JSONResponse({"repos": repos_commits, "reason": reason})
         except Exception as exc:
-            logger.warning("recent changes: Forgejo commits fetch failed: %s", exc)
+            # umbrella dmf-cms#108 fix-round 4: exc may be ForgejoAPIError.
+            logger.warning("recent changes: Forgejo commits fetch failed: %s", _sanitize_audit_field(str(exc)))
             return JSONResponse({"repos": [], "reason": "forgejo-unreachable"})
 
     @app.get("/api/changes/pulls")
@@ -4257,8 +4298,12 @@ def create_app(settings: Settings | None = None, contract: AppContract | None = 
                         })
                 except Exception as exc:
                     failed_repos += 1
+                    # umbrella dmf-cms#108 fix-round 4: same as the commits
+                    # handler above — full_name is Forgejo response content,
+                    # exc may be ForgejoAPIError.
                     logger.warning(
-                        "recent changes: Forgejo pulls fetch failed for %s: %s", full_name, exc
+                        "recent changes: Forgejo pulls fetch failed for %s: %s",
+                        _sanitize_audit_field(full_name), _sanitize_audit_field(str(exc)),
                     )
 
             if failed_repos == 0:
@@ -4269,7 +4314,7 @@ def create_app(settings: Settings | None = None, contract: AppContract | None = 
                 reason = "forgejo-unreachable"
             return JSONResponse({"pulls": all_pulls, "reason": reason})
         except Exception as exc:
-            logger.warning("recent changes: Forgejo pulls fetch failed: %s", exc)
+            logger.warning("recent changes: Forgejo pulls fetch failed: %s", _sanitize_audit_field(str(exc)))
             return JSONResponse({"pulls": [], "reason": "forgejo-unreachable"})
 
     # ------------------------------------------------------------------

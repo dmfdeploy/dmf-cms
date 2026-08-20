@@ -167,6 +167,39 @@ def test_view_as_set_and_cleared_audit_lines_sanitize_actor(caplog):
         assert "FORGED" in line
 
 
+def test_bootstrap_console_groups_log_line_sanitizes_hostile_awx_body(monkeypatch, caplog):
+    # umbrella dmf-cms#108 fix-round 4: exc may be AuthentikAPIError,
+    # whose str() embeds Authentik's own raw response body — the same
+    # "upstream response content" category as the invitation-error test
+    # above, at a startup-time call site instead of a live one.
+    import logging
+
+    import dmf_cms.main as main_module
+
+    def boom(**kwargs):
+        raise AuthentikAPIError(500, "boom\nFORGED Failed to ensure group x: pwned")
+
+    monkeypatch.setattr(main_module, "ensure_group", boom)
+    settings = Settings(
+        runtime_mode="local",
+        dev_login_enabled=True,
+        dev_groups=ADMIN,
+        media_tenancy=MediaTenancySettings(mode="single"),
+        authentik=AuthentikSettings(api_url="http://authentik.test", api_token="tok"),
+    )
+    with caplog.at_level(logging.WARNING, logger="dmf_cms.main"):
+        main_module._bootstrap_console_groups(settings)
+
+    lines = [
+        r.getMessage() for r in caplog.records
+        if r.getMessage().startswith("Failed to ensure group")
+    ]
+    assert len(lines) >= 1
+    for line in lines:
+        assert "\n" not in line
+    assert any("FORGED" in line for line in lines)
+
+
 def test_view_as_reflected_in_api_me():
     client = _client(groups=ADMIN)
     me = client.get("/api/me").json()

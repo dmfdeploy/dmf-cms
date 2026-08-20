@@ -206,6 +206,43 @@ def test_logout_routes_through_end_session(monkeypatch):
     assert client.get("/api/me").status_code == 401
 
 
+def test_logout_discovery_failure_log_line_sanitizes_hostile_exception_text(monkeypatch, caplog):
+    # umbrella dmf-cms#108 fix-round 4: genuinely ambiguous per that
+    # round's own reasoning (discovery_document uses a raw urlopen, so
+    # exc is typically an HTTPError or JSONDecodeError, not a clean
+    # *APIError.body) — sanitized per the "ambiguous -> sanitize" rule.
+    import logging
+
+    def boom(_settings):
+        raise ValueError(
+            "boom\nFORGED logout: could not build end-session URL, using plain landing: pwned"
+        )
+
+    monkeypatch.setattr("dmf_cms.main.discovery_document", boom)
+    settings = Settings(
+        runtime_mode="cluster",
+        dev_login_enabled=False,
+        oidc=OIDCSettings(
+            enabled=True,
+            issuer_url="https://auth.example.invalid",
+            client_id="dmf-console",
+            client_secret="super-secret",
+        ),
+    )
+    client = TestClient(create_app(settings=settings), base_url="https://console.example.invalid")
+    with caplog.at_level(logging.WARNING, logger="dmf_cms.main"):
+        resp = client.get("/auth/logout", follow_redirects=False)
+    assert resp.status_code == 200
+
+    lines = [
+        r.getMessage() for r in caplog.records
+        if r.getMessage().startswith("logout: could not build end-session URL")
+    ]
+    assert len(lines) == 1
+    assert "\n" not in lines[0]
+    assert "FORGED" in lines[0]
+
+
 def test_logout_falls_back_to_plain_landing_without_end_session(monkeypatch):
     discovery = {k: v for k, v in _DISCOVERY_WITH_END_SESSION.items() if k != "end_session_endpoint"}
     client = _oidc_client(

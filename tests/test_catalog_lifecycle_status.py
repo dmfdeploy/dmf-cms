@@ -67,6 +67,29 @@ def test_single_service_netbox_error_is_error(monkeypatch):
     assert get_lifecycle_status(entry, "http://nb", "tok") == "error"
 
 
+def test_single_service_netbox_error_log_line_sanitizes_hostile_body(monkeypatch, caplog):
+    # umbrella dmf-cms#108 fix-round 4: NetboxAPIError.body is upstream
+    # response content, same as media_workloads.py's identical pattern.
+    import logging
+
+    entry = _entry({"name": "svc-a"})
+
+    def fake_request(api_url, api_token, path, ssl_context=None, method="GET", payload=None):
+        raise netbox_module.NetboxAPIError(500, "boom\nFORGED catalog: NetBox query for svc-a failed: pwned")
+
+    monkeypatch.setattr(netbox_module, "_request", fake_request)
+    with caplog.at_level(logging.WARNING, logger="dmf_cms.catalog"):
+        assert get_lifecycle_status(entry, "http://nb", "tok") == "error"
+
+    lines = [
+        r.getMessage() for r in caplog.records
+        if r.getMessage().startswith("catalog: NetBox query for")
+    ]
+    assert len(lines) == 1
+    assert "\n" not in lines[0]
+    assert "FORGED" in lines[0]
+
+
 def test_no_provision_is_unknown():
     entry = CatalogEntry(key="k", display_name="d", summary="s")
     assert get_lifecycle_status(entry, "http://nb", "tok") == "unknown"

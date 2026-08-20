@@ -44,6 +44,7 @@ from starlette.concurrency import run_in_threadpool
 from . import awx as _awx
 from .catalog import CATALOG_DIR, load_catalog_entries, load_topology_instance
 from .l3_detail_tokens import KV_DETAIL_TOKENS
+from .log_safety import sanitize_audit_field
 
 logger = logging.getLogger(__name__)
 
@@ -577,7 +578,15 @@ class ReconnectViaAwxActuator:
                 extra_vars=extra_vars,
             )
         except Exception as exc:  # noqa: BLE001 - actuator-level failure, not a crash
-            logger.warning("switch-source actuator: launch failed for command %s: %s", command.command_id, exc)
+            # umbrella dmf-cms#108 fix-round 4: exc may be AWXAPIError
+            # (from launch_job), whose str() embeds AWX's own raw response
+            # body — upstream response content. command.command_id is a
+            # server-generated uuid4, not sanitized (same classification
+            # as request_id/operation_id elsewhere).
+            logger.warning(
+                "switch-source actuator: launch failed for command %s: %s",
+                command.command_id, sanitize_audit_field(str(exc)),
+            )
             self._fail(command, "switch-launch-failed")
             return
 
