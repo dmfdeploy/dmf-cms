@@ -114,11 +114,12 @@ def test_effective_user_none_when_unauthenticated():
 # Integration: endpoints + enforcement
 # --------------------------------------------------------------------------
 
-def _client(groups=ADMIN, netbox=False) -> TestClient:
+def _client(groups=ADMIN, netbox=False, dev_username=None) -> TestClient:
     settings = Settings(
         runtime_mode="local",
         dev_login_enabled=True,
         dev_groups=groups,
+        **({"dev_username": dev_username} if dev_username is not None else {}),
         media_tenancy=MediaTenancySettings(mode="single"),
         netbox=NetboxSettings(api_url="http://netbox.test", api_token="tok")
         if netbox
@@ -140,6 +141,30 @@ def test_set_view_as_rejects_invalid_role():
     for bad in [{"role": "admin"}, {"role": "root"}, {"role": ""}, {}, {"role": 3}]:
         resp = client.post("/api/me/view-as", json=bad)
         assert resp.status_code == 400, bad
+
+
+def test_view_as_set_and_cleared_audit_lines_sanitize_actor(caplog):
+    # umbrella dmf-cms#108 fix-round 2: "view-as set"/"view-as cleared"
+    # mirror the clear-for-deployment C5 record (per their own comment)
+    # and format actor=%s from real.subject (an OIDC claim — dev-login's
+    # username stands in for it here) unescaped, same injection shape
+    # fix-round 1 fixed in _audit_awx_write.
+    import logging
+
+    client = _client(groups=ADMIN, dev_username="admin\nFORGED view-as set: actor=root")
+    with caplog.at_level(logging.INFO, logger="dmf_cms.main"):
+        set_resp = client.post("/api/me/view-as", json={"role": "viewer"})
+        clear_resp = client.delete("/api/me/view-as")
+    assert set_resp.status_code == 200
+    assert clear_resp.status_code == 200
+
+    set_lines = [r.getMessage() for r in caplog.records if r.getMessage().startswith("view-as set:")]
+    cleared_lines = [r.getMessage() for r in caplog.records if r.getMessage().startswith("view-as cleared:")]
+    assert len(set_lines) == 1 and len(cleared_lines) == 1
+    for line in (set_lines[0], cleared_lines[0]):
+        assert "\n" not in line
+        assert "\r" not in line
+        assert "FORGED" in line
 
 
 def test_view_as_reflected_in_api_me():
