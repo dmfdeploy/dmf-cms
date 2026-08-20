@@ -2922,6 +2922,42 @@ def _configure_logging() -> None:
     Without this guard, each call would stack another handler onto
     "dmf_cms" and every subsequent ``logger.info()`` would print once per
     accumulated handler.
+
+    DECIDED (umbrella dmf-cms#108 fix-round 1): ``propagate`` on "dmf_cms"
+    (and therefore on every child logger, ``audit_logger`` included) is
+    left at its default, True — NOT set False here. That is a considered
+    choice, not an oversight: 19 assertions across 10 test files
+    (``test_awx_write_gate.py`` and friends) already depend on the audit
+    line propagating all the way to the ROOT logger, because pytest's
+    ``caplog`` fixture attaches its capture handler THERE. Setting
+    ``propagate=False`` would silently blind every one of them —
+    `caplog.records` would just stay empty, no error, tests still green,
+    testing nothing. That is a materially worse failure mode than the
+    alternative: today, in the actually deployed configuration, this
+    "dmf_cms" handler is the ONLY handler anywhere in the chain (uvicorn's
+    own dictConfig never touches it — see above), so propagating past it
+    lands on nothing and produces no duplicate. If some future change
+    ever adds a root handler (a stray ``logging.basicConfig()``, most
+    plausibly), every audit line would then print twice — a real but
+    strictly less bad outcome (a duplicate line) than losing this
+    package's entire caplog-based test coverage would be today. This
+    exact property — one write, one stdout line, under the real deployed
+    setup — is pinned by
+    ``test_awx_write_audit_line_appears_exactly_once_on_stdout_under_deployed_config``
+    in ``tests/test_audit_log_stdout.py``, which is what would actually
+    catch that future regression.
+
+    NOT DONE (declined, same fix round): the check-then-add above
+    (``if any(...): return`` / ``addHandler``) is not atomic — two
+    concurrent ``create_app()`` calls in the same process could both
+    observe no handler yet and both add one. Nothing in this codebase
+    calls ``create_app()`` concurrently: module import (the real
+    deployment: ``app = create_app()`` at import time) and uvicorn's own
+    single-process serving are both serial, and the test suite's ~120
+    calls are sequential test-by-test, never threaded against each other.
+    Guarding it (a lock, or an import-time sentinel) would be defending
+    against a call pattern that does not exist here — left as a plain
+    idempotency check, not a concurrency-safe one, deliberately.
     """
     app_logger = logging.getLogger(_APP_LOGGER_NAME)
     if any(h.get_name() == _STDOUT_HANDLER_NAME for h in app_logger.handlers):
