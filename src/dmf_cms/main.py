@@ -974,6 +974,24 @@ def _sanitize_audit_field(value: str | None) -> str:
     keys, workload slugs, IdP subjects) contain none of these and pass
     through completely UNCHANGED, so the ``target=%s``-shaped assertions
     across the existing suite (19, across 10 files) are unaffected.
+
+    PER-SITE, NOT A LOGGING FILTER (umbrella dmf-cms#108 fix-round 3,
+    evaluated and rejected explicitly): a ``logging.Filter`` that
+    control-character-escaped every record's formatted message, installed
+    once on the "dmf_cms" handler, would look like it closes this whole
+    class in one place instead of one call site at a time. It is the
+    wrong fix here: this codebase has roughly a dozen ``logger.exception``
+    / ``exc_info=True`` call sites across main.py and drain.py, and their
+    tracebacks — the primary debugging artifact for an unexpected crash —
+    are formatted by the handler AFTER the record's own message, from the
+    SAME record. A blanket filter escaping the rendered output would
+    mangle every one of those tracebacks into a single escaped line,
+    destroying exactly the thing ``logger.exception`` exists to preserve.
+    Sanitizing per-site, only the specific externally-influenced value
+    being interpolated (never the message template, never exception
+    text), is what keeps tracebacks intact while still closing the
+    injection path. Do not "simplify" this into a filter later without
+    solving that problem first.
     """
     if not value:
         return ""
@@ -1891,15 +1909,22 @@ async def _verify_drain_and_finalize(app: FastAPI, operation_id: str, run_id: st
                 # F1: branch on the return — a refusal (correlation changed
                 # mid-poll) already marked pending inside; logging
                 # "confirmed drained" here regardless would false-green it.
+                #
+                # umbrella dmf-cms#108 fix-round 3: run_id sanitized here too
+                # (and in the except block below) — the SAME run_id
+                # fix-round 2 sanitized at the auto-rollback audit sites,
+                # reaching the SAME stdout stream from a non-audit call.
+                # A forged line does not need to originate from an audit
+                # call site to read as one once it is on the same stream.
                 if _mark_drain_verified(ops_store, operation_id, run_id):
                     logger.info(
                         "drain: monitoring surface confirmed drained for operation %s (run %s)",
-                        operation_id, run_id,
+                        operation_id, _sanitize_audit_field(run_id),
                     )
                 else:
                     logger.info(
                         "drain: correlation changed mid-poll for operation %s (run %s) — staying pending",
-                        operation_id, run_id,
+                        operation_id, _sanitize_audit_field(run_id),
                     )
                 return
             if datetime.now(timezone.utc) > deadline:
@@ -1907,7 +1932,9 @@ async def _verify_drain_and_finalize(app: FastAPI, operation_id: str, run_id: st
                 return
             await asyncio.sleep(poll_interval)
     except Exception:
-        logger.exception("drain: unexpected crash verifying operation %s (run %s)", operation_id, run_id)
+        logger.exception(
+            "drain: unexpected crash verifying operation %s (run %s)", operation_id, _sanitize_audit_field(run_id),
+        )
         _mark_drain_pending(ops_store, operation_id, "drain-verify-crashed")
 
 
