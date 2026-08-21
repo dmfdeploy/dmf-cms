@@ -1,4 +1,5 @@
 import { useState } from 'react'
+import { Textarea } from '../../components/FormField'
 
 /**
  * The ONE consequential Media Workloads write (ADR-0037), as a self-contained
@@ -58,8 +59,9 @@ export default function ClearForDeployment({
         shows as pending reconciliation until something deploys it — today,
         that's Provision. This action does not deploy anything itself.
       </p>
-      <textarea
-        className="mt-2 w-full rounded border border-white/10 bg-black/20 p-1 text-xs text-text"
+      <Textarea
+        density="xs"
+        className="mt-2"
         placeholder="Reason (required, recorded in the audit trail)"
         value={reason}
         onChange={(e) => setReason(e.target.value)}
