@@ -684,6 +684,37 @@ function WorkloadWizard({
   // fact ProvisionStage reports, not re-derived here) rather than checked
   // alone, so Next still goes primary on Provision the moment nothing is
   // actually offered there (every entry deployed or blocked).
+  //
+  // THE "NEUTRAL BECAUSE DEPLOY IS OFFERED" BRANCH IS STRUCTURALLY
+  // UNREACHABLE HERE — do not read it as exercised, and do not simplify
+  // this plumbing on the premise that it is. `stageActions('provision',
+  // input)` only ever pushes 'deploy' while `input.lifecycle === 'provision'`
+  // exactly (lib/workloadLifecycle.ts). classifyWorkloadFlow's own ladder
+  // (lib/workloadFlow.ts) locks Configure until the workload's position has
+  // moved PAST provision — which means lifecycle can no longer BE
+  // 'provision'. So whenever `canNext` is true here (Configure isn't
+  // locked, Next is actually in the DOM), `eligibleDeployEntries` is
+  // provably empty and `provisionHasPromotedAction` is always false — a
+  // live "▶ Deploy" offer and a visible Next can never coexist on screen
+  // for this wizard. The branch this composes for IS reachable (and
+  // tested) — just in CreateWorkload.tsx's draft wizard, where Next is
+  // unconditional on lock state by design, not gated through `canNext`
+  // the way it is here. Keep the plumbing anyway: hardcoding
+  // `nextPrimary={true}` would bake this unenforced structural assumption
+  // into the call site, and a future change to stageActions()'s own rule
+  // (e.g. offering 'deploy' at some other position) would silently make
+  // that hardcoding wrong with nothing here to catch it.
+  //
+  // FIX ROUND (§D1, codex gate item 6, this file's own sibling
+  // CreateWorkload.tsx): a locked step's Next must never be primary
+  // regardless of what `nextIsPrimary` computes — enforced now in
+  // FlowStep.tsx itself (`nextPrimary && !locked`), not repeated here. This
+  // component's `canNext` already refuses to render Next at all once
+  // `steps[nextStep]` is locked, which is a DIFFERENT guard (it hides the
+  // button rather than recolouring it) and does not, on its own, prove the
+  // PREVIOUS step (whichever is mounted) isn't itself locked while
+  // pointing at an unlocked one — FlowStep's own clamp is what actually
+  // closes that regardless of which caller's `canNext` policy is in play.
   const nextIsPrimary = !(activeStep === 'provision' && provisionHasPromotedAction)
 
   const selectStep = (step: FlowStepId) => {

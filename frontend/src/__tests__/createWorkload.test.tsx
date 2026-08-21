@@ -1798,3 +1798,93 @@ describe('umbrella #432 §D1: Next carries primary weight only when the mounted 
     expect(next.className.split(/\s+/)).not.toContain('btn-secondary')
   })
 })
+
+// ---------------------------------------------------------------------------
+// umbrella #432 §D1 FIX ROUND (codex gate item 6, confirmed against be4a44b
+// by both the reviewer and independently here): Next was never primary
+// ONLY on Provision — the guard at CreateWorkload.tsx's own `nextIsPrimary`
+// only checks `stepId === 'provision'`, so for every OTHER stepId the
+// expression is unconditionally true. Configure and Finalise & Review are
+// LOCKED FOR THE WHOLE DRAFT (this file's own docstring) regardless of
+// anything the operator does, so a cyan Next pointing at locked prose was
+// not a contrived edge case — it was hit by simply pressing Next through
+// the wizard. Provision itself could ALSO render it whenever the catalog
+// read merely happened to be fetching or failing, with no template chosen
+// at all — an accident of network timing, unrelated to reachability.
+//
+// Fixed at FlowStep.tsx (`nextPrimary && !locked`), not by adding a lock
+// check to every caller's own `nextIsPrimary` — one clamp, reusing the
+// `state` prop every caller already passes for the children guard, covers
+// every stepId in both wizards at once and cannot be gotten wrong per call
+// site (the same "defence in depth" property this component's own
+// docstring already claims for suppressing `children` on a locked step).
+//
+// Finalise & Review is deliberately NOT one of the cases pinned below: it
+// is the wizard's LAST step (DRAFT_WIZARD_STEPS), so `canNext` is false
+// there and Next never renders in the first place — nothing to observe.
+// The orchestrator's own table computed `nextIsPrimary` as `true` for it
+// too, which is correct AS AN INTERNAL VALUE, but that value never reaches
+// a rendered button, so it's not a second reachable case to test.
+// ---------------------------------------------------------------------------
+
+describe('umbrella #432 §D1 FIX ROUND: Next is never primary on a locked step', () => {
+  // Reached with NO template chosen, so Design never completes and every
+  // step from Provision onward stays locked for the whole rest of the
+  // walk — this wizard's own Next is UNCONDITIONAL on lock state by design
+  // (this file's own docstring), so all of them stay reachable to check.
+  async function walkToLockedProvision() {
+    typeStudioName('Studio A')
+    await clickNext() // Identity -> Design
+    await clickNext() // Design -> Plan
+    await clickNext() // Plan -> Provision (locked: Design never completed)
+    return stepSection('Provision')
+  }
+
+  function assertNextNeutral(section: HTMLElement) {
+    const next = within(section).getByRole('button', { name: 'Next →' })
+    expect(next.className.split(/\s+/)).not.toContain('btn-primary')
+    expect(next.className.split(/\s+/)).toContain('btn-secondary')
+  }
+
+  it('stays neutral on a locked Provision when the catalog read has settled cleanly', async () => {
+    mkFetch()
+    renderCreate()
+    await screen.findByRole('heading', { name: 'Identity' })
+    const provision = await walkToLockedProvision()
+    expect(within(provision).getByText(/This step opens once Plan is complete/)).toBeTruthy()
+    assertNextNeutral(provision)
+  })
+
+  it('stays neutral on a locked Provision while the catalog read is still fetching', async () => {
+    const h = mkFetch()
+    let release: (() => void) | null = null
+    h.setCatalogGate(new Promise<void>((resolve) => { release = resolve }))
+    renderCreate()
+    await screen.findByRole('heading', { name: 'Identity' })
+    const provision = await walkToLockedProvision()
+    assertNextNeutral(provision)
+    release!()
+  })
+
+  it('stays neutral on a locked Provision when the catalog read has failed', async () => {
+    mkFetch({ catalogStatus: 500 })
+    renderCreate()
+    await screen.findByRole('heading', { name: 'Identity' })
+    const provision = await walkToLockedProvision()
+    assertNextNeutral(provision)
+  })
+
+  // THE MORE REACHABLE CASE (raised after the Provision-only fix landed):
+  // hit by simply pressing Next through the wizard with no special catalog
+  // state at all — Configure is locked for the WHOLE draft, unconditionally.
+  it('stays neutral on Configure, locked for the whole draft', async () => {
+    mkFetch()
+    renderCreate()
+    await screen.findByRole('heading', { name: 'Identity' })
+    await walkToLockedProvision()
+    await clickNext() // Provision -> Configure
+    const configure = stepSection('Configure')
+    expect(within(configure).getByText(/nothing to configure/)).toBeTruthy()
+    assertNextNeutral(configure)
+  })
+})
