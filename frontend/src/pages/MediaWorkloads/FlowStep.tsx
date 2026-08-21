@@ -39,6 +39,19 @@ export const InsideFlowStep = createContext(false)
  * the state badge to its right already reads "Now" whenever that is true.
  * Removed outright rather than replaced with different wording; the badge
  * alone carries the fact.
+ *
+ * umbrella #432 §D1: `nextPrimary` decides Next's colour, never its
+ * function — Next is UNCONDITIONAL either way (the file docstring above,
+ * carried forward: a locked step is still reachable by navigating to it).
+ * The rule (governed by ProvisionStage.tsx's own ruling comment: Provision
+ * is the only step with a top-level PROMOTED primary action): exactly one
+ * cyan control per screen. Every caller must pass this explicitly — there
+ * is no default — because a wrong default here would either silently
+ * revert every step to the pre-§D "no primary control at all" defect, or
+ * silently double up a second cyan control next to a step's own promoted
+ * action, and either is a regression this component itself has no way to
+ * catch: it is handed the answer, not the inputs the answer is judged
+ * from.
  */
 
 const STATE_LABEL: Record<FlowStepState, string> = {
@@ -81,6 +94,12 @@ const FlowStep = forwardRef<
     canNext: boolean
     onPrevious: () => void
     onNext: () => void
+    /** umbrella #432 §D1: true when Next is this screen's ONE promoted
+     *  (cyan) control — i.e. the mounted step offers no top-level promoted
+     *  action of its own. False on Provision (both wizards: it renders its
+     *  own primary Deploy/Provision-now offer). See this component's own
+     *  file docstring for the full rule and why there is no default. */
+    nextPrimary: boolean
     /** Stated reason when Previous/Next are refused (jobInFlight or no
      *  reachable neighbour) — inert text names it, never a disabled button. */
     previousReason: string
@@ -98,6 +117,7 @@ const FlowStep = forwardRef<
     canNext,
     onPrevious,
     onNext,
+    nextPrimary,
     previousReason,
     nextReason,
     children,
@@ -153,7 +173,11 @@ const FlowStep = forwardRef<
           <span className="text-muted">{previousReason}</span>
         )}
         {canNext ? (
-          <button type="button" className="btn btn-secondary btn-sm" onClick={onNext}>
+          <button
+            type="button"
+            className={`btn ${nextPrimary ? 'btn-primary' : 'btn-secondary'} btn-sm`}
+            onClick={onNext}
+          >
             Next →
           </button>
         ) : (

@@ -435,6 +435,14 @@ function WorkloadWizard({
   const [launching, setLaunching] = useState(false)
   const [switching, setSwitching] = useState(false)
   const [tearingDown, setTearingDown] = useState(false)
+  // umbrella #432 §D1: fed by ProvisionStage's own onPromotedActionChange —
+  // see FlowStep.tsx's own docstring for the rule this drives (`nextPrimary`
+  // below) and ProvisionStage.tsx's comment for why this is `.length > 0`,
+  // not the header-portal-only `computedPromotedKey`. Stale while any OTHER
+  // step is mounted (ProvisionStage's effect only runs while IT is mounted),
+  // which is why `nextIsPrimary` below only reads it inside the
+  // `activeStep === 'provision'` branch — never on its own.
+  const [provisionHasPromotedAction, setProvisionHasPromotedAction] = useState(false)
   const [lastSwitchResult, setLastSwitchResult] = useState<SwitchSourceResult | null>(null)
   // The wizard's own presentation state — never derived from FlowStepState.
   const [selectedStep, setSelectedStep] = useState<FlowStepId | null>(null)
@@ -666,6 +674,18 @@ function WorkloadWizard({
       : 'This step is locked.'
   const viewLiveReasonText = jobOwnerLabel ? 'Unavailable until the job finishes.' : ''
 
+  // umbrella #432 §D1: exactly one cyan promoted control per screen. Only
+  // Provision (of the five steps) ever renders one of its own — Configure's
+  // "Switch source" and Finalise's Teardown/Delete permanently are
+  // deliberately never `btn-primary` (ProvisionStage.tsx's own ruling
+  // comment) — so `activeStep === 'provision'` is not a hardcoded special
+  // case standing in for a general rule; it IS the general rule, as
+  // documented today. Composed with `provisionHasPromotedAction` (a single
+  // fact ProvisionStage reports, not re-derived here) rather than checked
+  // alone, so Next still goes primary on Provision the moment nothing is
+  // actually offered there (every entry deployed or blocked).
+  const nextIsPrimary = !(activeStep === 'provision' && provisionHasPromotedAction)
+
   const selectStep = (step: FlowStepId) => {
     if (jobInFlight || steps[step] === 'locked') return
     setSelectedStep(step)
@@ -746,6 +766,7 @@ function WorkloadWizard({
         actions={stageActions('provision', input)}
         onBusyChange={setLaunching}
         onJobStart={() => startJob('provision')}
+        onPromotedActionChange={setProvisionHasPromotedAction}
       />
     ),
     configure: (
@@ -867,6 +888,7 @@ function WorkloadWizard({
         canNext={canNext}
         onPrevious={() => prevStep && selectStep(prevStep)}
         onNext={() => nextStep && selectStep(nextStep)}
+        nextPrimary={nextIsPrimary}
         previousReason={previousReason}
         nextReason={nextReason}
       >

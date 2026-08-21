@@ -29,12 +29,19 @@ function renderStep({
   canNext = false,
   onPrevious = () => {},
   onNext = () => {},
+  // umbrella #432 §D1: this file's own tests are all about navigation
+  // reachability/reason text, never colour — false matches this component's
+  // pre-§D1 behaviour byte for byte (Next was unconditionally btn-secondary),
+  // so nothing here needs to vary it. See flowStepNextPrimary.test.tsx for
+  // the prop's own behaviour.
+  nextPrimary = false,
 }: {
   state: FlowStepState
   canPrevious?: boolean
   canNext?: boolean
   onPrevious?: () => void
   onNext?: () => void
+  nextPrimary?: boolean
 }) {
   render(
     <FlowStep
@@ -46,6 +53,7 @@ function renderStep({
       canNext={canNext}
       onPrevious={onPrevious}
       onNext={onNext}
+      nextPrimary={nextPrimary}
       previousReason="This step is locked."
       nextReason="This step is locked."
     >

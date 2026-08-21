@@ -220,7 +220,18 @@ function InstanceSwitchControl({
         {/* No disabled button: the arm affordance only appears when a switch
             is actually offerable (allowed by the rail AND a fresh observed
             source AND another source to go to). Anything else renders as
-            the explanatory line below instead. */}
+            the explanatory line below instead.
+
+            umbrella #432 §D2 (judgement call, left as btn-secondary, not
+            btn-danger-outline): switching source is DISRUPTIVE — it
+            re-points a live signal path, so it belongs in ProvisionStage's
+            own ruling as "never a promotion candidate" alongside Teardown
+            — but it is REVERSIBLE (switching back is the same action run
+            again, no state is destroyed) where Teardown and Delete
+            permanently both destroy something. The danger axis this order
+            adds is for actions with no clean way back; this one has one,
+            so it stays the same weight Confirm placement/Use this
+            template/Previous already use, not a danger tier. */}
         {!arming && allowed && isObservedFresh && otherSources.length > 0 && (
           <button
             className="btn btn-secondary btn-sm shrink-0"

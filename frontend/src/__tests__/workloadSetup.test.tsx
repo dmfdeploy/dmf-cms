@@ -747,6 +747,48 @@ describe('Provision: deploy click path', () => {
     expect(within(provisionSection).queryByRole('button', { name: '▶ Deploy' })).toBeNull()
   })
 
+  // umbrella #432 §D1: exactly one cyan promoted control per screen — the
+  // rule ProvisionStage.tsx's own comment states and WorkloadSetup's
+  // nextIsPrimary composes from ProvisionStage's reported eligibility.
+  //
+  // ONLY ONE BRANCH IS REACHABLE HERE, AND THAT IS STATED RATHER THAN
+  // HIDDEN. `deploy` is only ever an offered action while
+  // `input.lifecycle === 'provision'` exactly (lib/workloadLifecycle.ts's
+  // stageActions), and classifyWorkloadFlow's own ladder locks Configure
+  // (so FlowStep's Next does not render AT ALL — `canNext` is false, not
+  // merely non-primary) until the workload's position has moved PAST
+  // provision — which structurally means lifecycle is no longer
+  // 'provision'. A live "▶ Deploy" offer and a visible Next can therefore
+  // never coexist on screen for this real, backend-driven wizard: whenever
+  // Next is reachable on Provision, `eligibleDeployEntries` is provably
+  // empty (deploy was never an offered action to begin with), so
+  // `hasPromotedAction` is always false there. The "neutral while offered"
+  // branch this rule also requires IS reachable — in the DRAFT wizard,
+  // where Next is UNCONDITIONAL on lock state by design (CreateWorkload.tsx's
+  // own file docstring) — see createWorkload.test.tsx's identically-named
+  // describe block for both branches proven together.
+  describe('umbrella #432 §D1: Next carries primary weight only when the mounted step has none of its own', () => {
+    it('is primary on Provision once its position has moved on (no deploy action left to offer)', async () => {
+      mkFetch({ workload: workload({ lifecycle: 'configure' }) })
+      renderDetail()
+      await findRail()
+      const provisionSection = await selectStep('Provision')
+      const next = within(provisionSection).getByRole('button', { name: 'Next →' })
+      expect(next.className.split(/\s+/)).toContain('btn-primary')
+      expect(next.className.split(/\s+/)).not.toContain('btn-secondary')
+    })
+
+    it('is primary on Design, which never renders a promoted action of its own', async () => {
+      mkFetch({ workload: workload({ lifecycle: 'provision' }) })
+      renderDetail()
+      await findRail()
+      const designSection = await selectStep('Design')
+      const next = within(designSection).getByRole('button', { name: 'Next →' })
+      expect(next.className.split(/\s+/)).toContain('btn-primary')
+      expect(next.className.split(/\s+/)).not.toContain('btn-secondary')
+    })
+  })
+
   // fix-round 5 (PR #81, codex sibling sweep): a failed /api/catalog read
   // left `entries` empty exactly like a genuinely-empty catalog would, and
   // this stage announced a confident "No catalog templates matched this
@@ -886,6 +928,24 @@ describe('Finalise & Review: teardown click path', () => {
     const finaliseSection = await selectStep('Finalise & Review')
     expect(within(finaliseSection).queryByRole('button', { name: '⏏ Teardown' })).toBeNull()
     expect(within(finaliseSection).getByText('Not currently deployed.')).toBeTruthy()
+  })
+
+  // umbrella #432 §D2: Teardown used to render btn-secondary — visually
+  // identical to "← Previous" (measured live: 98×29 vs 91×29, same fill,
+  // same border). It's destructive (tears down a running instance), just a
+  // lower danger tier than "Delete permanently" (btn-danger, filled) —
+  // teardown's workload entry survives and can be re-provisioned.
+  it('carries the danger-outline treatment, not btn-secondary', async () => {
+    mkFetch({
+      workload: workload({ lifecycle: 'operate' }),
+      catalog: [catalogEntry({ lifecycle: 'active' })],
+    })
+    renderDetail()
+    await findRail()
+    const finaliseSection = await selectStep('Finalise & Review')
+    const teardown = within(finaliseSection).getByRole('button', { name: '⏏ Teardown' })
+    expect(teardown.className.split(/\s+/)).toContain('btn-danger-outline')
+    expect(teardown.className.split(/\s+/)).not.toContain('btn-secondary')
   })
 
   // fix-round 5 (PR #81, codex sibling sweep): same fix as Provision's
