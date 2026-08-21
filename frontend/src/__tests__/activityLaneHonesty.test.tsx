@@ -397,3 +397,47 @@ describe('History lane: Recent Jobs panel retained-error honesty', () => {
     expect(screen.getByText('Recent changes could not be loaded. Retrying automatically.')).toBeTruthy()
   })
 })
+
+// umbrella #432 §F fix-round 3 (codex gate): same defect class, same fix, as
+// recentChanges.test.tsx's matching pin on the Workspace widget — the title
+// and the badge here used to be two INDEPENDENT jobOutcome(job.status)
+// reads, which diverged for an empty status (the backend's own default for
+// a missing AWX status): title "Queued to remove X", badge "Unknown", same
+// job. Rendered end-to-end through the real HistoryLane, not asserted only
+// against describeJob in isolation.
+describe('History lane: Recent Jobs panel title/badge outcome agreement', () => {
+  it('never lets the title and badge disagree, even for an empty/unrecognised status', async () => {
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(async (input: RequestInfo | URL) => {
+        const url = (typeof input === 'string' ? input : (input as Request).url).toString()
+        if (url.endsWith('/api/changes/commits')) return json({ repos: [], reason: '' })
+        if (url.endsWith('/api/changes/pulls')) return json({ pulls: [], reason: '' })
+        if (url.endsWith('/api/changes/jobs')) {
+          return json({
+            jobs: [
+              {
+                id: 202,
+                name: 'media-finalise-mxl-videotest-view',
+                status: '',
+                started: null,
+                finished: null,
+                elapsed: 0,
+                failed: false,
+              },
+            ],
+            reason: '',
+          })
+        }
+        return json({})
+      }),
+    )
+    renderWithQuery(<HistoryLane />)
+
+    // Exactly two: the title ("Unknown — MXL Test-Pattern Viewer") and the
+    // badge ("Unknown") — the same word, not a guessed tense on one side.
+    const matches = await screen.findAllByText(/Unknown/)
+    expect(matches.length).toBe(2)
+    expect(screen.queryByText(/^Queued/)).toBeNull()
+  })
+})
