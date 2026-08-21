@@ -146,35 +146,44 @@ export default function HistoryLane() {
                   </div>
                 )
               ) : (
-                jobsState.jobs.slice(0, 10).map((job) => (
-                  <div key={job.id} className="px-6 py-4 hover:bg-panel/30 transition">
-                    <div className="flex items-start justify-between">
-                      <div className="flex-1">
-                        {/* Operator language leads (Art. 3/8); the raw AWX
-                            template name stays as a muted expert line — the
-                            History lane still surfaces the catalog key (demo
-                            runbook §7a), just no longer as the headline. */}
-                        <h3 className="font-semibold text-sm">{describeJob(job.name)}</h3>
-                        <p className="text-xs text-muted/70 mt-0.5">{job.name}</p>
-                        <div className="flex items-center gap-2 mt-2 text-xs text-muted">
-                          <span className={`inline-block px-2 py-1 rounded font-semibold ${
-                            job.status === 'successful' ? 'bg-green-500/20 text-green-400' :
-                            job.status === 'failed' ? 'bg-red-500/20 text-red-400' :
-                            job.status === 'running' ? 'bg-blue-500/20 text-blue-400' :
-                            'bg-gray-500/20 text-gray-400'
-                          }`}>
-                            {jobOutcome(job.status)}
-                          </span>
-                          <span>Run {job.id}</span>
-                          {job.elapsed && <span>{job.elapsed.toFixed(1)}s</span>}
+                jobsState.jobs.slice(0, 10).map((job) => {
+                  // Derived ONCE per row and fed to BOTH the title and the
+                  // badge below — see RecentChanges.tsx's matching comment
+                  // (umbrella #432 §F fix-round 3, codex gate). Styling below
+                  // still keys off the raw job.status, unchanged — only the
+                  // TEXT is unified; a styling mismatch is a separate,
+                  // out-of-scope concern.
+                  const outcome = jobOutcome(job.status)
+                  return (
+                    <div key={job.id} className="px-6 py-4 hover:bg-panel/30 transition">
+                      <div className="flex items-start justify-between">
+                        <div className="flex-1">
+                          {/* Operator language leads (Art. 3/8); the raw AWX
+                              template name stays as a muted expert line — the
+                              History lane still surfaces the catalog key (demo
+                              runbook §7a), just no longer as the headline. */}
+                          <h3 className="font-semibold text-sm">{describeJob(job.name, outcome)}</h3>
+                          <p className="text-xs text-muted/70 mt-0.5">{job.name}</p>
+                          <div className="flex items-center gap-2 mt-2 text-xs text-muted">
+                            <span className={`inline-block px-2 py-1 rounded font-semibold ${
+                              job.status === 'successful' ? 'bg-green-500/20 text-green-400' :
+                              job.status === 'failed' ? 'bg-red-500/20 text-red-400' :
+                              job.status === 'running' ? 'bg-blue-500/20 text-blue-400' :
+                              'bg-gray-500/20 text-gray-400'
+                            }`}>
+                              {outcome}
+                            </span>
+                            <span>Run {job.id}</span>
+                            {job.elapsed && <span>{job.elapsed.toFixed(1)}s</span>}
+                          </div>
+                        </div>
+                        <div className="text-right text-xs text-muted">
+                          {job.started && new Date(job.started).toLocaleString()}
                         </div>
                       </div>
-                      <div className="text-right text-xs text-muted">
-                        {job.started && new Date(job.started).toLocaleString()}
-                      </div>
                     </div>
-                  </div>
-                ))
+                  )
+                })
               )}
             </>
           )}

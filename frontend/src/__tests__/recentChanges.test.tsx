@@ -136,6 +136,36 @@ describe('RecentChanges widget states', () => {
     expect(screen.queryByText(/Facility automation/)).toBeNull()
   })
 
+  // umbrella #432 §F fix-round 3 (codex gate): the title and the badge used
+  // to be TWO independent jobOutcome(job.status) reads (one inside
+  // describeJob, one in this widget) — they always agreed for the 5 known
+  // outcome words, but an empty status (the backend's own default for a
+  // missing AWX status) made them diverge: title "Queued to remove X",
+  // badge "Unknown", same job, same row. This is the exact reachable case,
+  // rendered end-to-end through the real widget rather than asserted only
+  // against describeJob in isolation.
+  it('never lets the title and badge disagree, even for an empty/unrecognised status', async () => {
+    renderWidget({
+      jobs: [
+        {
+          id: 202,
+          name: 'media-finalise-mxl-videotest-view',
+          status: '',
+          started: null,
+          finished: null,
+          elapsed: 0,
+          failed: false,
+        },
+      ],
+      reason: '',
+    })
+    // Exactly two: the title ("Unknown — MXL Test-Pattern Viewer") and the
+    // badge ("Unknown") — the same word, not a guessed tense on one side.
+    const matches = await screen.findAllByText(/Unknown/)
+    expect(matches.length).toBe(2)
+    expect(screen.queryByText(/^Queued/)).toBeNull()
+  })
+
   it('a genuine console API failure still degrades honestly', async () => {
     renderWidget({ status: 500 })
     expect(await screen.findByText(/Recent changes could not be loaded/)).toBeTruthy()

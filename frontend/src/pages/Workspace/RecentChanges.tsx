@@ -62,23 +62,34 @@ export default function RecentChanges() {
                 </div>
               )
             ) : (
-              recent.map((job) => (
-                <div key={job.id} className="px-6 py-3 flex items-center justify-between gap-4">
-                  <div className="flex-1 min-w-0">
-                    {/* Operator language at default (Art. 3/8): "what changed" +
-                        plain outcome. The raw AWX template name is system jargon —
-                        demoted to a muted secondary line, not the headline. */}
-                    <p className="text-sm font-medium truncate">{describeJob(job.name)}</p>
-                    <p className="text-xs text-muted/70 truncate">{job.name}</p>
+              recent.map((job) => {
+                // Derived ONCE per row and fed to BOTH the title and the
+                // badge below (umbrella #432 §F fix-round 3, codex gate): two
+                // independent jobOutcome(job.status) calls always agreed for
+                // its 5 named outcomes, but describeJob's own fallback for
+                // an empty/unrecognised status used to guess a specific
+                // tense instead of reflecting the actual (unknown) outcome —
+                // title and badge could disagree. One value, used twice,
+                // makes that structurally impossible now.
+                const outcome = jobOutcome(job.status)
+                return (
+                  <div key={job.id} className="px-6 py-3 flex items-center justify-between gap-4">
+                    <div className="flex-1 min-w-0">
+                      {/* Operator language at default (Art. 3/8): "what changed" +
+                          plain outcome. The raw AWX template name is system jargon —
+                          demoted to a muted secondary line, not the headline. */}
+                      <p className="text-sm font-medium truncate">{describeJob(job.name, outcome)}</p>
+                      <p className="text-xs text-muted/70 truncate">{job.name}</p>
+                    </div>
+                    <div className="flex items-center gap-3 shrink-0 text-xs text-muted">
+                      <span className={`badge text-xs ${statusColor[job.status] || 'badge-status-pending'}`}>
+                        {outcome}
+                      </span>
+                      {job.started && <span>{new Date(job.started).toLocaleString()}</span>}
+                    </div>
                   </div>
-                  <div className="flex items-center gap-3 shrink-0 text-xs text-muted">
-                    <span className={`badge text-xs ${statusColor[job.status] || 'badge-status-pending'}`}>
-                      {jobOutcome(job.status)}
-                    </span>
-                    {job.started && <span>{new Date(job.started).toLocaleString()}</span>}
-                  </div>
-                </div>
-              ))
+                )
+              })
             )}
           </>
         )}

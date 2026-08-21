@@ -85,21 +85,20 @@ export function topologySourceLabel(
   return `${noun ?? functionKey} · ${sourceId}`
 }
 
-// An AWX job/template name → an operator-language "what changed" title.
-//   media-launch-mxl-videotestsrc   → "Deployed MXL Test-Pattern Source"
-//   media-finalise-mxl-videotest-view → "Removed MXL Test-Pattern Viewer"
-//   eso-openbao-health-check         → "Eso openbao health check" (humanised)
-// The raw name is kept by callers as demoted expert detail.
-export function describeJob(name: string): string {
-  if (!name) return 'Change'
+// A launch/finalise job name → its action and plain-language target noun.
+// `action` is null for internal/spike templates that carry no launch/finalise
+// verb at all (e.g. health checks) — those humanise straight through with no
+// tense applied.
+function jobTarget(name: string): { action: 'deploy' | 'remove' | null; noun: string } {
   const launch = name.match(/^media-launch-(.+)$/)
-  if (launch) return `Deployed ${functionNoun(launch[1])}`
+  if (launch) return { action: 'deploy', noun: functionNoun(launch[1]) }
   const finalise = name.match(/^media-(?:finalise|finalize|teardown)-(.+)$/)
-  if (finalise) return `Removed ${functionNoun(finalise[1])}`
-  return humaniseIdentifier(name)
+  if (finalise) return { action: 'remove', noun: functionNoun(finalise[1]) }
+  return { action: null, noun: humaniseIdentifier(name) }
 }
 
-// Raw AWX status → plain-word outcome (Art. 8: outcome in plain words).
+// Raw AWX status → plain-word outcome (Art. 8: outcome in plain words). This
+// is the badge's ONLY source of truth for job state.
 const JOB_OUTCOMES: Record<string, string> = {
   successful: 'Succeeded',
   failed: 'Failed',
@@ -115,6 +114,71 @@ const JOB_OUTCOMES: Record<string, string> = {
 export function jobOutcome(status: string): string {
   if (!status) return 'Unknown'
   return JOB_OUTCOMES[status] ?? humaniseIdentifier(status)
+}
+
+// Verb forms per action, keyed by the exact word jobOutcome() produces for
+// the badge (umbrella #432 §F). The row verb and the badge MUST derive from
+// the same status read — this table is keyed by jobOutcome()'s own output,
+// not a second switch over the raw AWX status, so the two can never
+// contradict each other again. This is what closes the defect a live
+// operator walk measured: "Removed MXL Test-Pattern Viewer … Running",
+// asserting a destructive action as already complete while it was still in
+// progress.
+const ACTION_VERBS: Record<'deploy' | 'remove', Record<string, string>> = {
+  deploy: {
+    Running: 'Deploying',
+    Succeeded: 'Deployed',
+    Failed: 'Failed to deploy',
+    Queued: 'Queued to deploy',
+    Canceled: 'Canceled deploying',
+  },
+  remove: {
+    Running: 'Removing',
+    Succeeded: 'Removed',
+    Failed: 'Failed to remove',
+    Queued: 'Queued to remove',
+    Canceled: 'Canceled removing',
+  },
+}
+
+// An AWX job/template name + its ALREADY-COMPUTED jobOutcome() word → a
+// tense-correct, operator-language "what changed" title.
+//   media-launch-mxl-videotestsrc, 'Running'    → "Deploying MXL Test-Pattern Source"
+//   media-launch-mxl-videotestsrc, 'Succeeded'  → "Deployed MXL Test-Pattern Source"
+//   media-finalise-mxl-videotest-view, 'Running' → "Removing MXL Test-Pattern Viewer"
+//   media-finalise-mxl-videotest-view, 'Failed'  → "Failed to remove MXL Test-Pattern Viewer"
+//   eso-openbao-health-check, anything           → "Eso openbao health check" (humanised, no verb)
+//
+// `outcome` is a PARAMETER, not something this function derives from a raw
+// status — fix-round 3 (codex gate, umbrella #432 §F): the previous shape
+// took the raw AWX status and called jobOutcome() internally, while callers
+// separately called jobOutcome() again for the badge. Both calls always
+// agreed for jobOutcome's own 5 named outcomes (same pure function, same
+// input), but jobOutcome() ALSO returns 'Unknown' (empty status) or an
+// open-ended humanised string (a genuinely unrecognised status) — values
+// this file's old fallback (`?? ACTION_VERBS[action].Queued`) silently
+// discarded in favour of a specific, WRONG, hardcoded tense: a job with no
+// readable status rendered "Queued to remove X" as its title while its
+// badge — computed independently — rendered "Unknown". Two different claims
+// about the same job. The badge is the more honest of the two: it says
+// "Unknown" precisely because the status genuinely isn't one of the 5 known
+// words, and the title should carry that same honesty, not paper over it
+// with an invented tense.
+//
+// Now there is exactly ONE computation per row (every caller runs
+// `jobOutcome(job.status)` once and passes the result to both this function
+// AND the badge), and this function's own fallback echoes that SAME value
+// instead of guessing — so no outcome, known or not, can produce disagreeing
+// text: the mapped 5 always agree because it's the same string driving both;
+// the unmapped case can't disagree either, because the same string is
+// literally what both sites render. The raw job name is kept by callers as
+// demoted expert detail.
+export function describeJob(name: string, outcome: string): string {
+  if (!name) return 'Change'
+  const { action, noun } = jobTarget(name)
+  if (!action) return noun
+  const verb = ACTION_VERBS[action][outcome]
+  return verb ? `${verb} ${noun}` : `${outcome} — ${noun}`
 }
 
 // ── Generic humaniser ───────────────────────────────────────────────────────
