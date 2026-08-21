@@ -4,6 +4,7 @@ import { useQueryClient } from '@tanstack/react-query'
 import { JobStatusLine, OperationStatusLine } from './stages/JobProgress'
 import type { Operation } from '../../api/types'
 import ViewLiveExit from './ViewLiveExit'
+import AutomationInProgressNotice from '../../components/AutomationInProgressNotice'
 
 /**
  * The gap between "the deploy was accepted" and "the workload exists"
@@ -300,24 +301,27 @@ export default function WorkloadMaterializing({
                 stated as certainty): a real provision on this environment
                 took roughly five minutes. States what's happening; never
                 instructs — the links ARE the "watch it" the operator asked
-                for, worded as facts rather than commands. */}
-            <div>
-              <p className="text-lg font-medium text-text">
-                The automation is running — provisioning like this typically takes a
-                few minutes.
-              </p>
-              <p className="mt-1 text-muted">
-                It shows up on{' '}
-                <Link to="/" className="text-accent hover:underline">
-                  Workspace
-                </Link>{' '}
-                while it runs, and in{' '}
-                <Link to="/media-workloads" className="text-accent hover:underline">
-                  Media Workloads
-                </Link>{' '}
-                once it&apos;s recorded.
-              </p>
-            </div>
+                for, worded as facts rather than commands.
+
+                umbrella #432, FIX ROUND (teardown never got this layer —
+                the operator's original feedback named all four actions,
+                this half of the order only ever covered the deploy path):
+                lifted into AutomationInProgressNotice so FinaliseStage.tsx's
+                own teardown in-flight state can reuse the SAME visual
+                treatment — see that component's own docstring for why the
+                wording itself is NOT shared (this sentence is true of
+                provisioning specifically, not of teardown). */}
+            <AutomationInProgressNotice lead="The automation is running — provisioning like this typically takes a few minutes.">
+              It shows up on{' '}
+              <Link to="/" className="text-accent hover:underline">
+                Workspace
+              </Link>{' '}
+              while it runs, and in{' '}
+              <Link to="/media-workloads" className="text-accent hover:underline">
+                Media Workloads
+              </Link>{' '}
+              once it&apos;s recorded.
+            </AutomationInProgressNotice>
             <p className="font-medium text-text">Deploy accepted.</p>
             <p className="text-muted">
               This workload appears here once the launcher records it against the
