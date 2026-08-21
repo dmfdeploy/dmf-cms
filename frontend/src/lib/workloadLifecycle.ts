@@ -175,6 +175,28 @@ export interface WorkloadLifecycleInput {
    */
   membersDataTrustworthy?: boolean
   /**
+   * umbrella #432 fix round: the SAME read, minus the freshness component —
+   * `!isError && configured === true && degraded !== true`, deliberately NOT
+   * `&& !isFetching`. `membersDataTrustworthy` above folds `isFetching` in on
+   * purpose (it fail-closes a MUTATION gate — purge authorization — and a
+   * count claim, both of which must not act on a read that has not yet
+   * settled). Home's cold-entry classification (classifyHomeState below)
+   * answers a different question: whether the ALREADY-RETAINED payload is
+   * good enough to keep showing, while a background poll of the SAME query
+   * is in flight. Folding `isFetching` into that answer was the '#432 §A
+   * amber flicker' defect — every 15s poll made an unchanged, still-good
+   * payload read as "unresolved" for the ~request duration, tearing down
+   * every `homeState === 'live'` sibling on a cadence with no semantic
+   * change behind it (UX Constitution §3 hard gate #5).
+   *
+   * This is a DISTINCT field rather than a change to `membersDataTrustworthy`
+   * itself: that field's meaning must not shift out from under
+   * `stageActions`'s purge gate, `LifecycleStrip`'s run-readout count, or
+   * `store/headerSlot.ts`'s TRUST binding — none of which this field is
+   * consumed by. Only `classifyHomeState` reads it.
+   */
+  membersDataRetained?: boolean
+  /**
    * The EFFECTIVE role (view-as-resolved — the auth store's `role` field,
    * never `real_role`) meets the purge endpoint's own authorization floor,
    * `_require_min_role(request, "operator")` (umbrella #378b). The grouped
@@ -415,6 +437,7 @@ export function buildWorkloadLifecycleInput(
       workload.instances.length > 0 && workload.instances.every((i) => i.requested_state === 'bootstrapped'),
     anyMemberObservedRunning: workload.instances.some((i) => i.observed_state === 'running'),
     membersDataTrustworthy: isGroupedReadTrustworthy(facts.groupedRead),
+    membersDataRetained: isGroupedReadRetained(facts.groupedRead),
     purgeAuthorized: isPurgeAuthorized(facts.userRead),
     isPurgeableEntity: workload.slug !== 'unassigned',
   }
@@ -439,6 +462,27 @@ export function isGroupedReadTrustworthy(read: {
   degraded?: boolean
 }): boolean {
   return !read.isError && !read.isFetching && read.configured === true && read.degraded !== true
+}
+
+/**
+ * umbrella #432 fix round: `isGroupedReadTrustworthy` above, minus the
+ * `!isFetching` conjunct — see `membersDataRetained`'s own docstring for why
+ * this is a SEPARATE formula rather than a change to that one. A read that
+ * is currently being re-fetched in the background is still exactly as good
+ * as it was a moment ago until the new fetch actually settles; this formula
+ * answers "is the payload sitting in `data` right now good", not "has the
+ * CURRENT fetch confirmed it's still good". Takes the same read shape as
+ * `isGroupedReadTrustworthy` (parameter kept structurally identical,
+ * including the unread `isFetching` field) so the two read as siblings, not
+ * as independently-invented formulas that happen to look similar.
+ */
+export function isGroupedReadRetained(read: {
+  isError: boolean
+  isFetching: boolean
+  configured?: boolean
+  degraded?: boolean
+}): boolean {
+  return !read.isError && read.configured === true && read.degraded !== true
 }
 
 /**

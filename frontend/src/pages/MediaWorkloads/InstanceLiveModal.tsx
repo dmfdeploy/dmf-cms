@@ -107,10 +107,21 @@ export default function InstanceLiveModal({
   instance,
   displayName,
   onClose,
+  unavailable = false,
 }: {
   instance: MediaWorkloadInstance
   displayName: string
   onClose: () => void
+  /**
+   * umbrella #432 fix round (item 4): true once a settled, trustworthy
+   * grouped read has confirmed this instance no longer exists — WorkloadHome
+   * reconciles `openInstance` by id against every such read and sets this
+   * rather than closing the modal out from under the operator unannounced.
+   * `instance` is still the LAST known snapshot (for the header's label);
+   * this stops LiveBody/MxlDetailPanel from mounting and polling an endpoint
+   * that can only ever 404 now.
+   */
+  unavailable?: boolean
 }) {
   const panelRef = useRef<HTMLDivElement>(null)
 
@@ -196,7 +207,11 @@ export default function InstanceLiveModal({
           </button>
         </header>
 
-        {live ? (
+        {unavailable ? (
+          <div className="panel mt-4 border border-amber-500/20 bg-amber-500/10 px-4 py-3 text-sm text-amber-200">
+            This instance is no longer part of the workload — showing the last known details above.
+          </div>
+        ) : live ? (
           <LiveBody instance={instance} />
         ) : (
           <div className="mt-4">
