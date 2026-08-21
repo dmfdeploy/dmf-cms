@@ -55,4 +55,16 @@ describe('ClearForDeployment confirm panel copy', () => {
     const textarea = screen.getByPlaceholderText(/Reason \(required/)
     expect(textarea.className.split(/\s+/)).not.toContain('field-xs')
   })
+
+  // umbrella #432, FIX ROUND (0.28.0 walk finding): same max-width cap as
+  // ReasonConfirm.tsx's own popover, and the same honest limit — see that
+  // test's own comment. jsdom cannot measure rendered width, so this pins
+  // the class contract only, not the actual layout; the walk is what
+  // verifies the layout.
+  it('carries the same max-width utility as ReasonConfirm.tsx', () => {
+    render(<ClearForDeployment instance="mxl-videotestsrc" onConfirm={vi.fn()} />)
+    fireEvent.click(screen.getByText('Clear for deployment'))
+    const panel = screen.getByText('Clear mxl-videotestsrc for deployment?').parentElement as HTMLElement
+    expect(panel.className).toMatch(/\bmax-w-sm\b/)
+  })
 })

@@ -23,6 +23,13 @@ import { Textarea } from '../../components/FormField'
  * confirm-popover affordance to an operator, so it gets the same sizes for
  * the same reason: text-xs -> text-sm, off `density="xs"` onto the field
  * primitive's own base size, min-w-64 -> min-w-80, p-3 -> p-4.
+ *
+ * FIX ROUND (0.28.0 walk finding): same `max-w-sm` cap as ReasonConfirm.tsx
+ * — see that component's own docstring for the full reasoning
+ * (min-w-80 is a floor, not a ceiling; this panel mounts as a bare block
+ * inside a wide stage row with nothing else to constrain it, and stretched
+ * to fill it — measured live at 1988px on the sibling component before this
+ * fix, same defect class).
  */
 export default function ClearForDeployment({
   instance,
@@ -59,7 +66,7 @@ export default function ClearForDeployment({
   }
 
   return (
-    <div className="min-w-80 rounded-lg border border-amber-500/30 bg-amber-500/10 p-4 text-amber-100">
+    <div className="min-w-80 max-w-sm rounded-lg border border-amber-500/30 bg-amber-500/10 p-4 text-amber-100">
       <div className="text-sm font-semibold">Clear {instance} for deployment?</div>
       <p className="mt-1.5 text-sm text-amber-200/80">
         This records the intent to run in the facility source of truth. It
