@@ -37,4 +37,22 @@ describe('ClearForDeployment confirm panel copy', () => {
     const textarea = screen.getByPlaceholderText(/Reason \(required/)
     expect(textarea.className.split(/\s+/)).toContain('field')
   })
+
+  // umbrella #432, FIX ROUND (operator report: "too much small text").
+  // Same scale bump as ReasonConfirm.tsx's own popover, in this separate
+  // component that duplicates the same shell.
+  it('raises the panel width floor and the title/field scale off the old dense defaults', () => {
+    render(<ClearForDeployment instance="mxl-videotestsrc" onConfirm={vi.fn()} />)
+    fireEvent.click(screen.getByText('Clear for deployment'))
+
+    const title = screen.getByText('Clear mxl-videotestsrc for deployment?')
+    const panel = title.parentElement as HTMLElement
+    expect(panel.className).toMatch(/\bmin-w-80\b/)
+    expect(panel.className).not.toMatch(/min-w-64/)
+    expect(title.className).toMatch(/\btext-sm\b/)
+    expect(title.className).not.toMatch(/text-xs/)
+
+    const textarea = screen.getByPlaceholderText(/Reason \(required/)
+    expect(textarea.className.split(/\s+/)).not.toContain('field-xs')
+  })
 })

@@ -85,6 +85,29 @@ describe('ReasonConfirm component', () => {
   })
 })
 
+// umbrella #432, FIX ROUND (operator report: "too much small text on those
+// provision / switch / teardown / delete action"). Same hierarchy, one step
+// up in scale — see this component's own docstring for the full reasoning.
+describe('ReasonConfirm popover type scale (umbrella #432, FIX ROUND)', () => {
+  it('raises the panel width floor and the title/description/field scale off the old dense defaults', () => {
+    render(<ReasonConfirm title="T" description="D" onConfirm={vi.fn()} onCancel={() => {}} />)
+
+    const title = screen.getByText('T')
+    const panel = title.parentElement as HTMLElement
+    expect(panel.className).toMatch(/\bmin-w-80\b/)
+    expect(panel.className).not.toMatch(/min-w-64/)
+    expect(title.className).toMatch(/\btext-sm\b/)
+    expect(title.className).not.toMatch(/text-xs/)
+
+    const description = screen.getByText('D')
+    expect(description.className).toMatch(/\btext-sm\b/)
+
+    // Off density="xs" onto the field primitive's own base size.
+    const textarea = screen.getByPlaceholderText(/Reason \(required/)
+    expect(textarea.className.split(/\s+/)).not.toContain('field-xs')
+  })
+})
+
 // umbrella #432 §C — the shared form-field primitive (components/FormField.tsx).
 // ReasonConfirm's own reason textarea, and both extraField shapes (free-text
 // input and select), used to each hand-roll `border-white/10 bg-black/20` —
