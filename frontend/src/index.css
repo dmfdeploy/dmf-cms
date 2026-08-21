@@ -89,7 +89,18 @@
 }
 
 @layer components {
-  /* ---- Buttons ---- */
+  /* ---- Buttons ----
+     umbrella #432 §D4: TWO deliberately different primary sizes below —
+     not drift to "fix" into one. `.btn` alone (no `.btn-sm`) is the
+     PAGE-LEVEL call-to-action size (e.g. "Create media workload",
+     MediaWorkloads/index.tsx — 195×40): one per page, the single heaviest
+     thing on it. `.btn .btn-sm` is the IN-PANEL action size (e.g.
+     "▶ Provision now", "▶ Deploy" — 122×28): smaller because it sits
+     inside chrome that already carries its own weight. Unifying these two
+     would either shrink the one page-level CTA meant to dominate its
+     screen, or inflate every in-panel action to compete with page chrome
+     for attention — so the next reader should read this size difference as
+     the rule, not fix it into a mismatch. */
   .btn {
     @apply px-3 py-2 rounded-lg font-medium transition-colors;
   }
@@ -98,12 +109,34 @@
     @apply bg-accent text-bg hover:bg-accent/90;
   }
 
+  /* umbrella #432 §D3: border was `border-muted/30` (~1.2:1 against
+     --color-panel #141416 — the same invisible-boundary defect §C fixed
+     for form fields) — this button's own fill is `bg-panel`, identical to
+     the `.panel` it renders on, so the border was the ONLY thing that
+     could possibly separate it from its container and it wasn't doing
+     that job. Reuses --color-field-border (§C, formFieldPrimitive.test.tsx)
+     rather than a second token: same 3.64:1 against --color-panel, already
+     confirmed to also clear 3:1 against ReasonConfirm's amber/10 and
+     red/10 tinted panels, which is exactly where this class's Cancel
+     button and FlowStep's own Previous/neutral-Next render too. */
   .btn-secondary {
-    @apply bg-panel text-text border border-muted/30 hover:bg-panel/80;
+    @apply bg-panel text-text border border-field-border hover:bg-panel/80;
   }
 
   .btn-danger {
     @apply bg-red-600 text-white hover:bg-red-500;
+  }
+
+  /* umbrella #432 §D2: a SECOND danger tier, independent of weight —
+     below the cyan primary AND below filled .btn-danger, but with its own
+     red border + red text so it is never mistaken for a neutral back/nav
+     control (.btn-secondary) the way "⏏ Teardown" and "← Previous" used to
+     render identically. Maps onto actual reversibility: teardown destroys
+     running instances but the workload entry survives and can be
+     re-provisioned (this tier); permanent delete has no rollback path at
+     all (.btn-danger, filled). */
+  .btn-danger-outline {
+    @apply bg-panel text-red-400 border border-red-500/60 hover:bg-red-500/10;
   }
 
   .btn-sm {

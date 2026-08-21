@@ -1736,3 +1736,65 @@ describe('umbrella #432 §C: Identity fields and focus-on-entry', () => {
     expect(slugField.className.split(/\s+/)).toContain('field')
   })
 })
+
+// ---------------------------------------------------------------------------
+// umbrella #432 §D1 — exactly one cyan promoted control per screen. Unlike
+// the real WorkloadSetup wizard (see workloadSetup.test.tsx's identically-
+// named describe block for why only ONE branch is reachable there), THIS
+// wizard's Next is UNCONDITIONAL on lock state by design (this file's own
+// docstring: "Design → Finalise & Review is UNCONDITIONAL... never gated on
+// lock state") — so both branches of the rule are genuinely observable
+// here, on the very same Provision step, just by changing whether it has
+// something of its own to offer.
+// ---------------------------------------------------------------------------
+
+describe('umbrella #432 §D1: Next carries primary weight only when the mounted step has none of its own', () => {
+  it('Identity\'s own Next is primary — Identity never offers a promoted action of its own', async () => {
+    mkFetch()
+    renderCreate()
+    await screen.findByRole('heading', { name: 'Identity' })
+    typeStudioName('Studio A')
+    const next = await screen.findByRole('button', { name: /Next/ })
+    expect(next.className.split(/\s+/)).toContain('btn-primary')
+    expect(next.className.split(/\s+/)).not.toContain('btn-secondary')
+  })
+
+  it('is primary on Design, which never offers a promoted action of its own', async () => {
+    mkFetch()
+    renderCreate()
+    await screen.findByRole('heading', { name: 'Identity' })
+    const design = await reachDesign()
+    const next = within(design).getByRole('button', { name: 'Next →' })
+    expect(next.className.split(/\s+/)).toContain('btn-primary')
+    expect(next.className.split(/\s+/)).not.toContain('btn-secondary')
+  })
+
+  it('stays neutral on Provision while "▶ Provision now" is showing', async () => {
+    mkFetch()
+    renderCreate()
+    await screen.findByRole('heading', { name: 'Identity' })
+    const provision = await reachProvision()
+    within(provision).getByRole('button', { name: '▶ Provision now' })
+    const next = within(provision).getByRole('button', { name: 'Next →' })
+    expect(next.className.split(/\s+/)).toContain('btn-secondary')
+    expect(next.className.split(/\s+/)).not.toContain('btn-primary')
+  })
+
+  it('goes primary on Provision once nothing is offered (the catalog read is failing)', async () => {
+    const h = mkFetch()
+    const queryClient = renderCreate()
+    await screen.findByRole('heading', { name: 'Identity' })
+    const provision = await reachProvision()
+    within(provision).getByRole('button', { name: '▶ Provision now' })
+
+    h.setCatalogStatus(500)
+    await queryClient.invalidateQueries({ queryKey: ['catalog'] })
+    await waitFor(() =>
+      expect(within(stepSection('Provision')).queryByRole('button', { name: '▶ Provision now' })).toBeNull(),
+    )
+
+    const next = within(stepSection('Provision')).getByRole('button', { name: 'Next →' })
+    expect(next.className.split(/\s+/)).toContain('btn-primary')
+    expect(next.className.split(/\s+/)).not.toContain('btn-secondary')
+  })
+})

@@ -524,9 +524,15 @@ function FinaliseEntry({
         <div>
           <div className="font-medium text-text">{entry.display_name}</div>
         </div>
-        {/* Never a disabled button — see ProvisionStage's identical note. */}
+        {/* Never a disabled button — see ProvisionStage's identical note.
+            umbrella #432 §D2: btn-danger-outline, not btn-secondary — this
+            IS destructive (it tears down a running instance), just a lower
+            danger tier than "Delete permanently" below (btn-danger,
+            filled): teardown's workload entry survives and can be
+            re-provisioned, permanent delete has no rollback path at all.
+            It was rendering identically to "← Previous" before this. */}
         {allowed && !inFlight && entry.lifecycle === 'active' && !arming && (
-          <button className="btn btn-secondary btn-sm shrink-0" onClick={() => setArming(true)}>
+          <button className="btn btn-danger-outline btn-sm shrink-0" onClick={() => setArming(true)}>
             ⏏ Teardown
           </button>
         )}

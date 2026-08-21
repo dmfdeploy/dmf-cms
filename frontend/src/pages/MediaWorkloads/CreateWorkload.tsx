@@ -180,6 +180,19 @@ export default function CreateWorkload() {
   const selectedEntry = entries.find((e) => e.key === selectedKey) ?? null
   const sites = facilityData?.sites ?? []
 
+  // umbrella #432 §D1: computed ONCE here rather than inside ProvisionSection
+  // (which used to derive it from its own catalogFailed/catalogFetching/entry
+  // props) — both the button's own offer AND the FlowStep Next-primary
+  // decision below now read this SAME value, so they cannot disagree about
+  // whether Provision currently offers anything.
+  const provisionBlocked: 'unverifiable' | 'checking' | 'deployed' | null = catalogFailed
+    ? 'unverifiable'
+    : catalogFetching
+      ? 'checking'
+      : selectedEntry?.lifecycle === 'active'
+        ? 'deployed'
+        : null
+
   const trimmedSlug = slug.trim()
   const slugValid = trimmedSlug !== '' && isValidWorkloadSlug(trimmedSlug)
 
@@ -327,6 +340,14 @@ export default function CreateWorkload() {
   } else {
     const stepId = activeStep
     const index = FLOW_STEPS.indexOf(stepId)
+    // umbrella #432 §D1: exactly one cyan promoted control per screen.
+    // Design/Plan/Configure/Finalise never render a top-level primary
+    // control of their own (Configure and Finalise & Review are locked for
+    // the WHOLE draft — see this file's own docstring — so Provision is the
+    // only stepId that can possibly disagree), so Next is primary everywhere
+    // except while Provision is actually showing its own offer
+    // (provisionBlocked === null — see that value's own comment).
+    const nextIsPrimary = !(stepId === 'provision' && provisionBlocked === null)
     stepBody = (
       <FlowStep
         anchorId={stepId}
@@ -338,6 +359,7 @@ export default function CreateWorkload() {
         canNext={nextStep !== null}
         onPrevious={() => prevStep && setSelectedStep(prevStep)}
         onNext={() => nextStep && setSelectedStep(nextStep)}
+        nextPrimary={nextIsPrimary}
         previousReason={previousReason}
         nextReason={nextReason}
       >
@@ -366,12 +388,12 @@ export default function CreateWorkload() {
         {stepId === 'provision' && (
           <ProvisionSection
             entry={selectedEntry}
-            // The read's outcome, not just its payload — see
-            // ProvisionSection's `blocked`. react-query keeps the last
-            // good entries alongside isError, so without this the step
-            // would go on acting from a catalog it knows it cannot read.
-            catalogFailed={catalogFailed}
-            catalogFetching={catalogFetching}
+            // The read's outcome, not just its payload — react-query keeps
+            // the last good entries alongside isError, so without this the
+            // step would go on acting from a catalog it knows it cannot
+            // read. Computed once above (provisionBlocked), not re-derived
+            // here — see that value's own comment.
+            blocked={provisionBlocked}
             slug={trimmedSlug}
             arming={arming}
             pending={deployMutation.isPending}
@@ -520,7 +542,11 @@ function IdentityStep({
       <div className="flex items-center justify-between gap-3 border-t border-white/10 px-4 py-3 text-xs">
         <span className="text-muted">This is the first step.</span>
         {canAdvance ? (
-          <button type="button" className="btn btn-secondary btn-sm" onClick={onNext}>
+          // umbrella #432 §D1: Identity offers no promoted action of its
+          // own (unlike Provision), so its own Next — the one cyan control
+          // on this screen — carries primary weight, same rule FlowStep.tsx
+          // now applies to every step after this one.
+          <button type="button" className="btn btn-primary btn-sm" onClick={onNext}>
             Next →
           </button>
         ) : (
@@ -743,8 +769,7 @@ function PlanAssignment({
  */
 function ProvisionSection({
   entry,
-  catalogFailed,
-  catalogFetching,
+  blocked,
   slug,
   arming,
   pending,
@@ -754,8 +779,11 @@ function ProvisionSection({
   onConfirm,
 }: {
   entry: CatalogEntry | null
-  catalogFailed: boolean
-  catalogFetching: boolean
+  /** umbrella #432 §D1: computed once by the caller (CreateWorkload's own
+   *  provisionBlocked) — see this prop's own comment there for why this
+   *  used to be re-derived from catalogFailed/catalogFetching/entry HERE
+   *  instead, and no longer is. */
+  blocked: 'unverifiable' | 'checking' | 'deployed' | null
   slug: string
   arming: boolean
   pending: boolean
@@ -822,13 +850,6 @@ function ProvisionSection({
   // exists to refuse. The outcome messages below are deliberately NOT gated:
   // they record what happened to a request this page already made, and that
   // history does not stop being true when the lifecycle moves.
-  const blocked: 'unverifiable' | 'checking' | 'deployed' | null = catalogFailed
-    ? 'unverifiable'
-    : catalogFetching
-      ? 'checking'
-      : entry?.lifecycle === 'active'
-        ? 'deployed'
-        : null
   return (
     <div>
       <h3 className="text-xs uppercase tracking-wide text-muted">Provisioning methods</h3>

@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from 'react'
+import { useEffect, useLayoutEffect, useRef, useState } from 'react'
 import { useQueryClient } from '@tanstack/react-query'
 import {
   isOperation,
@@ -46,6 +46,7 @@ export default function ProvisionStage({
   actions,
   onBusyChange,
   onJobStart,
+  onPromotedActionChange,
 }: {
   workload: MediaWorkload
   state: StageState
@@ -57,6 +58,19 @@ export default function ProvisionStage({
    * spec A).
    */
   onJobStart: () => void
+  /**
+   * umbrella #432 §D1: reports whether THIS stage currently offers at
+   * least one top-level primary control of its own (`eligibleDeployEntries`
+   * below, non-empty — the SAME runtime action model `computedPromotedKey`
+   * already derives, not a second copy of its condition) — so the parent
+   * (WorkloadSetup) can hold FlowStep's own Next neutral exactly while
+   * Provision has its own cyan control on screen, and let it go primary the
+   * moment Provision has nothing offered (every entry deployed/blocked).
+   * Optional so every OTHER direct render of this component (promotedAction
+   * test harnesses that predate §D1) is unaffected — a caller that never
+   * needs the signal simply never reads it.
+   */
+  onPromotedActionChange?: (hasPromotedAction: boolean) => void
 }) {
   // fix-round 5 (PR #81, codex sibling sweep): `catalogFailed` is threaded
   // into the absence claim below — a failed catalog read left `entries`
@@ -150,6 +164,31 @@ export default function ProvisionStage({
     ? entries.filter((e) => e.lifecycle !== 'active' && !activeTrack(track[e.key]))
     : []
   const computedPromotedKey = eligibleDeployEntries.length === 1 ? eligibleDeployEntries[0].key : null
+
+  // umbrella #432 §D1: whether THIS stage shows a top-level primary control
+  // right now — deliberately `.length > 0`, not `computedPromotedKey !==
+  // null`. computedPromotedKey answers a narrower question (does exactly
+  // one entry qualify for the HEADER portal); with two-or-more eligible
+  // entries neither is promoted to the header, but both still render their
+  // own inline `btn-primary` Deploy offer (this file's own docstring above:
+  // "two eligible entries means two live Deploy buttons at once") — the
+  // condition FlowStep's Next needs is "is there at least one cyan control
+  // on this screen already", which `computedPromotedKey === null` alone
+  // would wrongly answer "no" for that two-entry case.
+  //
+  // useLayoutEffect, not useEffect — same reasoning store/headerSlot.ts's
+  // useRegisterHeaderSlot already documents for an identical "a sibling
+  // (Topbar/FlowStep) renders from a value THIS effect reports" shape: a
+  // layout effect's setState cascades before the browser paints, so there
+  // is no in-between frame where Next shows the wrong colour for one
+  // frame while this reports up. jsdom+RTL cannot observe the frame this
+  // prevents either way (act() flushes passive effects synchronously too),
+  // so no test claims that timing guarantee — kept on the same engineering
+  // merit headerSlot.ts's own comment states, not a test-enforced one.
+  const hasPromotedAction = eligibleDeployEntries.length > 0
+  useLayoutEffect(() => {
+    onPromotedActionChange?.(hasPromotedAction)
+  }, [hasPromotedAction, onPromotedActionChange])
 
   // FIX ROUND P1b, extended P3 round 3 (P2-3, two independent reviewers,
   // same lines): LATCH the promoted identity through its own arm -> confirm
