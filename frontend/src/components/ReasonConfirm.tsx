@@ -15,6 +15,24 @@ import { Input, Select, Textarea } from './FormField'
  * SAME typed-``extraField`` + mandatory-reason mechanics every variant
  * shares. Defaults to ``"warning"`` (byte-for-byte the original amber
  * styling) so every existing caller is unaffected.
+ *
+ * umbrella #432, FIX ROUND (operator report, live: "too much small text on
+ * those provision / switch / teardown / delete action"). Every size in this
+ * component used to sit at 11-12px (title/description text-xs, the reason
+ * field's own `field-xs` density, helper/hint text-[11px]) — dense enough
+ * that the panel read as a wall of fine print rather than a confirm step.
+ * Raised one step across the board — text-xs -> text-sm, the reason/extra
+ * fields off `density="xs"` onto FormField's own base size — while keeping
+ * the SAME hierarchy (danger banner > title > description > field > helper):
+ * nothing here changed relative WEIGHT, only absolute scale and breathing
+ * room. `min-w-64` -> `min-w-80` so the wider type has room to sit
+ * comfortably rather than wrapping tighter than before; ProvisionStage.tsx's
+ * own promoted-popover wrapper already fixes width at `w-80` for its case,
+ * so this makes the inline (non-promoted) rendering match it rather than
+ * introducing a second width. `clear-for-deployment` (ClearForDeployment.tsx)
+ * is a separate component that duplicates this same shell rather than
+ * rendering THIS one, but reads as the identical affordance to an operator
+ * — scaled identically there, in its own file, for the same reason.
  */
 export interface ReasonConfirmExtraField {
   label: string
@@ -65,35 +83,33 @@ export default function ReasonConfirm({
     <div
       className={
         danger
-          ? 'min-w-64 rounded-lg border border-red-500/40 bg-red-500/10 p-3 text-red-100'
-          : 'min-w-64 rounded-lg border border-amber-500/30 bg-amber-500/10 p-3 text-amber-100'
+          ? 'min-w-80 rounded-lg border border-red-500/40 bg-red-500/10 p-4 text-red-100'
+          : 'min-w-80 rounded-lg border border-amber-500/30 bg-amber-500/10 p-4 text-amber-100'
       }
     >
       {danger && (
-        <div className="mb-1 flex items-center gap-1 text-[11px] font-semibold uppercase tracking-wide text-red-300">
+        <div className="mb-1.5 flex items-center gap-1 text-xs font-semibold uppercase tracking-wide text-red-300">
           <span aria-hidden="true">⚠</span>
           <span>Destructive — cannot be undone</span>
         </div>
       )}
-      <div className="text-xs font-semibold">{title}</div>
-      <p className={`mt-1 text-xs ${danger ? 'text-red-200/80' : 'text-amber-200/80'}`}>{description}</p>
+      <div className="text-sm font-semibold">{title}</div>
+      <p className={`mt-1.5 text-sm ${danger ? 'text-red-200/80' : 'text-amber-200/80'}`}>{description}</p>
       <Textarea
-        density="xs"
-        className="mt-2"
+        className="mt-3"
         placeholder="Reason (required, recorded in the audit trail)"
         value={reason}
         onChange={(e) => setReason(e.target.value)}
         rows={2}
       />
       {extraField && (
-        <div className="mt-2">
-          <label className={`block text-xs ${danger ? 'text-red-200/80' : 'text-amber-200/80'}`}>
+        <div className="mt-3">
+          <label className={`block text-sm ${danger ? 'text-red-200/80' : 'text-amber-200/80'}`}>
             {extraField.label}
           </label>
           {extraField.options ? (
             <Select
-              density="xs"
-              className="mt-1"
+              className="mt-1.5"
               value={extraField.value}
               onChange={(e) => extraField.onChange(e.target.value)}
             >
@@ -109,31 +125,30 @@ export default function ReasonConfirm({
           ) : (
             <Input
               type="text"
-              density="xs"
-              className="mt-1"
+              className="mt-1.5"
               placeholder={extraField.placeholder}
               value={extraField.value}
               onChange={(e) => extraField.onChange(e.target.value)}
             />
           )}
           {extraInvalid && extraField.invalidHint ? (
-            <p className="mt-1 text-[11px] text-red-300">{extraField.invalidHint}</p>
+            <p className="mt-1.5 text-xs text-red-300">{extraField.invalidHint}</p>
           ) : extraField.helperText ? (
-            <p className={`mt-1 text-[11px] ${danger ? 'text-red-200/60' : 'text-amber-200/60'}`}>
+            <p className={`mt-1.5 text-xs ${danger ? 'text-red-200/60' : 'text-amber-200/60'}`}>
               {extraField.helperText}
             </p>
           ) : null}
         </div>
       )}
       {error != null && error !== false && (
-        <p className="mt-1 text-xs text-red-300">
+        <p className="mt-1.5 text-sm text-red-300">
           {/* Art. 8: the operator gets what happened and what is safe to do
               next, not a stringified exception. Fixed here so all three
               stages inherit it rather than each growing its own copy. */}
           That didn&apos;t go through — nothing was changed. Check your access, then retry.
         </p>
       )}
-      <div className="mt-2 flex gap-2">
+      <div className="mt-3 flex gap-2">
         <button
           className={`btn btn-sm ${danger ? 'btn-danger' : 'btn-primary'}`}
           disabled={!reason.trim() || pending || extraInvalid}

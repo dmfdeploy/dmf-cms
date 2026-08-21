@@ -1141,6 +1141,60 @@ describe('the destination never denies a just-launched workload', () => {
     expect(screen.getByText(/appears here once the launcher records it/)).toBeTruthy()
   })
 
+  // umbrella #432, FIX ROUND (operator feedback: "if you must keep all the
+  // small text just add large friendly message... users will ignore all the
+  // small text"). ADDITIVE per the operator's own amendment — the existing
+  // "appears here once the launcher records it" paragraph (asserted above)
+  // stays untouched; these pin the NEW loud layer on top of it.
+  describe('the loud, friendly layer added on top of the existing record', () => {
+    it('states a large, friendly message with a typical (not guaranteed) duration', async () => {
+      mkFetch({ workloads: [] })
+      await armAndConfirm()
+      await screen.findByText('Deploy accepted.')
+
+      const lead = screen.getByText(/The automation is running/)
+      expect(lead.className).toMatch(/text-lg/)
+      // Constitution hard gate 1 — no uncertainty stated as certainty: a
+      // duration claim has to read as typical, never promised.
+      expect(lead.textContent).toMatch(/typically takes/)
+      expect(lead.textContent).not.toMatch(/\bwill take\b/)
+    })
+
+    it('links to Workspace and to Media Workloads, worded as facts rather than instructions', async () => {
+      mkFetch({ workloads: [] })
+      await armAndConfirm()
+      await screen.findByText('Deploy accepted.')
+
+      const workspace = screen.getByRole('link', { name: 'Workspace' })
+      expect(workspace.getAttribute('href')).toBe('/')
+      const mediaWorkloads = screen.getByRole('link', { name: 'Media Workloads' })
+      expect(mediaWorkloads.getAttribute('href')).toBe('/media-workloads')
+
+      // "The app states what it is doing; it never instructs" — the
+      // operator's own example ("Watch the progress on…") is an
+      // instruction; this states the same fact instead.
+      const surroundingText = workspace.closest('p')?.textContent ?? ''
+      expect(surroundingText).toMatch(/shows up on/)
+      expect(surroundingText).not.toMatch(/watch/i)
+    })
+
+    // The honesty constraint the operator's amendment explicitly still
+    // requires confirming, even though nothing here had to change to keep
+    // it true: the part-way-through fact is the SAME pinned paragraph from
+    // the first test in this describe block, still rendered, not replaced
+    // or hidden behind the new message.
+    it('still renders the part-way-through fact untouched, alongside the new message', async () => {
+      mkFetch({ workloads: [] })
+      await armAndConfirm()
+      await screen.findByText('Deploy accepted.')
+
+      expect(screen.getByText(/The automation is running/)).toBeTruthy()
+      expect(
+        screen.getByText(/The launcher does that PART-WAY through the job below/),
+      ).toBeTruthy()
+    })
+  })
+
   it('still renders not-found for a slug that arrives WITHOUT a launch', async () => {
     // The materializing state must be reachable only via the create handoff —
     // otherwise a genuinely missing workload would render as "provisioning"

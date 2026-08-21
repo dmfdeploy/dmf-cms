@@ -287,7 +287,37 @@ export default function WorkloadMaterializing({
             )}
           </div>
         ) : (
-          <div className="space-y-2 text-sm">
+          <div className="space-y-3 text-sm">
+            {/* umbrella #432, FIX ROUND (operator feedback, verbatim: "if you
+                must keep all the small text just add large friendly message,
+                i am quite sure the users will ignore all the small text").
+                ADDITIVE, per the operator's own amendment — the paragraph
+                below is untouched, §G-pinned wording and all. This is the
+                loud, actionable layer for whoever reads nothing else on the
+                page; that paragraph stays the quiet, honest record of the
+                part-way-through fact for whoever does. "Typically", not a
+                promised duration (Constitution hard gate 1 — no uncertainty
+                stated as certainty): a real provision on this environment
+                took roughly five minutes. States what's happening; never
+                instructs — the links ARE the "watch it" the operator asked
+                for, worded as facts rather than commands. */}
+            <div>
+              <p className="text-lg font-medium text-text">
+                The automation is running — provisioning like this typically takes a
+                few minutes.
+              </p>
+              <p className="mt-1 text-muted">
+                It shows up on{' '}
+                <Link to="/" className="text-accent hover:underline">
+                  Workspace
+                </Link>{' '}
+                while it runs, and in{' '}
+                <Link to="/media-workloads" className="text-accent hover:underline">
+                  Media Workloads
+                </Link>{' '}
+                once it&apos;s recorded.
+              </p>
+            </div>
             <p className="font-medium text-text">Deploy accepted.</p>
             <p className="text-muted">
               This workload appears here once the launcher records it against the

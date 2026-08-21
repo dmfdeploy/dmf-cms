@@ -16,6 +16,13 @@ import { Textarea } from '../../components/FormField'
  * that raised `busy` could never be lowered, and the rail stuck busy forever
  * after one clear (GATE-S1-RV2 P1). Ownership belongs above the gate; this
  * component just collects a reason and calls back.
+ *
+ * umbrella #432, FIX ROUND: same type-scale bump as ReasonConfirm.tsx's own
+ * "too much small text" fix — this is a separate component (duplicates the
+ * shell rather than rendering ReasonConfirm) but reads as the identical
+ * confirm-popover affordance to an operator, so it gets the same sizes for
+ * the same reason: text-xs -> text-sm, off `density="xs"` onto the field
+ * primitive's own base size, min-w-64 -> min-w-80, p-3 -> p-4.
  */
 export default function ClearForDeployment({
   instance,
@@ -52,27 +59,26 @@ export default function ClearForDeployment({
   }
 
   return (
-    <div className="min-w-64 rounded-lg border border-amber-500/30 bg-amber-500/10 p-3 text-amber-100">
-      <div className="text-xs font-semibold">Clear {instance} for deployment?</div>
-      <p className="mt-1 text-xs text-amber-200/80">
+    <div className="min-w-80 rounded-lg border border-amber-500/30 bg-amber-500/10 p-4 text-amber-100">
+      <div className="text-sm font-semibold">Clear {instance} for deployment?</div>
+      <p className="mt-1.5 text-sm text-amber-200/80">
         This records the intent to run in the facility source of truth. It
         shows as pending reconciliation until something deploys it — today,
         that's Provision. This action does not deploy anything itself.
       </p>
       <Textarea
-        density="xs"
-        className="mt-2"
+        className="mt-3"
         placeholder="Reason (required, recorded in the audit trail)"
         value={reason}
         onChange={(e) => setReason(e.target.value)}
         rows={2}
       />
       {failed && (
-        <p className="mt-1 text-xs text-red-300">
+        <p className="mt-1.5 text-sm text-red-300">
           The desired state was not recorded — nothing changed. Check your access, then retry.
         </p>
       )}
-      <div className="mt-2 flex gap-2">
+      <div className="mt-3 flex gap-2">
         <button
           className="btn btn-primary btn-sm"
           disabled={!reason.trim() || pending}
