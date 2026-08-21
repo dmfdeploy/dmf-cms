@@ -935,7 +935,14 @@ describe('Finalise & Review: teardown click path', () => {
   // same border). It's destructive (tears down a running instance), just a
   // lower danger tier than "Delete permanently" (btn-danger, filled) —
   // teardown's workload entry survives and can be re-provisioned.
-  it('carries the danger-outline treatment, not btn-secondary', async () => {
+  //
+  // umbrella #432 §D2 REVERSAL (operator, live on 0.27.1: "the teardown
+  // button is still not very readable with the nearblack and red
+  // combination"): the intermediate btn-danger-outline tier this test used
+  // to pin is gone — colour now matches Delete permanently exactly (filled
+  // btn-danger for both), and the two-tier distinction moved to friction
+  // (reason-only here vs the typed-slug gate there) instead of colour.
+  it('carries the filled danger treatment, same as Delete permanently — not btn-secondary, not an outline tier', async () => {
     mkFetch({
       workload: workload({ lifecycle: 'operate' }),
       catalog: [catalogEntry({ lifecycle: 'active' })],
@@ -944,8 +951,9 @@ describe('Finalise & Review: teardown click path', () => {
     await findRail()
     const finaliseSection = await selectStep('Finalise & Review')
     const teardown = within(finaliseSection).getByRole('button', { name: '⏏ Teardown' })
-    expect(teardown.className.split(/\s+/)).toContain('btn-danger-outline')
+    expect(teardown.className.split(/\s+/)).toContain('btn-danger')
     expect(teardown.className.split(/\s+/)).not.toContain('btn-secondary')
+    expect(teardown.className.split(/\s+/)).not.toContain('btn-danger-outline')
   })
 
   // fix-round 5 (PR #81, codex sibling sweep): same fix as Provision's
