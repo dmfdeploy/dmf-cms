@@ -1759,12 +1759,64 @@ describe('umbrella #432 §D1: Next carries primary weight only when the mounted 
     expect(next.className.split(/\s+/)).not.toContain('btn-secondary')
   })
 
-  it('is primary on Design, which never offers a promoted action of its own', async () => {
+  // umbrella #432 §D1 REVERSAL (operator report, live in Chrome on 0.27.1):
+  // this test used to assert Design's Next was ALWAYS primary — that was
+  // itself the regression §D1 shipped. "Use this template" is Design's own
+  // commitment; while it's showing, Next must NOT be the one cyan control
+  // on screen — it points at a locked Plan, while the actual unblocking
+  // action sits there looking like a neutral back button.
+  it('stays neutral on Design while "Use this template" is showing', async () => {
     mkFetch()
     renderCreate()
     await screen.findByRole('heading', { name: 'Identity' })
     const design = await reachDesign()
+    within(design).getByRole('button', { name: 'Use this template' })
     const next = within(design).getByRole('button', { name: 'Next →' })
+    expect(next.className.split(/\s+/)).toContain('btn-secondary')
+    expect(next.className.split(/\s+/)).not.toContain('btn-primary')
+  })
+
+  // The other half of the dynamic — the same shape ProvisionStage already
+  // has: once the commitment is made, the step's own control disappears
+  // and Next may go primary again.
+  it('goes primary on Design once a template is chosen (the commitment button is gone)', async () => {
+    mkFetch()
+    renderCreate()
+    await screen.findByRole('heading', { name: 'Identity' })
+    const design = await reachDesign()
+    await chooseTemplate()
+    expect(within(design).queryByRole('button', { name: 'Use this template' })).toBeNull()
+    const next = within(design).getByRole('button', { name: 'Next →' })
+    expect(next.className.split(/\s+/)).toContain('btn-primary')
+    expect(next.className.split(/\s+/)).not.toContain('btn-secondary')
+  })
+
+  // The equivalent pair for Plan's own "Confirm placement".
+  it('stays neutral on Plan while "Confirm placement" is showing', async () => {
+    mkFetch()
+    renderCreate()
+    await screen.findByRole('heading', { name: 'Identity' })
+    await reachDesign()
+    await chooseTemplate()
+    await clickNext() // Design -> Plan
+    const plan = stepSection('Plan')
+    await within(plan).findByRole('button', { name: 'Confirm placement' })
+    const next = within(plan).getByRole('button', { name: 'Next →' })
+    expect(next.className.split(/\s+/)).toContain('btn-secondary')
+    expect(next.className.split(/\s+/)).not.toContain('btn-primary')
+  })
+
+  it('goes primary on Plan once placement is confirmed (the confirm button is gone)', async () => {
+    mkFetch()
+    renderCreate()
+    await screen.findByRole('heading', { name: 'Identity' })
+    await reachDesign()
+    await chooseTemplate()
+    await clickNext() // Design -> Plan
+    const plan = stepSection('Plan')
+    fireEvent.click(await within(plan).findByRole('button', { name: 'Confirm placement' }))
+    expect(within(plan).queryByRole('button', { name: 'Confirm placement' })).toBeNull()
+    const next = within(plan).getByRole('button', { name: 'Next →' })
     expect(next.className.split(/\s+/)).toContain('btn-primary')
     expect(next.className.split(/\s+/)).not.toContain('btn-secondary')
   })

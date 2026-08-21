@@ -193,6 +193,24 @@ export default function CreateWorkload() {
         ? 'deployed'
         : null
 
+  // umbrella #432 §D1 REVERSAL (operator report, live in Chrome on 0.27.1):
+  // whether Design currently offers at least one "Use this template"
+  // commitment — the EXACT per-entry condition TemplatePicker's own render
+  // applies below (`entry.key !== selectedKey && entry.lifecycle !==
+  // 'active'`), aggregated with `.some()` so this can never disagree with
+  // what the picker actually renders, and false while the catalog read
+  // itself hasn't settled cleanly (TemplatePicker's own loading/failed
+  // branches render neither a button nor anything else selectable then).
+  // Deliberately NOT simplified to `!draft.hasTemplate`: a multi-entry
+  // catalog can still offer OTHER templates after one is chosen (see "offers
+  // the deployable templates alongside the ones it refuses" below) —
+  // hasTemplate alone would say Design offers nothing the instant ONE entry
+  // is picked, while the picker keeps a live commitment button showing for
+  // every other undeployed entry, which is the exact "cyan Next beside a
+  // real commitment" defect this reversal exists to close.
+  const designOffersAction =
+    !catalogLoading && !catalogFailed && entries.some((e) => e.key !== selectedKey && e.lifecycle !== 'active')
+
   const trimmedSlug = slug.trim()
   const slugValid = trimmedSlug !== '' && isValidWorkloadSlug(trimmedSlug)
 
@@ -210,6 +228,14 @@ export default function CreateWorkload() {
   // confirmedFacilityName for the reachable case this closes.
   const facilityConfirmed =
     resolvedFacilityName !== null && confirmedFacilityName === resolvedFacilityName
+
+  // umbrella #432 §D1 REVERSAL: whether Plan currently offers "Confirm
+  // placement" — PlanAssignment's own render shows that button in exactly
+  // one branch (hasFacility && !facilityConfirmed; loading, failed, zero
+  // sites, multiple sites, and already-confirmed are all prose with no
+  // button) — both values already exist above for the draft's own gate, not
+  // re-derived here.
+  const planOffersAction = hasFacility && !facilityConfirmed
 
   const draft: DraftProgress = {
     hasName: slugValid,
@@ -340,30 +366,53 @@ export default function CreateWorkload() {
   } else {
     const stepId = activeStep
     const index = FLOW_STEPS.indexOf(stepId)
-    // umbrella #432 §D1: exactly one cyan promoted control per screen.
-    // Design/Plan/Configure/Finalise never render a top-level primary
-    // control of their own (Configure and Finalise & Review are locked for
-    // the WHOLE draft — see this file's own docstring — so Provision is the
-    // only stepId that can possibly disagree), so Next is primary everywhere
-    // except while Provision is actually showing its own offer
-    // (provisionBlocked === null — see that value's own comment).
+    // umbrella #432 §D1: exactly one cyan promoted control per screen. Next
+    // is primary EXCEPT on whichever step currently renders a top-level
+    // commitment of its own — Design's "Use this template"
+    // (designOffersAction), Plan's "Confirm placement" (planOffersAction),
+    // and Provision's "▶ Provision now" (provisionBlocked === null) — never
+    // Configure/Finalise & Review, which are locked for the WHOLE draft (see
+    // this file's own docstring) and FlowStep's own clamp (below) neutralises
+    // regardless.
     //
-    // FIX ROUND (codex gate item 6): this value alone is NOT what keeps a
-    // LOCKED step's Next neutral — it only ever judges catalog state
-    // (provisionBlocked), which has nothing to do with whether Provision
-    // (or Plan/Configure/Finalise — every stepId but 'provision' makes this
-    // unconditionally true) is actually reachable yet. This wizard's own
-    // Next is UNCONDITIONAL on lock state by design (this file's own
-    // docstring: "Design → Finalise & Review is UNCONDITIONAL... never
-    // gated on lock state"), so a locked step's Next still renders — and,
-    // before this fix round, still rendered CYAN whenever this expression
-    // happened to be true (e.g. every step but a blocked Provision; the
-    // catalog merely fetching or failing made even a locked Provision's own
-    // Next cyan). FlowStep.tsx now clamps this to neutral itself whenever
-    // its own `state` is 'locked' (`nextPrimary && !locked`), so this value
-    // does not need — and must not gain — a duplicate lock check: that
-    // would be a second copy of a fact FlowStep already owns via `state`.
-    const nextIsPrimary = !(stepId === 'provision' && provisionBlocked === null)
+    // REVERSAL, umbrella #432 §D1 (operator report, live in Chrome on
+    // 0.27.1): this used to read `stepId === 'provision'` ONLY, so Design
+    // and Plan were UNCONDITIONALLY primary the instant §D1 shipped — cyan,
+    // pointing at a locked Plan/Provision, while the actual unblocking
+    // action ("Use this template"/"Confirm placement") sat there looking
+    // like a neutral back button. Before §D1, nothing on those screens was
+    // cyan at all; that flat state is what this restores, NOT by hardcoding
+    // Design/Plan to never be primary (the operator ruling this round is
+    // explicit: reverse the regression, don't hardcode over the dynamic this
+    // fix needs), but by consulting the SAME per-step "is it currently
+    // offering something" fact the button itself renders from — the
+    // designOffersAction/planOffersAction pattern already proven for
+    // Provision's own provisionBlocked. Once a template is chosen (and no
+    // OTHER undeployed entry remains to pick) or placement is confirmed,
+    // that step's own control disappears and Next may go primary again —
+    // the same shape ProvisionStage already has, not a special case.
+    //
+    // Promoting "Use this template"/"Confirm placement" to primary
+    // themselves is the better fix and is deliberately NOT this round's
+    // job — design work on a wizard surface with a known replacement,
+    // tracked at dmfdeploy/dmfdeploy#405.
+    //
+    // FIX ROUND (codex gate item 6, still true, unrelated to this reversal):
+    // this value alone is NOT what keeps a LOCKED step's Next neutral — it
+    // only ever judges whether a step's own action is offered, which has
+    // nothing to do with whether that step is actually reachable yet. This
+    // wizard's own Next is UNCONDITIONAL on lock state by design (this
+    // file's own docstring: "Design → Finalise & Review is UNCONDITIONAL...
+    // never gated on lock state"), so a locked step's Next still renders.
+    // FlowStep.tsx clamps it to neutral itself whenever its own `state` is
+    // 'locked' (`nextPrimary && !locked`), so this value does not need —
+    // and must not gain — a duplicate lock check: that would be a second
+    // copy of a fact FlowStep already owns via `state`.
+    const nextIsPrimary = !(
+      (stepId === 'design' && designOffersAction) ||
+      (stepId === 'plan' && planOffersAction) ||
+      (stepId === 'provision' && provisionBlocked === null)
+    )
     stepBody = (
       <FlowStep
         anchorId={stepId}
