@@ -425,8 +425,9 @@ describe("a job in flight demotes every non-locked chip to inert, but its label 
     // ONE shared note for the whole row, not the same sentence repeated
     // under every chip (the old per-chip repetition said the identical
     // thing five times) — this part is unchanged by the redesign.
+    // umbrella #432 G2: wording-only — the imperative tail is gone.
     expect(
-      screen.getAllByText('A Configure job is in progress — wait for its outcome.').length,
+      screen.getAllByText('A Configure job is in progress.').length,
     ).toBe(1)
   })
 })

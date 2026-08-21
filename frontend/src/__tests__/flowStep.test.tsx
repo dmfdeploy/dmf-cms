@@ -25,14 +25,12 @@ const SENTINEL = 'flow-step-body-sentinel'
 
 function renderStep({
   state,
-  isCurrentPosition = false,
   canPrevious = false,
   canNext = false,
   onPrevious = () => {},
   onNext = () => {},
 }: {
   state: FlowStepState
-  isCurrentPosition?: boolean
   canPrevious?: boolean
   canNext?: boolean
   onPrevious?: () => void
@@ -43,7 +41,6 @@ function renderStep({
       number={3}
       label="Provision"
       state={state}
-      isCurrentPosition={isCurrentPosition}
       lockedReason="Locked because the step before it has not finished."
       canPrevious={canPrevious}
       canNext={canNext}
@@ -84,15 +81,13 @@ describe('an openable step always renders its body — no fold to defeat', () =>
   })
 })
 
-describe('backend position is a distinct marker from mere selection', () => {
-  it('shows "the workload is here now" only when isCurrentPosition is true', () => {
-    renderStep({ state: 'open', isCurrentPosition: true })
-    expect(screen.getByText('The workload is here now')).toBeTruthy()
-  })
-
-  it('says nothing about position when this mounted step is not it', () => {
-    renderStep({ state: 'open', isCurrentPosition: false })
-    expect(screen.queryByText('The workload is here now')).toBeNull()
+describe('umbrella #432 G1: no boilerplate caption beside the state badge', () => {
+  it('never renders "The workload is here now" — the badge alone (e.g. "Now") carries that fact', () => {
+    for (const state of ['current', 'open', 'complete', 'record'] as const) {
+      cleanup()
+      renderStep({ state })
+      expect(screen.queryByText('The workload is here now'), state).toBeNull()
+    }
   })
 })
 

@@ -524,6 +524,59 @@ describe('the rail is exactly the five orchestration steps (dmfdeploy#414)', () 
   })
 })
 
+// umbrella #432 G1: FlowStep used to render a fixed "The workload is here
+// now" caption beside its own state badge, driven by `isCurrentPosition`
+// (activeStep === the backend's position) — independent of which STATE
+// badge that step actually carried. CORRECTION to the originating report's
+// premise, found while building this test: the badge next to it is "Now"
+// ONLY while that step's OWN job is in flight (classifyWorkloadFlow's
+// ladder puts `stageActions().length > 0` — i.e. "open"/Ready — ahead of
+// "is the position" — i.e. "current"/Now — and provision/configure always
+// have a real action the instant they are NOT busy: deploy, switch-source).
+// So the FAR MORE COMMON case is the position sitting behind a "Ready"
+// badge, not "Now" — the caption was never purely a "Now" echo; it was
+// redundant with the RAIL's own position marker instead (aria-current
+// "step" + PositionTally, both still present and untouched by this fix,
+// mounted directly above via the header slot). Both cases are pinned below.
+//
+// DISCRIMINATING at the wizard level, not FlowStep's own unit tests:
+// FlowStep's `isCurrentPosition` prop was removed outright (see
+// FlowStep.tsx), so a FlowStep-only test can no longer pass the pre-fix
+// true/false split at all — swapping the pre-fix FlowStep.tsx back in under
+// a caller that no longer supplies the prop would just read `undefined`
+// there, which is ALSO falsy, and the caption would stay absent for a
+// reason that has nothing to do with the fix. Mounting the real wizard
+// exercises the actual wiring instead.
+describe('umbrella #432 G1: no "here now" caption beside the position badge', () => {
+  it('never renders it beside "Ready" — the common case: positioned here, with an action still open', async () => {
+    mkFetch({ workload: workload({ lifecycle: 'provision' }) })
+    renderDetail()
+    await findRail()
+    const provisionSection = stageSection('Provision')
+
+    expect(within(provisionSection).getByText('Ready')).toBeTruthy()
+    expect(within(provisionSection).queryByText('The workload is here now')).toBeNull()
+    expect(screen.queryByText('The workload is here now')).toBeNull()
+  })
+
+  it('never renders it beside "Now" either — reached only while THIS step\'s own job is in flight', async () => {
+    mkFetch({ workload: workload({ lifecycle: 'provision' }) })
+    renderDetail()
+    await findRail()
+    const provisionSection = stageSection('Provision')
+
+    fireEvent.click(await within(provisionSection).findByRole('button', { name: '▶ Deploy' }))
+    fireEvent.change(within(provisionSection).getByPlaceholderText(REASON_PLACEHOLDER), {
+      target: { value: 'demo launch' },
+    })
+    fireEvent.click(within(provisionSection).getByRole('button', { name: 'Confirm deploy' }))
+
+    await waitFor(() => expect(within(provisionSection).getByText('Now')).toBeTruthy())
+    expect(within(provisionSection).queryByText('The workload is here now')).toBeNull()
+    expect(screen.queryByText('The workload is here now')).toBeNull()
+  })
+})
+
 describe('the honest undetermined flow (backend lifecycle=unknown)', () => {
   it('opens no step and says so honestly, instead of guessing', async () => {
     mkFetch({ workload: workload({ lifecycle: 'unknown' }) })
@@ -873,6 +926,164 @@ describe('Finalise & Review: teardown click path', () => {
   })
 })
 
+// umbrella #432 G3: pre-fix, a live-measured teardown rendered "A Finalise &
+// Review job is in progress — wait for its outcome." FOUR times at once —
+// the rail's own note, the Previous span, the Next span, and the View-live
+// exit — not the two (Previous + View-live) the originating report caught.
+//
+// GATE ROUND 2, FINDING A2: the first pass here fixed only Finalise & Review
+// and left Provision and Configure at THREE copies each (rail, Next, View
+// live) — worse than the shipped case, because an outsider walking the demo
+// reaches Provision and Configure BEFORE Finalise. Per-owner matrix below,
+// one `it` per job owner, so no single stage's fix can regress unnoticed
+// the way Provision/Configure did the first time.
+//
+// See WorkloadSetup.tsx's own G3 comment for the resolution: the rail is
+// the one canonical carrier for every job owner; Previous goes quiet for
+// all three; Next goes quiet too EXCEPT on Finalise & Review, where it
+// states the always-true "last step" fact instead (untrue as a fallback for
+// Provision/Configure, which do have a real next step once the job clears);
+// View live names only what IT adds (leaving is blocked), never which job.
+describe('umbrella #432 G3: the job-in-progress sentence renders once, for every job owner — not three or four times', () => {
+  it('Provision: the rail alone carries it; Next and View live each say something else instead of repeating it', async () => {
+    mkFetch({ workload: workload({ lifecycle: 'provision' }) })
+    renderDetail()
+    await findRail()
+    const provisionSection = stageSection('Provision')
+
+    fireEvent.click(await within(provisionSection).findByRole('button', { name: '▶ Deploy' }))
+    fireEvent.change(within(provisionSection).getByPlaceholderText(REASON_PLACEHOLDER), {
+      target: { value: 'demo launch' },
+    })
+    fireEvent.click(within(provisionSection).getByRole('button', { name: 'Confirm deploy' }))
+
+    // THE discriminating assertion: exactly one on-screen copy of the
+    // sentence — pre-fix (gate round 2 baseline) this settles at three.
+    await waitFor(() => {
+      expect(screen.getAllByText(/A Provision job is in progress/).length).toBe(1)
+    })
+
+    expect(within(provisionSection).queryByRole('button', { name: '← Previous' })).toBeNull()
+    expect(within(provisionSection).queryByRole('button', { name: 'Next →' })).toBeNull()
+    // Next has no honest reason beyond the rail's own while armed — quiet,
+    // not a repeat (Provision is never the last step, so unlike Finalise
+    // there is no always-true fallback fact to state instead).
+    expect(within(provisionSection).queryByText(/is in progress/)).toBeNull()
+    expect(screen.getByText('View live — Unavailable until the job finishes.')).toBeTruthy()
+  })
+
+  it('Configure: the rail alone carries it; Next and View live each say something else instead of repeating it', async () => {
+    const wl = viewerWorkload()
+    // umbrella #432 G3 (gate round 2): the switch mock resolves near-
+    // instantly by default — a plain `waitFor` after clicking Confirm can
+    // land AFTER the job already settled, observing the idle state rather
+    // than the in-flight one and passing for the wrong reason (this is
+    // exactly what happened while building this test: it saw "Active
+    // source: source-b" already rendered, the switch long done). holdSwitch
+    // keeps the fetch open so the in-flight state is the only state on
+    // screen until releaseSwitch() fires.
+    const { releaseSwitch } = mkFetch({
+      workload: wl,
+      catalog: [catalogEntry({ key: 'viewer', lifecycle: 'active' })],
+      topology: { 'viewer-1': freshTopology() },
+      holdSwitch: true,
+    })
+    renderDetail()
+    await findRail()
+    const configureSection = await selectStep('Configure')
+
+    fireEvent.click(await within(configureSection).findByRole('button', { name: 'Switch source' }))
+    fireEvent.change(within(configureSection).getByPlaceholderText(REASON_PLACEHOLDER), {
+      target: { value: 'operator requested' },
+    })
+    fireEvent.change(within(configureSection).getByRole('combobox'), { target: { value: 'source-b' } })
+    fireEvent.click(within(configureSection).getByRole('button', { name: 'Confirm switch' }))
+
+    // THE discriminating assertion: exactly one on-screen copy of the
+    // sentence — pre-fix (gate round 2 baseline) this settles at three.
+    await waitFor(() => {
+      expect(screen.getAllByText(/A Configure job is in progress/).length).toBe(1)
+    })
+
+    expect(within(configureSection).queryByRole('button', { name: '← Previous' })).toBeNull()
+    expect(within(configureSection).queryByRole('button', { name: 'Next →' })).toBeNull()
+    expect(within(configureSection).queryByText(/is in progress/)).toBeNull()
+    expect(screen.getByText('View live — Unavailable until the job finishes.')).toBeTruthy()
+
+    releaseSwitch()
+  })
+
+  it('Finalise & Review: the rail alone carries it; Previous, Next, and View live each say something else instead of repeating it', async () => {
+    mkFetch({
+      workload: workload({ lifecycle: 'operate' }),
+      catalog: [catalogEntry({ lifecycle: 'active' })],
+    })
+    renderDetail()
+    await findRail()
+    const finaliseSection = await selectStep('Finalise & Review')
+
+    fireEvent.click(within(finaliseSection).getByRole('button', { name: '⏏ Teardown' }))
+    fireEvent.change(within(finaliseSection).getByPlaceholderText(REASON_PLACEHOLDER), {
+      target: { value: 'decommission' },
+    })
+    fireEvent.click(within(finaliseSection).getByRole('button', { name: 'Confirm teardown' }))
+
+    // THE discriminating assertion: exactly one on-screen copy of the
+    // sentence, not "at least one" — pre-fix (round 1 baseline) this
+    // settles at four.
+    await waitFor(() => {
+      // No trailing period in the regex — this isolates the COUNT claim
+      // from G2's wording change, so it discriminates on dedup alone.
+      expect(screen.getAllByText(/A Finalise & Review job is in progress/).length).toBe(1)
+    })
+
+    expect(within(finaliseSection).queryByRole('button', { name: '← Previous' })).toBeNull()
+    expect(within(finaliseSection).queryByRole('button', { name: 'Next →' })).toBeNull()
+    // Next states an unrelated, always-true fact — never a dead control.
+    // Unlike Provision/Configure above, Finalise & Review genuinely has no
+    // next step, job or no job, so this fallback is never a lie.
+    expect(within(finaliseSection).getByText('This is the last step.')).toBeTruthy()
+    // View live names its own unavailability without restating which job —
+    // also never a dead control.
+    expect(screen.getByText('View live — Unavailable until the job finishes.')).toBeTruthy()
+  })
+})
+
+// umbrella #432 G6: the Review panel used to keep claiming "No teardown,
+// switch, or delete has run yet in this session." for as long as a
+// teardown was genuinely in flight — those four facts only populate on a
+// TERMINAL outcome, so the false "nothing has run" claim persisted for the
+// entire in-flight window. Fixed by reading FinaliseStage's own `busy` —
+// the SAME fact it already reports upward via onBusyChange to drive
+// Previous/Next/View live/the rail — not a second, independently-computed
+// answer (the exact mistake §F(a) already spent three rounds fixing).
+describe('umbrella #432 G6: the Review panel does not contradict an in-flight teardown', () => {
+  it('says a teardown is running instead of claiming nothing has run yet', async () => {
+    mkFetch({
+      workload: workload({ lifecycle: 'operate' }),
+      catalog: [catalogEntry({ lifecycle: 'active' })],
+    })
+    renderDetail()
+    await findRail()
+    const finaliseSection = await selectStep('Finalise & Review')
+
+    expect(
+      within(finaliseSection).getByText('No teardown, switch, or delete has run yet in this session.'),
+    ).toBeTruthy()
+
+    fireEvent.click(within(finaliseSection).getByRole('button', { name: '⏏ Teardown' }))
+    fireEvent.change(within(finaliseSection).getByPlaceholderText(REASON_PLACEHOLDER), {
+      target: { value: 'decommission' },
+    })
+    fireEvent.click(within(finaliseSection).getByRole('button', { name: 'Confirm teardown' }))
+
+    await within(finaliseSection).findByText('A teardown is in progress.')
+    expect(
+      within(finaliseSection).queryByText('No teardown, switch, or delete has run yet in this session.'),
+    ).toBeNull()
+  })
+})
+
 // ---- cross-stage suppression: the architectural risk this page takes on
 
 describe('a job in flight suppresses navigation everywhere, not just its own stage', () => {
@@ -1193,7 +1404,10 @@ describe('the "View live" setup exit', () => {
     await waitFor(() => {
       expect(screen.queryByRole('link', { name: 'View live' })).toBeNull()
       expect(screen.queryByRole('button', { name: 'View live' })).toBeNull()
-      expect(screen.getByText(/View live — A Provision job is in progress/)).toBeTruthy()
+      // umbrella #432 G3 (gate round 2, finding A2): View live states its
+      // own affordance's unavailability, not which job — the rail (still
+      // showing "A Provision job is in progress.") already said that.
+      expect(screen.getByText('View live — Unavailable until the job finishes.')).toBeTruthy()
     })
 
     await within(provisionSection).findByText(/job #501/)

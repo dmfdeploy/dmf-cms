@@ -117,6 +117,7 @@ describe("WorkloadSetup's own job-lock contract, isolated from any stage's mutat
     // No await, no waitFor: this assertion runs on the exact render produced
     // by the click above.
     expect(within(rail).queryByRole('button', { name: 'Design' })).toBeNull()
-    expect(within(rail).getAllByText(/A Configure job is in progress — wait for its outcome\./).length).toBeGreaterThan(0)
+    // umbrella #432 G2: wording-only — the imperative tail is gone.
+    expect(within(rail).getAllByText(/A Configure job is in progress\./).length).toBeGreaterThan(0)
   })
 })

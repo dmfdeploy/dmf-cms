@@ -349,9 +349,8 @@ export default function LifecycleStrip({
   runningReadout: { running: number; total: number; trustworthy: boolean }
   onSelect: (step: FlowStepId) => void
 }) {
-  const jobReason = jobOwnerLabel
-    ? `A ${jobOwnerLabel} job is in progress — wait for its outcome.`
-    : ''
+  // umbrella #432 G2: states the fact; the operator is never instructed.
+  const jobReason = jobOwnerLabel ? `A ${jobOwnerLabel} job is in progress.` : ''
 
   return (
     <nav aria-label="Media workload lifecycle" className="flex flex-nowrap items-center gap-2">

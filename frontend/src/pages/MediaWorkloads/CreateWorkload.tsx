@@ -332,7 +332,6 @@ export default function CreateWorkload() {
         number={index + 1}
         label={FLOW_STEP_LABELS[stepId]}
         state={flow.steps[stepId]}
-        isCurrentPosition={stepId === flow.current}
         lockedReason={LOCKED_REASON[stepId]}
         canPrevious={prevStep !== null}
         canNext={nextStep !== null}
@@ -465,6 +464,17 @@ function IdentityStep({
           value={studioName}
           onChange={(e) => onNameChange(e.target.value)}
         />
+        {/* umbrella #432 §G (gate round 2, finding B2): this name is never
+            recorded anywhere — see the amber note below — it only DERIVES
+            the field beneath it (draftWorkload.ts's deriveSlug, live as you
+            type unless the field below has been hand-edited). Stated here
+            so that derivation is an explained outcome, not a surprise —
+            the un-mangling of the derived identifier back into a display
+            name is a backend gap, deferred to dmfdeploy/dmfdeploy#436. */}
+        <p className="mt-1 text-xs text-muted">
+          Used to derive the workload&apos;s identifier — &apos;UI Review Studio&apos; becomes
+          &apos;ui-review-studio&apos;.
+        </p>
 
         <label htmlFor="workload-slug" className="mt-3 block text-xs uppercase tracking-wide text-muted">
           Workload identity
@@ -490,9 +500,16 @@ function IdentityStep({
           </p>
         )}
 
+        {/* umbrella #432 §G (gate round 2, finding B2): "nothing about it is
+            recorded anywhere until then" overclaimed — handleProvisionConfirm
+            sends only `trimmedSlug` to the deploy mutation (`workload:
+            trimmedSlug`, no name field), so the studio name is discarded on
+            Provision too, not merely on an early refresh. Corrected to say
+            what actually gets recorded. */}
         <p className="mt-3 text-xs text-amber-200/80">
           This draft lives only in this browser tab until Provision runs — refreshing or closing
-          the tab before then loses it, and nothing about it is recorded anywhere until then.
+          the tab before then loses it. Provision records the workload identifier only; the
+          studio name above is never stored anywhere.
         </p>
       </div>
       <div className="flex items-center justify-between gap-3 border-t border-white/10 px-4 py-3 text-xs">

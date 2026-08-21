@@ -249,7 +249,9 @@ export default function WorkloadMaterializing({
         <ViewLiveExit
           slug={slug}
           jobInFlight={jobInFlight}
-          jobReasonText="The launch job is in progress — wait for its outcome."
+          // umbrella #432 G2: states the fact; the operator is never
+          // instructed.
+          jobReasonText="The launch job is in progress."
         />
       </div>
 

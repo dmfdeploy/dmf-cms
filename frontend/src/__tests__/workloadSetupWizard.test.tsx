@@ -231,15 +231,23 @@ describe('mount -> pending -> membership change -> unwedge (Acceptance Criterion
       expect(within(rail()).queryByRole('button', { name: 'Design' })).toBeNull()
       expect(within(rail()).queryByRole('button', { name: 'Finalise & Review' })).toBeNull()
     })
-    expect(within(rail()).getAllByText(/A Configure job is in progress — wait for its outcome\./).length).toBeGreaterThan(0)
+    // umbrella #432 G2: the rail's own note dropped the imperative tail —
+    // wording-only, the rest of this test's shape is unchanged.
+    expect(within(rail()).getAllByText(/A Configure job is in progress\./).length).toBeGreaterThan(0)
     expect(within(configureSection).queryByRole('button', { name: '← Previous' })).toBeNull()
     expect(within(configureSection).queryByRole('button', { name: 'Next →' })).toBeNull()
-    expect(within(configureSection).getAllByText(/A Configure job is in progress/).length).toBeGreaterThan(0)
+    // umbrella #432 G3 (gate round 2, finding A2): Previous/Next used to
+    // both restate the rail's own sentence here — now they go quiet (no
+    // dead control either way: the rail directly above already named the
+    // reason, and repeating it a second/third time was the defect).
+    expect(within(configureSection).queryByText(/A Configure job is in progress/)).toBeNull()
     // dmfdeploy#414: the setup exit (WorkloadSetup.tsx's ViewLiveExit) is
     // also inert while the job runs — it obeys the same job-navigation lock
     // every other seam here does.
     expect(screen.queryByRole('link', { name: 'View live' })).toBeNull()
-    expect(screen.getByText(/View live — A Configure job is in progress/)).toBeTruthy()
+    // umbrella #432 G3: View live states its own affordance's
+    // unavailability, not which job — the rail already said that.
+    expect(screen.getByText('View live — Unavailable until the job finishes.')).toBeTruthy()
 
     // 4. CHANGE MEMBERSHIP through a GENUINE query invalidation — the same
     // path the 15s poll takes, not a hand-forced rerender. viewer-1 (the

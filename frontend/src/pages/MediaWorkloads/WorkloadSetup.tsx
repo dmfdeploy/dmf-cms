@@ -634,21 +634,37 @@ function WorkloadWizard({
   const isLastFlowStep = activeIndex === FLOW_STEPS.length - 1
 
   const jobOwnerLabel = jobOwner ? STEP_LABEL[jobOwner] : null
-  const jobReasonText = jobOwnerLabel
-    ? `A ${jobOwnerLabel} job is in progress — wait for its outcome.`
-    : ''
+  // umbrella #432 G3 (gate round 2, finding A2): LifecycleStrip (mounted in
+  // the header slot above via buildHeaderSlotRail below, from this SAME
+  // jobOwnerLabel) is the ONE place on this screen that states "A
+  // {jobOwnerLabel} job is in progress." — for every job owner, not only
+  // Finalise & Review. The first pass here fixed only the Finalise case (a
+  // live-measured teardown showed the sentence FOUR times: rail, Previous,
+  // Next, View live) and left Provision/Configure at THREE copies each
+  // (rail, Next, View live) — worse than what shipped, since an outsider
+  // walking the demo reaches Provision and Configure before Finalise. Same
+  // principle applied uniformly now: Previous and Next state no reason
+  // beyond the rail's own while a job is in flight, so both go quiet —
+  // except Next on Finalise & Review, which has an unconditionally true
+  // structural fact to state instead ("This is the last step.", true
+  // whether or not anything is running there). View live names only its
+  // OWN affordance's unavailability, for every job owner — never which job,
+  // which the rail already said once.
   const previousReason = jobInFlight
-    ? jobReasonText
+    ? ''
     : prevStep === null
       ? 'This is the first step.'
       : 'This step is locked.'
   const nextReason = jobInFlight
-    ? jobReasonText
+    ? isLastFlowStep
+      ? 'This is the last step.'
+      : ''
     : nextStep === null
       ? isLastFlowStep
         ? 'This is the last step.'
         : 'There is no next step to configure. Finalise & Review stays reachable at any time from the steps above.'
       : 'This step is locked.'
+  const viewLiveReasonText = jobOwnerLabel ? 'Unavailable until the job finishes.' : ''
 
   const selectStep = (step: FlowStepId) => {
     if (jobInFlight || steps[step] === 'locked') return
@@ -783,7 +799,7 @@ function WorkloadWizard({
           {badge.label}
           {workload.health === 'degraded' ? ' · degraded' : ''}
         </span>
-        <ViewLiveExit slug={workload.slug} jobInFlight={jobInFlight} jobReasonText={jobReasonText} />
+        <ViewLiveExit slug={workload.slug} jobInFlight={jobInFlight} jobReasonText={viewLiveReasonText} />
       </div>
 
       {/* The rail itself now lives in the header slot (Topbar), registered
@@ -846,7 +862,6 @@ function WorkloadWizard({
         // comment above for why the rail a few lines below deliberately
         // does NOT get the same treatment.
         state={displaySteps[activeStep]}
-        isCurrentPosition={activeStep === current}
         lockedReason={LOCKED_REASON[activeStep]}
         canPrevious={canPrevious}
         canNext={canNext}

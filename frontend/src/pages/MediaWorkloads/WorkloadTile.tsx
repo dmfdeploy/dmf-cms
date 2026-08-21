@@ -104,9 +104,14 @@ export default function WorkloadTile({
           >
             {instance.observed_state}
           </span>
-          <span className="text-xs text-muted">
-            node {instance.placement.node ?? '—'}
-          </span>
+          {/* umbrella #432 G7: an em-dash placeholder here read as a
+              rendering fault rather than information — NetBox genuinely has
+              no device/VM assigned to this service yet, which is honestly
+              conveyed by omitting the field entirely, not by printing a
+              glyph standing in for it. */}
+          {instance.placement.node && (
+            <span className="text-xs text-muted">node {instance.placement.node}</span>
+          )}
         </div>
 
         <div className="flex items-center gap-2 text-xs text-muted">

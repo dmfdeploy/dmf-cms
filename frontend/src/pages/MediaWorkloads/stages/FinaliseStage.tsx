@@ -188,11 +188,12 @@ export default function FinaliseStage({
   // (FinaliseStage.tsx:104-107 pre-fix). No pruning effect: a departed key's
   // track value is simply never read again.
   const activeTrack = (t: EntryTrack | undefined) => t != null && (t.jobId !== null || t.opId !== null)
-  const busy =
-    teardownMutation.isPending ||
-    functionKeys.some((key) => activeTrack(track[key])) ||
-    purgeMutation.isPending ||
-    purgeOpId !== null
+  // umbrella #432 G6: split out so the Review panel below can name WHICH of
+  // the two is running, using the exact same facts `busy` already OR's
+  // together — not a second, independently-computed answer.
+  const teardownBusy = teardownMutation.isPending || functionKeys.some((key) => activeTrack(track[key]))
+  const purgeBusy = purgeMutation.isPending || purgeOpId !== null
+  const busy = teardownBusy || purgeBusy
   useEffect(() => onBusyChange(busy), [busy, onBusyChange])
 
   // umbrella #347: once the tracked purge operation reaches a REAL terminal
@@ -398,7 +399,24 @@ export default function FinaliseStage({
 
         <div className="border-t border-white/5 pt-3">
           <h3 className="text-xs uppercase tracking-wide text-muted">Review</h3>
-          {!lastJob && !lastSwitchResult && !purgeReview && !lastOpOutcome ? (
+          {/* umbrella #432 G6: this used to claim nothing had run whenever
+              lastJob/lastSwitchResult/purgeReview/lastOpOutcome were all
+              still empty — true right up until a teardown or delete is
+              ARMED AND CONFIRMED, at which point it stays empty for as long
+              as the job is in flight (those four only populate on a
+              terminal outcome), so the panel kept asserting silence while
+              one was genuinely running. `busy` is the SAME fact
+              onBusyChange already reports to the rest of the screen above
+              (Previous/Next/View live/the rail), not a second answer
+              computed here. */}
+          {busy ? (
+            <p className="mt-1 text-muted">
+              {/* umbrella #432 G2 ruling: bare "is in progress" — every
+                  other string in this sweep uses that exact form; "currently
+                  in progress" would be the one variant. */}
+              {purgeBusy ? 'A delete is in progress.' : 'A teardown is in progress.'}
+            </p>
+          ) : !lastJob && !lastSwitchResult && !purgeReview && !lastOpOutcome ? (
             <p className="mt-1 text-muted">No teardown, switch, or delete has run yet in this session.</p>
           ) : (
             <div className="mt-1 space-y-2">
