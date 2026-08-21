@@ -918,6 +918,42 @@ describe('Finalise & Review: teardown click path', () => {
     expect(JSON.parse(teardown[0].init?.body as string)).toEqual({ reason: 'decommission' })
   })
 
+  // umbrella #432, FIX ROUND (operator: "a large friendly message is
+  // missing for teardown, that it takes a while and so on"). ADDITIVE —
+  // the pre-existing job-progress line ("job #502", from JobStatusLine)
+  // must still render alongside the new loud layer, not in its place.
+  it('shows the loud in-progress message and both links once the teardown job is in flight', async () => {
+    mkFetch({
+      workload: workload({ lifecycle: 'operate' }),
+      catalog: [catalogEntry({ lifecycle: 'active' })],
+    })
+    renderDetail()
+    await findRail()
+    const finaliseSection = await selectStep('Finalise & Review')
+    fireEvent.click(within(finaliseSection).getByRole('button', { name: '⏏ Teardown' }))
+    fireEvent.change(within(finaliseSection).getByPlaceholderText(REASON_PLACEHOLDER), {
+      target: { value: 'decommission' },
+    })
+    fireEvent.click(within(finaliseSection).getByRole('button', { name: 'Confirm teardown' }))
+
+    const lead = await within(finaliseSection).findByText(/The automation is running/)
+    expect(lead.className).toMatch(/text-lg/)
+    expect(lead.textContent).toMatch(/typically takes/)
+    expect(lead.textContent).not.toMatch(/\bwill take\b/)
+
+    const workspace = within(finaliseSection).getByRole('link', { name: 'Workspace' })
+    expect(workspace.getAttribute('href')).toBe('/')
+    const mediaWorkloads = within(finaliseSection).getByRole('link', { name: 'Media Workloads' })
+    expect(mediaWorkloads.getAttribute('href')).toBe('/media-workloads')
+    // States a fact; never instructs.
+    const surroundingText = workspace.closest('p')?.textContent ?? ''
+    expect(surroundingText).toMatch(/shows up on/)
+    expect(surroundingText).not.toMatch(/watch/i)
+
+    // The pre-existing, quiet job-progress line is untouched, alongside it.
+    expect(await within(finaliseSection).findByText(/job #502/)).toBeTruthy()
+  })
+
   it('never renders Teardown for an entry that is not currently deployed', async () => {
     mkFetch({
       workload: workload({ lifecycle: 'operate' }),

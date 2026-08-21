@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
+import { Link } from 'react-router-dom'
 import { useQueryClient } from '@tanstack/react-query'
 import { Trash2 } from 'lucide-react'
 import {
@@ -11,6 +12,7 @@ import {
 } from '../../../api/hooks'
 import { useActivityStore } from '../../../store/activity'
 import ReasonConfirm from '../../../components/ReasonConfirm'
+import AutomationInProgressNotice from '../../../components/AutomationInProgressNotice'
 import type { CatalogEntry, MediaWorkload, Operation, SwitchSourceResult, UserIdentity } from '../../../api/types'
 import type { StageActionId, StageState } from '../../../lib/workloadLifecycle'
 import StageCard from './StageCard'
@@ -600,6 +602,30 @@ function FinaliseEntry({
         </div>
       )}
 
+      {/* umbrella #432, FIX ROUND (operator: "a large friendly message is
+          missing for teardown, that it takes a while and so on"). The
+          provision path got this layer (WorkloadMaterializing.tsx); this
+          half of that order was scoped to the deploy-specific page and
+          teardown — which renders here, inline in this same stage card,
+          not on a separate page — never got it. Same shared visual
+          treatment (AutomationInProgressNotice), own wording: a teardown on
+          this environment ran two to three minutes, faster than a
+          provision, so it does not borrow that duration. */}
+      {inFlight && (
+        <div className="mt-2">
+          <AutomationInProgressNotice lead="The automation is running — tearing down like this typically takes two to three minutes.">
+            It shows up on{' '}
+            <Link to="/" className="text-accent hover:underline">
+              Workspace
+            </Link>{' '}
+            while it runs, and reflects in{' '}
+            <Link to="/media-workloads" className="text-accent hover:underline">
+              Media Workloads
+            </Link>{' '}
+            once it finishes.
+          </AutomationInProgressNotice>
+        </div>
+      )}
       {track.opId != null && (
         <div className="mt-2">
           <OperationStatusLine
