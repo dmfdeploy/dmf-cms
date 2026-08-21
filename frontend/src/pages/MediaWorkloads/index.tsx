@@ -275,7 +275,21 @@ export default function MediaWorkloads() {
                 ? 'Cannot confirm there are no Media Function instances — the source of truth is unreachable.'
                 : cannotClaimNone
                 ? INCOMPLETE_INVALID_TAGS_COPY
-                : 'No Media Function instances in your scope.'}
+                : // umbrella #432 G4: this is the genuinely-empty case — the
+                  // read succeeded and nothing is wrong, so unlike the three
+                  // branches above it is not reporting a claim (Standing
+                  // Copy Doctrine: inviting register, nothing at stake).
+                  // Rewritten in this page's own vocabulary (this is the
+                  // Workloads page — "Media Function" names a distinct,
+                  // narrower concept under ADR-0046) and off "scope", which
+                  // is console jargon the operator never typed. Says what
+                  // this space is for rather than instructing a next step —
+                  // "Create media workload" already sits in the header
+                  // above, unconditionally, so naming it again here would
+                  // be rule 2's banned restatement of an adjacent control.
+                  // One sentence, active voice, per the ruling: "once
+                  // created" left the actor unstated.
+                  "No media workloads yet — they'll appear here once you create one."}
             </div>
           ) : (
             <div className="mt-4 grid grid-cols-1 gap-4 sm:grid-cols-2 xl:grid-cols-3">

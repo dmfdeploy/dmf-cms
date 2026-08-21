@@ -331,7 +331,7 @@ describe('the full journey: list entry, create, materialising, old /operate, old
     )
 
     // 1. LIST ENTRY — nothing recorded yet, "Create media workload" reachable.
-    await screen.findByText('No Media Function instances in your scope.')
+    await screen.findByText("No media workloads yet — they'll appear here once you create one.")
     fireEvent.click(screen.getByRole('link', { name: 'Create media workload' }))
     expect(screen.getByTestId('location').textContent).toBe('/media-workloads/new')
 

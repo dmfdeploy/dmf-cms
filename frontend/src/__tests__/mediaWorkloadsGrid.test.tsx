@@ -1106,7 +1106,7 @@ describe('"Create media workload" entry point (umbrella #285 addendum)', () => {
 
     // Waits for the grouped fetch to resolve (empty-scope designed state)
     // before asserting, so the link is checked in its settled render.
-    await screen.findByText('No Media Function instances in your scope.')
+    await screen.findByText("No media workloads yet — they'll appear here once you create one.")
     const link = screen.getByRole('link', { name: 'Create media workload' }) as HTMLAnchorElement
     expect(link.getAttribute('href')).toBe('/media-workloads/new')
   })
@@ -1217,7 +1217,7 @@ describe('degraded-read honesty (hard gate 1, umbrella #385)', () => {
         'Cannot confirm there are no Media Function instances — the source of truth is unreachable.',
       ),
     ).toBeTruthy()
-    expect(screen.queryByText('No Media Function instances in your scope.')).toBeNull()
+    expect(screen.queryByText("No media workloads yet — they'll appear here once you create one.")).toBeNull()
 
     // The banner speaks plainly (Art. 8) — never the bare reason token as
     // the visible explanation.
@@ -1261,7 +1261,7 @@ describe('degraded-read honesty (hard gate 1, umbrella #385)', () => {
     expect(
       await screen.findByText(/This list is incomplete — every recorded instance has a conflicting workload assignment/),
     ).toBeTruthy()
-    expect(screen.queryByText('No Media Function instances in your scope.')).toBeNull()
+    expect(screen.queryByText("No media workloads yet — they'll appear here once you create one.")).toBeNull()
     // NetBox WAS reachable here — the unreachable-specific copy must not
     // appear, or the operator is pointed at the wrong cause entirely.
     expect(screen.queryByText(/source of truth is unreachable/)).toBeNull()
@@ -1308,7 +1308,7 @@ describe('degraded-read honesty (hard gate 1, umbrella #385)', () => {
     // REAL timers, which never advance here and would hang — see this
     // file's other describes for the same discipline).
     await settle()
-    expect(screen.getByText('No Media Function instances in your scope.')).toBeTruthy()
+    expect(screen.getByText("No media workloads yet — they'll appear here once you create one.")).toBeTruthy()
 
     // Advance past the 15s poll interval so react-query's background
     // refetch fires and rejects, while the old (empty, non-degraded) data
@@ -1320,7 +1320,7 @@ describe('degraded-read honesty (hard gate 1, umbrella #385)', () => {
         'Cannot confirm there are no Media Function instances — the last read attempt failed. Retrying automatically.',
       ),
     ).toBeTruthy()
-    expect(screen.queryByText('No Media Function instances in your scope.')).toBeNull()
+    expect(screen.queryByText("No media workloads yet — they'll appear here once you create one.")).toBeNull()
   })
 })
 

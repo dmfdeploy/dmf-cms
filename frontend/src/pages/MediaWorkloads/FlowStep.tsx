@@ -33,6 +33,12 @@ export const InsideFlowStep = createContext(false)
  * renders whatever it is told, as a button when enabled and as inert text
  * naming the reason when not (never a disabled button — umbrella #285's
  * "no dead controls" carries forward unchanged).
+ *
+ * umbrella #432 G1: this used to also take an `isCurrentPosition` prop and
+ * render "The workload is here now" beside the header — boilerplate, since
+ * the state badge to its right already reads "Now" whenever that is true.
+ * Removed outright rather than replaced with different wording; the badge
+ * alone carries the fact.
  */
 
 const STATE_LABEL: Record<FlowStepState, string> = {
@@ -69,13 +75,6 @@ const FlowStep = forwardRef<
     /** Verbatim EBU stage name — never abbreviated or re-worded. */
     label: string
     state: FlowStepState
-    /**
-     * This step is also the workload's backend-derived POSITION — shown as
-     * a distinct "Current position" marker, never conflated with selection
-     * (this panel IS the current selection by construction; `isCurrentPosition`
-     * says whether it also happens to be where the workload actually sits).
-     */
-    isCurrentPosition: boolean
     /** Why this step cannot be worked yet — see the file docstring's guard. */
     lockedReason?: string
     canPrevious: boolean
@@ -94,7 +93,6 @@ const FlowStep = forwardRef<
     number,
     label,
     state,
-    isCurrentPosition,
     lockedReason,
     canPrevious,
     canNext,
@@ -128,9 +126,6 @@ const FlowStep = forwardRef<
           </span>
           <div className="min-w-0">
             <h2 className="text-base font-semibold">{label}</h2>
-            {isCurrentPosition && (
-              <div className="text-xs text-muted">The workload is here now</div>
-            )}
           </div>
         </div>
         <span className={`badge text-xs ${STATE_BADGE_CLASS[state]}`}>{STATE_LABEL[state]}</span>

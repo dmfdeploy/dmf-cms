@@ -610,6 +610,36 @@ describe('studio name → shown workload identity', () => {
       screen.getByText(/refreshing or closing the tab before then loses it/),
     ).toBeTruthy()
   })
+
+  // umbrella #432 §G (gate round 2, finding B2): the name typed here is
+  // collected as though it were durable identity ("Studio identity",
+  // "Studio name", a draft-loss warning implying the whole draft becomes
+  // recorded on Provision) but is silently discarded — only the derived
+  // slug below it is ever sent (Provision: the deploy POST tests below pin
+  // that the body carries no name field at all). Both fixes are stated
+  // near the name field itself, before the operator ever reaches Provision.
+  it('explains near the name field that only the derived identifier is recorded, with a concrete example', async () => {
+    mkFetch()
+    renderCreate()
+    await screen.findByRole('heading', { name: 'Identity' })
+    expect(
+      screen.getByText("Used to derive the workload's identifier — 'UI Review Studio' becomes 'ui-review-studio'."),
+    ).toBeTruthy()
+  })
+
+  it('does not overclaim that the draft becomes recorded on Provision — only the identifier does, never the name', async () => {
+    mkFetch()
+    renderCreate()
+    await screen.findByRole('heading', { name: 'Identity' })
+    // THE discriminating assertion: the old text claimed "nothing about it
+    // is recorded anywhere until then" (until Provision runs) — implying
+    // the whole draft, name included, becomes recorded at that point. It
+    // never does; only the slug is ever sent.
+    expect(screen.queryByText(/nothing about it is recorded anywhere/)).toBeNull()
+    expect(
+      screen.getByText(/Provision records the workload identifier only; the studio name above is never stored anywhere\./),
+    ).toBeTruthy()
+  })
 })
 
 // ---- the deploy POST: the actual persistence seam -----------------------

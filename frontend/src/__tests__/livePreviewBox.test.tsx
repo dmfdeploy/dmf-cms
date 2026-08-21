@@ -118,3 +118,36 @@ describe('WorkloadTile live preview — a settled failed poll never claims live'
     expect(screen.queryByText('Live · sidecar preview')).toBeNull()
   })
 })
+
+// umbrella #432 G7: `node —` (the em-dash placeholder) used to render on
+// every tile whose instance had no NetBox device/VM assigned yet — read as
+// a rendering fault rather than as information. `active={false}` disables
+// the live-preview query entirely (canPoll requires it), so these render
+// with no fetch mock at all — nothing here is about the preview.
+describe('WorkloadTile node placement — no placeholder glyph for an absent one', () => {
+  function renderTileWithNode(node: string | null) {
+    const queryClient = new QueryClient({ defaultOptions: { queries: { retry: false } } })
+    return render(
+      <QueryClientProvider client={queryClient}>
+        <WorkloadTile
+          instance={instance({ placement: { node, ports: [], protocol: null } })}
+          displayName="Test"
+          active={false}
+          motionAllowed={false}
+          onOpen={() => {}}
+        />
+      </QueryClientProvider>,
+    )
+  }
+
+  it('omits the node field entirely when NetBox has no device/VM assigned — never "node —"', () => {
+    renderTileWithNode(null)
+    expect(screen.queryByText('node —')).toBeNull()
+    expect(screen.queryByText(/node/)).toBeNull()
+  })
+
+  it('still names the real node when NetBox has one', () => {
+    renderTileWithNode('node-7')
+    expect(screen.getByText('node node-7')).toBeTruthy()
+  })
+})
