@@ -106,6 +106,20 @@ describe('ReasonConfirm popover type scale (umbrella #432, FIX ROUND)', () => {
     const textarea = screen.getByPlaceholderText(/Reason \(required/)
     expect(textarea.className.split(/\s+/)).not.toContain('field-xs')
   })
+
+  // umbrella #432, FIX ROUND (0.28.0 walk finding): min-w-80 is a floor, not
+  // a ceiling — measured live at 1988px wide with a 1954px unwrapped
+  // description line, because the panel is a bare block inside a wide stage
+  // row with nothing else to constrain it. THE HONEST LIMIT OF THIS TEST:
+  // jsdom cannot measure rendered width, so this pins the CLASS CONTRACT
+  // (the panel carries a max-width utility) — it cannot pin, and does not
+  // claim to pin, that the rendered panel is actually narrow. The real
+  // verification for that is the walk, not this suite.
+  it('carries a max-width utility, capping the floor min-w-80 leaves open', () => {
+    render(<ReasonConfirm title="T" description="D" onConfirm={vi.fn()} onCancel={() => {}} />)
+    const panel = screen.getByText('T').parentElement as HTMLElement
+    expect(panel.className).toMatch(/\bmax-w-sm\b/)
+  })
 })
 
 // umbrella #432 §C — the shared form-field primitive (components/FormField.tsx).
