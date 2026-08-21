@@ -222,15 +222,19 @@ function InstanceSwitchControl({
             source AND another source to go to). Anything else renders as
             the explanatory line below instead.
 
-            umbrella #432 §D2 (judgement call, left as btn-secondary, not
-            btn-danger-outline): switching source is DISRUPTIVE — it
-            re-points a live signal path, so it belongs in ProvisionStage's
+            umbrella #432 §D2 (judgement call, left as btn-secondary, not a
+            danger treatment of any kind): switching source is DISRUPTIVE —
+            it re-points a live signal path, so it belongs in ProvisionStage's
             own ruling as "never a promotion candidate" alongside Teardown
             — but it is REVERSIBLE (switching back is the same action run
             again, no state is destroyed) where Teardown and Delete
             permanently both destroy something. The danger axis this order
-            adds is for actions with no clean way back; this one has one,
-            so it stays the same weight Confirm placement/Use this
+            adds (now filled btn-danger for BOTH Teardown and Delete
+            permanently — §D2's own reversal, once red-on-near-black
+            OUTLINE turned out to read as barely-there regardless of what
+            the WCAG formula measured — see FinaliseStage.tsx's own comment)
+            is for actions with no clean way back; this one has one, so it
+            stays the same weight Confirm placement/Use this
             template/Previous already use, not a danger tier. */}
         {!arming && allowed && isObservedFresh && otherSources.length > 0 && (
           <button

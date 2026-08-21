@@ -535,14 +535,29 @@ function FinaliseEntry({
           <div className="font-medium text-text">{entry.display_name}</div>
         </div>
         {/* Never a disabled button — see ProvisionStage's identical note.
-            umbrella #432 §D2: btn-danger-outline, not btn-secondary — this
-            IS destructive (it tears down a running instance), just a lower
-            danger tier than "Delete permanently" below (btn-danger,
-            filled): teardown's workload entry survives and can be
-            re-provisioned, permanent delete has no rollback path at all.
-            It was rendering identically to "← Previous" before this. */}
+            umbrella #432 §D2 REVERSAL (operator, live on 0.27.1: "the
+            teardown button is still not very readable with the nearblack
+            and red combination"). btn-danger-outline (a red-on-near-black
+            OUTLINE, 6.65:1 by the WCAG formula) measured as compliant but
+            read as barely-there — WCAG 2.x contrast is luminance-only, and
+            red carries the smallest luminance weight of the three channels
+            (0.2126 vs green's 0.7152), so the edge a human perceives there
+            is almost purely chromatic, a property the formula does not
+            model. Reinstating the operator's original call ("keep colour
+            design same as the permanently delete"): filled btn-danger, same
+            as Delete permanently below.
+
+            THE TWO-TIER DISTINCTION MOVES, IT DOESN'T DISAPPEAR: colour now
+            carries ONE fact for both these controls (this destroys
+            something), and FRICTION carries reversibility — this control
+            stays reason-only; Delete permanently below is the one gated on
+            typing the exact slug, because it alone has no rollback path.
+            Two channels, one job each, rather than one subtle colour
+            difference trying to encode both (which is also what
+            btn-danger-outline vs btn-secondary encoded no better before
+            §D2 — visually identical to "← Previous"). */}
         {allowed && !inFlight && entry.lifecycle === 'active' && !arming && (
-          <button className="btn btn-danger-outline btn-sm shrink-0" onClick={() => setArming(true)}>
+          <button className="btn btn-danger btn-sm shrink-0" onClick={() => setArming(true)}>
             ⏏ Teardown
           </button>
         )}
