@@ -677,7 +677,7 @@ describe('locked steps are always prose in the rail, never a control', () => {
     expect(strip2.getByRole('button', { name: 'Finalise & Review' })).toBeTruthy()
     const finaliseSection = await selectStep('Finalise & Review')
     expect(within(finaliseSection).queryByRole('button', { name: 'Clear for deployment' })).toBeNull()
-    expect(await within(finaliseSection).findByRole('button', { name: '🗑 Delete permanently' })).toBeTruthy()
+    expect(await within(finaliseSection).findByRole('button', { name: 'Delete permanently' })).toBeTruthy()
   })
 
   it('suppresses the clear control while a job is in flight, like every other action', async () => {
@@ -1756,7 +1756,7 @@ describe('delete-permanently gate: completeness (umbrella dmfdeploy/dmfdeploy#37
     // FIX ROUND P2-2: portaled to document.body — see the identical note
     // above ("locked steps are always prose in the rail...").
     expect(screen.getByText(/nothing to tear down/)).toBeTruthy()
-    expect(screen.queryByRole('button', { name: '🗑 Delete permanently' })).toBeNull()
+    expect(screen.queryByRole('button', { name: 'Delete permanently' })).toBeNull()
   })
 
   it('still offers it when the read is fresh, error-free, configured, and not degraded', async () => {
@@ -1767,7 +1767,7 @@ describe('delete-permanently gate: completeness (umbrella dmfdeploy/dmfdeploy#37
     renderDetail()
     await findRail()
     const finaliseSection = await selectStep('Finalise & Review')
-    expect(within(finaliseSection).getByRole('button', { name: '🗑 Delete permanently' })).toBeTruthy()
+    expect(within(finaliseSection).getByRole('button', { name: 'Delete permanently' })).toBeTruthy()
   })
 })
 
@@ -1781,7 +1781,7 @@ describe('delete-permanently gate: authorization (umbrella dmfdeploy/dmfdeploy#3
     const strip = await findRail()
 
     expect(within(strip).queryByRole('button', { name: 'Finalise & Review' })).toBeNull()
-    expect(screen.queryByRole('button', { name: '🗑 Delete permanently' })).toBeNull()
+    expect(screen.queryByRole('button', { name: 'Delete permanently' })).toBeNull()
   })
 
   it('withholds it from an admin viewing as viewer — the EFFECTIVE role gates, not the real one', async () => {
@@ -1793,7 +1793,7 @@ describe('delete-permanently gate: authorization (umbrella dmfdeploy/dmfdeploy#3
     const strip = await findRail()
 
     expect(within(strip).queryByRole('button', { name: 'Finalise & Review' })).toBeNull()
-    expect(screen.queryByRole('button', { name: '🗑 Delete permanently' })).toBeNull()
+    expect(screen.queryByRole('button', { name: 'Delete permanently' })).toBeNull()
   })
 
   it('offers it to operator, engineer, and admin once every other gate passes', async () => {
@@ -1804,7 +1804,7 @@ describe('delete-permanently gate: authorization (umbrella dmfdeploy/dmfdeploy#3
       await findRail()
       const finaliseSection = await selectStep('Finalise & Review')
       expect(
-        within(finaliseSection).getByRole('button', { name: '🗑 Delete permanently' }),
+        within(finaliseSection).getByRole('button', { name: 'Delete permanently' }),
         `role=${role}`,
       ).toBeTruthy()
     }
@@ -1832,7 +1832,7 @@ describe('delete-permanently gate: authorization (umbrella dmfdeploy/dmfdeploy#3
     const queryClient = renderDetail()
     await findRail()
     const finaliseSection = await selectStep('Finalise & Review')
-    await within(finaliseSection).findByRole('button', { name: '🗑 Delete permanently' })
+    await within(finaliseSection).findByRole('button', { name: 'Delete permanently' })
     const meCallsBeforeInvalidate = h.calls.me
 
     // NOW arm the gate, then trigger the same shape useSetViewAs() does:
@@ -1852,14 +1852,14 @@ describe('delete-permanently gate: authorization (umbrella dmfdeploy/dmfdeploy#3
     await waitFor(() =>
       expect(within(rail()).queryByRole('button', { name: 'Finalise & Review' })).toBeNull(),
     )
-    expect(screen.queryByRole('button', { name: '🗑 Delete permanently' })).toBeNull()
+    expect(screen.queryByRole('button', { name: 'Delete permanently' })).toBeNull()
 
     // Release the held read — it throws (meRejectFlag was set before the
     // release). The control must stay withdrawn, never re-arm off the
     // stale-but-still-authorized payload react-query kept around.
     releaseMe?.()
     await waitFor(() => expect(queryClient.getQueryState(['user'])?.fetchStatus).toBe('idle'))
-    expect(screen.queryByRole('button', { name: '🗑 Delete permanently' })).toBeNull()
+    expect(screen.queryByRole('button', { name: 'Delete permanently' })).toBeNull()
   })
 
   // umbrella #378b: the REJECTED fix for the test above was staleTime:
@@ -1913,7 +1913,7 @@ describe('delete-permanently gate: authorization (umbrella dmfdeploy/dmfdeploy#3
     // After navigating: ProvisionStage unmounted (stopped observing),
     // FinaliseStage never subscribes — WorkloadWizard alone.
     expect(userQ?.getObserversCount()).toBe(1)
-    expect(within(finaliseSection).getByRole('button', { name: '🗑 Delete permanently' })).toBeTruthy()
+    expect(within(finaliseSection).getByRole('button', { name: 'Delete permanently' })).toBeTruthy()
     expect(h.calls.me).toBe(1)
   })
 })
@@ -1969,7 +1969,7 @@ describe('Finalise & Review selection survives a background poll (umbrella dmfde
     await findRail()
     const finaliseSection = await selectStep('Finalise & Review')
 
-    fireEvent.click(within(finaliseSection).getByRole('button', { name: '🗑 Delete permanently' }))
+    fireEvent.click(within(finaliseSection).getByRole('button', { name: 'Delete permanently' }))
     fireEvent.change(within(finaliseSection).getByPlaceholderText(REASON_PLACEHOLDER), {
       target: { value: REASON_TEXT },
     })
@@ -2027,6 +2027,6 @@ describe('delete-permanently gate: entity identity (umbrella dmfdeploy/dmfdeploy
     const strip = await findRail()
 
     expect(within(strip).queryByRole('button', { name: 'Finalise & Review' })).toBeNull()
-    expect(screen.queryByRole('button', { name: '🗑 Delete permanently' })).toBeNull()
+    expect(screen.queryByRole('button', { name: 'Delete permanently' })).toBeNull()
   })
 })
