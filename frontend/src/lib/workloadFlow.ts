@@ -514,27 +514,44 @@ export function classifyForwardExit(input: WorkloadLifecycleInput): ForwardExit 
  *                   inventing one here would be exactly the sometimes-false
  *                   success affordance dmfdeploy#412 exists to rule out.
  *
- * "Trusted" reuses the same notion classifyForwardExit and
- * store/headerSlot.ts's TRUST side table already build from
- * (WorkloadLifecycleInput.membersDataTrustworthy) — checked FIRST (Art. 9,
- * unhappy path first), same discipline as classifyForwardExit.
+ * "Trusted" reused classifyForwardExit's and store/headerSlot.ts's TRUST
+ * side table's notion of trust (WorkloadLifecycleInput.membersDataTrustworthy)
+ * until umbrella #432's fix round — checked FIRST (Art. 9, unhappy path
+ * first), same discipline as classifyForwardExit. It now gates on the
+ * DISTINCT `membersDataRetained` instead; see that field's own docstring in
+ * workloadLifecycle.ts for exactly why this classifier alone made that
+ * switch while classifyForwardExit, stageActions, LifecycleStrip and
+ * store/headerSlot.ts's TRUST table all keep reading the stricter
+ * `membersDataTrustworthy`.
  *
  * Deliberately a SEPARATE classifier from classifyForwardExit rather than a
  * reuse of its `ForwardExit` union: that function answers a narrower
  * question scoped to Configure's own exit (and never returns anything for
  * `lifecycle === 'provision'`, which Home must still classify — a fresh
  * record with nothing provisioned yet is exactly the first 'setup' case).
- * Both read the same `WorkloadLifecycleInput` fields with the same
- * trustworthy-first discipline, so they cannot disagree about what the
- * workload actually is, only about which question each answers.
+ * Both read the same `WorkloadLifecycleInput`, so they cannot disagree about
+ * what the workload actually is, only about which question each answers.
  */
 export type HomeState = 'live' | 'setup' | 'unresolved'
 
+/**
+ * umbrella #432 fix round (item 3): gated on `membersDataRetained`, NOT
+ * `membersDataTrustworthy`. The two differ only in whether an in-flight
+ * background poll of an otherwise-unchanged, error-free payload counts —
+ * `membersDataTrustworthy` says no (it fail-closes a mutation gate and a
+ * count claim); `membersDataRetained` says yes (a poll returning identical
+ * data is not a semantic change — UX Constitution §3 hard gate #5 — so
+ * Home's classification of what is already being shown must not flap on
+ * that cadence). A genuine change — an actual error, a degraded payload, an
+ * unconfigured environment, or the backend's own position moving — still
+ * flips this classifier exactly as before, because all of those flip
+ * `membersDataRetained` too.
+ */
 export function classifyHomeState(input: WorkloadLifecycleInput): HomeState {
-  if (!input.membersDataTrustworthy) return 'unresolved'
+  if (!input.membersDataRetained) return 'unresolved'
   if (input.lifecycle === 'operate') return 'live'
   if (input.lifecycle === 'unknown') return 'unresolved'
-  // 'provision' or 'configure': a trustworthy record short of Operate.
+  // 'provision' or 'configure': a retained record short of Operate.
   if (input.anyMemberObservedRunning) return 'unresolved'
   return 'setup'
 }
