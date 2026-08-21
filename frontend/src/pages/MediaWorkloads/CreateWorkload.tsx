@@ -347,6 +347,22 @@ export default function CreateWorkload() {
     // only stepId that can possibly disagree), so Next is primary everywhere
     // except while Provision is actually showing its own offer
     // (provisionBlocked === null — see that value's own comment).
+    //
+    // FIX ROUND (codex gate item 6): this value alone is NOT what keeps a
+    // LOCKED step's Next neutral — it only ever judges catalog state
+    // (provisionBlocked), which has nothing to do with whether Provision
+    // (or Plan/Configure/Finalise — every stepId but 'provision' makes this
+    // unconditionally true) is actually reachable yet. This wizard's own
+    // Next is UNCONDITIONAL on lock state by design (this file's own
+    // docstring: "Design → Finalise & Review is UNCONDITIONAL... never
+    // gated on lock state"), so a locked step's Next still renders — and,
+    // before this fix round, still rendered CYAN whenever this expression
+    // happened to be true (e.g. every step but a blocked Provision; the
+    // catalog merely fetching or failing made even a locked Provision's own
+    // Next cyan). FlowStep.tsx now clamps this to neutral itself whenever
+    // its own `state` is 'locked' (`nextPrimary && !locked`), so this value
+    // does not need — and must not gain — a duplicate lock check: that
+    // would be a second copy of a fact FlowStep already owns via `state`.
     const nextIsPrimary = !(stepId === 'provision' && provisionBlocked === null)
     stepBody = (
       <FlowStep

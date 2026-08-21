@@ -52,6 +52,24 @@ export const InsideFlowStep = createContext(false)
  * action, and either is a regression this component itself has no way to
  * catch: it is handed the answer, not the inputs the answer is judged
  * from.
+ *
+ * FIX ROUND (§D1, codex gate item 6): `nextPrimary` alone is NOT enough —
+ * this component also clamps it to `false` whenever ITS OWN `state` is
+ * `locked`, the same defence-in-depth the paragraph above already applies
+ * to `children`. The bug this closes: CreateWorkload.tsx's draft wizard
+ * navigates PAST a locked Provision unconditionally (no lock gate on
+ * `nextStep` at all — the caller's own docstring calls this out
+ * deliberately), and its `nextIsPrimary` there is judged purely from
+ * catalog state (`provisionBlocked`), which has nothing to do with whether
+ * Provision is actually reachable yet. Caught live: with no template
+ * chosen, a locked Provision's own Next rendered CYAN whenever the catalog
+ * read merely happened to be fetching or failing — an accident of network
+ * timing turning on a promoted-looking control that points at ANOTHER
+ * locked step (Configure, "nothing has been provisioned yet"). Clamping
+ * here means no caller — draft or real wizard alike — has to separately
+ * remember to AND its own primary decision with lock state; `state` is a
+ * prop every caller already has to pass for the children guard, so this
+ * reuses information already at hand rather than asking for a new one.
  */
 
 const STATE_LABEL: Record<FlowStepState, string> = {
@@ -98,7 +116,9 @@ const FlowStep = forwardRef<
      *  (cyan) control — i.e. the mounted step offers no top-level promoted
      *  action of its own. False on Provision (both wizards: it renders its
      *  own primary Deploy/Provision-now offer). See this component's own
-     *  file docstring for the full rule and why there is no default. */
+     *  file docstring for the full rule, why there is no default, AND the
+     *  fix-round clamp: this component ALSO forces Next neutral whenever
+     *  `state` is `locked`, regardless of what's passed here. */
     nextPrimary: boolean
     /** Stated reason when Previous/Next are refused (jobInFlight or no
      *  reachable neighbour) — inert text names it, never a disabled button. */
@@ -175,7 +195,12 @@ const FlowStep = forwardRef<
         {canNext ? (
           <button
             type="button"
-            className={`btn ${nextPrimary ? 'btn-primary' : 'btn-secondary'} btn-sm`}
+            // FIX ROUND (§D1, codex gate item 6): `&& !locked`, not
+            // `nextPrimary` alone — see the file docstring's "FIX ROUND"
+            // paragraph. A locked step is reachable (Next is unconditional,
+            // by design) but never gets to be the one cyan control, because
+            // wherever it points is ALSO locked prose, never a real action.
+            className={`btn ${nextPrimary && !locked ? 'btn-primary' : 'btn-secondary'} btn-sm`}
             onClick={onNext}
           >
             Next →
