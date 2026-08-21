@@ -1,4 +1,4 @@
-import { useState } from 'react'
+import { useEffect, useRef, useState, type FocusEvent } from 'react'
 import { Link, useLocation } from 'react-router-dom'
 import { useAuthStore } from '../store/auth'
 import { useTopbarMessageStore } from '../store/topbarMessage'
@@ -131,6 +131,7 @@ const VIEW_AS_ROLES = ['viewer', 'operator', 'engineer'] as const
 export default function Topbar() {
   const user = useAuthStore((state) => state.user)
   const [menuOpen, setMenuOpen] = useState(false)
+  const menuRef = useRef<HTMLDivElement>(null)
   const setViewAs = useSetViewAs()
   const clearViewAs = useClearViewAs()
   const { pathname } = useLocation()
@@ -138,6 +139,57 @@ export default function Topbar() {
   const transientMessage = useTopbarMessageStore((s) => s.message)
   const slotContent = useHeaderSlotContent()
   const setActionSlotNode = useSetHeaderActionSlotNode()
+
+  // Dismiss the personal menu on an outside click or Escape (umbrella #432
+  // §B) — same pattern as NotificationBell's dropdown for the mousedown
+  // case: a ref-containment check, removed on unmount. Both handlers read
+  // `menuRef.current` fresh AT EVENT TIME (the ref object itself is stable
+  // across renders — only `.current` changes), so they stay correct
+  // regardless of when the wrapper div actually mounts. Before this, the
+  // menu could only be closed by clicking the avatar button a second time.
+  useEffect(() => {
+    const handleClickOutside = (event: MouseEvent) => {
+      if (menuRef.current && !menuRef.current.contains(event.target as Node)) {
+        setMenuOpen(false)
+      }
+    }
+    const handleKeyDown = (event: KeyboardEvent) => {
+      if (event.key === 'Escape') {
+        setMenuOpen(false)
+      }
+    }
+    document.addEventListener('mousedown', handleClickOutside)
+    document.addEventListener('keydown', handleKeyDown)
+    return () => {
+      document.removeEventListener('mousedown', handleClickOutside)
+      document.removeEventListener('keydown', handleKeyDown)
+    }
+  }, [])
+
+  // Keyboard-only dismissal path: a tab out of the panel (or out of the
+  // document entirely, where relatedTarget is null) closes it. Wired as
+  // React's own onBlur prop on the wrapper below, NOT a manual
+  // addEventListener('focusout', …) in a mount-only effect — that first
+  // attempt (fix-round 1) captured `menuRef.current` in a local const at
+  // effect-run time. Topbar renders `null` until the auth store populates
+  // (see the early return below), so on the normal initial-load path the
+  // wrapper div does not exist yet when the `[]`-effect runs: the captured
+  // reference was null, `wrapper?.addEventListener(...)` silently no-opped
+  // via optional chaining, and the effect never re-ran to rebind once the
+  // wrapper actually mounted — focus-out dismissal was dead in production.
+  // React's onBlur IS the bubbling native focusout (React 17+), delegated,
+  // and bound/unbound WITH the element itself, so this bug class cannot
+  // recur here. `event.currentTarget` is the wrapper, read fresh at event
+  // time — never a value captured at some earlier moment. focusout bubbles,
+  // so this also fires when focus merely moves BETWEEN items inside the
+  // panel, hence the containment check on relatedTarget rather than closing
+  // unconditionally.
+  const handleFocusOut = (event: FocusEvent<HTMLDivElement>) => {
+    const next = event.relatedTarget as Node | null
+    if (!next || !event.currentTarget.contains(next)) {
+      setMenuOpen(false)
+    }
+  }
 
   if (!user) return null
 
@@ -239,15 +291,28 @@ export default function Topbar() {
           <NotificationBell />
 
           {/* Avatar — clickable dropdown */}
-          <div className="relative">
+          <div className="relative" ref={menuRef} onBlur={handleFocusOut}>
             <button
               onClick={() => setMenuOpen(!menuOpen)}
+              aria-expanded={menuOpen}
               className={`w-8 h-8 rounded-full flex items-center justify-center text-xs font-bold transition-all hover:ring-2 cursor-pointer ${roleBadgeStyles[role] || 'bg-gray-900/40 text-gray-300'}`}
             >
               {getInitials(user.display_name)}
             </button>
 
             {menuOpen && (
+              // This is a disclosure (identity + a couple of buttons/links), not
+              // a menu — role="menu" is deliberately absent. WAI-ARIA's `menu`
+              // role requires menuitem/menuitemcheckbox/menuitemradio children
+              // (the first child here is a plain identity block) and commits to
+              // a keyboard contract (arrow-key roving tabindex) this panel does
+              // not implement; NotificationBell's dropdown, the pattern this
+              // follows, uses no role either. For the same reason the trigger
+              // button above carries no aria-haspopup at all — WAI-ARIA treats
+              // aria-haspopup="true" as EQUIVALENT to aria-haspopup="menu", so
+              // it would make the exact promise this comment says the panel
+              // doesn't keep. Do not re-add either without also building the
+              // menu keyboard model.
               <div className="absolute right-0 mt-2 w-48 bg-panel border border-border rounded-lg shadow-lg overflow-hidden z-50">
                 <div className="px-4 py-3 border-b border-border">
                   <p className="text-sm font-medium text-text">{user.display_name}</p>
@@ -273,6 +338,7 @@ export default function Topbar() {
                 )}
                 <Link
                   to="/settings"
+                  onClick={() => setMenuOpen(false)}
                   className="block px-4 py-3 text-sm text-text hover:bg-bg transition-colors"
                 >
                   Settings
