@@ -85,4 +85,17 @@ describe('Admin People panel invite flow', () => {
     fireEvent.click(screen.getByText('Close'))
     expect(screen.queryByText(/Expires:/)).toBeNull()
   })
+
+  // umbrella #432 §C — the shared form-field primitive (components/FormField.tsx).
+  // This readOnly field used to carry its own ad-hoc `bg-panel border-panel`
+  // (a border literally the same colour as its own background — invisible
+  // by construction, not just under-contrast).
+  it('renders the readOnly enrollment URL field through the shared .field primitive', async () => {
+    renderAdmin()
+    fireEvent.click(await screen.findByText('+ Invite new user'))
+    const urlField = await screen.findByDisplayValue(
+      'https://auth.dmf.example.com/if/flow/enrollment/?itoken=abc123',
+    )
+    expect(urlField.className.split(/\s+/)).toContain('field')
+  })
 })

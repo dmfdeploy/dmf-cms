@@ -4,6 +4,7 @@ import { useAdminUsers, useAdminGroups, useAdminHealth, useCreatePasskeyInvitati
 import { Users, Bot, Activity } from 'lucide-react'
 import type { AdminUser, PasskeyInvitationResponse } from '@/api/types'
 import { settleQuery } from '@/lib/queryState'
+import { Input } from '@/components/FormField'
 import PageHeading from '@/components/PageHeading'
 import { usePageTitle } from '@/hooks/usePageTitle'
 
@@ -199,11 +200,11 @@ export default function Admin() {
             </div>
             <div className="mt-4">
               <p className="text-sm text-muted mb-2">Or copy the enrollment URL:</p>
-              <input
+              <Input
                 type="text"
                 value={inviteResult.enrollment_url}
                 readOnly
-                className="w-full bg-panel border border-panel rounded px-3 py-2 text-sm font-mono"
+                className="font-mono"
               />
               <p className="text-xs text-muted mt-2">
                 Expires: {new Date(inviteResult.expires).toLocaleString()}

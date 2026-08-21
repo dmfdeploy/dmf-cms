@@ -7,6 +7,7 @@ import { isValidWorkloadSlug } from '../../lib/workloadSlug'
 import { workloadSetupPath } from '../../lib/routes'
 import { APIError } from '../../api/client'
 import ReasonConfirm from '../../components/ReasonConfirm'
+import { Input } from '../../components/FormField'
 import FlowStep from './FlowStep'
 import { useDraftWorkloadStore } from '../../store/draftWorkload'
 import PageHeading from '../../components/PageHeading'
@@ -456,13 +457,19 @@ function IdentityStep({
         <label htmlFor="studio-name" className="block text-xs uppercase tracking-wide text-muted">
           Studio name
         </label>
-        <input
+        <Input
           id="studio-name"
           type="text"
-          className="mt-1 w-full rounded border border-white/10 bg-black/20 p-2 text-sm text-text"
+          className="mt-1 max-w-sm"
           placeholder="e.g. Studio A"
           value={studioName}
           onChange={(e) => onNameChange(e.target.value)}
+          // umbrella #432 §C measured defect: document.activeElement was
+          // BODY on load — nothing was ever focused. This is the wizard's
+          // first field on its first step, so it takes focus once, on
+          // mount, and never again (see FormField.tsx's own docstring for
+          // why that's structurally true rather than a convention to keep).
+          focusOnMount
         />
         {/* umbrella #432 §G (gate round 2, finding B2): this name is never
             recorded anywhere — see the amber note below — it only DERIVES
@@ -483,16 +490,14 @@ function IdentityStep({
             NetBox tag) — shown and editable, never a hidden derivation of the
             name above, which is the Art. 1 failure mode a "friendly name that
             secretly becomes something else" would be. */}
-        <div className="mt-1 flex items-center gap-1">
-          <span className="font-mono text-sm text-muted">workload:</span>
-          <input
-            id="workload-slug"
-            type="text"
-            className="w-full rounded border border-white/10 bg-black/20 p-2 font-mono text-sm text-text"
-            value={slug}
-            onChange={(e) => onSlugChange(e.target.value)}
-          />
-        </div>
+        <Input
+          id="workload-slug"
+          type="text"
+          className="mt-1 max-w-sm font-mono"
+          prefix="workload:"
+          value={slug}
+          onChange={(e) => onSlugChange(e.target.value)}
+        />
         {trimmedSlug !== '' && !slugValid && (
           <p className="mt-1 text-xs text-red-300">
             Only lowercase letters, digits and hyphens are allowed, and it can&apos;t start or end

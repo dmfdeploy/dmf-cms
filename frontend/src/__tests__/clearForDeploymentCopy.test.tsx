@@ -29,4 +29,12 @@ describe('ClearForDeployment confirm panel copy', () => {
     ).toBeTruthy()
     expect(screen.queryByText(/automation lane/i)).toBeNull()
   })
+
+  // umbrella #432 §C — the shared form-field primitive (components/FormField.tsx).
+  it('renders the reason textarea through the shared .field primitive', () => {
+    render(<ClearForDeployment instance="mxl-videotestsrc" onConfirm={vi.fn()} />)
+    fireEvent.click(screen.getByText('Clear for deployment'))
+    const textarea = screen.getByPlaceholderText(/Reason \(required/)
+    expect(textarea.className.split(/\s+/)).toContain('field')
+  })
 })

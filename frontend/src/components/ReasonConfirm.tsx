@@ -1,4 +1,5 @@
 import { useState } from 'react'
+import { Input, Select, Textarea } from './FormField'
 
 /**
  * Armed-confirm + mandatory-reason panel for a consequential write (the C5
@@ -76,8 +77,9 @@ export default function ReasonConfirm({
       )}
       <div className="text-xs font-semibold">{title}</div>
       <p className={`mt-1 text-xs ${danger ? 'text-red-200/80' : 'text-amber-200/80'}`}>{description}</p>
-      <textarea
-        className="mt-2 w-full rounded border border-white/10 bg-black/20 p-1 text-xs text-text"
+      <Textarea
+        density="xs"
+        className="mt-2"
         placeholder="Reason (required, recorded in the audit trail)"
         value={reason}
         onChange={(e) => setReason(e.target.value)}
@@ -89,8 +91,9 @@ export default function ReasonConfirm({
             {extraField.label}
           </label>
           {extraField.options ? (
-            <select
-              className="mt-1 w-full rounded border border-white/10 bg-black/20 p-1 text-xs text-text"
+            <Select
+              density="xs"
+              className="mt-1"
               value={extraField.value}
               onChange={(e) => extraField.onChange(e.target.value)}
             >
@@ -102,11 +105,12 @@ export default function ReasonConfirm({
                   {opt.label}
                 </option>
               ))}
-            </select>
+            </Select>
           ) : (
-            <input
+            <Input
               type="text"
-              className="mt-1 w-full rounded border border-white/10 bg-black/20 p-1 text-xs text-text"
+              density="xs"
+              className="mt-1"
               placeholder={extraField.placeholder}
               value={extraField.value}
               onChange={(e) => extraField.onChange(e.target.value)}

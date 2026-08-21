@@ -1704,3 +1704,35 @@ describe('readLaunchState narrows untrusted router state', () => {
     return waitFor(() => expect(screen.getByText('Workload not found')).toBeTruthy())
   })
 })
+
+// ---------------------------------------------------------------------------
+// umbrella #432 §C — the shared form-field primitive (components/FormField.tsx)
+//
+// Measured live on 0.26.0: document.activeElement was BODY on load (nothing
+// focused), the studio name field was 1295px wide, its fill read ~1.03:1
+// against its panel, and its border rendered sub-pixel (0.667px at 10%
+// white). The width/fill/border symptoms are fixed inside the primitive
+// itself and pinned once, generically, in formFieldPrimitive.test.tsx —
+// what's specific to THIS page is focus-on-entry (Identity is the wizard's
+// first step) and that both Identity fields actually render through it.
+// ---------------------------------------------------------------------------
+
+describe('umbrella #432 §C: Identity fields and focus-on-entry', () => {
+  it('focuses the studio name field on mount, not BODY', async () => {
+    mkFetch()
+    renderCreate()
+    await screen.findByRole('heading', { name: 'Identity' })
+    expect(document.activeElement).toBe(screen.getByLabelText('Studio name'))
+  })
+
+  it('renders the studio name and workload slug fields through the shared .field primitive', async () => {
+    mkFetch()
+    renderCreate()
+    await screen.findByRole('heading', { name: 'Identity' })
+
+    const nameField = screen.getByLabelText('Studio name')
+    const slugField = screen.getByLabelText('Workload identity')
+    expect(nameField.className.split(/\s+/)).toContain('field')
+    expect(slugField.className.split(/\s+/)).toContain('field')
+  })
+})

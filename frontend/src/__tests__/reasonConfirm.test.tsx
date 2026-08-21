@@ -85,6 +85,51 @@ describe('ReasonConfirm component', () => {
   })
 })
 
+// umbrella #432 §C — the shared form-field primitive (components/FormField.tsx).
+// ReasonConfirm's own reason textarea, and both extraField shapes (free-text
+// input and select), used to each hand-roll `border-white/10 bg-black/20` —
+// now all three render through the one primitive.
+describe('ReasonConfirm renders through the shared .field primitive', () => {
+  it('renders the reason textarea through .field', () => {
+    render(<ReasonConfirm title="T" description="D" onConfirm={vi.fn()} onCancel={() => {}} />)
+    const textarea = screen.getByPlaceholderText(/Reason \(required/)
+    expect(textarea.className.split(/\s+/)).toContain('field')
+  })
+
+  it('renders a free-text extraField through .field', () => {
+    render(
+      <ReasonConfirm
+        title="T"
+        description="D"
+        onConfirm={vi.fn()}
+        onCancel={() => {}}
+        extraField={{ label: 'Extra', placeholder: 'e.g. studio-a', value: '', onChange: () => {} }}
+      />,
+    )
+    const input = screen.getByPlaceholderText('e.g. studio-a')
+    expect(input.className.split(/\s+/)).toContain('field')
+  })
+
+  it('renders a select extraField through .field', () => {
+    render(
+      <ReasonConfirm
+        title="T"
+        description="D"
+        onConfirm={vi.fn()}
+        onCancel={() => {}}
+        extraField={{
+          label: 'Extra',
+          value: '',
+          onChange: () => {},
+          options: [{ value: 'a', label: 'A' }],
+        }}
+      />,
+    )
+    const select = screen.getByRole('combobox')
+    expect(select.className.split(/\s+/)).toContain('field')
+  })
+})
+
 describe('ReasonConfirm variant="danger" (umbrella #347, delete-permanently)', () => {
   // The exact extraField shape FinaliseStage wires for typed-slug
   // confirmation: invalid whenever the typed text doesn't equal the slug,

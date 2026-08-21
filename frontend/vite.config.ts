@@ -9,6 +9,13 @@ export default defineConfig({
   test: {
     environment: 'jsdom',
     setupFiles: ['./vitest.setup.ts'],
+    // umbrella #432 §C: without this, Vitest stubs every `.css` import to an
+    // empty string regardless of query suffix — formFieldPrimitive.test.tsx
+    // reads index.css via `?raw` specifically so its contrast assertion is
+    // computed from the real, shipped stylesheet text rather than a value
+    // copied into TS. No existing test imports CSS at all, so this has no
+    // effect on anything already passing.
+    css: true,
   },
   resolve: {
     alias: {
