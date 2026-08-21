@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
 import { useQueryClient } from '@tanstack/react-query'
+import { Trash2 } from 'lucide-react'
 import {
   _WATCHED_TERMINAL_STATES,
   isOperation,
@@ -385,8 +386,17 @@ export default function FinaliseStage({
               />
             </div>
           ) : purgeAllowed ? (
-            <button className="btn btn-danger btn-sm mt-2" onClick={() => setPurgeArming(true)}>
-              🗑 Delete permanently
+            // FIX ROUND (operator report on 0.27.0): 🗑 is an emoji-presentation
+            // glyph — it renders in the emoji font's own colours and ignores
+            // `text-white`, so it read muddy on the red-600 fill (unlike ⏏/▶
+            // elsewhere, which are text-presentation and DO inherit
+            // currentColor). Swapped for lucide-react's Trash2 (already a
+            // dependency, already used in Badge.tsx/NotificationBell.tsx),
+            // which renders as an SVG stroke inheriting currentColor — a
+            // real white icon on this button, not a second colour to manage.
+            <button className="btn btn-danger btn-sm mt-2 inline-flex items-center gap-1.5" onClick={() => setPurgeArming(true)}>
+              <Trash2 className="h-4 w-4" aria-hidden="true" />
+              Delete permanently
             </button>
           ) : (
             <p className="mt-1 text-muted">

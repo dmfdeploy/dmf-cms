@@ -185,7 +185,7 @@ describe('dmfdeploy#412: Configure no longer forwards to Finalise & Review', () 
     // side effect of anything rendered on Configure.
     expect(screen.queryByRole('heading', { name: 'Finalise & Review', level: 2 })).toBeNull()
     expect(screen.queryByRole('button', { name: '⏏ Teardown' })).toBeNull()
-    expect(screen.queryByRole('button', { name: '🗑 Delete permanently' })).toBeNull()
+    expect(screen.queryByRole('button', { name: 'Delete permanently' })).toBeNull()
   })
 
   it('still lets Previous walk Finalise & Review back to Configure (regression guard — unchanged by this fix)', async () => {

@@ -155,7 +155,7 @@ describe('Finalise & Review: delete permanently drives to a real completion', ()
     fireEvent.click(await waitFor(() => within(rail()).getByRole('button', { name: 'Finalise & Review' })))
     const finalise = stageSection('Finalise & Review')
 
-    fireEvent.click(await within(finalise).findByRole('button', { name: '🗑 Delete permanently' }))
+    fireEvent.click(await within(finalise).findByRole('button', { name: 'Delete permanently' }))
     fireEvent.change(within(finalise).getByPlaceholderText(/Reason \(required/), {
       target: { value: 'confirmed clean' },
     })
@@ -221,7 +221,7 @@ describe('Finalise & Review: delete permanently drives to a real completion', ()
     fireEvent.click(await waitFor(() => within(rail()).getByRole('button', { name: 'Finalise & Review' })))
     const finalise = stageSection('Finalise & Review')
 
-    fireEvent.click(await within(finalise).findByRole('button', { name: '🗑 Delete permanently' }))
+    fireEvent.click(await within(finalise).findByRole('button', { name: 'Delete permanently' }))
     fireEvent.change(within(finalise).getByPlaceholderText(/Reason \(required/), { target: { value: 'go' } })
     fireEvent.change(within(finalise).getByPlaceholderText('studio-a'), { target: { value: 'studio-a' } })
     fireEvent.click(within(finalise).getByRole('button', { name: 'Delete permanently' }))
@@ -309,7 +309,7 @@ describe('Finalise & Review: delete permanently drives to a real completion', ()
       fireEvent.click(await waitFor(() => within(rail()).getByRole('button', { name: 'Finalise & Review' })))
       const finalise = stageSection('Finalise & Review')
 
-      fireEvent.click(await within(finalise).findByRole('button', { name: '🗑 Delete permanently' }))
+      fireEvent.click(await within(finalise).findByRole('button', { name: 'Delete permanently' }))
       fireEvent.change(within(finalise).getByPlaceholderText(/Reason \(required/), { target: { value: 'go' } })
       fireEvent.change(within(finalise).getByPlaceholderText('studio-a'), { target: { value: 'studio-a' } })
       fireEvent.click(within(finalise).getByRole('button', { name: 'Delete permanently' }))
@@ -356,7 +356,7 @@ describe('Finalise & Review: delete permanently drives to a real completion', ()
     // lifecycle=provision with an active+running member is CONFIGURE
     // position, not off-flow — but regardless of position, delete-
     // permanently must not appear anywhere while a member is running.
-    expect(screen.queryByRole('button', { name: '🗑 Delete permanently' })).toBeNull()
+    expect(screen.queryByRole('button', { name: 'Delete permanently' })).toBeNull()
   })
 
   it('is withdrawn during a genuinely pending background refetch (isFetching), even though the retained payload is still eligible', async () => {
@@ -400,7 +400,7 @@ describe('Finalise & Review: delete permanently drives to a real completion', ()
     await screen.findByRole('navigation', { name: 'Media workload lifecycle' })
     fireEvent.click(await waitFor(() => within(rail()).getByRole('button', { name: 'Finalise & Review' })))
     const finalise = stageSection('Finalise & Review')
-    await within(finalise).findByRole('button', { name: '🗑 Delete permanently' })
+    await within(finalise).findByRole('button', { name: 'Delete permanently' })
 
     // Trigger the background refetch WITHOUT awaiting it (it never settles
     // within this test) — same trigger workloadSetupStageWedge.test.tsx
@@ -408,7 +408,7 @@ describe('Finalise & Review: delete permanently drives to a real completion', ()
     void queryClient.invalidateQueries({ queryKey: ['media-workloads-grouped'] })
 
     await waitFor(() =>
-      expect(within(finalise).queryByRole('button', { name: '🗑 Delete permanently' })).toBeNull(),
+      expect(within(finalise).queryByRole('button', { name: 'Delete permanently' })).toBeNull(),
     )
 
     // Let the held-open fetch resolve so nothing dangles past the test.
@@ -459,7 +459,7 @@ describe('Finalise & Review: delete permanently drives to a real completion', ()
     fireEvent.click(await waitFor(() => within(rail()).getByRole('button', { name: 'Finalise & Review' })))
     const finalise = stageSection('Finalise & Review')
 
-    fireEvent.click(await within(finalise).findByRole('button', { name: '🗑 Delete permanently' }))
+    fireEvent.click(await within(finalise).findByRole('button', { name: 'Delete permanently' }))
     fireEvent.change(within(finalise).getByPlaceholderText(/Reason \(required/), { target: { value: 'go' } })
     fireEvent.change(within(finalise).getByPlaceholderText('studio-a'), { target: { value: 'studio-a' } })
     fireEvent.click(within(finalise).getByRole('button', { name: 'Delete permanently' }))
@@ -486,5 +486,51 @@ describe('Finalise & Review: delete permanently drives to a real completion', ()
         ),
       ).toBeTruthy()
     })
+  })
+})
+
+// ---------------------------------------------------------------------------
+// umbrella #432 §D2 FIX ROUND (operator report, live in Chrome on 0.27.0):
+// 🗑 is an emoji-presentation glyph — it renders in the emoji font's own
+// colours and ignores `text-white`, so it read muddy on the red-600 fill
+// (unlike ⏏/▶ elsewhere, which are text-presentation and DO inherit
+// currentColor). Swapped for lucide-react's Trash2, an inline SVG that
+// inherits currentColor.
+// ---------------------------------------------------------------------------
+
+describe("umbrella #432 §D2 FIX ROUND: Delete permanently's icon is legible on the red fill", () => {
+  it('renders no emoji-presentation glyph, and a real (currentColor-inheriting) SVG icon instead', async () => {
+    const wl = eligibleWorkload()
+    const grouped: MediaWorkloadsGroupedResponse = {
+      configured: true,
+      degraded: false,
+      scope: [],
+      workloads: [wl],
+      invalid_instances: [],
+    }
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(async (input: RequestInfo | URL) => {
+        const url = (typeof input === 'string' ? input : (input as Request).url).toString()
+        if (url.endsWith('/api/me')) return json(OPERATOR)
+        if (url.endsWith('/api/catalog')) return json({ entries: [] })
+        if (url.endsWith('/api/media-workloads/grouped')) return json(grouped)
+        return json({})
+      }),
+    )
+
+    renderDetail()
+    await screen.findByRole('navigation', { name: 'Media workload lifecycle' })
+    fireEvent.click(await waitFor(() => within(rail()).getByRole('button', { name: 'Finalise & Review' })))
+    const finalise = stageSection('Finalise & Review')
+
+    const button = within(finalise).getByRole('button', { name: 'Delete permanently' })
+    // THE discriminator: no emoji-presentation glyph anywhere in the
+    // button's rendered text — 🗑 is U+1F5D1.
+    expect(button.textContent ?? '').not.toMatch(/\u{1F5D1}/u)
+    // A real icon renders instead — an inline SVG, which inherits
+    // `currentColor` (text-white here) rather than carrying its own
+    // baked-in emoji-font colour.
+    expect(button.querySelector('svg')).toBeTruthy()
   })
 })
