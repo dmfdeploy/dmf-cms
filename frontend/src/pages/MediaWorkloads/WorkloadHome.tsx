@@ -167,6 +167,31 @@ export default function WorkloadHome() {
   const readUnusable = hasReadError || isUnconfigured
 
   const workloadForRail = data?.workloads.find((w) => w.slug === slug)
+  // Gate round 4: `firstLoadFailed` alone was not enough. It only covers
+  // `data == null` — a background failure that retains a payload sails
+  // straight past it into `isUnconfigured` or the `!workload` branch below,
+  // both of which then assert a present-tense STATUS or ABSENCE claim
+  // ("is not configured" / "is not... in your scope right now") from data
+  // the CURRENT read has already flagged as unconfirmed, while the header
+  // rail simultaneously withdraws for that exact same error (`readUnusable`
+  // above) — body and rail disagreeing about how much the console can
+  // currently stand behind, the same asymmetry PR #90 fixed for the rail
+  // alone and this file exists to remove everywhere else.
+  //
+  // PRECEDENCE, not qualification — deliberately, and unlike the main
+  // workload-found path below (which DOES qualify: the `hasReadError`
+  // notice further down sits ALONGSIDE the retained grid/modal, because
+  // there is real observed content underneath worth keeping visible with a
+  // caveat). Neither `isUnconfigured` nor `!workload` has any such content
+  // beneath it — each is bare status prose with nothing else on the page —
+  // so qualifying them would mean inventing two new pieces of hedged copy
+  // ("not configured, but that could not be reconfirmed" / "not found, but
+  // that could not be reconfirmed") for claims that have nothing to hedge
+  // FOR. Falling back to the same, already-established "could not be loaded
+  // right now" notice is simpler, reuses existing copy, and — critically —
+  // is not a new claim either: it's the one thing this read still knows for
+  // certain right now.
+  const readErrorMasksRetainedStatus = hasReadError && data != null && (isUnconfigured || !workloadForRail)
   // Unconditional, ahead of every early return below (hooks must run every
   // render) — same reasoning as the rail registration below.
   usePageTitle(workloadForRail ? workloadForRail.name : slug)
@@ -256,15 +281,19 @@ export default function WorkloadHome() {
     )
   }
 
-  // umbrella #432 fix round (item 2): a genuine FIRST load failure — no
-  // retained payload exists to fall back on — still gets the bare error
-  // page; there is nothing else honest to show. A BACKGROUND refetch
-  // failure retains its prior `data` (queryState.ts documents this exact
-  // TanStack Query behaviour) and no longer takes this branch — it falls
+  // umbrella #432 fix round (item 2) / gate round 4: a genuine FIRST load
+  // failure — no retained payload exists to fall back on — still gets the
+  // bare error page; there is nothing else honest to show. So does a
+  // BACKGROUND failure whose retained payload would otherwise only resolve
+  // to an unconfirmed status/absence claim (`readErrorMasksRetainedStatus`
+  // — see its own comment above for why that's precedence, not
+  // qualification). Neither reaches this branch when the retained payload
+  // resolves to a real, configured, present workload — THAT case falls
   // through to the normal render below, which shows the SAME notice text as
   // a conditional sibling alongside the retained grid/modal rather than
-  // blanking them (see the `hasReadError` notice further down).
-  if (firstLoadFailed) {
+  // blanking them (see the `hasReadError` notice further down) — the one
+  // path with real content underneath worth keeping visible.
+  if (firstLoadFailed || readErrorMasksRetainedStatus) {
     return (
       <div className="flex-1 overflow-y-auto p-6">
         <PageHeading>{workloadForRail ? workloadForRail.name : slug}</PageHeading>
@@ -523,10 +552,17 @@ export default function WorkloadHome() {
             <h2 className="text-base font-semibold">
               {/* umbrella #432 fix round item 5: "Live view" unqualified is
                   false on an unresolved-but-retained read — the tiles below
-                  are the last CONFIRMED observation, not a claim about this
-                  instant. Same "showing the last reading" register
-                  LivePreviewBox.tsx uses per-instance, applied once here at
-                  the section level rather than repeated per tile. */}
+                  are the last observation this page HAS, not a claim about
+                  this instant. Gate round 4 correction: that observation is
+                  not always a previously-CONFIRMED one either — a degraded
+                  FIRST response has no prior settled read behind it at all,
+                  and is itself already known-incomplete (some members
+                  excluded), yet still renders here (showLiveGrid's own
+                  comment: a first response can be degraded WITH instances).
+                  "Showing last known state" is honest about that in a way
+                  "last confirmed observation" would not have been. Same
+                  register LivePreviewBox.tsx uses per-instance, applied once
+                  here at the section level rather than repeated per tile. */}
               {homeStateIsLive ? 'Live view' : 'Live view — showing last known state'}
             </h2>
           </div>

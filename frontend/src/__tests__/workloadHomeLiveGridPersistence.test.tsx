@@ -393,6 +393,77 @@ describe('a failed background refetch retains its content (item 2)', () => {
     expect(screen.queryByRole('link', { name: /Go to Configure/i })).toBeNull()
     expect(screen.queryByText(/The monitoring surface for this workload/)).toBeNull()
   })
+
+  // Gate round 4: `firstLoadFailed` (data == null) is not the only shape a
+  // background failure with retained data can take. These two prove the
+  // retained-status precedence for the two branches gate round 4 named —
+  // both of which sit AHEAD of the main workload-found path and were never
+  // reachable from an in-flight-grid scenario, so the test above alone
+  // could not have caught either.
+  it('a background error masks a RETAINED "not configured" claim rather than asserting it uncaveated', async () => {
+    let groupedCalls = 0
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(async (input: RequestInfo | URL) => {
+        const url = (typeof input === 'string' ? input : (input as Request).url).toString()
+        if (url.endsWith('/api/catalog')) return json({ entries: [catalogEntry()] })
+        if (url.endsWith('/api/media-workloads/grouped')) {
+          groupedCalls += 1
+          if (groupedCalls > 1) return new Response('boom', { status: 500 })
+          // First (successful) read: genuinely unconfigured. Establishes the
+          // retained payload the SECOND, failing read leaves behind.
+          return json({ configured: false, degraded: false, scope: [], workloads: [], invalid_instances: [] })
+        }
+        return json({})
+      }),
+    )
+    const queryClient = renderHome()
+
+    // First read settles: the honest, UNCAVEATED "not configured" page is
+    // correct here — no error is live yet.
+    await screen.findByText(/Media Workloads is not configured for this environment/)
+
+    await queryClient.refetchQueries({ queryKey: ['media-workloads-grouped'] })
+
+    // THE discriminating assertion: once the background read has failed,
+    // the retained "not configured" claim must not keep asserting itself
+    // uncaveated — the read that would reconfirm it just failed.
+    await waitFor(() => expect(screen.getByText(FAILED_NOTICE)).toBeTruthy())
+    expect(screen.queryByText(/Media Workloads is not configured for this environment/)).toBeNull()
+  })
+
+  it('a background error masks a RETAINED "workload not found" claim rather than asserting it uncaveated', async () => {
+    let groupedCalls = 0
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(async (input: RequestInfo | URL) => {
+        const url = (typeof input === 'string' ? input : (input as Request).url).toString()
+        if (url.endsWith('/api/catalog')) return json({ entries: [catalogEntry()] })
+        if (url.endsWith('/api/media-workloads/grouped')) {
+          groupedCalls += 1
+          if (groupedCalls > 1) return new Response('boom', { status: 500 })
+          // First (successful) read: configured, but this slug is absent.
+          // Establishes the retained payload the SECOND, failing read
+          // leaves behind.
+          return json({ configured: true, degraded: false, scope: [], workloads: [], invalid_instances: [] })
+        }
+        return json({})
+      }),
+    )
+    const queryClient = renderHome()
+
+    // First read settles: the honest, UNCAVEATED "not found" page is
+    // correct here — no error is live yet.
+    await screen.findByText('Workload not found')
+
+    await queryClient.refetchQueries({ queryKey: ['media-workloads-grouped'] })
+
+    // THE discriminating assertion: once the background read has failed,
+    // the retained absence claim must not keep asserting itself uncaveated
+    // either — same precedence as the "not configured" case above.
+    await waitFor(() => expect(screen.getByText(FAILED_NOTICE)).toBeTruthy())
+    expect(screen.queryByText('Workload not found')).toBeNull()
+  })
 })
 
 // ---------------------------------------------------------------------------
