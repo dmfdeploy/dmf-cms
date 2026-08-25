@@ -56,7 +56,7 @@ design system, component architecture, React conventions, and anti-patterns.
 
 ## Implementation Stack
 
-- **Frontend:** React 18 + TypeScript + Vite + Tailwind CSS + React Router v7 + TanStack Query + Zustand
+- **Frontend:** React 19 + TypeScript + Vite + Tailwind CSS + React Router v7 + TanStack Query + Zustand
 - **Backend:** FastAPI + JSON APIs (SPA-only; legacy Jinja/templates removed)
 - **Auth:** Authentik OIDC (passkey-first), session cookies via `starlette.middleware.sessions`
 - **Deploy:** Helm chart → `dmf-infra` stack/operator/cms role, invoked by `playbooks/650-dmf-cms.yml`
