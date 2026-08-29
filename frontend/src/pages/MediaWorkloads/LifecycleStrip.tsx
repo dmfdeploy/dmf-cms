@@ -1,6 +1,11 @@
-import { useEffect, useRef, useState } from 'react'
-import { createPortal } from 'react-dom'
-import { FLOW_STEPS, type FlowStepId, type FlowStepState } from '../../lib/workloadFlow'
+import { useId } from 'react'
+import { Lock } from 'lucide-react'
+import {
+  FLOW_STEPS,
+  type FlowStepId,
+  type FlowStepState,
+  type StageCompleteness,
+} from '../../lib/workloadFlow'
 
 /**
  * The wizard rail (umbrella #347 WO-D1, operator direction 2026-08-02).
@@ -55,9 +60,38 @@ import { FLOW_STEPS, type FlowStepId, type FlowStepState } from '../../lib/workl
  * `membersDataTrustworthy`, not re-derived here), the readout says so rather
  * than printing a stale or half-true count.
  *
- * LockedReasonToggle (the "i" disclosure) stays load-bearing: locked keys
- * are still non-interactive, so it remains the only way a locked step's
- * reason is reachable at all.
+ * PASS 2 — COMPLETENESS GRAMMAR, EQUAL COLUMNS, REACHABLE LOCKED KEYS
+ * (dmfdeploy#449 folding in dmfdeploy#405; design settled in
+ * `docs/plans/DMF Console UI Round Plan 2026-08-21.md` §3, authorised under
+ * the scope-freeze carve-out anchored at commit
+ * fb20c703cb0be95da43b8497e20a6aa7b308a53a on protected `main`).
+ *
+ * Three things changed, and NOTHING about state DERIVATION did — the rail's
+ * state model still lives entirely outside this component
+ * (lib/workloadLifecycle.ts, lib/workloadFlow.ts) and the route contract is
+ * untouched (railRouteContract.test.tsx). This pass changes only how each key
+ * is PAINTED, plus the one refusal #405 exists to remove:
+ *
+ *   1. A COMPLETENESS MARK per key — see StageMark below for the full
+ *      grammar and why the dot is a meter rather than a selection marker.
+ *      This is what finally gives the rail something to say on the workload
+ *      home, where no key is selected: before this pass it rendered five
+ *      identical dead chips there, with no position and no progress, on what
+ *      dmfdeploy#414 made the most-visited rail state.
+ *   2. EQUAL COLUMNS — see the <ol> below. Key widths ran 47px to 123px, a
+ *      2.63x spread, so keys moved as state changed the labels.
+ *   3. LOCKED KEYS ARE REACHABLE BUT READ-ONLY (dmfdeploy#405). The "i"
+ *      disclosure toggle that used to sit beside every locked key is GONE:
+ *      the key itself is the disclosure now. Clicking a locked key selects
+ *      it and mounts its stated reason, which is what the draft wizard's
+ *      Previous/Next already did — the gating was inverted, blocking on the
+ *      live workload where stages are peer surfaces an operator revisits,
+ *      while walking freely in the draft where sequence genuinely matters.
+ *      The safety property did not move: FlowStep.tsx renders a locked
+ *      step's reason prose and never its children, so no stage control
+ *      becomes reachable. The `i` buttons were also the last visual noise on
+ *      the row after Pass 1's subtractions, and two of five keys carry one
+ *      immediately after creation — the first screen an outsider sees.
  *
  * SELECTION AND POSITION ARE TWO DIFFERENT FACTS, deliberately never
  * conflated onto one signal. `aria-pressed` marks SELECTED on the
@@ -111,8 +145,10 @@ import { FLOW_STEPS, type FlowStepId, type FlowStepState } from '../../lib/workl
  *     under the 4.5:1 AA floor; there is no second, dimmer-but-still-AA-safe
  *     text token defined in index.css to opacify toward instead, so "dark"
  *     is expressed entirely through a darker/emptier key face plus a dashed
- *     border (Art. 11, colour is never the only signal, and a locked key now
- *     carries no icon or word of its own to say so any other way).
+ *     border (Art. 11, colour is never the only signal). PASS 2 adds a third,
+ *     independent cue for this state — the padlock (StageMark below) — so
+ *     "locked" no longer rests on the dashed border alone, and is no longer
+ *     distinguishable from "not started" only by the absence of something.
  * Cyan (`--color-accent`) is NOT used here — it is the action accent, and
  * the promoted primary action sits in this same row; cyan meaning both
  * "where you are" and "the thing to click" would make the action ambiguous
@@ -138,94 +174,73 @@ const STEP_LABEL: Record<FlowStepId, string> = {
 }
 
 /**
- * A locked chip's reason, behind a small keyboard/tap-operable toggle — not
- * a `title=` tooltip (hover-only, fails Art. 11), and not a permanent
- * caption (does not fit a single-line row). Own local state, since
- * LifecycleStrip itself has none: each locked chip's disclosure is
- * independent.
+ * PASS 2 — THE COMPLETENESS MARK (dmfdeploy#449, plan §3.2).
  *
- * FIX ROUND (WP-3 spec B gate, P2-2): this chip's own `<nav>` lives inside
- * Topbar's overflow-x-auto rail wrapper (the same scrolling ancestor
- * PromotedAction.tsx's own popover had to escape for the identical reason —
- * see Topbar.tsx's "FIX ROUND P1a" comment). `position: absolute` here
- * stayed a descendant of that ancestor regardless of z-index, so its lower
- * half was silently clipped exactly like the promoted panel was — CSS
- * forces overflow-y to auto wherever overflow-x is auto, and an ancestor's
- * overflow clips ANY descendant, absolutely-positioned or not, that is not
- * itself escaped via `position: fixed` or a portal outside that ancestor's
- * DOM subtree. Fixed here the same way: `position: fixed`, measured against
- * the trigger button's own real bounding box, portaled to `document.body` —
- * outside the rail's DOM subtree entirely, so the scrolling ancestor's
- * overflow has nothing of this popover left to clip.
+ * Four states, two glyphs, one fill variation, one absence:
  *
- * FIX ROUND (P3 round 3, P2-4): escaping the clipping ancestor fixed WHERE
- * the popover could render, not WHETHER it stayed on screen once there —
- * `left: rect.left` with no clamp put most of its fixed 192px (w-48) width
- * past the right edge for any chip near it, same failure shape as P1a's
- * panel before that one got a containing-block fix. Closing on scroll/resize
- * only handles the popover moving OUT of place after it opens; it does
- * nothing for a bad INITIAL placement. Clamped against the real viewport
- * width at measurement time instead.
+ *   filled dot  — stage complete
+ *   outline dot — stage partially satisfied (started, or invalidated upstream)
+ *   no dot      — stage not started
+ *   padlock     — stage locked, cannot be entered
+ *
+ * WHY THE DOT IS NOT A SELECTION MARKER. Selection is already carried by the
+ * key's own fill, so marking it again with a dot would be exactly the
+ * redundancy Pass 1 spent its budget removing. The dot is a COMPLETENESS
+ * METER instead, which is also what makes the future case work with no new
+ * glyphs: when a stage's completeness can regress (an upstream revision
+ * invalidating Plan), filled simply becomes outline and the grammar already
+ * says it.
+ *
+ * WHY NOT A TICK. The candidate icon set uses a circled check for Finalise.
+ * A tick as the "complete" mark would put two ticks on the Finalise key
+ * whenever it is complete, so the tick is unavailable here — the operator
+ * identified this before the icon set was built.
+ *
+ * PADLOCK AND DOT ARE MUTUALLY EXCLUSIVE. "Locked" and "not started" are
+ * different facts and must not collapse into the same absence, which is the
+ * whole reason a padlock exists rather than dimming alone. A locked key shows
+ * the padlock and no dot; the two never appear together.
+ *
+ * COLOUR-INDEPENDENT (Constitution Art. 11). Every distinction is shape, fill
+ * or absence — never hue. `bg-current`/`border-current` inherit the key's own
+ * text colour, so the mark rides whatever the key's tone already is (inverted
+ * when selected, muted otherwise) and adds no new colour axis at all. The
+ * grammar survives greyscale.
+ *
+ * THE SLOT IS ALWAYS RESERVED, even for `none`. Absence is a signal in this
+ * grammar, and a mark that collapses its own box would shift the label beside
+ * it — reintroducing the moving keys that equal columns exist to stop, at a
+ * smaller scale.
+ *
+ * NOT AN <svg> FOR THE DOTS, deliberately. lifecycleStrip.test.tsx pins that
+ * a non-locked key carries no `<svg>` — Pass 1's subtraction of the per-state
+ * icon set, which this pass does not reopen. The dots are bordered/filled
+ * spans; only the padlock is an icon, and only a locked key has one.
+ *
+ * OUTSTANDING BUILD CONSTRAINT (plan §3.3): "filled-vs-outline at ~7px is a
+ * fine distinction. The mark size must be chosen against a real render, not a
+ * mockup — and confirmed in greyscale." The 8px dot with a 1.5px ring below
+ * is a considered starting value, NOT a verified one — jsdom computes no
+ * pixels, so nothing in this suite can discharge that constraint. It is
+ * discharged only by looking at pages/Dev/LifecycleRailHarness.tsx in a real
+ * browser at the 1920x1080 capture viewport.
  */
-const LOCKED_REASON_POPOVER_WIDTH_PX = 192 // w-48
-const LOCKED_REASON_POPOVER_MARGIN_PX = 8
+const MARK_DESCRIPTION: Record<StageCompleteness, string> = {
+  complete: 'Complete',
+  partial: 'Partially satisfied',
+  none: 'Not started',
+}
 
-function LockedReasonToggle({ label, reason }: { label: string; reason: string }) {
-  const [open, setOpen] = useState(false)
-  const buttonRef = useRef<HTMLButtonElement>(null)
-  const [coords, setCoords] = useState<{ top: number; left: number } | null>(null)
-
-  useEffect(() => {
-    if (!open) {
-      setCoords(null)
-      return
-    }
-    const rect = buttonRef.current?.getBoundingClientRect()
-    if (rect) {
-      const maxLeft = window.innerWidth - LOCKED_REASON_POPOVER_WIDTH_PX - LOCKED_REASON_POPOVER_MARGIN_PX
-      const left = Math.max(LOCKED_REASON_POPOVER_MARGIN_PX, Math.min(rect.left, maxLeft))
-      setCoords({ top: rect.bottom + 4, left })
-    }
-
-    // The rail scrolls horizontally under this button (Topbar.tsx's
-    // overflow-x-auto wrapper) — a scroll moves the button without moving
-    // this fixed-position, one-shot-measured popover, so it closes rather
-    // than visibly detach from its trigger. `true` (capture phase) is
-    // required: a scroll on the rail's own scrolling element does not
-    // bubble to window in the normal phase, only capture.
-    const close = () => setOpen(false)
-    window.addEventListener('scroll', close, true)
-    window.addEventListener('resize', close)
-    return () => {
-      window.removeEventListener('scroll', close, true)
-      window.removeEventListener('resize', close)
-    }
-  }, [open])
-
+function StageMark({ locked, completeness }: { locked: boolean; completeness: StageCompleteness }) {
   return (
-    <span className="relative shrink-0">
-      <button
-        ref={buttonRef}
-        type="button"
-        className="flex h-5 w-5 shrink-0 items-center justify-center rounded-full border border-white/20 text-2xs text-muted"
-        aria-expanded={open}
-        aria-label={`Why ${label} is locked`}
-        onClick={() => setOpen((v) => !v)}
-      >
-        i
-      </button>
-      {open &&
-        coords &&
-        createPortal(
-          <span
-            role="note"
-            style={{ position: 'fixed', top: coords.top, left: coords.left }}
-            className="z-30 block w-48 rounded-lg border border-border bg-panel p-2 text-left text-2xs text-muted shadow-lg"
-          >
-            {reason}
-          </span>,
-          document.body,
-        )}
+    <span aria-hidden="true" className="flex h-3 w-3 shrink-0 items-center justify-center">
+      {locked ? (
+        <Lock className="h-3 w-3" strokeWidth={2.5} />
+      ) : completeness === 'complete' ? (
+        <span data-testid="mark-complete" className="h-2 w-2 rounded-full bg-current" />
+      ) : completeness === 'partial' ? (
+        <span data-testid="mark-partial" className="h-2 w-2 rounded-full border-[1.5px] border-current" />
+      ) : null}
     </span>
   )
 }
@@ -319,6 +334,7 @@ function RunningReadout({
 
 export default function LifecycleStrip({
   steps,
+  completeness,
   activeChip,
   current,
   lockedReasons,
@@ -328,6 +344,13 @@ export default function LifecycleStrip({
   onSelect,
 }: {
   steps: Record<FlowStepId, FlowStepState>
+  /** dmfdeploy#449: per-stage completeness for the dot grammar — DERIVED
+   *  upstream (lib/workloadFlow.ts's classifyWorkloadFlow, carried through
+   *  store/headerSlot.ts's branded rail model), never computed here from
+   *  `index < current`. That is the forward-compatible prop shape plan §3.3
+   *  asks for: when completeness becomes a quantity that can regress, this
+   *  component needs no repaint at all. */
+  completeness: Record<FlowStepId, StageCompleteness>
   /** Which of the five keys reads as selected, or none. Always drives the
    *  inverted fill. The accessible signal on top of that varies by branch:
    *  `aria-pressed` on the interactive `<button>` variant, a visually-hidden
@@ -351,20 +374,51 @@ export default function LifecycleStrip({
 }) {
   // umbrella #432 G2: states the fact; the operator is never instructed.
   const jobReason = jobOwnerLabel ? `A ${jobOwnerLabel} job is in progress.` : ''
+  // Unique per mounted rail — the dev harness renders several at once, and
+  // duplicate ids would make aria-describedby resolve to the wrong key's
+  // description.
+  const railId = useId()
 
   return (
     <nav aria-label="Media workload lifecycle" className="flex flex-nowrap items-center gap-2">
-      <ol className="flex flex-nowrap items-center gap-2">
+      {/*
+        EQUAL COLUMNS (dmfdeploy#449, plan §3.3). Was `flex flex-nowrap`,
+        which sized every key to its own label — 47px (Plan) to 123px
+        (Finalise & Review), a 2.63x spread, so keys MOVED as state changed
+        the labels. Five equal tracks instead, the shared width set by
+        "Finalise & Review", which is never abbreviated.
+
+        `w-max` is load-bearing, not decoration. Tailwind's `grid-cols-5` is
+        `repeat(5, minmax(0, 1fr))` — a 0 minimum, not `auto` — so under the
+        horizontal-scroll ancestor this row lives in (Topbar's
+        overflow-x-auto wrapper) the tracks would happily shrink below their
+        content and wrap the labels rather than overflow. Pinning the grid to
+        its max-content width makes the tracks resolve to the widest key and
+        lets the ancestor scroll, which is what that ancestor is for.
+      */}
+      <ol className="grid w-max grid-cols-5 items-center gap-2">
         {FLOW_STEPS.map((id) => {
           const state = steps[id]
           const locked = state === 'locked'
           const isPosition = id === current
           const isSelected = id === activeChip
-          const interactive = !jobInFlight && !locked
+          // dmfdeploy#405: `locked` is NO LONGER a reason to refuse the
+          // click. A locked key selects and mounts its own stated reason,
+          // exactly as the draft wizard's Previous/Next already walk into
+          // locked steps. The safety property is unchanged and still lives
+          // where it always did — FlowStep.tsx renders a locked step's REASON
+          // PROSE AND NEVER ITS CHILDREN — so making the key reachable
+          // exposes an explanation, never a stage control. A job in flight
+          // still demotes every key to inert: that is a different fact from
+          // locked, and the whole row is genuinely un-actionable while a job
+          // runs.
+          const interactive = !jobInFlight
           // Operator's Pass 1 ruling (pinned below in lifecycleStrip.test.tsx):
           // the tally never renders on a key that is already illuminated —
           // the fill alone already says "this is where you are".
           const showTally = isPosition && !isSelected
+          const stageCompleteness = completeness[id]
+          const descriptionId = `${railId}-${id}-state`
 
           const keyToneClass = isSelected
             ? 'bg-text text-bg border-transparent'
@@ -373,19 +427,33 @@ export default function LifecycleStrip({
               : 'bg-white/5 text-muted border-white/10'
 
           const chipClass = [
-            'relative flex items-center gap-1.5 whitespace-nowrap rounded-[3px] border px-2.5 py-1.5 transition-shadow',
+            'relative flex w-full items-center justify-center gap-1.5 whitespace-nowrap rounded-[3px] border px-2.5 py-1.5 transition-shadow',
             keyToneClass,
           ].join(' ')
 
           const inner = (
             <>
               {showTally && <PositionTally />}
+              <StageMark locked={locked} completeness={stageCompleteness} />
               <span className="text-xs font-semibold">{STEP_LABEL[id]}</span>
+              {/*
+                The completeness mark is aria-hidden shape, so without this
+                the repaint would have added a fact only sighted operators
+                can read — the exact gap this component keeps auditing itself
+                for. Carried as a DESCRIPTION rather than folded into the
+                key's accessible NAME: the name stays exactly the EBU label,
+                which is what makes "Design" still address the Design key for
+                an assistive-tech user (and for every test in this suite)
+                however the mark grammar changes underneath it.
+              */}
+              <span id={descriptionId} className="sr-only">
+                {locked ? `Locked. ${lockedReasons[id]}` : MARK_DESCRIPTION[stageCompleteness]}
+              </span>
             </>
           )
 
           return (
-            <li key={id} className="flex shrink-0 items-center gap-1">
+            <li key={id} className="flex items-center">
               {interactive ? (
                 <button
                   type="button"
@@ -395,6 +463,7 @@ export default function LifecycleStrip({
                   // explicit aria-label keeps this independent of whatever
                   // else ends up inside the button in a later pass.
                   aria-label={STEP_LABEL[id]}
+                  aria-describedby={descriptionId}
                   aria-pressed={isSelected}
                   aria-current={isPosition ? 'step' : undefined}
                   onClick={() => onSelect(id)}
@@ -405,6 +474,7 @@ export default function LifecycleStrip({
                 <div
                   className={chipClass}
                   aria-label={STEP_LABEL[id]}
+                  aria-describedby={descriptionId}
                   aria-current={isPosition ? 'step' : undefined}
                 >
                   {inner}
@@ -415,7 +485,6 @@ export default function LifecycleStrip({
                   {jobInFlight && isSelected && <span className="sr-only">Selected</span>}
                 </div>
               )}
-              {locked && <LockedReasonToggle label={STEP_LABEL[id]} reason={lockedReasons[id]} />}
             </li>
           )
         })}

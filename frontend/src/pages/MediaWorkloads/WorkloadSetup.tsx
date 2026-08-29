@@ -11,10 +11,8 @@ import { classifyWorkloadForHeaderSlot, buildHeaderSlotRail, useRegisterHeaderSl
 import {
   FLOW_STEPS,
   classifyForwardExit,
-  isStepOpenable,
   lifecycleBadge,
   type FlowStepId,
-  type FlowStepState,
   type ForwardExit,
 } from '../../lib/workloadFlow'
 import type { MediaWorkload, SwitchSourceResult } from '../../api/types'
@@ -200,15 +198,17 @@ function ExitRow({ slug }: { slug: string }) {
  * no separate "first mount" rule, only this order evaluated fresh.
  */
 function defaultSelection(
-  steps: Record<FlowStepId, FlowStepState>,
   current: FlowStepId | null,
   offFlow: boolean,
   requestedStep: string,
 ): FlowStepId {
-  if (
-    FLOW_STEPS.includes(requestedStep as FlowStepId) &&
-    isStepOpenable(steps[requestedStep as FlowStepId])
-  ) {
+  // dmfdeploy#405: the hash target is honoured whatever its lock state. It
+  // used to be rejected unless `isStepOpenable`, which sent an operator
+  // following a deep link to a locked step somewhere else and then announced
+  // that it had. A locked step now mounts its own stated reason, so honouring
+  // the request answers the question the link was asking; `steps` is no
+  // longer a parameter at all, because nothing here consults it any more.
+  if (FLOW_STEPS.includes(requestedStep as FlowStepId)) {
     return requestedStep as FlowStepId
   }
   if (current !== null) return current
@@ -568,10 +568,13 @@ function WorkloadWizard({
   if (!dataUnsettled) settledStepsRef.current = steps
   const displaySteps = dataUnsettled ? settledStepsRef.current : steps
 
-  const activeStep =
-    selectedStep !== null && isStepOpenable(displaySteps[selectedStep])
-      ? selectedStep
-      : defaultSelection(displaySteps, current, offFlow, requestedStep)
+  // dmfdeploy#405: a selection is no longer abandoned for becoming locked.
+  // The isStepOpenable test here was the actual mechanism of the bounce —
+  // with locked keys clickable, keeping it would have let the operator select
+  // Configure and be silently returned to the fallback on the very next
+  // render, which is dmfdeploy#392's defect exactly. A non-null selection is
+  // now always honoured; `defaultSelection` runs only when there is none.
+  const activeStep = selectedStep !== null ? selectedStep : defaultSelection(current, offFlow, requestedStep)
 
   // React's sanctioned "derived state" pattern: persist the computed
   // fallback into state so a later query refresh that keeps the operator's
@@ -624,8 +627,21 @@ function WorkloadWizard({
   const nextStep = forwardIndex !== -1 && forwardIndex < FORWARD_STEPS.length - 1
     ? FORWARD_STEPS[forwardIndex + 1]
     : null
-  const canPrevious = !jobInFlight && prevStep !== null && steps[prevStep] !== 'locked'
-  const canNext = !jobInFlight && nextStep !== null && steps[nextStep] !== 'locked'
+  // dmfdeploy#405, and stated as a DECISION rather than left as a surprise —
+  // the issue flags this footer explicitly. Previous/Next no longer refuse a
+  // locked neighbour. Leaving them gated while the rail above reaches locked
+  // keys would have been the incoherent half-state: the same step reachable
+  // by clicking its key and refused by the Next pointing at it. This also
+  // makes the live wizard agree with the draft wizard, where Previous/Next
+  // have always been unconditional (CreateWorkload.tsx) — the inversion #405
+  // exists to remove was that the LIVE surface, where stages are peer
+  // surfaces an operator revisits, was the stricter of the two.
+  //
+  // Navigation only, exactly as before: FlowStep renders a locked step's
+  // reason and never its children, and clamps its own Next out of the primary
+  // (cyan) treatment whenever its state is locked.
+  const canPrevious = !jobInFlight && prevStep !== null
+  const canNext = !jobInFlight && nextStep !== null
   // dmfdeploy#412 FIX ROUND 3: nextStep === null is no longer one meaning.
   // It is true on Finalise & Review (forwardIndex === -1, off FORWARD_STEPS
   // entirely — genuinely the last step of FLOW_STEPS) AND on Configure
@@ -717,8 +733,19 @@ function WorkloadWizard({
   // closes that regardless of which caller's `canNext` policy is in play.
   const nextIsPrimary = !(activeStep === 'provision' && provisionHasPromotedAction)
 
+  // dmfdeploy#405: a locked step is SELECTABLE now. Removing this guard on
+  // its own would have been the wrong half of the change and would have
+  // reintroduced dmfdeploy#392's silent revert — `activeStep`'s own
+  // isStepOpenable fallback, the hash defaulter and the requested-lock banner
+  // all assumed selection could never be locked, so the page would have
+  // bounced the operator straight back to the fallback selection. All four
+  // moved together; see each one's own comment.
+  //
+  // `jobInFlight` stays, and is a different fact: locked means "not yours to
+  // work yet, here is why", busy means "the whole row is un-actionable while
+  // this job runs".
   const selectStep = (step: FlowStepId) => {
-    if (jobInFlight || steps[step] === 'locked') return
+    if (jobInFlight) return
     setSelectedStep(step)
   }
 
@@ -770,14 +797,6 @@ function WorkloadWizard({
     else if (step === 'finalise') setTearingDown(true)
     emitTopbarMessage(`${STEP_LABEL[step]} job for ${workload.name} started`)
   }
-
-  // dmfdeploy#416: displaySteps, not live `steps` — the one consumer on this
-  // page that had not yet moved onto the latched value #392 introduced (see
-  // displaySteps' own comment above). Reading live `steps` here meant a
-  // background poll could assert this step is closed, and announce that
-  // (role="status" aria-live="polite" below) while it is genuinely open.
-  const requestedIsLocked =
-    FLOW_STEPS.includes(requestedStep as FlowStepId) && displaySteps[requestedStep as FlowStepId] === 'locked'
 
   const stageBody: Record<FlowStepId, ReactNode> = {
     design: (
@@ -889,17 +908,18 @@ function WorkloadWizard({
         </div>
       )}
 
-      {requestedIsLocked && (
-        <div
-          role="status"
-          aria-live="polite"
-          className="panel mt-4 border border-amber-500/20 bg-amber-500/10 px-4 py-3 text-sm text-amber-200"
-        >
-          {STEP_LABEL[requestedStep as FlowStepId]} isn&apos;t open yet:{' '}
-          {LOCKED_REASON[requestedStep as FlowStepId]}
-        </div>
-      )}
-
+      {/*
+        dmfdeploy#405: the requested-lock banner that used to sit here is
+        gone. It existed to explain a REFUSAL — "you asked for Configure, it
+        isn't open yet, here is why, and you are looking at something else
+        instead". There is no refusal left to explain: the hash target is
+        honoured whatever its lock state (defaultSelection above), so the
+        operator lands ON Configure and FlowStep mounts that same locked
+        reason as the panel's own body. Keeping the banner would have printed
+        the reason twice on one screen, one of them in an amber alert about a
+        thing that just succeeded — and amber is this console's
+        needs-attention register, spent here on a non-event.
+      */}
       <FlowStep
         ref={panelRef}
         anchorId={activeStep}

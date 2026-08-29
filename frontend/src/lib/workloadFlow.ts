@@ -111,6 +111,42 @@ export type FlowStepState =
    */
   | 'locked'
 
+/**
+ * Per-stage completeness — the rail's dot grammar (umbrella dmfdeploy#449,
+ * `docs/plans/DMF Console UI Round Plan 2026-08-21.md` §3.2).
+ *
+ * A DIFFERENT QUESTION FROM FlowStepState, deliberately kept separate rather
+ * than folded into it. FlowStepState answers "may the operator open this, and
+ * what does opening it mean" — an AFFORDANCE question, which is why its
+ * `open` outranks everything else in the ladder below. Completeness answers
+ * "how much of this stage is settled" — a PROGRESS question. The two
+ * genuinely disagree in a case that already ships: at position `configure`
+ * with a sibling still bootstrapped, Provision is `open` (it still bears
+ * clear-for-deployment) AND fully behind the position. Reading the dot off
+ * FlowStepState would have to call that either "not complete" (false — the
+ * workload is past it) or drop the action (false the other way).
+ *
+ *   'complete' — filled dot. The workload is past this stage.
+ *   'partial'  — outline dot. Started, or a readable record with no position
+ *                claim behind it.
+ *   'none'     — no dot. Not started.
+ *
+ * FORWARD-COMPATIBLE BY CONSTRUCTION (plan §3.3). The plan's regression
+ * semantics — a stage going `complete` → `partial` because an upstream change
+ * invalidated it — is a BACKEND lifecycle-derivation change under ADR-0046
+ * and is explicitly NOT in this round. Nothing here derives the dot from
+ * `index < current` at the render layer, so enabling regression later is a
+ * change to what this function computes, not a repaint of the component that
+ * draws it.
+ *
+ * A locked stage carries no dot at all: the padlock is its mark, and the two
+ * are mutually exclusive in the grammar (four states, two glyphs, one fill
+ * variation, one absence). Locked stages are `none` here, and the component
+ * renders the padlock from `FlowStepState` rather than from this value — so
+ * neither fact has to be reconstructed from the other.
+ */
+export type StageCompleteness = 'complete' | 'partial' | 'none'
+
 export interface FlowState {
   /**
    * The step the operator is working now, or null. Null is a real answer in
@@ -132,6 +168,10 @@ export interface FlowState {
   /** True when the backend could not place the workload at all. */
   undetermined: boolean
   steps: Record<FlowStepId, FlowStepState>
+  /** Per-stage progress, for the rail's dot grammar — see StageCompleteness
+   *  for why this is a separate axis from `steps` rather than derived from
+   *  it, and why the render layer must never recompute it. */
+  completeness: Record<FlowStepId, StageCompleteness>
 }
 
 /**
@@ -183,11 +223,34 @@ export function classifyWorkloadFlow(input: WorkloadLifecycleInput): FlowState {
     else steps[id] = 'locked'
   })
 
+  // The completeness ladder — POSITION FACTS ONLY. It deliberately does not
+  // consult stageActions: bearing an action is an affordance fact, and rule 1
+  // above exists so a reachable control is never presented as finished
+  // business. That is the right answer for `steps` and the wrong one for a
+  // progress dot, which must keep saying "the workload is past this" about a
+  // behind-the-position stage that still happens to bear an action.
+  //
+  // `reached` is reused rather than recomputed, so the two ladders can never
+  // disagree about how far the workload has got — offFlow (at Operate) counts
+  // as past the end here exactly as it does above, which is what finally
+  // gives the rail something true to say on the workload home.
+  const completeness = {} as Record<FlowStepId, StageCompleteness>
+  FLOW_STEPS.forEach((id, index) => {
+    if (reached !== null && index < reached) completeness[id] = 'complete'
+    else if (activeIndex !== null && index === activeIndex) completeness[id] = 'partial'
+    // An undetermined position cannot claim a record step is complete — that
+    // is the same distinction `record` draws in the steps ladder — but it can
+    // honestly say the choices it holds were made. Outline, never filled.
+    else if (undetermined && RECORD_STEPS.includes(id)) completeness[id] = 'partial'
+    else completeness[id] = 'none'
+  })
+
   return {
     current: activeIndex === null ? null : FLOW_STEPS[activeIndex],
     offFlow,
     undetermined,
     steps,
+    completeness,
   }
 }
 
@@ -291,8 +354,27 @@ export function classifyDraftFlow(draft: DraftProgress): FlowState {
     finalise: 'locked',
   }
 
+  // The draft's completeness reads the operator's OWN progress facts rather
+  // than collapsing "the step you are on" into partial. A draft with nothing
+  // entered yet has genuinely started nothing, and an outline dot on Design
+  // there would claim otherwise on the very first screen. `hasName ||
+  // hasTemplate` is what "started" means for Design; for Plan it is
+  // `hasFacility` — the console resolved a facility — with the filled dot
+  // held back for `facilityConfirmed`, matching planDone's own gate (WP-3
+  // spec D: resolved alone is not enough).
+  const completeness: Record<FlowStepId, StageCompleteness> = {
+    design: designDone ? 'complete' : draft.hasName || draft.hasTemplate ? 'partial' : 'none',
+    plan: planDone ? 'complete' : designDone && draft.hasFacility ? 'partial' : 'none',
+    // The deploy fires from Provision and ends the draft, so it is never
+    // 'complete' in this classifier — reaching complete means there is a real
+    // workload and classifyWorkloadFlow is answering instead.
+    provision: planDone ? 'partial' : 'none',
+    configure: 'none',
+    finalise: 'none',
+  }
+
   const current = designDone ? (planDone ? 'provision' : 'plan') : 'design'
-  return { current, offFlow: false, undetermined: false, steps }
+  return { current, offFlow: false, undetermined: false, steps, completeness }
 }
 
 // ─────────────────────────────────────────────────────────────────────────
