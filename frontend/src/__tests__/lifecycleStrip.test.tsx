@@ -802,11 +802,23 @@ describe('a job-in-flight chip that is also the SELECTED one still carries that 
     expect(within(design).queryByText('Selected')).toBeNull()
   })
 
-  // CONFIRMED unaffected by the dmf-cms#391 Pass 1 redesign: the sr-only
-  // "Selected" node is orthogonal to the state-word/icon removals (it was
-  // never a state word itself), so no changes were needed here — already
-  // green before and after this fix round.
-  it('never renders "Selected" text on a locked chip outside a job — it is never the selected one', () => {
+  // dmfdeploy#405 FIX ROUND: this used to assert `aria-pressed` was ABSENT
+  // (null) on a locked, non-busy chip — true before #405, because that chip
+  // rendered as a non-interactive <div>, and LifecycleStrip's own div branch
+  // sets no `aria-pressed` attribute at all (nothing here claims a <div>
+  // could not carry the attribute — a raw DOM node accepts any ARIA
+  // attribute you set on it; the precise fact is that THIS component's div
+  // branch does not set it, and it would carry no accessible semantics
+  // there without `role="button"` regardless). #405 made a locked-but-idle
+  // key a real, native <button> (LifecycleStrip.tsx's `interactive =
+  // !jobInFlight`), and that branch unconditionally carries
+  // `aria-pressed={isSelected}` (line ~467) — present and "false" here, not
+  // absent. The old assertion is now not just outdated but WEAKER than it
+  // looks: "toBeNull()" is satisfied both by "correctly absent because this
+  // branch never sets it" (the old true reason) and by "buggily stripped off
+  // a real button" (a regression), so it could never have told the two
+  // apart. Asserting the exact string "false" closes that gap.
+  it('carries its NOT-selected state via real aria-pressed on a locked, non-busy chip — never the sr-only "Selected" text reserved for the job-in-flight branch', () => {
     const steps: Record<FlowStepId, FlowStepState> = {
       design: 'complete',
       plan: 'complete',
@@ -816,8 +828,14 @@ describe('a job-in-flight chip that is also the SELECTED one still carries that 
     }
     renderRail({ steps, activeChip: 'design', current: null, jobInFlight: false })
     const provision = chip('Provision')
+    // dmfdeploy#405: locked, not busy — a real, reachable <button> (P1).
+    expect(provision.tagName).toBe('BUTTON')
+    expect(provision.getAttribute('aria-pressed')).toBe('false')
+    // The sr-only "Selected" text node (see the sibling test above) exists
+    // only as a substitute for `aria-pressed` on the job-in-flight,
+    // non-button <div> branch, which is unreachable here — a real button
+    // never needs it.
     expect(within(provision).queryByText('Selected')).toBeNull()
-    expect(provision.getAttribute('aria-pressed')).toBeNull()
   })
 })
 
