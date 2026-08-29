@@ -2,7 +2,7 @@ import { afterEach, describe, expect, it, vi } from 'vitest'
 import { cleanup, fireEvent, render, screen, within } from '@testing-library/react'
 import { MemoryRouter } from 'react-router-dom'
 import LifecycleStrip from '../pages/MediaWorkloads/LifecycleStrip'
-import type { FlowStepId, FlowStepState } from '../lib/workloadFlow'
+import { FLOW_STEPS, type FlowStepId, type FlowStepState, type StageCompleteness } from '../lib/workloadFlow'
 
 /**
  * The rail's "never colour alone" contract (Constitution Art. 11, umbrella
@@ -65,25 +65,41 @@ const LOCKED_REASONS: Record<FlowStepId, string> = {
 // own override.
 const DEFAULT_RUNNING_READOUT = { running: 1, total: 1, trustworthy: true }
 
+// dmfdeploy#449 Pass 2: LifecycleStrip now also requires a per-stage
+// completeness map (the dot grammar). Defaults to all-'none' so the many
+// tests in this file that predate the mark and care nothing about it render
+// no dots at all and keep asserting exactly what they always did. Tests that
+// DO care pass their own map.
+const NO_COMPLETENESS: Record<FlowStepId, StageCompleteness> = {
+  design: 'none',
+  plan: 'none',
+  provision: 'none',
+  configure: 'none',
+  finalise: 'none',
+}
+
 function renderRail(overrides: {
   steps: Record<FlowStepId, FlowStepState>
   activeChip: FlowStepId | null
   current: FlowStepId | null
+  completeness?: Record<FlowStepId, StageCompleteness>
   jobOwnerLabel?: string | null
   jobInFlight?: boolean
   runningReadout?: { running: number; total: number; trustworthy: boolean }
+  onSelect?: (step: FlowStepId) => void
 }) {
   render(
     <MemoryRouter>
       <LifecycleStrip
         steps={overrides.steps}
+        completeness={overrides.completeness ?? NO_COMPLETENESS}
         activeChip={overrides.activeChip}
         current={overrides.current}
         lockedReasons={LOCKED_REASONS}
         jobOwnerLabel={overrides.jobOwnerLabel ?? null}
         jobInFlight={overrides.jobInFlight ?? false}
         runningReadout={overrides.runningReadout ?? DEFAULT_RUNNING_READOUT}
-        onSelect={() => {}}
+        onSelect={overrides.onSelect ?? (() => {})}
       />
     </MemoryRouter>,
   )
@@ -148,8 +164,19 @@ function LabelFor(id: FlowStepId): string {
 // longer claims a lock icon or "Locked" text exist. The LockedReasonToggle
 // interaction block itself is untouched — that behavior wasn't part of the
 // redesign and still works exactly as before.
-describe('locked state carries a dashed-border shape cue — never colour alone', () => {
-  it('renders the dashed border for a locked chip, with its reason behind a keyboard/tap-operable toggle, not a permanent caption', () => {
+// dmfdeploy#449 Pass 2 + dmfdeploy#405: a locked key now carries THREE
+// independent non-colour cues (dashed border, padlock glyph, and the absence
+// of a completeness dot) and is REACHABLE — the "i" disclosure toggle that
+// used to be the only way to read a locked step's reason is gone, because the
+// key itself is the disclosure now. The two tests that pinned that toggle (its
+// aria-expanded round-trip, and the popover's viewport clamp for a trigger
+// near the right edge) are deleted rather than adapted: the component they
+// exercised no longer exists, and there is no popover left to place. What
+// replaces them, and what actually matters to the operator, is pinned here and
+// in workloadSetup.test.tsx — the key selects, and the reason mounts in the
+// panel below.
+describe('locked state carries non-colour cues, and the key itself is reachable (dmfdeploy#405)', () => {
+  it('renders the dashed border, a padlock, and no completeness dot — and is a real button, not an inert div', () => {
     const steps: Record<FlowStepId, FlowStepState> = {
       design: 'complete',
       plan: 'complete',
@@ -157,44 +184,39 @@ describe('locked state carries a dashed-border shape cue — never colour alone'
       configure: 'locked',
       finalise: 'locked',
     }
-    renderRail({ steps, activeChip: 'design', current: null })
+    const onSelect = vi.fn()
+    renderRail({ steps, activeChip: 'design', current: null, onSelect })
 
     const provision = chip('Provision')
-    // "Locked" text and the lock <svg> icon are gone (see file-level comment
-    // above) — only the dashed border remains as the non-colour cue.
     expect(provision.className).toContain('border-dashed')
 
-    // A locked chip is inert — no button role. FIX ROUND (codex gate, P3):
-    // this used to credit the dashed border to "a screen reader or a
-    // colour-blind operator" alike — wrong for the screen-reader half. A
-    // screen reader does not expose CSS border-style at all; a visual
-    // dashed border is legible only to a SIGHTED operator (colour-blind or
-    // not). What actually distinguishes a locked key for a screen-reader
-    // operator is the semantic difference this suite asserts just below —
-    // no button role reachable, nothing in the tab order — not the border
-    // itself.
-    //
-    // FIX ROUND (codex gate, P2): within(provision).queryByRole('button')
-    // searches provision's DESCENDANTS only — Testing Library's `within`
-    // never treats the container itself as a candidate — so this could
-    // never have caught the chip ROOT regressing to a <button>, only a
-    // stray <button> nested inside it. tagName is the actual discriminator
-    // for "is this element itself a button". Mutation-verified: temporarily
-    // changed the locked branch's `<div className={chipClass} ...>` to
-    // `<button>` in LifecycleStrip.tsx, reran this test, confirmed it failed
-    // (tagName === 'BUTTON'), then restored — see the PR description.
-    expect(provision.tagName).toBe('DIV')
-    expect(within(provision).queryByRole('button')).toBeNull()
+    // The padlock is the one <svg> the rail draws, and only ever on a locked
+    // key — the sibling test above pins that no NON-locked key carries one.
+    expect(provision.querySelector('svg'), 'a locked key should carry the padlock glyph').not.toBeNull()
 
-    // The reason is NOT a permanent caption (would not fit a single-line
-    // row) — it is not in the DOM at all until the toggle is activated,
-    // and it is a real, keyboard-operable button, not a title= tooltip.
-    expect(screen.queryByText('provision locked reason')).toBeNull()
-    const toggle = screen.getByRole('button', { name: 'Why Provision is locked' })
-    expect(toggle.getAttribute('aria-expanded')).toBe('false')
-    fireEvent.click(toggle)
-    expect(screen.getByText('provision locked reason')).toBeTruthy()
-    expect(toggle.getAttribute('aria-expanded')).toBe('true')
+    // Padlock and dot are mutually exclusive: "locked" and "not started" are
+    // different facts, and collapsing them into the same absence is exactly
+    // what the padlock exists to prevent.
+    expect(provision.querySelector('[data-testid="mark-complete"]')).toBeNull()
+    expect(provision.querySelector('[data-testid="mark-partial"]')).toBeNull()
+
+    // dmfdeploy#405, the behaviour change. This assertion is the exact
+    // inverse of what this suite pinned before — the old test asserted
+    // tagName === 'DIV' and was mutation-verified in that direction. Locked
+    // is now reachable-but-read-only, so the key IS a button and clicking it
+    // reports the selection upward.
+    expect(provision.tagName).toBe('BUTTON')
+    fireEvent.click(provision)
+    expect(onSelect).toHaveBeenCalledWith('provision')
+
+    // The reason is NOT rendered as visible chrome on the row — a
+    // single-line rail has no room for it, which was true before #405 and is
+    // still true. It reaches assistive tech as the key's DESCRIPTION, and
+    // reaches sighted operators as the mounted panel's body once the key is
+    // selected (workloadSetup.test.tsx pins that half).
+    const describedBy = provision.getAttribute('aria-describedby')
+    expect(describedBy).toBeTruthy()
+    expect(document.getElementById(describedBy as string)?.textContent).toContain('provision locked reason')
   })
 
   it('carries no opacity utility on the chip container itself', () => {
@@ -266,49 +288,6 @@ describe('locked state carries a dashed-border shape cue — never colour alone'
 
     expect(label.className).not.toMatch(/\bopacity-\d+\b/)
     expect(effectiveContrastRatio(provision, label)).toBeGreaterThanOrEqual(4.5)
-  })
-})
-
-// FIX ROUND (P3 round 3, P2-4): the popover escaped Topbar's clipping
-// ancestor via position:fixed (P2-2 above), but `left: rect.left` with no
-// viewport clamp still let a chip near the right edge place most of the
-// popover's fixed 192px (w-48) width off-screen. Closing on scroll/resize
-// (already tested elsewhere in this file) only handles the popover moving
-// out of place after opening — it says nothing about a bad INITIAL
-// placement, which is what this pins: a mocked near-right-edge trigger
-// rect, and the rendered note's own inline left must still fit.
-describe('the locked-reason popover stays inside the viewport for a trigger near the right edge', () => {
-  it('clamps left instead of placing straight off the trigger\'s own rect.left', () => {
-    const steps: Record<FlowStepId, FlowStepState> = {
-      design: 'complete',
-      plan: 'complete',
-      provision: 'locked',
-      configure: 'locked',
-      finalise: 'locked',
-    }
-    renderRail({ steps, activeChip: 'design', current: null })
-
-    const toggle = screen.getByRole('button', { name: 'Why Provision is locked' })
-    // jsdom's default viewport is 1024x768 — this rect models a trigger
-    // sitting almost at the right edge, where an unclamped popover would
-    // extend well past window.innerWidth.
-    vi.spyOn(toggle, 'getBoundingClientRect').mockReturnValue({
-      left: 1000,
-      right: 1020,
-      top: 40,
-      bottom: 60,
-      width: 20,
-      height: 20,
-      x: 1000,
-      y: 40,
-      toJSON: () => {},
-    })
-    fireEvent.click(toggle)
-
-    const note = screen.getByRole('note')
-    const left = Number(note.style.left.replace('px', ''))
-    const POPOVER_WIDTH_PX = 192 // w-48, mirrored from LifecycleStrip.tsx
-    expect(left + POPOVER_WIDTH_PX).toBeLessThanOrEqual(window.innerWidth)
   })
 })
 
@@ -571,6 +550,149 @@ describe('backend position and wizard selection are each their own signal', () =
 
     for (const id of ['design', 'plan', 'provision', 'configure', 'finalise'] as FlowStepId[]) {
       expect(hasTally(chip(LabelFor(id))), `${id} should carry no tally — current is null`).toBe(false)
+    }
+  })
+})
+
+// NEW (dmfdeploy#449 Pass 2, plan §3.2): the completeness grammar. Four
+// states, two glyphs, one fill variation, one absence — and every distinction
+// is shape, fill or absence, never hue (Constitution Art. 11), so the grammar
+// survives greyscale. These are rendering assertions on the actual DOM nodes;
+// the DERIVATION that decides which mark a stage gets is workloadFlow.test.ts's
+// concern, not this file's.
+describe('the completeness mark — filled dot, outline dot, no dot, padlock', () => {
+  const OPEN_STEPS: Record<FlowStepId, FlowStepState> = {
+    design: 'complete',
+    plan: 'complete',
+    provision: 'current',
+    configure: 'open',
+    finalise: 'open',
+  }
+
+  it('draws a filled dot for complete, an outline dot for partial, and nothing at all for not-started', () => {
+    renderRail({
+      steps: OPEN_STEPS,
+      activeChip: 'provision',
+      current: 'provision',
+      completeness: {
+        design: 'complete',
+        plan: 'complete',
+        provision: 'partial',
+        configure: 'none',
+        finalise: 'none',
+      },
+    })
+
+    for (const id of ['design', 'plan'] as FlowStepId[]) {
+      const el = chip(LabelFor(id))
+      expect(el.querySelector('[data-testid="mark-complete"]'), `${id} should carry a filled dot`).not.toBeNull()
+      expect(el.querySelector('[data-testid="mark-partial"]')).toBeNull()
+    }
+
+    const provision = chip('Provision')
+    expect(provision.querySelector('[data-testid="mark-partial"]'), 'provision should carry an outline dot').not.toBeNull()
+    expect(provision.querySelector('[data-testid="mark-complete"]')).toBeNull()
+
+    for (const id of ['configure', 'finalise'] as FlowStepId[]) {
+      const el = chip(LabelFor(id))
+      expect(el.querySelector('[data-testid="mark-complete"]'), `${id} should carry no dot`).toBeNull()
+      expect(el.querySelector('[data-testid="mark-partial"]'), `${id} should carry no dot`).toBeNull()
+    }
+  })
+
+  // The mark is aria-hidden shape. Without a description carrier the repaint
+  // would have added a fact only sighted operators can read — precisely the
+  // gap this component's own docstring keeps auditing for. The key's
+  // accessible NAME must stay the bare EBU label (every other test in this
+  // file addresses keys by it), so the state rides aria-describedby instead.
+  it('states each mark in the accessibility tree without disturbing the key\'s accessible name', () => {
+    renderRail({
+      steps: OPEN_STEPS,
+      activeChip: 'provision',
+      current: 'provision',
+      completeness: {
+        design: 'complete',
+        plan: 'complete',
+        provision: 'partial',
+        configure: 'none',
+        finalise: 'none',
+      },
+    })
+
+    const expected: Record<string, string> = {
+      design: 'Complete',
+      plan: 'Complete',
+      provision: 'Partially satisfied',
+      configure: 'Not started',
+      finalise: 'Not started',
+    }
+    for (const id of FLOW_STEPS) {
+      const el = chip(LabelFor(id))
+      // The name is still exactly the label — nothing appended.
+      expect(el.getAttribute('aria-label'), `${id} accessible name must stay the bare label`).toBe(LabelFor(id))
+      const describedBy = el.getAttribute('aria-describedby')
+      expect(describedBy, `${id} should describe its own state`).toBeTruthy()
+      expect(document.getElementById(describedBy as string)?.textContent).toBe(expected[id])
+    }
+  })
+
+  // dmfdeploy#414 made the bare workload URL the workload's home, and there
+  // NO key is selected — the rail rendered five identical dead chips, no
+  // position, no progress, on the most-visited rail state. This is the fix,
+  // and the reason completeness is a separate axis from selection at all.
+  it('still reports progress on the workload home, where no key is selected and there is no position', () => {
+    renderRail({
+      steps: {
+        design: 'complete',
+        plan: 'complete',
+        provision: 'complete',
+        configure: 'open',
+        finalise: 'open',
+      },
+      activeChip: null,
+      current: null,
+      completeness: {
+        design: 'complete',
+        plan: 'complete',
+        provision: 'complete',
+        configure: 'complete',
+        finalise: 'complete',
+      },
+    })
+
+    // Nothing is selected and nothing is the position...
+    for (const id of FLOW_STEPS) {
+      const el = chip(LabelFor(id))
+      expect(el.getAttribute('aria-pressed'), `${id} must not read as selected`).toBe('false')
+      expect(el.getAttribute('aria-current'), `${id} must not read as the position`).toBeNull()
+      // ...yet the rail is no longer silent: every key states its progress.
+      expect(el.querySelector('[data-testid="mark-complete"]'), `${id} should still report completeness`).not.toBeNull()
+    }
+  })
+
+  // The mark inherits the key's own text colour (bg-current/border-current)
+  // rather than introducing a colour axis of its own, which is what keeps the
+  // grammar readable in greyscale and on the inverted (selected) key alike.
+  it('carries no colour utility of its own — the mark inherits the key tone', () => {
+    renderRail({
+      steps: OPEN_STEPS,
+      activeChip: 'design',
+      current: 'provision',
+      completeness: {
+        design: 'complete',
+        plan: 'partial',
+        provision: 'none',
+        configure: 'none',
+        finalise: 'none',
+      },
+    })
+
+    const filled = chip('Design').querySelector('[data-testid="mark-complete"]') as HTMLElement
+    expect(filled.className).toContain('bg-current')
+    const outline = chip('Plan').querySelector('[data-testid="mark-partial"]') as HTMLElement
+    expect(outline.className).toContain('border-current')
+    for (const el of [filled, outline]) {
+      expect(el.className).not.toMatch(/\b(bg|text|border)-(red|green|amber|accent|ok|warning)\b/)
     }
   })
 })

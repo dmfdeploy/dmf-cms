@@ -219,7 +219,18 @@ describe('the rail model is unforgeable — only buildHeaderSlotRail can produce
     // not a plain FlowState. Splitting classification into two calls for
     // WP-3 does not reopen round 4's gap: a hand-built FlowState still
     // cannot reach a rail model, it just fails one call earlier now.
-    const flowShaped: FlowState = { current: 'configure', offFlow: false, undetermined: false, steps: OPEN_STEPS }
+    const flowShaped: FlowState = {
+      current: 'configure',
+      offFlow: false,
+      undetermined: false,
+      steps: OPEN_STEPS,
+      // dmfdeploy#449: completeness is part of FlowState now, so a hand-built
+      // one has to supply it too — which is exactly the point. It rides the
+      // branded flow rather than RailModelExtras, so there is no caller-facing
+      // channel through which to paint five filled dots on a workload that has
+      // provisioned nothing.
+      completeness: { design: 'complete', plan: 'complete', provision: 'complete', configure: 'complete', finalise: 'complete' },
+    }
     // @ts-expect-error — flowShaped is FlowState, not ClassifiedFlow.
     const rail = buildHeaderSlotRail(flowShaped, { activeChip: 'configure', ...NOOP_EXTRAS })
     expect(rail).toBeTruthy()
@@ -234,6 +245,11 @@ describe('the rail model is unforgeable — only buildHeaderSlotRail can produce
     expect(flow.current).toBe(direct.current)
     expect(flow.offFlow).toBe(direct.offFlow)
     expect(rail.steps).toEqual(direct.steps)
+    // dmfdeploy#449: completeness makes the same trip as steps — derived once
+    // by classifyWorkloadFlow, carried on the branded flow, never recomputed
+    // by the rail builder or the component that draws the dots.
+    expect(flow.completeness).toEqual(direct.completeness)
+    expect(rail.completeness).toEqual(direct.completeness)
     expect(rail.current).toBe(direct.current)
     expect(rail.offFlow).toBe(direct.offFlow)
   })

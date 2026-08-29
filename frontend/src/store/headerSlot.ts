@@ -1,6 +1,12 @@
 import { useLayoutEffect } from 'react'
 import { create } from 'zustand'
-import { classifyWorkloadFlow, type FlowState, type FlowStepId, type FlowStepState } from '../lib/workloadFlow'
+import {
+  classifyWorkloadFlow,
+  type FlowState,
+  type FlowStepId,
+  type FlowStepState,
+  type StageCompleteness,
+} from '../lib/workloadFlow'
 import type { WorkloadLifecycleInput } from '../lib/workloadLifecycle'
 
 /**
@@ -248,6 +254,17 @@ export function classifyWorkloadForHeaderSlot(
 
 export interface HeaderSlotRailModel {
   steps: Record<FlowStepId, FlowStepState>
+  /**
+   * dmfdeploy#449: per-stage completeness for the rail's dot grammar. Read
+   * off the ClassifiedFlow, NOT off RailModelExtras — deliberately, and for
+   * the same reason the run counts moved into TRUST. Completeness is a
+   * derivation fact, so letting a caller supply it would reopen exactly the
+   * gap point 3 above closed for counts: a caller holding a genuine flow
+   * could pair it with a hand-written "everything complete" and the rail
+   * would paint five filled dots on a workload that had provisioned nothing.
+   * There is no field on RailModelExtras through which to try.
+   */
+  completeness: Record<FlowStepId, StageCompleteness>
   activeChip: FlowStepId | null
   current: FlowStepId | null
   offFlow: boolean
@@ -345,6 +362,7 @@ export function buildHeaderSlotRail(flow: ClassifiedFlow, extras: RailModelExtra
   const runningReadout = Object.freeze({ running: trust.running, total: trust.total, trustworthy: trust.trustworthy })
   const rail: HeaderSlotRailModel = {
     steps: flow.steps,
+    completeness: flow.completeness,
     current: flow.current,
     offFlow: flow.offFlow,
     ...extras,
