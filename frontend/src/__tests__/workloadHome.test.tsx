@@ -694,17 +694,24 @@ describe('FIX ROUND P2-3: the rail agrees with WorkloadSetup for a purge-eligibl
     // usable, not on home state), so wait on the rail itself, which is what
     // this test actually concerns.
     const strip = await screen.findByRole('navigation', { name: 'Media workload lifecycle' })
-    // A locked chip renders as an inert <div>, never a <button> — see
-    // LifecycleStrip.tsx. Before this fix, a purge-eligible workload still
-    // read as Finalise-locked here (allMembersBootstrapped/
-    // anyMemberObservedRunning/membersDataTrustworthy/purgeAuthorized were
-    // all silently absent), the same shape workloadSetup.test.tsx's own
-    // "locked steps are always prose in the rail" pins as the WRONG state
-    // for this workload.
+    const finaliseChip = within(strip).getByRole('button', { name: 'Finalise & Review' })
+    // dmfdeploy#405 FIX ROUND: this used to assert the chip's tag name —
+    // "a locked chip renders as an inert <div>, never a <button>" — which
+    // was a real proof of not-locked before #405 (a locked chip's
+    // getByRole('button', ...) call above would have thrown). #405 made
+    // every key an interactive <button> whether locked or not
+    // (LifecycleStrip.tsx P1/P2), so that check is now vacuously true
+    // regardless of whether this workload actually reads as authorized —
+    // it would keep passing even if WorkloadHome's own role read silently
+    // failed closed (see this file's own P2-3 sibling test below for the
+    // withheld case, and workloadSetup.test.tsx's "locked steps are always
+    // prose in the rail" precedent for the identical shape). The
+    // discriminator is the key's own stated description (P3): it must NOT
+    // read as locked.
     expect(
-      within(strip).getByRole('button', { name: 'Finalise & Review' }),
-      'Finalise & Review must be a real button (not-locked), same as WorkloadSetup reads this workload',
-    ).toBeTruthy()
+      within(finaliseChip).queryByText(/nothing to tear down/),
+      'Finalise & Review must not read as locked, same as WorkloadSetup reads this workload',
+    ).toBeNull()
   })
 
   it('withholds it the same way WorkloadSetup does when the operator is not authorized', async () => {
@@ -715,8 +722,27 @@ describe('FIX ROUND P2-3: the rail agrees with WorkloadSetup for a purge-eligibl
     // purgeAuthorized (running(input) is false for lifecycle: 'provision'),
     // so the chip reads as locked — the fail-closed default, not a missing
     // field silently producing the same visual result for the wrong reason.
+    //
+    // dmfdeploy#405 FIX ROUND: the chip stays an interactive <button> whether
+    // locked or not (LifecycleStrip.tsx P1/P2: `interactive = !jobInFlight`,
+    // `aria-label={STEP_LABEL[id]}`) — the DOM-tag-name check this test used
+    // before #405 no longer discriminates. Unlike WorkloadSetup's own gate
+    // tests (workloadSetup.test.tsx's `expectFinaliseWithheld`), there is no
+    // second half to this discriminator on THIS route either: WorkloadHome
+    // mounts no wizard step of its own to navigate into — its rail's
+    // `onSelect` is a plain navigation to `/setup#finalise` (WorkloadHome.tsx),
+    // identical whether the destination step is locked or open, so
+    // "reachable" proves nothing about withholding here. The key's own
+    // stated LOCKED description (P3) is the only fact this surface has to
+    // offer, and it is the same fact an assistive-tech user actually hears.
     const strip = await screen.findByRole('navigation', { name: 'Media workload lifecycle' })
-    expect(within(strip).queryByLabelText('Finalise & Review')?.tagName).toBe('DIV')
+    const finaliseChip = within(strip).getByRole('button', { name: 'Finalise & Review' })
+    expect(within(finaliseChip).getByText(/nothing to tear down/)).toBeTruthy()
+    // WorkloadHome mounts no wizard step of its own — there is no
+    // stage-local subtree to additionally scope into the way
+    // workloadSetup.test.tsx's `expectFinaliseWithheld` does, so page-wide
+    // is the only "is it really absent" check available on this route.
+    expect(screen.queryByRole('button', { name: 'Delete permanently' })).toBeNull()
   })
 })
 
