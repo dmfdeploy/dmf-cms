@@ -356,8 +356,19 @@ function stageSection(label: string): HTMLElement {
   return heading.closest('[data-step-state]') as HTMLElement
 }
 
-/** Clicks the rail chip for `label` (must be openable — a locked step has
- *  no button to click, by design) and returns the newly-mounted section.
+/** Clicks the rail chip for `label` and returns the newly-mounted section.
+ *
+ *  dmfdeploy#405 FIX ROUND: the parenthetical this docstring used to carry
+ *  here — "must be openable — a locked step has no button to click, by
+ *  design" — stopped being true the moment #405 shipped: every key, locked
+ *  included, is now a reachable <button> WHEN NO JOB IS IN FLIGHT
+ *  (LifecycleStrip.tsx's `interactive = !jobInFlight` — a job in flight
+ *  still demotes every key to an inert, non-interactive <div>, locked or
+ *  not; that suppression is a different fact from locked and #405 did not
+ *  touch it), specifically so a locked step CAN be clicked and read its own
+ *  stated reason. `expectFinaliseWithheld` below relies on exactly that —
+ *  it calls this helper on a locked Finalise & Review key on purpose, with
+ *  no job in flight in any of its callers.
  *
  *  Arc 4 WP-3: the rail now registers into the header slot via a layout
  *  effect rather than rendering inline with the rest of the page (umbrella
@@ -902,6 +913,22 @@ describe('Finalise & Review: teardown click path', () => {
     // default selection already — selectStep still works, clicking an
     // already-selected chip is harmless.
     const finaliseSection = await selectStep('Finalise & Review')
+    // umbrella dmfdeploy/dmfdeploy#378: the INITIAL action buttons are
+    // mutually exclusive by construction (stageActions('finalise') returns
+    // ['tear-down'] alone while anything is running — see that function's
+    // own comment), so this fresh mount offers no Delete permanently button
+    // alongside Teardown. That exclusivity is narrower than "never both, in
+    // any state": FinaliseStage.tsx's own `purgeArming` (set by a Delete
+    // permanently click, cleared only on a successful purge or an explicit
+    // cancel) is checked ahead of `purgeAllowed` in the Delete-permanently
+    // ternary — `allowed` (Teardown's own gate) is not part of that chain at
+    // all, it is a separate prop handed to a sibling `<FinaliseEntry>` on an
+    // independent render path, which is a STRONGER reason the two can
+    // coexist than ordering would be: neither surface gates the other. This
+    // is precisely so an already-armed purge confirmation survives a
+    // background poll moving the workload to a running lifecycle mid-arm —
+    // a distinct, deliberate case this assertion does not exercise.
+    expect(within(finaliseSection).queryByRole('button', { name: 'Delete permanently' })).toBeNull()
     fireEvent.click(within(finaliseSection).getByRole('button', { name: '⏏ Teardown' }))
 
     expect(teardown).toHaveLength(0)
@@ -1778,13 +1805,59 @@ describe('failure and loop-closure are visible and atomic', () => {
 // Provision..." test above proves is legitimately offered) and violate
 // exactly one further fact. Since delete-permanently is the ONLY action
 // stageActions() can offer at Finalise while lifecycle=provision, withdrawing
-// it also drops the whole step to 'locked' (nothing else makes it openable)
-// — so the discriminator is the rail losing its Finalise button and stating
-// the lock reason, not a stage-local "not offered" paragraph the wizard
-// never mounts in this position. Precedent: "locked steps are always prose
-// in the rail, never a control" above pins the identical shape for the
-// pre-existing gates.
+// it also drops the whole step to 'locked' (nothing else makes it openable).
+//
+// dmfdeploy#405 FIX ROUND: the discriminator used to be "the rail loses its
+// Finalise button" — a locked step rendered as an inert, non-interactive
+// <div>, so a bare `queryByRole('button', { name: 'Finalise & Review' }))
+// .toBeNull()` proved withholding on its own. #405 made every rail key —
+// locked included — a reachable <button> WHEN NO JOB IS IN FLIGHT, carrying
+// the SAME accessible name the open key has (LifecycleStrip.tsx:
+// `interactive = !jobInFlight`, `aria-label={STEP_LABEL[id]}`) — a job in
+// flight still demotes every key to an inert <div>, locked or not; that
+// suppression is a different fact from locked and #405 did not touch it.
+// The qualified case above is deliberate, so a locked step can still be
+// visited and read its own stated reason (the removed "Why … is locked"
+// disclosure toggle folded into the key itself). The button therefore no
+// longer discriminates
+// offered from withheld — only its DESCRIPTION
+// (aria-describedby, "Locked. …", P3) does. `expectFinaliseWithheld` below
+// asserts that description, then navigates in anyway (#405's whole point:
+// a locked step is reachable, not merely present) and confirms
+// FlowStep.tsx's locked branch renders the SAME reason prose and never
+// mounts the purge control (FlowStep.tsx:174-183) — absence observed at the
+// place the control would actually live, not inferred from a step the
+// wizard never reached, which a stage-local "not offered" check alone could
+// satisfy vacuously (see this file's own git history: the step drops to
+// 'locked' the moment the last action withdraws, so FinaliseStage is never
+// even mounted for an unconditional-render regression to be caught by a
+// stage-local absence check).
 // ---------------------------------------------------------------------------
+
+/**
+ * Shared discriminator for the #378a/b/c gate tests below. See the section
+ * comment above for why a bare rail-button absence check stopped proving
+ * anything once dmfdeploy#405 made locked keys reachable buttons.
+ *
+ *   (a) present + locked — the key's own stated description (P3), not its
+ *       absence;
+ *   (b) actually navigate there — #405 makes it reachable, so click it;
+ *   (c) the locked reason prose renders and there is no purge control —
+ *       BOTH scoped to where the control would live (proves the RIGHT
+ *       place stays empty) AND page-wide (proves the control isn't
+ *       leaking somewhere else on the page entirely — a stage-scoped
+ *       query cannot see a control rendered as a sibling of the mounted
+ *       stage rather than inside it, so scoping alone would pass even if
+ *       the gate leaked the button outside FinaliseStage's own subtree).
+ */
+async function expectFinaliseWithheld(strip: HTMLElement): Promise<void> {
+  const chip = await waitFor(() => within(strip).getByRole('button', { name: 'Finalise & Review' }))
+  expect(within(chip).getByText(/nothing to tear down/)).toBeTruthy()
+  const finaliseSection = await selectStep('Finalise & Review')
+  expect(within(finaliseSection).getByText(/nothing to tear down/)).toBeTruthy()
+  expect(within(finaliseSection).queryByRole('button', { name: 'Delete permanently' })).toBeNull()
+  expect(screen.queryByRole('button', { name: 'Delete permanently' })).toBeNull()
+}
 
 describe('delete-permanently gate: completeness (umbrella dmfdeploy/dmfdeploy#378a)', () => {
   it('withholds the affordance when the grouped read reports degraded, even for an otherwise-eligible workload', async () => {
@@ -1795,12 +1868,7 @@ describe('delete-permanently gate: completeness (umbrella dmfdeploy/dmfdeploy#37
     renderDetail()
     const strip = await findRail()
 
-    expect(within(strip).queryByRole('button', { name: 'Finalise & Review' })).toBeNull()
-    fireEvent.click(within(strip).getByRole('button', { name: 'Why Finalise & Review is locked' }))
-    // FIX ROUND P2-2: portaled to document.body — see the identical note
-    // above ("locked steps are always prose in the rail...").
-    expect(screen.getByText(/nothing to tear down/)).toBeTruthy()
-    expect(screen.queryByRole('button', { name: 'Delete permanently' })).toBeNull()
+    await expectFinaliseWithheld(strip)
   })
 
   it('still offers it when the read is fresh, error-free, configured, and not degraded', async () => {
@@ -1824,8 +1892,7 @@ describe('delete-permanently gate: authorization (umbrella dmfdeploy/dmfdeploy#3
     renderDetail()
     const strip = await findRail()
 
-    expect(within(strip).queryByRole('button', { name: 'Finalise & Review' })).toBeNull()
-    expect(screen.queryByRole('button', { name: 'Delete permanently' })).toBeNull()
+    await expectFinaliseWithheld(strip)
   })
 
   it('withholds it from an admin viewing as viewer — the EFFECTIVE role gates, not the real one', async () => {
@@ -1836,8 +1903,7 @@ describe('delete-permanently gate: authorization (umbrella dmfdeploy/dmfdeploy#3
     renderDetail()
     const strip = await findRail()
 
-    expect(within(strip).queryByRole('button', { name: 'Finalise & Review' })).toBeNull()
-    expect(screen.queryByRole('button', { name: 'Delete permanently' })).toBeNull()
+    await expectFinaliseWithheld(strip)
   })
 
   it('offers it to operator, engineer, and admin once every other gate passes', async () => {
@@ -1889,20 +1955,56 @@ describe('delete-permanently gate: authorization (umbrella dmfdeploy/dmfdeploy#3
     // Same structural shape as the 378a/b/c gate tests above: delete-
     // permanently is the ONLY action stageActions() can offer at Finalise
     // while lifecycle=provision, so withdrawing it (here: the identity read
-    // going untrustworthy mid-refetch) drops the WHOLE step to locked and
-    // the wizard's own selection ladder bounces the operator back to
-    // Provision (the backend position) — the rail losing its Finalise
-    // button is the discriminator, not a stage-local absence.
-    await waitFor(() =>
-      expect(within(rail()).queryByRole('button', { name: 'Finalise & Review' })).toBeNull(),
-    )
+    // going untrustworthy mid-refetch) drops the WHOLE step to locked.
+    //
+    // dmfdeploy#405 FIX ROUND: unlike the sibling gate tests above, this one
+    // starts the operator ALREADY selected on Finalise, and #405
+    // (WorkloadSetup.tsx:571-577) means a SELECTED step is no longer
+    // abandoned for becoming locked — "a selection is no longer abandoned
+    // for becoming locked... A non-null selection is now always honoured."
+    // The pre-#405 bounce this test used to rely on ("the wizard's own
+    // selection ladder returns to Provision, and the rail losing its
+    // Finalise button is the discriminator") no longer happens: the rail's
+    // Finalise & Review key stays SELECTED (aria-pressed) and reachable
+    // throughout, so the discriminator is the key's own LOCKED description
+    // (P3), not a rail absence that no longer occurs.
+    //
+    // MID-FLIGHT, the rail and the panel genuinely disagree for a moment,
+    // and both halves are load-bearing: the rail reads LIVE `flow.steps`
+    // (buildHeaderSlotRail), which folds `userQuery.isFetching` into
+    // isPurgeAuthorized's fail-closed check, so the key's description flips
+    // to locked the INSTANT the refetch starts. The wizard's PANEL reads the
+    // frozen `displaySteps` instead (umbrella #392's own fix: a still-
+    // fetching read must not evict an operator's already-typed reason), so
+    // FinaliseStage stays mounted through this window — it is FinaliseStage's
+    // OWN action-gated content (not yet FlowStep's locked prose) that
+    // withholds the button here, and that is `#392`'s claim, not a bug this
+    // test should paper over.
+    await waitFor(() => {
+      const finaliseChip = within(rail()).getByRole('button', { name: 'Finalise & Review' })
+      expect(within(finaliseChip).getByText(/nothing to tear down/)).toBeTruthy()
+    })
+    // Still reachable, not merely present — click it, same as the operator
+    // could.
+    fireEvent.click(within(rail()).getByRole('button', { name: 'Finalise & Review' }))
     expect(screen.queryByRole('button', { name: 'Delete permanently' })).toBeNull()
 
     // Release the held read — it throws (meRejectFlag was set before the
-    // release). The control must stay withdrawn, never re-arm off the
-    // stale-but-still-authorized payload react-query kept around.
+    // release). Once the read SETTLES, `displaySteps` catches up to locked
+    // too (#392's freeze holds only through the UNSETTLED window, never past
+    // it) — FlowStep.tsx's own locked branch (P5) now takes over the panel:
+    // reason prose, no mounted children. The control must stay withdrawn,
+    // never re-arm off the stale-but-still-authorized payload react-query
+    // kept around.
     releaseMe?.()
     await waitFor(() => expect(queryClient.getQueryState(['user'])?.fetchStatus).toBe('idle'))
+    const lockedFinaliseSection = stageSection('Finalise & Review')
+    expect(within(lockedFinaliseSection).getByText(/nothing to tear down/)).toBeTruthy()
+    // Scoped (proves the right place stays empty) AND page-wide (proves
+    // nothing leaked outside FinaliseStage's own subtree — a scoped-only
+    // check cannot see a control rendered as a sibling of the mounted
+    // stage rather than inside it).
+    expect(within(lockedFinaliseSection).queryByRole('button', { name: 'Delete permanently' })).toBeNull()
     expect(screen.queryByRole('button', { name: 'Delete permanently' })).toBeNull()
   })
 
@@ -2070,7 +2172,6 @@ describe('delete-permanently gate: entity identity (umbrella dmfdeploy/dmfdeploy
     renderDetail('unassigned')
     const strip = await findRail()
 
-    expect(within(strip).queryByRole('button', { name: 'Finalise & Review' })).toBeNull()
-    expect(screen.queryByRole('button', { name: 'Delete permanently' })).toBeNull()
+    await expectFinaliseWithheld(strip)
   })
 })
