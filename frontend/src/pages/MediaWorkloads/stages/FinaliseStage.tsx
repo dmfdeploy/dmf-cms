@@ -583,6 +583,23 @@ function FinaliseEntry({
   // AutomationInProgressNotice, because only this call site knows which
   // token is "last" for its own action.
   const inTail = progressOperation?.progress_step === 'finalising'
+  // codex adversarial review (feat/390-throbber, T2/G4): a REAL guard, not
+  // an emergent property of "callers stop rendering the notice once
+  // resolved" — that claim was contradicted by the code. `inFlight`
+  // (above) is driven by track.jobId/opId, and JobStatusLine's own
+  // onComplete hand-off is DELIBERATELY paced (2s, "long enough to read
+  // the outcome" — see JobProgress.tsx), so a terminal job id can sit in
+  // `track` — and therefore this notice can still be mounted — for a
+  // real window after the underlying run has actually concluded. This
+  // component's OWN operation poll (progressOperation, via
+  // track.progressOpId, which — unlike track.opId — survives that exact
+  // handoff) already knows independently whether the run is genuinely
+  // done. G4 is specifically about the RUNNING COUNT never sitting next
+  // to a result — never the whole notice — so only runningReadout is
+  // gated on it below, not `inFlight`/the notice's own visibility.
+  const progressOperationResolved =
+    progressOperation != null &&
+    (progressOperation.state === 'error' || _WATCHED_TERMINAL_STATES.includes(progressOperation.state))
 
   return (
     <div className="border-t border-white/5 pt-3 first:border-t-0 first:pt-0">
@@ -676,7 +693,7 @@ function FinaliseEntry({
             startedAt={progressOperation?.created_at ?? null}
             progressStep={progressOperation?.progress_step}
             typicalDuration="two to three minutes"
-            runningReadout={inTail ? runningReadout : null}
+            runningReadout={inTail && !progressOperationResolved ? runningReadout : null}
             stale={progressReadFailed}
           >
             It shows up on{' '}

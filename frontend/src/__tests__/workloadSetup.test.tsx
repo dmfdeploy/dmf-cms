@@ -164,6 +164,15 @@ interface FetchOpts {
   topologyStatus?: Record<string, number>
   deployResult?: Record<string, unknown>
   teardownResult?: Record<string, unknown>
+  /**
+   * dmfdeploy/dmfdeploy#390 (T2/G4 regression test): keyed by operation_id,
+   * served for GET /api/operations/:id — lets a test dispatch an ASYNC
+   * teardown (teardownResult carrying operation_id) and control exactly
+   * what the operation poll reports, independent of the job-status mock
+   * below (which the sync-only path used by every other test in this file
+   * never exercises).
+   */
+  operationResponses?: Record<string, Record<string, unknown>>
   switchResult?: Record<string, unknown>
   clearResult?: Record<string, unknown>
   facilitySites?: Array<{ name: string; slug: string | null; device_count: number }>
@@ -313,6 +322,10 @@ function mkFetch(opts: FetchOpts = {}) {
     }
     if (url.match(/\/api\/catalog\/[^/]+\/status\/\d+$/)) {
       return json({ job_id: 501, status: 'successful', is_done: true, is_running: false })
+    }
+    const opMatch = url.match(/\/api\/operations\/([^/]+)$/)
+    if (opMatch && opts.operationResponses?.[opMatch[1]]) {
+      return json(opts.operationResponses[opMatch[1]])
     }
     return json({})
   })
@@ -1047,6 +1060,68 @@ describe('Finalise & Review: teardown click path', () => {
 
     // The pre-existing, quiet job-progress line is untouched, alongside it.
     expect(await within(finaliseSection).findByText(/job #502/)).toBeTruthy()
+  })
+
+  // codex adversarial review (feat/390-throbber, T2/G4): the running count
+  // must NEVER render next to a terminal result. The claim that callers
+  // "stop rendering the notice once resolved" was contradicted by the
+  // code — track.opId (and therefore `inFlight`/the mounted notice) can
+  // outlive the operation's OWN real terminal state by the deliberate 1-3s
+  // pacing window OperationStatusLine's onTerminal hand-off uses. This
+  // drives the ASYNC teardown path (an operation_id, not a bare job_id) so
+  // the operation poll — which the notice's own progress subscription
+  // reads independently via track.progressOpId — is exercised at all; the
+  // sync-only path every other test in this file uses never touches it.
+  it('G4: never shows the running count once the operation has ITSELF resolved, even while track is still clearing', async () => {
+    const h = mkFetch({
+      workload: workload({
+        lifecycle: 'operate',
+        instances: [
+          instance({ instance: 'crosspoint-1', observed_state: 'running' }),
+          instance({ instance: 'crosspoint-2', observed_state: 'running' }),
+          instance({ instance: 'crosspoint-3', observed_state: 'failing' }),
+        ],
+      }),
+      catalog: [catalogEntry({ lifecycle: 'active' })],
+      teardownResult: { operation_id: 'op-teardown-1', status: 'launched', request_id: 'req-teardown-1' },
+      operationResponses: {
+        'op-teardown-1': {
+          operation_id: 'op-teardown-1',
+          action: 'teardown',
+          target: 'crosspoint',
+          // Terminal on the VERY FIRST poll — proves the guard closes the
+          // gap immediately, not "eventually after enough polls".
+          state: 'run_complete',
+          job_id: 999,
+          error: null,
+          progress_step: 'finalising',
+          created_at: '2026-01-01T00:00:00Z',
+          updated_at: '2026-01-01T00:00:05Z',
+        },
+      },
+    })
+    renderDetail()
+    await findRail()
+    const finaliseSection = await selectStep('Finalise & Review')
+    fireEvent.click(within(finaliseSection).getByRole('button', { name: '⏏ Teardown' }))
+    fireEvent.change(within(finaliseSection).getByPlaceholderText(REASON_PLACEHOLDER), {
+      target: { value: 'decommission' },
+    })
+    fireEvent.click(within(finaliseSection).getByRole('button', { name: 'Confirm teardown' }))
+
+    await within(finaliseSection).findByText('Tearing down')
+
+    // The operation's OWN data has already loaded (progress_step is
+    // recognized) and inTail's own condition is true — the step phrase
+    // renders, proving this isn't "nothing loaded yet".
+    await waitFor(() => expect(within(finaliseSection).getByText('Finalising cleanup')).toBeTruthy())
+
+    // The core assertion: even though the workload has a real, trustworthy,
+    // non-empty running/total (2 of 3) and inTail is true, the count must
+    // never appear — the SAME operation poll that supplied progress_step
+    // also reports state=run_complete, and the guard must see that.
+    expect(within(finaliseSection).queryByText(/services running/)).toBeNull()
+    expect(h.calls.teardown).toHaveLength(1)
   })
 
   it('never renders Teardown for an entry that is not currently deployed', async () => {

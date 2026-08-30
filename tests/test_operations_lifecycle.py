@@ -1546,6 +1546,38 @@ def test_fetch_l3_milestone_from_events_last_event_wins(monkeypatch):
     assert tok == "provisioning"
 
 
+def test_fetch_l3_milestone_from_events_selects_by_max_counter_not_list_order(monkeypatch):
+    # codex adversarial review (T4): "latest" must be decided by comparing
+    # counter values, never by trusting the order AWX's own response
+    # arrived in. This list is DELIBERATELY in DESCENDING counter order —
+    # the opposite of what order_by=counter asks for — proving the
+    # selection is order-independent. A reversed-list-scan implementation
+    # would return "preflight-passed" (the first item) here; the correct
+    # answer, by counter value alone, is "configuring" (counter=3).
+    app = _fake_app_for_outcome()
+    monkeypatch.setattr(
+        main, "get_job_events_for_task",
+        lambda **k: [
+            _milestone_event("DMF_L3_MILESTONE: configuring", counter=3),
+            _milestone_event("DMF_L3_MILESTONE: provisioning", counter=2),
+            _milestone_event("DMF_L3_MILESTONE: preflight-passed", counter=1),
+        ],
+    )
+    tok = asyncio.run(main._fetch_l3_milestone_from_events(app, 42))
+    assert tok == "configuring"
+
+
+def test_fetch_l3_milestone_from_events_ignores_events_with_missing_or_non_int_counter(monkeypatch):
+    app = _fake_app_for_outcome()
+    events = [
+        {"task": main._L3_MILESTONE_TASK_NAME, "event_data": {"res": {"msg": "DMF_L3_MILESTONE: configuring"}}},  # no counter key
+        {**_milestone_event("DMF_L3_MILESTONE: provisioning", counter=2), "counter": "2"},  # counter not an int
+    ]
+    monkeypatch.setattr(main, "get_job_events_for_task", lambda **k: events)
+    tok = asyncio.run(main._fetch_l3_milestone_from_events(app, 42))
+    assert tok is None
+
+
 def test_fetch_l3_milestone_from_events_missing_event_data_shapes_are_none(monkeypatch):
     app = _fake_app_for_outcome()
     malformed = [
@@ -1814,6 +1846,64 @@ def test_watcher_milestone_fetch_never_touches_outcome_fields(monkeypatch):
     assert updated.state == OperationState.RUN_COMPLETE
     assert updated.l3_outcome is None
     assert updated.auto_rollback is None
+
+
+def test_watcher_milestone_write_failure_never_reaches_outer_classification(monkeypatch):
+    # codex adversarial review (feat/390-throbber, T1/P1): the test above
+    # does NOT exercise a real milestone token (get_job_events_for_task
+    # returns []), so it would still pass even if the milestone block's
+    # ops_store.update(...) call sat unguarded inside the watcher's OUTER
+    # try/except — a failure there would misclassify the op as
+    # state=RUN_STATUS_UNKNOWN, error="job-watch-crashed" (via
+    # _watch_lost_terminal_state), and RUN_STATUS_UNKNOWN is a DIRTY state
+    # that blocks further dispatch. A purely cosmetic progress-display bug
+    # must never be able to dirty a facility. This test proves the
+    # property directly: a REAL milestone token is fetched AND the write
+    # that would store it is made to raise — the op's outcome must still
+    # be byte-identical to a run where nothing about milestones ever
+    # happened.
+    app, ops_store = _fake_app()
+    op = ops_store.create("deploy", "key1")
+    job_calls = {"n": 0}
+    job_responses = [
+        {"status": "running", "started": "t0"},
+        {"status": "successful", "started": "t0", "finished": "t1"},
+    ]
+
+    def fake_get_job(**k):
+        i = min(job_calls["n"], len(job_responses) - 1)
+        job_calls["n"] += 1
+        return job_responses[i]
+
+    monkeypatch.setattr(main, "get_job", fake_get_job)
+    monkeypatch.setattr(
+        main, "get_job_events_for_task",
+        lambda **k: [_milestone_event("DMF_L3_MILESTONE: provisioning")],
+    )
+
+    real_update = ops_store.update
+
+    def exploding_update(operation_id, **kwargs):
+        if kwargs.get("progress_step") is not None:
+            raise RuntimeError("simulated failure inside the milestone-progress write")
+        return real_update(operation_id, **kwargs)
+
+    monkeypatch.setattr(ops_store, "update", exploding_update)
+
+    _run_watcher(app, op.operation_id, 111, "deploy", "key1")
+
+    updated = ops_store.get(op.operation_id)
+    # Byte-identical to test_watcher_successful_job_is_run_complete's own
+    # outcome — a run with no milestones at all.
+    assert updated.state == OperationState.RUN_COMPLETE
+    assert updated.error is None
+    assert updated.l3_outcome is None
+    assert updated.auto_rollback is None
+    # The injected failure means the token genuinely never got stored —
+    # this is not "the test happens to pass regardless of what
+    # progress_step ends up as", it is a direct proof the write was
+    # attempted and swallowed.
+    assert updated.progress_step is None
 
 
 # ---------------------------------------------------------------------------
