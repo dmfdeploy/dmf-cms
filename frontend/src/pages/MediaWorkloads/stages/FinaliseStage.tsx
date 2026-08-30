@@ -18,7 +18,7 @@ import AutomationInProgressNotice, {
 import type { CatalogEntry, MediaWorkload, Operation, SwitchSourceResult, UserIdentity } from '../../../api/types'
 import type { StageActionId, StageState } from '../../../lib/workloadLifecycle'
 import StageCard from './StageCard'
-import { JobStatusLine, OperationStatusLine } from './JobProgress'
+import { JobStatusLine, OPERATION_LABEL, OperationStatusLine } from './JobProgress'
 import { settleQuery } from '../../../lib/queryState'
 
 /**
@@ -370,10 +370,30 @@ export default function FinaliseStage({
               <p className="text-muted">
                 Deleting <span className="font-mono">{workload.slug}</span> permanently…
               </p>
+              {/* umbrella #499: this used to read "op 1a2b3c4d... —
+                  waking" — the operation id and the raw Operation['state']
+                  word, both at default level. Art. 3 puts job ids and
+                  internal state at expert, not default. The default-level
+                  line below now says the SAME fact OPERATION_LABEL already
+                  translates it to everywhere else on this stage (per-entry
+                  teardown's OperationStatusLine); the raw id/state pair
+                  moves into "System details", the same disclosure every
+                  other expert-tier readout on this page already uses. */}
               <p className="mt-1 text-muted/70">
-                op <span className="font-mono">{purgeOpId.slice(0, 8)}...</span>
-                {purgeOp ? ` — ${purgeOp.state}` : purgeOpFailed ? ' — could not query status' : ' — querying status…'}
+                {purgeOp
+                  ? OPERATION_LABEL[purgeOp.state]
+                  : purgeOpFailed
+                    ? 'Could not query status'
+                    : 'Querying status…'}
               </p>
+              <details className="mt-1 text-muted/70">
+                <summary className="cursor-pointer select-none opacity-80 hover:opacity-100">
+                  System details
+                </summary>
+                <p className="mt-1 pl-4 font-mono">
+                  op {purgeOpId.slice(0, 8)}...{purgeOp ? ` · ${purgeOp.state}` : ''}
+                </p>
+              </details>
               {purgeOpFailed && (
                 <p className="mt-1 text-amber-300">
                   {purgeOp

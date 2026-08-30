@@ -12,7 +12,13 @@ import type { Operation } from '../../../api/types'
  * Finalise & Review stages unchanged, not reinvented.
  */
 
-const OPERATION_LABEL: Record<string, string> = {
+// Exported (umbrella #499): the delete-permanently panel below FinaliseStage
+// reuses this SAME table for its own operator-language state text, rather
+// than hand-writing a second translation of `Operation['state']` — the
+// raw enum value it used to render at default level is exactly the Art. 3
+// leak that issue is about, and a second copy here would just be a second
+// place for the two tables to drift apart.
+export const OPERATION_LABEL: Record<string, string> = {
   waking: 'Waking automation',
   launching: 'Launching job',
   launched: 'Launched',
