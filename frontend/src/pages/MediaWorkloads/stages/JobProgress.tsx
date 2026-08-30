@@ -1,7 +1,7 @@
 import { useEffect, useRef } from 'react'
 import { useCatalogJobStatus, useOperationStatus } from '../../../api/hooks'
 import { settleQuery } from '../../../lib/queryState'
-import type { Operation } from '../../../api/types'
+import type { Operation, OperationState } from '../../../api/types'
 
 /**
  * Launch-job progress/outcome, relocated verbatim (behaviour-for-behaviour)
@@ -18,10 +18,21 @@ import type { Operation } from '../../../api/types'
 // raw enum value it used to render at default level is exactly the Art. 3
 // leak that issue is about, and a second copy here would just be a second
 // place for the two tables to drift apart.
-export const OPERATION_LABEL: Record<string, string> = {
+//
+// PR #127 review fix: typed `Record<string, string>`, this table could be
+// missing a key and TypeScript would never notice — which is exactly how
+// `running` shipped with no entry (FinaliseStage's delete-permanently panel
+// observing a purge mid-flight rendered a blank status line). Retyped
+// `Record<OperationState, string>` so the object literal itself is a
+// compile-time exhaustiveness check: add a state to OPERATION_STATES
+// without a matching entry here, or vice versa, and `tsc` refuses to build.
+// jobProgressHonesty.test.tsx also asserts this at runtime, independent of
+// whether a given test run happens to invoke tsc.
+export const OPERATION_LABEL: Record<OperationState, string> = {
   waking: 'Waking automation',
   launching: 'Launching job',
   launched: 'Launched',
+  running: 'Running',
   error: 'Error',
   // umbrella #403: the REAL terminal states a watched action (deploy/
   // teardown/rollback/finalise-purge — see useOperationStatus's own
@@ -37,10 +48,19 @@ export const OPERATION_LABEL: Record<string, string> = {
   run_status_unknown: 'Status unknown',
 }
 
-const OPERATION_CLASS: Record<string, string> = {
+// PR #127 review fix: same shape, same gap, same fix as OPERATION_LABEL
+// above — `running` had no class either, so the span rendered with
+// `undefined` appended to its className (no visible color, reading as calm/
+// neutral rather than "in progress"). `running` gets the SAME blue as
+// `launching` (still mid-flight, nothing wrong yet); the two states that
+// genuinely need attention — rollback_incomplete/run_status_unknown — were
+// already differentiated (red/amber, never green) by umbrella #403 and stay
+// that way.
+export const OPERATION_CLASS: Record<OperationState, string> = {
   waking: 'text-yellow-300',
   launching: 'text-blue-300',
   launched: 'text-green-400',
+  running: 'text-blue-300',
   error: 'text-red-400',
   run_complete: 'text-green-400',
   run_failed: 'text-red-400',

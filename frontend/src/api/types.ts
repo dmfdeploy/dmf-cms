@@ -54,17 +54,33 @@ export interface WorkflowLaunchResponse {
 // finalise-purge (#202 WP2's watched actions) continue past LAUNCHED
 // through the job-terminal states below; a purge consumer needs to observe
 // those to know when the operation is ACTUALLY done, not just dispatched.
-export type OperationState =
-  | 'waking'
-  | 'launching'
-  | 'launched'
-  | 'running'
-  | 'run_complete'
-  | 'run_failed'
-  | 'failed_rollback_required'
-  | 'rollback_incomplete'
-  | 'run_status_unknown'
-  | 'error'
+//
+// PR #127 review fix (umbrella #499): OperationState used to be a bare
+// union with every operator-facing label table it feeds (JobProgress.tsx's
+// OPERATION_LABEL/OPERATION_CLASS) typed as the unconstrained
+// `Record<string, string>` — TypeScript cannot see a missing key in that
+// shape, which is exactly how `running` shipped with no label (an operator
+// watching a purge in progress saw a blank status line). OPERATION_STATES
+// is now the single source of truth: the array literal below defines the
+// runtime value set AND, via `typeof ... [number]`, the OperationState type
+// itself, so any table declared `Record<OperationState, string>` gets a
+// compiler error the moment a state here has no entry there — and any test
+// that iterates OPERATION_STATES (rather than hand-copying the list) stays
+// correct automatically when this array grows.
+export const OPERATION_STATES = [
+  'waking',
+  'launching',
+  'launched',
+  'running',
+  'run_complete',
+  'run_failed',
+  'failed_rollback_required',
+  'rollback_incomplete',
+  'run_status_unknown',
+  'error',
+] as const
+
+export type OperationState = (typeof OPERATION_STATES)[number]
 
 export interface Operation {
   operation_id: string
