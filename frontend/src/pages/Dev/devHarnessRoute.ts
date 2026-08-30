@@ -124,3 +124,25 @@ export function isGhostGridHarnessRoute(
 ): boolean {
   return import.meta.env.DEV && stripBase(pathname, base) === GHOST_GRID_HARNESS_ROUTE
 }
+
+/**
+ * dmfdeploy/dmfdeploy#390 (F16) — the throbber inspection harness's own
+ * route, gated the SAME way as both harnesses above (DEV-only, bypasses
+ * auth in App.tsx, checked ahead of every auth-derived branch).
+ *
+ * Third sibling, same reasoning as the ghost-grid pair immediately above —
+ * a thin one-line gate per harness over the shared `stripBase`, rather than
+ * widening `isDevHarnessRoute` into a route-identifying signature and
+ * touching every assertion its fix-round history pins. Two branches
+ * (dmfdeploy/dmfdeploy#390 and dmfdeploy/dmfdeploy#498) reached this same
+ * conclusion independently, which is the argument for keeping the pattern
+ * rather than generalizing it on the next one.
+ */
+export const THROBBER_HARNESS_ROUTE = '/__dev/throbber'
+
+export function isThrobberHarnessRoute(
+  pathname: string,
+  base: string = import.meta.env.BASE_URL,
+): boolean {
+  return import.meta.env.DEV && stripBase(pathname, base) === THROBBER_HARNESS_ROUTE
+}
