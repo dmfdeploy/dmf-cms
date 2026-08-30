@@ -1212,14 +1212,27 @@ describe('Finalise & Review: teardown click path', () => {
 // one `it` per job owner, so no single stage's fix can regress unnoticed
 // the way Provision/Configure did the first time.
 //
-// See WorkloadSetup.tsx's own G3 comment for the resolution: the rail is
-// the one canonical carrier for every job owner; Previous goes quiet for
-// all three; Next goes quiet too EXCEPT on Finalise & Review, where it
-// states the always-true "last step" fact instead (untrue as a fallback for
-// Provision/Configure, which do have a real next step once the job clears);
-// View live names only what IT adds (leaving is blocked), never which job.
-describe('umbrella #432 G3: the job-in-progress sentence renders once, for every job owner — not three or four times', () => {
-  it('Provision: the rail alone carries it; Next and View live each say something else instead of repeating it', async () => {
+// See WorkloadSetup.tsx's own G3 comment for the ORIGINAL resolution: the
+// rail was the one canonical carrier for every job owner; Previous went
+// quiet for all three; Next went quiet too EXCEPT on Finalise & Review,
+// where it states the always-true "last step" fact instead (untrue as a
+// fallback for Provision/Configure, which do have a real next step once the
+// job clears); View live names only what IT adds (leaving is blocked),
+// never which job.
+//
+// SHELL ROUND 2 (dmfdeploy#481, folding in dmfdeploy#499's acceptance
+// criteria): the rail's OWN copy of the sentence is now GONE outright, not
+// relocated — "with a real job in flight, the lifecycle band contains zero
+// status text." Previous/Next/View-live's OWN wording was already silent
+// about WHICH job (this same G3 work made it so, on the theory that the
+// rail said it once) — that silence still holds, so the sentence now
+// renders ZERO times through this page's own chrome. What still tells the
+// operator "a job is running, here's what and how long" is the point-of-
+// action surface each stage already owns (JobStatusLine/OperationStatusLine
+// on Provision/Configure, AutomationInProgressNotice on Finalise &
+// Review) — a DIFFERENT wording, unaffected by and not asserted on here.
+describe('umbrella #481/#499: the rail states no job-in-progress sentence at all — Previous/Next/View live stay as quiet as G3 already made them', () => {
+  it('Provision: nothing on this page states "A Provision job is in progress" — Next and View live each say something else instead', async () => {
     mkFetch({ workload: workload({ lifecycle: 'provision' }) })
     renderDetail()
     await findRail()
@@ -1231,25 +1244,25 @@ describe('umbrella #432 G3: the job-in-progress sentence renders once, for every
     })
     fireEvent.click(within(provisionSection).getByRole('button', { name: 'Confirm deploy' }))
 
-    // THE discriminating assertion: exactly one on-screen copy of the
-    // sentence — pre-fix (gate round 2 baseline) this settles at three.
+    // THE discriminating assertion: zero on-screen copies of the rail's old
+    // sentence — dmfdeploy#481 removed it outright (Shell Round 2), it does
+    // not merely move to exactly one surface any more.
     await waitFor(() => {
-      expect(screen.getAllByText(/A Provision job is in progress/).length).toBe(1)
+      expect(screen.queryAllByText(/A Provision job is in progress/).length).toBe(0)
     })
 
     expect(within(provisionSection).queryByRole('button', { name: '← Previous' })).toBeNull()
     expect(within(provisionSection).queryByRole('button', { name: 'Next →' })).toBeNull()
-    // Next has no honest reason beyond the rail's own while armed — quiet,
-    // not a repeat (Provision is never the last step, so unlike Finalise
-    // there is no always-true fallback fact to state instead).
+    // Next has no honest reason to state while armed — quiet, same as
+    // before (Provision is never the last step, so unlike Finalise there is
+    // no always-true fallback fact to state instead).
     expect(within(provisionSection).queryByText(/is in progress/)).toBeNull()
     // umbrella #499: the reason moved on demand (title + sr-only text) —
-    // this screen already states "a job is running" via the rail, so it is
-    // no longer painted a second/third time alongside "View live" itself.
+    // never painted alongside "View live" itself, rail or no rail.
     expect(screen.getByText('View live').getAttribute('title')).toBe('Unavailable until the job finishes.')
   })
 
-  it('Configure: the rail alone carries it; Next and View live each say something else instead of repeating it', async () => {
+  it('Configure: nothing on this page states "A Configure job is in progress" — Next and View live each say something else instead', async () => {
     const wl = viewerWorkload()
     // umbrella #432 G3 (gate round 2): the switch mock resolves near-
     // instantly by default — a plain `waitFor` after clicking Confirm can
@@ -1276,10 +1289,10 @@ describe('umbrella #432 G3: the job-in-progress sentence renders once, for every
     fireEvent.change(within(configureSection).getByRole('combobox'), { target: { value: 'source-b' } })
     fireEvent.click(within(configureSection).getByRole('button', { name: 'Confirm switch' }))
 
-    // THE discriminating assertion: exactly one on-screen copy of the
-    // sentence — pre-fix (gate round 2 baseline) this settles at three.
+    // THE discriminating assertion: zero on-screen copies of the rail's old
+    // sentence — see the Provision case above for why.
     await waitFor(() => {
-      expect(screen.getAllByText(/A Configure job is in progress/).length).toBe(1)
+      expect(screen.queryAllByText(/A Configure job is in progress/).length).toBe(0)
     })
 
     expect(within(configureSection).queryByRole('button', { name: '← Previous' })).toBeNull()
@@ -1291,7 +1304,7 @@ describe('umbrella #432 G3: the job-in-progress sentence renders once, for every
     releaseSwitch()
   })
 
-  it('Finalise & Review: the rail alone carries it; Previous, Next, and View live each say something else instead of repeating it', async () => {
+  it('Finalise & Review: nothing on this page states "A Finalise & Review job is in progress" — Previous, Next, and View live each say something else instead', async () => {
     mkFetch({
       workload: workload({ lifecycle: 'operate' }),
       catalog: [catalogEntry({ lifecycle: 'active' })],
@@ -1306,13 +1319,13 @@ describe('umbrella #432 G3: the job-in-progress sentence renders once, for every
     })
     fireEvent.click(within(finaliseSection).getByRole('button', { name: 'Confirm teardown' }))
 
-    // THE discriminating assertion: exactly one on-screen copy of the
-    // sentence, not "at least one" — pre-fix (round 1 baseline) this
-    // settles at four.
+    // THE discriminating assertion: zero on-screen copies of the sentence —
+    // pre-#481 this settled at one (the rail alone), pre-fix (round 1
+    // baseline) it settled at four.
     await waitFor(() => {
       // No trailing period in the regex — this isolates the COUNT claim
       // from G2's wording change, so it discriminates on dedup alone.
-      expect(screen.getAllByText(/A Finalise & Review job is in progress/).length).toBe(1)
+      expect(screen.queryAllByText(/A Finalise & Review job is in progress/).length).toBe(0)
     })
 
     expect(within(finaliseSection).queryByRole('button', { name: '← Previous' })).toBeNull()
@@ -1389,13 +1402,15 @@ describe('a job in flight suppresses navigation everywhere, not just its own sta
     fireEvent.click(within(configureSection).getByRole('button', { name: 'Confirm switch' }))
 
     // The switch is now pending (fetch is held open) — every rail selector
-    // goes inert with the stated reason, not just Configure's own, and the
-    // mounted panel's own Next/Previous do too.
+    // goes inert, not just Configure's own, and the mounted panel's own
+    // Next/Previous do too. dmfdeploy#481 (Shell Round 2) removed the
+    // rail's own "A Configure job is in progress" note outright — the
+    // suppression itself (every key demoted to a non-button) is what this
+    // asserts now, not a repeated sentence.
     await waitFor(() => {
       expect(within(rail()).queryByRole('button', { name: 'Finalise & Review' })).toBeNull()
     })
-    // Every rail item states the same reason — not just the acting stage's.
-    expect(within(rail()).getAllByText(/A Configure job is in progress/).length).toBeGreaterThan(0)
+    expect(within(rail()).queryAllByText(/A Configure job is in progress/).length).toBe(0)
     expect(within(stageSection('Configure')).queryByRole('button', { name: 'Next →' })).toBeNull()
 
     releaseSwitch()
