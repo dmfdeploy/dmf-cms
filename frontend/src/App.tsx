@@ -17,9 +17,14 @@ import MediaWorkloads from './pages/MediaWorkloads'
 import Catalog from './pages/Catalog'
 import Admin from './pages/Admin'
 import Settings from './pages/Settings'
-import { isDevHarnessRoute, isGhostGridHarnessRoute } from './pages/Dev/devHarnessRoute'
+import {
+  isDevHarnessRoute,
+  isGhostGridHarnessRoute,
+  isThrobberHarnessRoute,
+} from './pages/Dev/devHarnessRoute'
 import LifecycleRailHarness from './pages/Dev/LifecycleRailHarness'
 import GhostGridHarness from './pages/Dev/GhostGridHarness'
+import ThrobberHarness from './pages/Dev/ThrobberHarness'
 
 export default function App() {
   // dmf-cms#391: checked ahead of every auth-derived branch below,
@@ -30,7 +35,9 @@ export default function App() {
   const devHarness = isDevHarnessRoute(location.pathname)
   // dmfdeploy/dmfdeploy#498 — the ghost-grid harness, same bypass shape.
   const ghostGridHarness = isGhostGridHarnessRoute(location.pathname)
-  const anyHarness = devHarness || ghostGridHarness
+  // dmfdeploy/dmfdeploy#390 (F16): the throbber harness, same bypass shape.
+  const throbberHarness = isThrobberHarnessRoute(location.pathname)
+  const anyHarness = devHarness || ghostGridHarness || throbberHarness
 
   // FIX ROUND (dmf-cms#391, codex gate — D): `enabled: !devHarness` makes
   // the dev-harness route genuinely fire zero network calls, rather than
@@ -38,10 +45,10 @@ export default function App() {
   // hoping that's harmless. See useCurrentUser's own docstring for why this
   // is safe to add (additive, defaults to enabled, and this is the only
   // mounted instance on this particular route). Widened to `!anyHarness`
-  // for #498 — the SAME zero-network-call contract applies to the
-  // ghost-grid harness, for the same reason (its own specimens stub
-  // `window.fetch` themselves; App.tsx's own /api/me call must not race
-  // ahead of that stub).
+  // for #498 and F16 — the SAME zero-network-call contract applies to the
+  // ghost-grid and throbber harnesses, for the same reason (their own
+  // specimens stub `window.fetch` themselves; App.tsx's own /api/me call
+  // must not race ahead of that stub).
   const { data: user, isLoading: userLoading, isError } = useCurrentUser(!anyHarness)
   const { setUser, setLoading } = useAuthStore()
 
@@ -63,6 +70,9 @@ export default function App() {
 
   if (ghostGridHarness) {
     return <GhostGridHarness />
+  }
+  if (throbberHarness) {
+    return <ThrobberHarness />
   }
 
   if (userLoading) {

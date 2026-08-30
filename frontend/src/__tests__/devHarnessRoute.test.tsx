@@ -48,7 +48,13 @@ import { cleanup, render, screen } from '@testing-library/react'
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query'
 import { MemoryRouter } from 'react-router-dom'
 import App from '../App'
-import { DEV_HARNESS_ROUTE, isDevHarnessRoute, stripBase } from '../pages/Dev/devHarnessRoute'
+import {
+  DEV_HARNESS_ROUTE,
+  isDevHarnessRoute,
+  isThrobberHarnessRoute,
+  stripBase,
+  THROBBER_HARNESS_ROUTE,
+} from '../pages/Dev/devHarnessRoute'
 import { APP_BASE } from '../../vite-base.config'
 import type { UserIdentity } from '../api/types'
 
@@ -190,5 +196,72 @@ describe('the harness is absent from the production route table', () => {
     // redirects to Workspace — same as any other unknown path would.
     expect(await screen.findByText(/Loading|Workspace|Facilities/i)).toBeTruthy()
     expect(screen.queryByTestId('lifecycle-rail-harness')).toBeNull()
+  })
+})
+
+// dmfdeploy/dmfdeploy#390 (F16) — the throbber harness's own route gate.
+// Deliberately the SAME shape of test as the lifecycle-rail describes
+// above, not a shared/parametrized one — isThrobberHarnessRoute is its own
+// sibling function (see devHarnessRoute.ts's own comment on why), so its
+// contract is pinned independently rather than assumed to track the other
+// gate's tests forever.
+describe('isThrobberHarnessRoute — the pure gate', () => {
+  it('matches the harness path only when DEV is true', () => {
+    expect(import.meta.env.DEV).toBe(true) // sanity: vitest's own default
+    expect(isThrobberHarnessRoute(THROBBER_HARNESS_ROUTE)).toBe(true)
+  })
+
+  it('never matches any other path, even under DEV — including the OTHER dev harness route', () => {
+    expect(isThrobberHarnessRoute('/media-workloads/studio-a')).toBe(false)
+    expect(isThrobberHarnessRoute('/')).toBe(false)
+    expect(isThrobberHarnessRoute(DEV_HARNESS_ROUTE)).toBe(false)
+  })
+
+  it('refuses to match when DEV is stubbed false — the production build\'s own value', () => {
+    vi.stubEnv('DEV', false)
+    expect(isThrobberHarnessRoute(THROBBER_HARNESS_ROUTE)).toBe(false)
+  })
+
+  it('tolerates a leading Vite base prefix — reuses stripBase, the same logic the rail gate already proves', () => {
+    const prefixed = `${APP_BASE.replace(/\/$/, '')}${THROBBER_HARNESS_ROUTE}`
+    expect(isThrobberHarnessRoute(prefixed, APP_BASE)).toBe(true)
+  })
+})
+
+describe('the two dev harness routes never collide', () => {
+  it('the rail gate does not match the throbber route, and vice versa', () => {
+    expect(isDevHarnessRoute(THROBBER_HARNESS_ROUTE)).toBe(false)
+    expect(isThrobberHarnessRoute(DEV_HARNESS_ROUTE)).toBe(false)
+  })
+})
+
+describe('the throbber harness is absent from the production route table', () => {
+  it('is reachable through the real <App/> when DEV is true, and makes NO network call at all', async () => {
+    const fetchSpy = vi.fn()
+    vi.stubGlobal('fetch', fetchSpy)
+    renderAppAt(THROBBER_HARNESS_ROUTE)
+    expect(await screen.findByTestId('throbber-harness')).toBeTruthy()
+    expect(fetchSpy).not.toHaveBeenCalled()
+  })
+
+  it('falls through to the ordinary catch-all when DEV is stubbed false, instead of rendering the harness', async () => {
+    vi.stubEnv('DEV', false)
+    stubAuthenticatedFetch()
+    renderAppAt(THROBBER_HARNESS_ROUTE)
+
+    expect(await screen.findByText(/Loading|Workspace|Facilities/i)).toBeTruthy()
+    expect(screen.queryByTestId('throbber-harness')).toBeNull()
+  })
+
+  it('renders every documented specimen, none crashing, none silently empty', async () => {
+    vi.stubGlobal('fetch', vi.fn())
+    renderAppAt(THROBBER_HARNESS_ROUTE)
+    const harness = await screen.findByTestId('throbber-harness')
+    // 12 specimens as of F16 — a loose floor (>= 10), not a brittle exact
+    // pin, so adding one more specimen later doesn't fail this test for no
+    // reason; the point is "the page actually rendered a full set", not
+    // "exactly this many forever".
+    const specimens = harness.querySelectorAll('[data-testid^="throbber-specimen-"]')
+    expect(specimens.length).toBeGreaterThanOrEqual(10)
   })
 })
