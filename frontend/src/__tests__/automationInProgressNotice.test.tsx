@@ -104,6 +104,40 @@ describe('AutomationInProgressNotice', () => {
       expect(screen.getByText('1m 35s')).toBeTruthy()
     })
 
+    // Operator ruling, dmfdeploy/dmfdeploy#390 follow-up: rolls over to
+    // hours past 60 minutes ("1h 15m 13s", not "75m 13s") — a 60m+ run is
+    // by definition stuck, exactly when the number matters most, and "75m"
+    // makes the reader do arithmetic a rollover does instantly. Below 60
+    // minutes the existing "Nm Ss" formatting is UNCHANGED — the 59m
+    // boundary case below is the guard against a rollover that fires one
+    // minute early.
+    it('rolls over to hours past the 60-minute boundary, and only past it', () => {
+      render(
+        <AutomationInProgressNotice
+          action="Tearing down"
+          startedAt="2026-08-30T11:00:01.000Z" // exactly 3599s (59m59s) before the fixed system time
+          typicalDuration="two to three minutes"
+        >
+          x
+        </AutomationInProgressNotice>,
+      )
+      // Just under the boundary: still "Nm Ss", no hour.
+      expect(screen.getByText('59m 59s')).toBeTruthy()
+
+      // Cross exactly 60 minutes.
+      act(() => {
+        vi.advanceTimersByTime(1_000)
+      })
+      expect(screen.getByText('1h 0m 0s')).toBeTruthy()
+      expect(screen.queryByText('60m 0s')).toBeNull()
+
+      // Comfortably past it — the operator's own worked example.
+      act(() => {
+        vi.advanceTimersByTime(15 * 60_000 + 13_000)
+      })
+      expect(screen.getByText('1h 15m 13s')).toBeTruthy()
+    })
+
     it('codex T3: the clock keeps ticking with prefers-reduced-motion emulated as active — the whole degradation argument depends on this surviving when the spinner does not', () => {
       // Emulates the OS preference the same way this is conventionally done
       // in jsdom (window.matchMedia has no real media-feature detection —

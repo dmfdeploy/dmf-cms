@@ -84,9 +84,19 @@ const MILESTONE_PHRASES: Record<string, string> = {
   finalising: 'Finalising cleanup',
 }
 
+/**
+ * Operator ruling (dmfdeploy/dmfdeploy#390 follow-up): rolls over to hours
+ * past 60 minutes — "1h 15m 13s", not "75m 13s". A 60m+ run is by
+ * definition a stuck one (every typical-duration claim in this file tops
+ * out well under that), which is exactly when the number matters most, and
+ * "75m" makes the reader do arithmetic a rollover does instantly. Below 60
+ * minutes, behavior is UNCHANGED — "Nm Ss" / seconds-only, same as before.
+ */
 function formatElapsed(totalSeconds: number): string {
-  const minutes = Math.floor(totalSeconds / 60)
+  const hours = Math.floor(totalSeconds / 3600)
+  const minutes = Math.floor((totalSeconds % 3600) / 60)
   const seconds = totalSeconds % 60
+  if (hours > 0) return `${hours}h ${minutes}m ${seconds}s`
   return minutes > 0 ? `${minutes}m ${seconds}s` : `${seconds}s`
 }
 

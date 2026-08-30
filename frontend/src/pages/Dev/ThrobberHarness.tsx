@@ -197,8 +197,9 @@ const SPECIMENS: Specimen[] = [
     id: '11-long-elapsed-60m',
     title: '11 · Long elapsed — 60+ minutes (a genuinely stuck run)',
     note:
-      'Format check: formatElapsed() has no hour rollover — this renders as "75m Ns", not "1h 15m Ns". ' +
-      'Eyeball whether that reads as acceptable at this length, or whether an hour rollover is worth a follow-up.',
+      'Format check: formatElapsed() rolls over to hours past 60 minutes (operator ruling, ' +
+      'dmfdeploy/dmfdeploy#390 follow-up) — this renders as "1h 15m Ns", not "75m Ns". Confirm it reads ' +
+      'instantly at this length, with no arithmetic required.',
     props: {
       action: 'Tearing down',
       startedAt: minutesAgo(75),
