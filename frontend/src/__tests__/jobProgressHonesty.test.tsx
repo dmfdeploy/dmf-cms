@@ -11,7 +11,8 @@
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import { act, cleanup, render, screen, waitFor } from '@testing-library/react'
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query'
-import { OperationStatusLine, JobStatusLine } from '../pages/MediaWorkloads/stages/JobProgress'
+import { OperationStatusLine, JobStatusLine, OPERATION_LABEL, OPERATION_CLASS } from '../pages/MediaWorkloads/stages/JobProgress'
+import { OPERATION_STATES } from '../api/types'
 
 function json(body: unknown, status = 200) {
   return new Response(JSON.stringify(body), { status, headers: { 'Content-Type': 'application/json' } })
@@ -116,5 +117,30 @@ describe('JobStatusLine: a settled failed poll never silently keeps showing a st
     renderWithQuery(<JobStatusLine entryKey="k2" jobId={9} onComplete={() => {}} />)
     expect(await screen.findByText('Could not query job status — retrying automatically')).toBeTruthy()
     expect(screen.queryByText('Querying job status…')).toBeNull()
+  })
+})
+
+describe('OPERATION_LABEL / OPERATION_CLASS: every OperationState has an entry (PR #127 review fix)', () => {
+  // umbrella #499 / PR #127: `running` shipped in OperationState with no
+  // entry in either table (both were `Record<string, string>`, a shape
+  // TypeScript cannot check for missing keys). Both are now typed
+  // `Record<OperationState, string>`, which turns a missing key into a
+  // `tsc` build failure — but this repo's `npm test` (vitest) does not run
+  // tsc (only `npm run build` does), so that compile-time guarantee alone
+  // would never fail a plain test run. These two assertions iterate
+  // OPERATION_STATES — the same array OperationState is derived FROM, not
+  // a hand-copied list — so they stay a genuine "does the map cover the
+  // union" check (not "do these three known strings exist") for every
+  // state that exists today AND every state added in the future.
+  it('OPERATION_LABEL has a non-empty label for every OperationState', () => {
+    for (const state of OPERATION_STATES) {
+      expect(OPERATION_LABEL[state], `missing OPERATION_LABEL entry for '${state}'`).toBeTruthy()
+    }
+  })
+
+  it('OPERATION_CLASS has a non-empty style class for every OperationState', () => {
+    for (const state of OPERATION_STATES) {
+      expect(OPERATION_CLASS[state], `missing OPERATION_CLASS entry for '${state}'`).toBeTruthy()
+    }
   })
 })
