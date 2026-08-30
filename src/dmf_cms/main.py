@@ -1478,9 +1478,28 @@ async def _fetch_l3_milestone_from_events(app: FastAPI, job_id: int) -> str | No
     Same defensive-parsing discipline as ``_fetch_l3_outcome_from_events``
     (per-level dict validation, a defense-in-depth per-event task-name
     re-check even though ``get_job_events_for_task`` already filters
-    server-side, "last event wins", never raises — a fetch failure or a
-    malformed event just yields ``None``). The differences are the task
-    name/regex and that there is no kv to sanitize.
+    server-side, never raises — a fetch failure or a malformed event just
+    yields ``None``). The differences are the task name/regex and that
+    there is no kv to sanitize.
+
+    codex adversarial review (feat/390-throbber, T4): "latest" is decided
+    by EXPLICITLY COMPARING each event's own ``counter`` field, never by
+    trusting the list's return order — unlike the terminal outcome
+    parsers above (which iterate ``reversed(events)`` and return the
+    first match, relying on ``get_job_events_for_task``'s
+    ``order_by=counter`` request actually landing ascending). Milestones
+    are read repeatedly, mid-run, into a monotonic-ordinal guard — if AWX
+    ever returned events in a different order than requested (or the
+    ordering param were dropped somewhere upstream), a reversed-list scan
+    would silently return the OLDEST marker instead of the newest, moving
+    the displayed step backward and defeating that guard at its own
+    source. Selecting by explicit max-``counter`` is correct regardless of
+    what order the list arrives in — an event with a missing or
+    non-integer ``counter`` is skipped, same "malformed shape -> skip,
+    never crash" posture as every other per-level check here. An event
+    whose SHAPE is valid but whose ``counter`` is merely tied with the
+    current best keeps the earlier-seen one (arbitrary but deterministic;
+    AWX counters are not expected to collide in practice).
 
     Callers poll this repeatedly, mid-run — unlike the terminal markers
     above, which are fetched once. A ``None`` result here must never be
@@ -1503,10 +1522,15 @@ async def _fetch_l3_milestone_from_events(app: FastAPI, job_id: int) -> str | No
     if not events:
         return None
 
-    for event in reversed(events):
+    best_counter: int | None = None
+    best_token: str | None = None
+    for event in events:
         if not isinstance(event, dict):
             continue
         if event.get("task") != _L3_MILESTONE_TASK_NAME:
+            continue
+        counter = event.get("counter")
+        if not isinstance(counter, int):
             continue
         event_data = event.get("event_data")
         if not isinstance(event_data, dict):
@@ -1518,10 +1542,13 @@ async def _fetch_l3_milestone_from_events(app: FastAPI, job_id: int) -> str | No
         if not isinstance(msg, str):
             continue
         match = _L3_MILESTONE_RE.match(msg.strip())
-        if match:
-            return match.group("token")
+        if not match:
+            continue
+        if best_counter is None or counter > best_counter:
+            best_counter = counter
+            best_token = match.group("token")
 
-    return None
+    return best_token
 
 
 # umbrella #202 WP3 R3b (codex round-2 P2-1): a bounded, settings-free cap
@@ -2320,20 +2347,45 @@ async def _watch_job_operation(app: FastAPI, operation_id: str, job_id: int, act
             # known step text and picks it up next tick once AWX has
             # actually ingested the event). Do not "fix" this by adding the
             # wait here.
-            vocab = _L3_MILESTONE_ORDER.get(action)
-            if vocab is not None and seen_started and milestone_ordinal < len(vocab) - 1:
-                milestone_token = await _fetch_l3_milestone_from_events(app, job_id)
-                if milestone_token in vocab:
-                    new_ordinal = vocab.index(milestone_token)
-                    # Monotonic guard: a lagged or reordered fetch can only
-                    # ever hold the displayed step or advance it, never move
-                    # it backward. An unrecognized token (None, or a string
-                    # outside this action's own vocabulary) is silently
-                    # ignored — same fail-open posture as an outcome-marker
-                    # fetch that finds nothing.
-                    if new_ordinal > milestone_ordinal:
-                        milestone_ordinal = new_ordinal
-                        ops_store.update(operation_id, progress_step=milestone_token)
+            # codex adversarial review (feat/390-throbber, T1/P1): the
+            # side-channel guarantee this block exists to keep — a
+            # milestone-path failure can NEVER affect state/l3_outcome/
+            # auto_rollback — was not actually total. _fetch_l3_milestone_
+            # from_events already swallows its OWN failures and returns
+            # None, but this block's ops_store.update(...) call (or any
+            # other unexpected exception here) still sat INSIDE the
+            # watcher's OUTER try/except below, which treats ANY exception
+            # as a real crash: state=_watch_lost_terminal_state(...),
+            # error="job-watch-crashed". RUN_STATUS_UNKNOWN is a DIRTY
+            # state that blocks further dispatch — so a purely cosmetic
+            # progress-display bug could have dirtied a facility. This
+            # nested try/except is the fix: NOTHING in this block can ever
+            # reach the outer handler. A failure here just means this
+            # tick's progress update is lost — exactly as invisible to the
+            # operator as a missed milestone fetch already is (see the
+            # comment above), and worth exactly as little ceremony.
+            try:
+                vocab = _L3_MILESTONE_ORDER.get(action)
+                if vocab is not None and seen_started and milestone_ordinal < len(vocab) - 1:
+                    milestone_token = await _fetch_l3_milestone_from_events(app, job_id)
+                    if milestone_token in vocab:
+                        new_ordinal = vocab.index(milestone_token)
+                        # Monotonic guard: a lagged or reordered fetch can
+                        # only ever hold the displayed step or advance it,
+                        # never move it backward. An unrecognized token
+                        # (None, or a string outside this action's own
+                        # vocabulary) is silently ignored — same fail-open
+                        # posture as an outcome-marker fetch that finds
+                        # nothing.
+                        if new_ordinal > milestone_ordinal:
+                            milestone_ordinal = new_ordinal
+                            ops_store.update(operation_id, progress_step=milestone_token)
+            except Exception:
+                logger.exception(
+                    "job watch: milestone-progress update failed for operation %s "
+                    "(job %s, target %s) — side channel only, op state untouched",
+                    operation_id, job_id, _sanitize_audit_field(key),
+                )
 
             await asyncio.sleep(poll_interval)
     except Exception:
