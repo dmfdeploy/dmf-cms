@@ -247,7 +247,9 @@ describe('mount -> pending -> membership change -> unwedge (Acceptance Criterion
     expect(screen.queryByRole('link', { name: 'View live' })).toBeNull()
     // umbrella #432 G3: View live states its own affordance's
     // unavailability, not which job — the rail already said that.
-    expect(screen.getByText('View live — Unavailable until the job finishes.')).toBeTruthy()
+    // umbrella #499: that reason is on demand (title + sr-only text) now,
+    // not painted next to "View live" as a fourth on-screen restatement.
+    expect(screen.getByText('View live').getAttribute('title')).toBe('Unavailable until the job finishes.')
 
     // 4. CHANGE MEMBERSHIP through a GENUINE query invalidation — the same
     // path the 15s poll takes, not a hand-forced rerender. viewer-1 (the

@@ -1165,7 +1165,10 @@ describe('umbrella #432 G3: the job-in-progress sentence renders once, for every
     // not a repeat (Provision is never the last step, so unlike Finalise
     // there is no always-true fallback fact to state instead).
     expect(within(provisionSection).queryByText(/is in progress/)).toBeNull()
-    expect(screen.getByText('View live — Unavailable until the job finishes.')).toBeTruthy()
+    // umbrella #499: the reason moved on demand (title + sr-only text) —
+    // this screen already states "a job is running" via the rail, so it is
+    // no longer painted a second/third time alongside "View live" itself.
+    expect(screen.getByText('View live').getAttribute('title')).toBe('Unavailable until the job finishes.')
   })
 
   it('Configure: the rail alone carries it; Next and View live each say something else instead of repeating it', async () => {
@@ -1204,7 +1207,8 @@ describe('umbrella #432 G3: the job-in-progress sentence renders once, for every
     expect(within(configureSection).queryByRole('button', { name: '← Previous' })).toBeNull()
     expect(within(configureSection).queryByRole('button', { name: 'Next →' })).toBeNull()
     expect(within(configureSection).queryByText(/is in progress/)).toBeNull()
-    expect(screen.getByText('View live — Unavailable until the job finishes.')).toBeTruthy()
+    // umbrella #499: on demand, not painted — see the Provision case above.
+    expect(screen.getByText('View live').getAttribute('title')).toBe('Unavailable until the job finishes.')
 
     releaseSwitch()
   })
@@ -1240,8 +1244,8 @@ describe('umbrella #432 G3: the job-in-progress sentence renders once, for every
     // next step, job or no job, so this fallback is never a lie.
     expect(within(finaliseSection).getByText('This is the last step.')).toBeTruthy()
     // View live names its own unavailability without restating which job —
-    // also never a dead control.
-    expect(screen.getByText('View live — Unavailable until the job finishes.')).toBeTruthy()
+    // also never a dead control. umbrella #499: on demand, not painted.
+    expect(screen.getByText('View live').getAttribute('title')).toBe('Unavailable until the job finishes.')
   })
 })
 
@@ -1630,7 +1634,9 @@ describe('the "View live" setup exit', () => {
       // umbrella #432 G3 (gate round 2, finding A2): View live states its
       // own affordance's unavailability, not which job — the rail (still
       // showing "A Provision job is in progress.") already said that.
-      expect(screen.getByText('View live — Unavailable until the job finishes.')).toBeTruthy()
+      // umbrella #499: that reason is on demand (title + sr-only text) now,
+      // not painted next to "View live" as a fourth on-screen restatement.
+      expect(screen.getByText('View live').getAttribute('title')).toBe('Unavailable until the job finishes.')
     })
 
     await within(provisionSection).findByText(/job #501/)
