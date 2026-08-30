@@ -465,7 +465,10 @@ describe('Finalise & Review: delete permanently drives to a real completion', ()
     fireEvent.click(within(finalise).getByRole('button', { name: 'Delete permanently' }))
 
     // First (successful) poll settles — genuinely current, no notice.
-    await within(finalise).findByText(/— launching/)
+    // umbrella #499: the default-level line reads the operator-language
+    // OPERATION_LABEL translation now, not the raw `Operation['state']`
+    // word — the raw word moved into "System details" (expert tier).
+    await within(finalise).findByText('Launching job')
     expect(within(finalise).queryByText(/Could not confirm the latest status/)).toBeNull()
 
     // Trigger the SAME background refetch a poll tick would cause, without
@@ -479,7 +482,7 @@ describe('Finalise & Review: delete permanently drives to a real completion', ()
     })
 
     await waitFor(() => {
-      expect(within(finalise).getByText(/— launching/)).toBeTruthy()
+      expect(within(finalise).getByText('Launching job')).toBeTruthy()
       expect(
         within(finalise).getByText(
           'Could not confirm the latest status — showing the last read, retrying automatically.',
