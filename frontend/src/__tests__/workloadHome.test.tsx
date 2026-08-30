@@ -766,11 +766,13 @@ describe('the header rail during a failed background refetch (PR #90 review, dmf
     const queryClient = renderHome()
     await screen.findByText(/The monitoring surface for this workload/)
 
-    // First (successful) read settles — the rail is present, with a real
-    // running-count readout (the thing Pass 1 added and the thing that must
-    // not survive into the error state below).
+    // First (successful) read settles — the rail is present, with real
+    // keys rendered (Shell Round 2, dmfdeploy#481, removed the row-end
+    // running-count readout Pass 1 added — the band renders no status text
+    // at all now; a real key is the thing that must not survive into the
+    // error state below instead).
     const strip = await screen.findByRole('navigation', { name: 'Media workload lifecycle' })
-    expect(strip.textContent).toMatch(/1 of 1 running/)
+    expect(within(strip).getByRole('button', { name: 'Design' })).toBeTruthy()
 
     // A genuine react-query refetch — same mechanism the 15s poll
     // (useMediaWorkloadsGrouped, hooks.ts) and the "active source" tests

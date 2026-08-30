@@ -402,13 +402,16 @@ describe('the run-count readout — trustworthy AND the counts themselves — is
       ;(rail as { runningReadout: unknown }).runningReadout = { running: 999, total: 1, trustworthy: true }
     }).toThrow()
 
-    // The real proof: render it, exactly as Topbar does, and confirm the
-    // ORIGINAL derived count is what a real operator would actually see —
-    // not "999", and not merely "the object claims to be frozen".
-    renderTopbarAt('/media-workloads/studio-a', { slug: 'studio-a', rail })
-    const row = screen.getByTestId('header-slot-row')
-    expect(within(row).getByText('1 of 1 running', { exact: false })).toBeTruthy()
-    expect(within(row).queryByText('999', { exact: false })).toBeNull()
+    // The real proof: the ORIGINAL derived count is what survives, not
+    // "999" — not merely "the object claims to be frozen". Shell Round 2
+    // (dmfdeploy#481) removed LifecycleStrip's own rendering of this
+    // readout entirely (the band carries no indicators now — see that
+    // component's own docstring), so there is no longer a DOM path through
+    // Topbar to read this back from; the object itself, which is exactly
+    // what this module's own guarantee is actually about (headerSlot.ts's
+    // "WHAT IS ACTUALLY ENFORCED" docstring), is the direct proof.
+    expect(rail.runningReadout.running).toBe(1)
+    expect(rail.runningReadout.total).toBe(1)
   })
 })
 

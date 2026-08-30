@@ -673,22 +673,35 @@ function WorkloadWizard({
   const isLastFlowStep = activeIndex === FLOW_STEPS.length - 1
 
   const jobOwnerLabel = jobOwner ? STEP_LABEL[jobOwner] : null
-  // umbrella #432 G3 (gate round 2, finding A2): LifecycleStrip (mounted in
-  // the header slot above via buildHeaderSlotRail below, from this SAME
-  // jobOwnerLabel) is the ONE place on this screen that states "A
-  // {jobOwnerLabel} job is in progress." — for every job owner, not only
-  // Finalise & Review. The first pass here fixed only the Finalise case (a
-  // live-measured teardown showed the sentence FOUR times: rail, Previous,
-  // Next, View live) and left Provision/Configure at THREE copies each
-  // (rail, Next, View live) — worse than what shipped, since an outsider
-  // walking the demo reaches Provision and Configure before Finalise. Same
-  // principle applied uniformly now: Previous and Next state no reason
-  // beyond the rail's own while a job is in flight, so both go quiet —
-  // except Next on Finalise & Review, which has an unconditionally true
-  // structural fact to state instead ("This is the last step.", true
-  // whether or not anything is running there). View live names only its
-  // OWN affordance's unavailability, for every job owner — never which job,
-  // which the rail already said once.
+  // umbrella #432 G3 (gate round 2, finding A2), UPDATED by dmfdeploy#481
+  // (Shell Round 2). ORIGINALLY: LifecycleStrip (mounted in the header slot
+  // above via buildHeaderSlotRail below, from this SAME jobOwnerLabel) was
+  // the ONE place on this screen that stated "A {jobOwnerLabel} job is in
+  // progress." — for every job owner, not only Finalise & Review. The first
+  // pass here fixed only the Finalise case (a live-measured teardown showed
+  // the sentence FOUR times: rail, Previous, Next, View live) and left
+  // Provision/Configure at THREE copies each (rail, Next, View live) —
+  // worse than what shipped, since an outsider walking the demo reaches
+  // Provision and Configure before Finalise. Same principle applied
+  // uniformly then: Previous and Next state no reason beyond the rail's own
+  // while a job is in flight, so both go quiet — except Next on Finalise &
+  // Review, which has an unconditionally true structural fact to state
+  // instead ("This is the last step.", true whether or not anything is
+  // running there). View live names only its OWN affordance's
+  // unavailability, for every job owner — never which job.
+  //
+  // dmfdeploy#481 removed the rail's own copy of the sentence OUTRIGHT — the
+  // lifecycle band now carries zero status text (LifecycleStrip.tsx's own
+  // docstring; dmfdeploy#499's acceptance criteria). Previous/Next/View
+  // live's quiet-about-which-job behaviour below is UNCHANGED and still the
+  // right call on its own terms (repeating the job's identity on every
+  // navigation seam was always the actual defect, independent of whether
+  // the rail said it once) — it no longer leans on the rail having said it,
+  // because nothing needs it to have: the operator still sees "a job is
+  // running, here's what and how long" at the point of action itself
+  // (JobStatusLine/OperationStatusLine on Provision/Configure,
+  // AutomationInProgressNotice on Finalise & Review, dmfdeploy#390), which
+  // is where Constitution Art. 2 puts it regardless.
   const previousReason = jobInFlight
     ? ''
     : prevStep === null

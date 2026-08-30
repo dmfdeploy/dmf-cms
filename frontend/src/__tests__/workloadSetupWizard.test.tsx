@@ -231,22 +231,25 @@ describe('mount -> pending -> membership change -> unwedge (Acceptance Criterion
       expect(within(rail()).queryByRole('button', { name: 'Design' })).toBeNull()
       expect(within(rail()).queryByRole('button', { name: 'Finalise & Review' })).toBeNull()
     })
-    // umbrella #432 G2: the rail's own note dropped the imperative tail —
-    // wording-only, the rest of this test's shape is unchanged.
-    expect(within(rail()).getAllByText(/A Configure job is in progress\./).length).toBeGreaterThan(0)
+    // dmfdeploy#481 (Shell Round 2): the rail's own note is gone outright —
+    // the navigation refusal itself (every seam above) is what this test
+    // proves, not a status sentence anywhere in the row.
+    expect(within(rail()).queryAllByText(/A Configure job is in progress/).length).toBe(0)
     expect(within(configureSection).queryByRole('button', { name: '← Previous' })).toBeNull()
     expect(within(configureSection).queryByRole('button', { name: 'Next →' })).toBeNull()
-    // umbrella #432 G3 (gate round 2, finding A2): Previous/Next used to
-    // both restate the rail's own sentence here — now they go quiet (no
-    // dead control either way: the rail directly above already named the
-    // reason, and repeating it a second/third time was the defect).
+    // umbrella #432 G3 (gate round 2, finding A2): Previous/Next stay quiet
+    // — no dead control either way, and repeating the job's identity a
+    // second/third time was always the defect, rail or no rail.
     expect(within(configureSection).queryByText(/A Configure job is in progress/)).toBeNull()
     // dmfdeploy#414: the setup exit (WorkloadSetup.tsx's ViewLiveExit) is
     // also inert while the job runs — it obeys the same job-navigation lock
     // every other seam here does.
     expect(screen.queryByRole('link', { name: 'View live' })).toBeNull()
     // umbrella #432 G3: View live states its own affordance's
-    // unavailability, not which job — the rail already said that.
+    // unavailability, not which job — dmfdeploy#481 removed the rail's own
+    // copy of that fact outright rather than relocating it, so nothing on
+    // this page names which job any more except the point-of-action surface
+    // that stage itself owns (unasserted here).
     // umbrella #499: that reason is on demand (title + sr-only text) now,
     // not painted next to "View live" as a fourth on-screen restatement.
     expect(screen.getByText('View live').getAttribute('title')).toBe('Unavailable until the job finishes.')

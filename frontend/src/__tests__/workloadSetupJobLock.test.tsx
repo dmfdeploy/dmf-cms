@@ -117,7 +117,10 @@ describe("WorkloadSetup's own job-lock contract, isolated from any stage's mutat
     // No await, no waitFor: this assertion runs on the exact render produced
     // by the click above.
     expect(within(rail).queryByRole('button', { name: 'Design' })).toBeNull()
-    // umbrella #432 G2: wording-only — the imperative tail is gone.
-    expect(within(rail).getAllByText(/A Configure job is in progress\./).length).toBeGreaterThan(0)
+    // dmfdeploy#481 (Shell Round 2): the rail's own in-progress sentence is
+    // gone outright, not merely reworded — the lock itself (every key
+    // demoted off <button> on this SAME synchronous click) is the thing
+    // this test proves, not a status sentence.
+    expect(within(rail).queryAllByText(/A Configure job is in progress/).length).toBe(0)
   })
 })
