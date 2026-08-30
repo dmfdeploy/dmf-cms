@@ -152,6 +152,24 @@ def test_update_sets_l3_outcome():
     assert store.get(op.operation_id).l3_outcome == "rollback-succeeded"
 
 
+def test_progress_step_defaults_to_none_and_serializes():
+    # dmfdeploy/dmfdeploy#390 — a fresh op has no milestone observed yet;
+    # to_dict() must expose the field (None, honestly, not omitted).
+    store = OperationStore(ttl_seconds=3600)
+    op = store.create("deploy", "key1")
+    assert op.progress_step is None
+    assert op.to_dict()["progress_step"] is None
+
+
+def test_update_sets_progress_step():
+    store = OperationStore(ttl_seconds=3600)
+    op = store.create("deploy", "key1")
+    store.update(op.operation_id, progress_step="provisioning")
+    updated = store.get(op.operation_id)
+    assert updated.progress_step == "provisioning"
+    assert updated.to_dict()["progress_step"] == "provisioning"
+
+
 # ---------------------------------------------------------------------------
 # operations.py — GC only removes ops in their OWN action's terminal set
 # ---------------------------------------------------------------------------
@@ -1460,6 +1478,342 @@ def test_fetch_l3_outcome_from_events_tolerates_fetch_failure(monkeypatch):
     tok, kv = asyncio.run(main._fetch_l3_outcome_from_events(app, 42))
     assert tok is None
     assert kv is None
+
+
+# ---------------------------------------------------------------------------
+# main.py — _fetch_l3_milestone_from_events (dmfdeploy/dmfdeploy#390, Phase 1
+# "the throbber" — a third, separate marker contract: in-flight progress,
+# never a terminal outcome, no kv, fetched repeatedly mid-run)
+# ---------------------------------------------------------------------------
+
+
+def _milestone_event(msg, *, task=None, counter=1):
+    return {
+        "counter": counter,
+        "task": task if task is not None else main._L3_MILESTONE_TASK_NAME,
+        "event_data": {"res": {"msg": msg}},
+    }
+
+
+@pytest.mark.parametrize("token", [
+    "preflight-passed", "provisioning", "configuring", "tearing-down",
+    "finalising", "some-future-token",
+])
+def test_fetch_l3_milestone_from_events_parses_each_known_and_unknown_token(monkeypatch, token):
+    app = _fake_app_for_outcome()
+    monkeypatch.setattr(
+        main, "get_job_events_for_task",
+        lambda **k: [_milestone_event(f"DMF_L3_MILESTONE: {token}")],
+    )
+    tok = asyncio.run(main._fetch_l3_milestone_from_events(app, 42))
+    assert tok == token
+
+
+def test_fetch_l3_milestone_from_events_queries_the_named_task(monkeypatch):
+    app = _fake_app_for_outcome()
+    captured = {}
+
+    def fake_fetch(**kwargs):
+        captured.update(kwargs)
+        return [_milestone_event("DMF_L3_MILESTONE: provisioning")]
+
+    monkeypatch.setattr(main, "get_job_events_for_task", fake_fetch)
+    asyncio.run(main._fetch_l3_milestone_from_events(app, 42))
+    assert captured["task_name"] == "dmf-l3-milestone"
+    assert captured["job_id"] == 42
+
+
+def test_fetch_l3_milestone_from_events_wrong_task_name_is_invisible(monkeypatch):
+    app = _fake_app_for_outcome()
+    monkeypatch.setattr(
+        main, "get_job_events_for_task",
+        lambda **k: [_milestone_event("DMF_L3_MILESTONE: configuring", task="some-other-debug-task")],
+    )
+    tok = asyncio.run(main._fetch_l3_milestone_from_events(app, 42))
+    assert tok is None
+
+
+def test_fetch_l3_milestone_from_events_last_event_wins(monkeypatch):
+    app = _fake_app_for_outcome()
+    monkeypatch.setattr(
+        main, "get_job_events_for_task",
+        lambda **k: [
+            _milestone_event("DMF_L3_MILESTONE: preflight-passed", counter=1),
+            _milestone_event("DMF_L3_MILESTONE: provisioning", counter=2),
+        ],
+    )
+    tok = asyncio.run(main._fetch_l3_milestone_from_events(app, 42))
+    assert tok == "provisioning"
+
+
+def test_fetch_l3_milestone_from_events_missing_event_data_shapes_are_none(monkeypatch):
+    app = _fake_app_for_outcome()
+    malformed = [
+        {"task": main._L3_MILESTONE_TASK_NAME},
+        {"task": main._L3_MILESTONE_TASK_NAME, "event_data": "not-a-dict"},
+        {"task": main._L3_MILESTONE_TASK_NAME, "event_data": {}},
+        {"task": main._L3_MILESTONE_TASK_NAME, "event_data": {"res": "not-a-dict"}},
+        {"task": main._L3_MILESTONE_TASK_NAME, "event_data": {"res": {}}},
+        {"task": main._L3_MILESTONE_TASK_NAME, "event_data": {"res": {"msg": 12345}}},
+        "not-a-dict-event-at-all",
+    ]
+    monkeypatch.setattr(main, "get_job_events_for_task", lambda **k: malformed)
+    tok = asyncio.run(main._fetch_l3_milestone_from_events(app, 42))
+    assert tok is None
+
+
+def test_fetch_l3_milestone_from_events_empty_events_list_is_none(monkeypatch):
+    app = _fake_app_for_outcome()
+    monkeypatch.setattr(main, "get_job_events_for_task", lambda **k: [])
+    tok = asyncio.run(main._fetch_l3_milestone_from_events(app, 42))
+    assert tok is None
+
+
+def test_fetch_l3_milestone_from_events_ignores_malformed_marker_strings(monkeypatch):
+    app = _fake_app_for_outcome()
+    events = [
+        _milestone_event("DMF_L3_MILESTONE provisioning", counter=1),  # missing colon
+        _milestone_event("  DMF_L3_MILESTONE: UPPER-not-allowed", counter=2),  # uppercase
+        _milestone_event("DMF_L3_MILESTONE: has spaces in it", counter=3),  # kv-shaped, not allowed here
+        _milestone_event("not a marker line at all", counter=4),
+    ]
+    monkeypatch.setattr(main, "get_job_events_for_task", lambda **k: events)
+    tok = asyncio.run(main._fetch_l3_milestone_from_events(app, 42))
+    assert tok is None
+
+
+def test_fetch_l3_milestone_from_events_tolerates_fetch_failure(monkeypatch):
+    app = _fake_app_for_outcome()
+
+    def boom(**k):
+        raise TimeoutError("no events yet")
+
+    monkeypatch.setattr(main, "get_job_events_for_task", boom)
+    tok = asyncio.run(main._fetch_l3_milestone_from_events(app, 42))
+    assert tok is None
+
+
+# ---------------------------------------------------------------------------
+# main.py — _watch_job_operation × milestone polling (dmfdeploy/dmfdeploy#390)
+# ---------------------------------------------------------------------------
+
+
+def test_watcher_advances_progress_step_across_ticks(monkeypatch):
+    app, ops_store = _fake_app()
+    op = ops_store.create("deploy", "key1")
+    job_calls = {"n": 0}
+    job_responses = [
+        {"status": "running", "started": "t0"},
+        {"status": "running", "started": "t0"},
+        {"status": "successful", "started": "t0", "finished": "t1"},
+    ]
+    milestone_responses = [
+        [_milestone_event("DMF_L3_MILESTONE: preflight-passed")],
+        [_milestone_event("DMF_L3_MILESTONE: preflight-passed", counter=1),
+         _milestone_event("DMF_L3_MILESTONE: provisioning", counter=2)],
+    ]
+    observed_progress_step = []
+
+    def fake_get_job(**k):
+        # Clamped, not a hard index: _await_event_ingestion_finished may
+        # call get_job MORE times than this test plans for on a terminal
+        # tick whose job dict has no event_processing_finished flag —
+        # repeat the last planned response rather than raising IndexError.
+        i = min(job_calls["n"], len(job_responses) - 1)
+        job_calls["n"] += 1
+        return job_responses[i]
+
+    def fake_get_job_events_for_task(**k):
+        # Called once per non-terminal tick, AFTER get_job for that tick —
+        # job_calls["n"] has already been incremented past this tick's index.
+        idx = job_calls["n"] - 1
+        observed_progress_step.append(ops_store.get(op.operation_id).progress_step)
+        return milestone_responses[idx]
+
+    monkeypatch.setattr(main, "get_job", fake_get_job)
+    monkeypatch.setattr(main, "get_job_events_for_task", fake_get_job_events_for_task)
+    _run_watcher(app, op.operation_id, 111, "deploy", "key1")
+
+    updated = ops_store.get(op.operation_id)
+    assert updated.state == OperationState.RUN_COMPLETE
+    assert updated.progress_step == "provisioning"
+    # Tick 1 saw preflight-passed already stored (set by end of tick 0's
+    # fetch — see below); tick 2's fetch observed provisioning not yet set.
+    assert observed_progress_step == [None, "preflight-passed"]
+
+
+def test_watcher_progress_step_never_regresses_on_a_lagged_fetch(monkeypatch):
+    # A later tick's fetch returning an EARLIER token than already stored
+    # (a lag/reorder artifact) must never move progress_step backward.
+    # Tick 0 lands on a MIDDLE token deliberately (not the vocabulary's
+    # last one) so the early-stop optimization doesn't itself prevent
+    # tick 1's fetch from happening — this test needs the fetch to occur
+    # so the monotonic guard actually has something to reject.
+    app, ops_store = _fake_app()
+    op = ops_store.create("deploy", "key1")
+    job_calls = {"n": 0}
+    job_responses = [
+        {"status": "running", "started": "t0"},
+        {"status": "running", "started": "t0"},
+        {"status": "successful", "started": "t0", "finished": "t1"},
+    ]
+    # Tick 0 observes "provisioning" (ordinal 1, not the last index);
+    # tick 1's fetch regresses to "preflight-passed" (ordinal 0) — a
+    # simulated stale/lagged/reordered read.
+    milestone_responses = [
+        [_milestone_event("DMF_L3_MILESTONE: provisioning")],
+        [_milestone_event("DMF_L3_MILESTONE: preflight-passed")],
+    ]
+    milestone_fetch_count = {"n": 0}
+
+    def fake_get_job(**k):
+        # Clamped, not a hard index: _await_event_ingestion_finished may
+        # call get_job MORE times than this test plans for on a terminal
+        # tick whose job dict has no event_processing_finished flag —
+        # repeat the last planned response rather than raising IndexError.
+        i = min(job_calls["n"], len(job_responses) - 1)
+        job_calls["n"] += 1
+        return job_responses[i]
+
+    def fake_get_job_events_for_task(**k):
+        idx = job_calls["n"] - 1
+        milestone_fetch_count["n"] += 1
+        return milestone_responses[idx] if idx < len(milestone_responses) else []
+
+    monkeypatch.setattr(main, "get_job", fake_get_job)
+    monkeypatch.setattr(main, "get_job_events_for_task", fake_get_job_events_for_task)
+    _run_watcher(app, op.operation_id, 111, "deploy", "key1")
+
+    # Proves tick 1's fetch actually happened (not skipped by early-stop)
+    # AND that its regressed token was rejected.
+    assert milestone_fetch_count["n"] == 2
+    assert ops_store.get(op.operation_id).progress_step == "provisioning"
+
+
+def test_watcher_stops_polling_milestones_after_the_last_token(monkeypatch):
+    # Early-stop: once the LAST token in the action's own vocabulary has
+    # been observed, no further get_job_events_for_task call happens for
+    # the rest of that op's watch, even across more non-terminal ticks.
+    app, ops_store = _fake_app()
+    op = ops_store.create("deploy", "key1")
+    job_calls = {"n": 0}
+    job_responses = [
+        {"status": "running", "started": "t0"},
+        {"status": "running", "started": "t0"},
+        {"status": "running", "started": "t0"},
+        {"status": "successful", "started": "t0", "finished": "t1"},
+    ]
+    milestone_fetch_count = {"n": 0}
+
+    def fake_get_job(**k):
+        # Clamped, not a hard index: _await_event_ingestion_finished may
+        # call get_job MORE times than this test plans for on a terminal
+        # tick whose job dict has no event_processing_finished flag —
+        # repeat the last planned response rather than raising IndexError.
+        i = min(job_calls["n"], len(job_responses) - 1)
+        job_calls["n"] += 1
+        return job_responses[i]
+
+    def fake_get_job_events_for_task(**k):
+        milestone_fetch_count["n"] += 1
+        return [_milestone_event("DMF_L3_MILESTONE: configuring")]  # the last deploy token
+
+    monkeypatch.setattr(main, "get_job", fake_get_job)
+    monkeypatch.setattr(main, "get_job_events_for_task", fake_get_job_events_for_task)
+    _run_watcher(app, op.operation_id, 111, "deploy", "key1")
+
+    assert ops_store.get(op.operation_id).progress_step == "configuring"
+    # Only the FIRST non-terminal tick fetches — ticks 2 and 3 see
+    # milestone_ordinal already at the vocabulary's last index and skip
+    # the call entirely.
+    assert milestone_fetch_count["n"] == 1
+
+
+def test_watcher_does_not_poll_milestones_before_job_started(monkeypatch):
+    app, ops_store = _fake_app()
+    op = ops_store.create("deploy", "key1")
+    job_calls = {"n": 0}
+    job_responses = [
+        {"status": "pending", "started": None},  # not started yet
+        {"status": "successful", "started": "t0", "finished": "t1"},
+    ]
+    milestone_fetch_count = {"n": 0}
+
+    def fake_get_job(**k):
+        # Clamped, not a hard index: _await_event_ingestion_finished may
+        # call get_job MORE times than this test plans for on a terminal
+        # tick whose job dict has no event_processing_finished flag —
+        # repeat the last planned response rather than raising IndexError.
+        i = min(job_calls["n"], len(job_responses) - 1)
+        job_calls["n"] += 1
+        return job_responses[i]
+
+    def fake_get_job_events_for_task(**k):
+        milestone_fetch_count["n"] += 1
+        return []
+
+    monkeypatch.setattr(main, "get_job", fake_get_job)
+    monkeypatch.setattr(main, "get_job_events_for_task", fake_get_job_events_for_task)
+    _run_watcher(app, op.operation_id, 111, "deploy", "key1")
+
+    assert milestone_fetch_count["n"] == 0
+    assert ops_store.get(op.operation_id).progress_step is None
+
+
+@pytest.mark.parametrize("action", ["rollback", "finalise-purge"])
+def test_watcher_does_not_poll_milestones_for_non_placement1_actions(monkeypatch, action):
+    # rollback/finalise-purge are the two OTHER actions _watch_job_operation
+    # handles — "launch" never gets a watcher spawned at all (see this
+    # function's own docstring), so it isn't a real case to cover here.
+    # Terminal status is "failed", not "successful", specifically so
+    # finalise-purge's own success path (a real NetBox re-read) never
+    # triggers — irrelevant to what this test is proving.
+    app, ops_store = _fake_app()
+    key = "a" * 32
+    op = ops_store.create(action, key)
+    job_calls = {"n": 0}
+    job_responses = [
+        {"status": "running", "started": "t0"},
+        {"status": "failed", "started": "t0", "finished": "t1"},
+    ]
+    milestone_fetch_count = {"n": 0}
+
+    def fake_get_job(**k):
+        # Clamped, not a hard index: _await_event_ingestion_finished may
+        # call get_job MORE times than this test plans for on a terminal
+        # tick whose job dict has no event_processing_finished flag —
+        # repeat the last planned response rather than raising IndexError.
+        i = min(job_calls["n"], len(job_responses) - 1)
+        job_calls["n"] += 1
+        return job_responses[i]
+
+    def fake_get_job_events_for_task(**k):
+        if k.get("task_name") == main._L3_MILESTONE_TASK_NAME:
+            milestone_fetch_count["n"] += 1
+        return []
+
+    monkeypatch.setattr(main, "get_job", fake_get_job)
+    monkeypatch.setattr(main, "get_job_events_for_task", fake_get_job_events_for_task)
+    _run_watcher(app, op.operation_id, 111, action, key)
+
+    assert milestone_fetch_count["n"] == 0
+    assert ops_store.get(op.operation_id).progress_step is None
+
+
+def test_watcher_milestone_fetch_never_touches_outcome_fields(monkeypatch):
+    # The side-channel property, proven directly: even when the milestone
+    # fetch returns a real token on the SAME tick the job resolves, only
+    # progress_step moves — l3_outcome/auto_rollback are untouched by it
+    # (they're still driven solely by the terminal outcome-marker fetch).
+    app, ops_store = _fake_app()
+    op = ops_store.create("teardown", "key1")
+    monkeypatch.setattr(main, "get_job", lambda **k: {"status": "successful", "started": "t0", "finished": "t1"})
+    monkeypatch.setattr(main, "get_job_events_for_task", lambda **k: [])
+    _run_watcher(app, op.operation_id, 111, "teardown", "key1")
+    updated = ops_store.get(op.operation_id)
+    assert updated.state == OperationState.RUN_COMPLETE
+    assert updated.l3_outcome is None
+    assert updated.auto_rollback is None
 
 
 # ---------------------------------------------------------------------------

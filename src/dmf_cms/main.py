@@ -1439,6 +1439,91 @@ async def _fetch_l3_purge_outcome_from_events(app: FastAPI, job_id: int) -> tupl
     return None, None
 
 
+# dmfdeploy/dmfdeploy#390 (Phase 1, "the throbber"): a THIRD, genuinely
+# separate marker contract — dmf-runbooks' roles/l3_run_guard/tasks/
+# _emit_milestone.yml emits these from a task literally named
+# 'dmf-l3-milestone', same transport/parse shape as DMF_L3_OUTCOME/
+# DMF_L3_PURGE_OUTCOME above (task-name-anchored job events, never stdout).
+# Structurally different from both of those, though: this marker reports
+# IN-FLIGHT PROGRESS, never a run's terminal outcome, and is fetched
+# repeatedly DURING a run (see the poll site in _watch_job_operation below),
+# not once at terminal. No kv — the vocabulary is deliberately small, flat,
+# and closed; it carries no per-run detail.
+_L3_MILESTONE_RE = re.compile(r"^DMF_L3_MILESTONE: (?P<token>[a-z0-9_-]+)$")
+_L3_MILESTONE_TASK_NAME = "dmf-l3-milestone"
+
+# The milestone vocabulary, in EMISSION ORDER, per watched action — must
+# match dmf-runbooks' own call sites exactly (roles/l3_run_guard/tasks/
+# _emit_milestone.yml's callers in playbooks/launch-*.yml and
+# playbooks/teardown-*.yml). Only the two Placement-1 actions (decisions-
+# file §3) get milestone polling at all — "rollback"/"finalise-purge" have
+# no entry here and are never polled for this (see the guard at the
+# _watch_job_operation call site).
+#
+# Deliberately NOT hard-coded to "exactly three" anywhere below — every
+# consumer derives its bound from len(...) / tuple.index(...), so adding a
+# fourth token to either tuple here (paired with one more _emit_milestone
+# call on the dmf-runbooks side) is the whole change; no other logic needs
+# to move.
+_L3_MILESTONE_ORDER: dict[str, tuple[str, ...]] = {
+    "deploy": ("preflight-passed", "provisioning", "configuring"),
+    "teardown": ("preflight-passed", "tearing-down", "finalising"),
+}
+
+
+async def _fetch_l3_milestone_from_events(app: FastAPI, job_id: int) -> str | None:
+    """Fetch a job's ``dmf-l3-milestone`` task events and return the latest
+    (highest-``counter``) milestone token, or ``None``.
+
+    Same defensive-parsing discipline as ``_fetch_l3_outcome_from_events``
+    (per-level dict validation, a defense-in-depth per-event task-name
+    re-check even though ``get_job_events_for_task`` already filters
+    server-side, "last event wins", never raises — a fetch failure or a
+    malformed event just yields ``None``). The differences are the task
+    name/regex and that there is no kv to sanitize.
+
+    Callers poll this repeatedly, mid-run — unlike the terminal markers
+    above, which are fetched once. A ``None`` result here must never be
+    treated as "nothing will ever arrive"; it means "nothing observed on
+    THIS fetch", and the caller is expected to try again next tick.
+    """
+    settings = app.state.settings
+    try:
+        events = await run_in_threadpool(
+            get_job_events_for_task,
+            api_url=settings.awx.api_url,
+            api_token=settings.awx.api_token,
+            job_id=job_id,
+            task_name=_L3_MILESTONE_TASK_NAME,
+            ssl_verify=settings.awx.ssl_verify,
+        )
+    except Exception:
+        return None
+
+    if not events:
+        return None
+
+    for event in reversed(events):
+        if not isinstance(event, dict):
+            continue
+        if event.get("task") != _L3_MILESTONE_TASK_NAME:
+            continue
+        event_data = event.get("event_data")
+        if not isinstance(event_data, dict):
+            continue
+        res = event_data.get("res")
+        if not isinstance(res, dict):
+            continue
+        msg = res.get("msg")
+        if not isinstance(msg, str):
+            continue
+        match = _L3_MILESTONE_RE.match(msg.strip())
+        if match:
+            return match.group("token")
+
+    return None
+
+
 # umbrella #202 WP3 R3b (codex round-2 P2-1): a bounded, settings-free cap
 # on the EXTRA polls _await_event_ingestion_finished waits for AWX's own
 # event_processing_finished flag. AWX's job-events ingestion can lag the
@@ -2029,6 +2114,12 @@ async def _watch_job_operation(app: FastAPI, operation_id: str, job_id: int, act
     consecutive_failures = 0
     seen_running = False
     seen_started = False
+    # dmfdeploy/dmfdeploy#390: loop-local milestone progress, same pattern
+    # as seen_started/seen_running above — NOT read back from the op store,
+    # tracked here so the monotonic-ordinal check below never needs a lock
+    # round-trip just to see what it last set. -1 means "nothing observed
+    # yet" (below every real index, including 0).
+    milestone_ordinal = -1
 
     try:
         while True:
@@ -2214,6 +2305,35 @@ async def _watch_job_operation(app: FastAPI, operation_id: str, job_id: int, act
             if not seen_running:
                 ops_store.update(operation_id, state=OperationState.RUNNING)
                 seen_running = True
+
+            # dmfdeploy/dmfdeploy#390 (Phase 1, "the throbber"): best-effort,
+            # SIDE-CHANNEL milestone poll — Placement-1 actions only, and
+            # only once the job has actually started (nothing can have been
+            # emitted before then). A DELIBERATE design choice, not an
+            # oversight: this does NOT call _await_event_ingestion_finished
+            # before fetching, unlike the terminal outcome fetch above. That
+            # bounded wait is correct exactly once, immediately before the
+            # authoritative terminal classification — blocking THIS tick on
+            # it would delay the loop's real job (tracking status to
+            # terminal) for no operator-visible benefit, since a milestone
+            # missed on one tick is invisible (the UI just holds its last-
+            # known step text and picks it up next tick once AWX has
+            # actually ingested the event). Do not "fix" this by adding the
+            # wait here.
+            vocab = _L3_MILESTONE_ORDER.get(action)
+            if vocab is not None and seen_started and milestone_ordinal < len(vocab) - 1:
+                milestone_token = await _fetch_l3_milestone_from_events(app, job_id)
+                if milestone_token in vocab:
+                    new_ordinal = vocab.index(milestone_token)
+                    # Monotonic guard: a lagged or reordered fetch can only
+                    # ever hold the displayed step or advance it, never move
+                    # it backward. An unrecognized token (None, or a string
+                    # outside this action's own vocabulary) is silently
+                    # ignored — same fail-open posture as an outcome-marker
+                    # fetch that finds nothing.
+                    if new_ordinal > milestone_ordinal:
+                        milestone_ordinal = new_ordinal
+                        ops_store.update(operation_id, progress_step=milestone_token)
 
             await asyncio.sleep(poll_interval)
     except Exception:

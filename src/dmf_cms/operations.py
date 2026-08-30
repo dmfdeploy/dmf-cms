@@ -202,6 +202,19 @@ class Operation:
     # an API response body (that disclosure IS the vulnerability this
     # field closes).
     purge_tenant_scope: tuple[str, ...] | None = None
+    # dmfdeploy/dmfdeploy#390 (Phase 1, "the throbber"): the latest DMF_L3_
+    # MILESTONE token observed for this op, RAW (main.py's
+    # _L3_MILESTONE_ORDER/_fetch_l3_milestone_from_events) — a best-effort,
+    # SIDE-CHANNEL progress signal, set only for "deploy"/"teardown" ops
+    # while non-terminal. Deliberately mirrors l3_outcome's own "never
+    # gates classification" posture: this field can only ever move forward
+    # (main.py's watcher enforces the monotonic ordinal guard before
+    # calling update() with it — this dataclass itself does not re-check
+    # ordering) and NEVER influences state/l3_outcome/auto_rollback. None
+    # means "no milestone observed yet" — the frontend's own job to degrade
+    # that honestly (elapsed+phase, never a blank throbber), not this
+    # field's job to fake a value.
+    progress_step: str | None = None
     created_at: datetime = field(default_factory=lambda: datetime.now(timezone.utc))
     updated_at: datetime = field(default_factory=lambda: datetime.now(timezone.utc))
 
@@ -220,6 +233,7 @@ class Operation:
             "auto_rollback": self.auto_rollback,
             "run_id": self.run_id,
             "purge_verified_at": self.purge_verified_at,
+            "progress_step": self.progress_step,
             "created_at": self.created_at.isoformat(),
             "updated_at": self.updated_at.isoformat(),
         }
@@ -454,6 +468,7 @@ class OperationStore:
         auto_rollback: str | None = None,
         run_id: str | None = None,
         purge_verified_at: str | None = None,
+        progress_step: str | None = None,
     ) -> Operation | None:
         """Update an operation's state and/or fields.
 
@@ -491,6 +506,13 @@ class OperationStore:
                 "finalise-purge" op reaches RUN_COMPLETE (see
                 ``Operation.purge_verified_at``'s own comment). Same
                 never-explicitly-cleared convention as every field here.
+            progress_step: dmfdeploy/dmfdeploy#390 — latest raw milestone
+                token (see ``Operation.progress_step``'s own comment).
+                Ordering/monotonicity is the CALLER's responsibility
+                (main.py's watcher only ever passes a token whose ordinal
+                is strictly greater than the one it last set) — this method
+                just stores whatever it's given, same as every other field
+                here.
 
         Returns:
             Updated Operation if found, None otherwise
@@ -514,6 +536,8 @@ class OperationStore:
                 op.run_id = run_id
             if purge_verified_at is not None:
                 op.purge_verified_at = purge_verified_at
+            if progress_step is not None:
+                op.progress_step = progress_step
             op.updated_at = datetime.now(timezone.utc)
 
             return op
