@@ -1324,6 +1324,113 @@ describe('degraded-read honesty (hard gate 1, umbrella #385)', () => {
   })
 })
 
+// umbrella #498 — the ghost canvas. Operator ruling 2026-08-30: ghosts
+// render on the zero-workloads screen too, ONLY when the read is genuinely
+// healthy (no error/degraded state), with the unchanged empty-state message
+// overlaid on top. jsdom resolves zero ghosts either way (no real layout
+// engine — see canvasGrid.test.tsx for the component's own measured-slack
+// tests), so what's pinned here is STRUCTURE: which branch gets the
+// CanvasGrid mount at all, not how many ghosts render inside it.
+describe('the healthy-empty ghost canvas (umbrella #498)', () => {
+  it('mounts the ghost canvas behind the unchanged empty-state message', async () => {
+    mkListFetch([])
+    renderListPage()
+
+    const message = await screen.findByText(
+      "No media workloads yet — they'll appear here once you create one.",
+    )
+    // The message overlays the SAME relative wrapper CanvasGrid mounts into
+    // (EmptyWorkloadsCanvas) — not a separate, unrelated panel.
+    const overlayWrapper = message.closest('.relative')
+    expect(overlayWrapper).toBeTruthy()
+    expect(overlayWrapper?.querySelector('.grid')).toBeTruthy()
+    // Under jsdom, CanvasGrid always measures zero ghosts (no real layout
+    // engine to resolve grid-template-columns) — this is the same bail-out
+    // every pre-existing test in this file already relied on unknowingly.
+    expect(screen.queryAllByTestId('canvas-grid-ghost')).toHaveLength(0)
+  })
+
+  it.each(['netbox-unreachable', 'netbox-not-configured'] as const)(
+    'does NOT mount the ghost canvas on a degraded/unreachable read (reason=%s) — only the plain panel',
+    async (reason) => {
+      const fetchMock = vi.fn(async (input: RequestInfo | URL) => {
+        const url = (typeof input === 'string' ? input : (input as Request).url).toString()
+        if (url.endsWith('/api/catalog')) return json({ entries: [catalogEntry()] })
+        if (url.endsWith('/api/media-workloads/grouped')) {
+          return json({ configured: true, degraded: true, reason, scope: [], workloads: [], invalid_instances: [] })
+        }
+        return json({})
+      })
+      vi.stubGlobal('fetch', fetchMock)
+      renderListPage()
+
+      const banner = await screen.findByText(
+        'Cannot confirm there are no Media Function instances — the source of truth is unreachable.',
+      )
+      // A degraded/unreachable read is "something is wrong, retrying" — the
+      // ready-for-your-first-workload canvas must not lay behind it (Art. 8:
+      // it would contradict the notice it sits behind).
+      expect(banner.closest('.relative')).toBeNull()
+      expect(banner.className).toContain('panel')
+    },
+  )
+
+  it('does NOT mount the ghost canvas on the invalid-workload-tags (cannotClaimNone) read either', async () => {
+    const fetchMock = vi.fn(async (input: RequestInfo | URL) => {
+      const url = (typeof input === 'string' ? input : (input as Request).url).toString()
+      if (url.endsWith('/api/catalog')) return json({ entries: [catalogEntry()] })
+      if (url.endsWith('/api/media-workloads/grouped')) {
+        return json({
+          configured: true,
+          // No `reason` token: NetBox answered fine (unlike the
+          // netbox-unreachable/not-configured cases above) — `degraded`
+          // here is earned purely by the excluded invalid-multiple
+          // instance below, which is what routes this to `cannotClaimNone`
+          // rather than `sourceUnreachable` (see the page's own comment on
+          // that distinction).
+          degraded: true,
+          scope: [],
+          workloads: [],
+          invalid_instances: [
+            {
+              instance: 'bad-svc',
+              function_key: 'mxl-videotestsrc',
+              workload_assignment: 'invalid-multiple',
+              conflicting_workloads: ['alpha', 'beta'],
+            },
+          ],
+        })
+      }
+      return json({})
+    })
+    vi.stubGlobal('fetch', fetchMock)
+    renderListPage()
+
+    const banner = await screen.findByText(
+      /This list is incomplete — every recorded instance has a conflicting workload assignment/,
+    )
+    expect(banner.closest('.relative')).toBeNull()
+    expect(banner.className).toContain('panel')
+  })
+
+  it('a populated grid (>=1 workload) mounts CanvasGrid too, with zero ghosts under jsdom', async () => {
+    mkListFetch([
+      {
+        slug: 'test',
+        name: 'test',
+        lifecycle: 'operate',
+        health: 'ok',
+        instances: [{ ...inst(), workload_assignment: 'ok' }],
+        functions: [],
+      },
+    ])
+    renderListPage()
+
+    await screen.findByText('test')
+    expect(screen.queryAllByTestId('canvas-grid-ghost')).toHaveLength(0)
+  })
+})
+
 describe('bounds are universal, including the fallback panel (GATE-S1-RV)', () => {
   it('does not poll the legacy aggregate while the tab is hidden', async () => {
     // The live_view=false fallback was the last unbounded 200ms poller. It

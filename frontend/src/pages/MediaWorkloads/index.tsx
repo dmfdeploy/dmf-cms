@@ -8,6 +8,7 @@ import { settleQuery } from '../../lib/queryState'
 import LivePreviewBox from './LivePreviewBox'
 import PageHeading from '../../components/PageHeading'
 import Tile from '../../components/Tile'
+import CanvasGrid from '../../components/CanvasGrid'
 import Badge, { type BadgeTone } from '../../components/Badge'
 import { usePageTitle } from '../../hooks/usePageTitle'
 import { workloadHomePath } from '../../lib/routes'
@@ -219,6 +220,17 @@ export default function MediaWorkloads() {
   // regardless of what's retained.
   const cannotClaimNone = Boolean(isError || data?.degraded)
 
+  // umbrella #498, operator ruling 2026-08-30: the ghost canvas renders on
+  // the zero-workloads screen ONLY in this, the genuinely-healthy-and-empty
+  // case — the read succeeded, nothing is degraded, there is truly nothing
+  // here yet. It deliberately does NOT extend to the three branches above
+  // (isError / sourceUnreachable / cannotClaimNone): those are "something
+  // is wrong, retrying" states, and laying a full-viewport "ready for your
+  // first workload" canvas behind a failure notice would contradict the
+  // notice itself (Art. 8) rather than foreshadow the future drag-to-canvas
+  // mechanic the healthy case is meant to hint at.
+  const healthyEmpty = workloads.length === 0 && !isError && !sourceUnreachable && !cannotClaimNone
+
   return (
     <div className="flex-1 overflow-y-auto p-6">
       <PageHeading>Media Workloads</PageHeading>
@@ -267,32 +279,18 @@ export default function MediaWorkloads() {
             </p>
           )}
 
-          {workloads.length === 0 ? (
+          {workloads.length === 0 && !healthyEmpty ? (
             <div className="panel mt-4 py-10 text-center text-sm text-muted">
               {isError
                 ? 'Cannot confirm there are no Media Function instances — the last read attempt failed. Retrying automatically.'
                 : sourceUnreachable
                 ? 'Cannot confirm there are no Media Function instances — the source of truth is unreachable.'
-                : cannotClaimNone
-                ? INCOMPLETE_INVALID_TAGS_COPY
-                : // umbrella #432 G4: this is the genuinely-empty case — the
-                  // read succeeded and nothing is wrong, so unlike the three
-                  // branches above it is not reporting a claim (Standing
-                  // Copy Doctrine: inviting register, nothing at stake).
-                  // Rewritten in this page's own vocabulary (this is the
-                  // Workloads page — "Media Function" names a distinct,
-                  // narrower concept under ADR-0046) and off "scope", which
-                  // is console jargon the operator never typed. Says what
-                  // this space is for rather than instructing a next step —
-                  // "Create media workload" already sits in the header
-                  // above, unconditionally, so naming it again here would
-                  // be rule 2's banned restatement of an adjacent control.
-                  // One sentence, active voice, per the ruling: "once
-                  // created" left the actor unstated.
-                  "No media workloads yet — they'll appear here once you create one."}
+                : INCOMPLETE_INVALID_TAGS_COPY}
             </div>
+          ) : healthyEmpty ? (
+            <EmptyWorkloadsCanvas />
           ) : (
-            <div className="mt-4 grid grid-cols-1 gap-4 sm:grid-cols-2 xl:grid-cols-3">
+            <CanvasGrid itemCount={workloads.length}>
               {workloads.map((wl) => (
                 <WorkloadEntryTile
                   key={wl.slug}
@@ -301,7 +299,7 @@ export default function MediaWorkloads() {
                   motionAllowed={motionTiles.has(wl.slug) && !reducedMotion}
                 />
               ))}
-            </div>
+            </CanvasGrid>
           )}
 
           {/* Unassigned-group disposal explanation (umbrella #285 addendum,
@@ -339,6 +337,63 @@ export default function MediaWorkloads() {
           )}
         </>
       )}
+    </div>
+  )
+}
+
+/* ─── the healthy-empty ghost canvas ─── */
+
+/**
+ * The zero-workloads, nothing-is-wrong screen (umbrella #498, operator
+ * ruling 2026-08-30). This is the highest-traffic cold-open surface in the
+ * console — the external usability walkthrough opens exactly here — and the
+ * ruling is explicit about what that means for this one screen:
+ *
+ *   1. It sets the CEILING on how strong the ghost treatment is anywhere in
+ *      the console. A full viewport of ghost cells is the maximum possible
+ *      dose of this decoration; if it reads as loading/broken/busy HERE, it
+ *      is too strong everywhere, full stop — tune CanvasGrid's ghost
+ *      styling against THIS screen first, then confirm the populated pages
+ *      still read well, not the other way round.
+ *   2. The message OUTRANKS the grid, visibly. "No media workloads yet —
+ *      they'll appear here once you create one." (copy UNCHANGED from
+ *      before this change) has to be the first thing the eye lands on, not
+ *      the ghosts. Structurally: the ghost canvas renders first in the DOM,
+ *      the message overlays it, centered, in a solid `.panel` box — later
+ *      DOM order paints on top with no z-index needed, and an opaque box
+ *      over a field of near-invisible dashed outlines reads as foreground
+ *      over background by construction, not by tuning.
+ *   3. Still no scrollbar from decoration — CanvasGrid's own measured-slack
+ *      math (lib/canvasGhostGrid.ts) already guarantees this; itemCount=0
+ *      just means every ghost is a `fullRows` ghost (nothing to complete a
+ *      "last row" of, since there IS no real row), so it degrades to "fill
+ *      whatever slack there is, and no more" with no special case needed.
+ *   4. Still not interactive — CanvasGrid's ghosts already are.
+ *
+ * The overlay is `pointer-events-none` (the ghosts need no pointer-events
+ * suppression of their own — they carry no handlers to suppress — but the
+ * overlay LAYER sitting on top of the whole canvas would otherwise swallow
+ * clicks meant for nothing in particular; belt-and-braces, matches
+ * CanvasGrid's own ghost cells doing the same for the same reason) with
+ * `pointer-events-auto` restored on the message box itself, in case a
+ * future revision of this notice ever needs a real control inside it.
+ */
+function EmptyWorkloadsCanvas() {
+  return (
+    <div className="relative mt-4">
+      <CanvasGrid itemCount={0}>{null}</CanvasGrid>
+      <div className="pointer-events-none absolute inset-0 flex items-center justify-center p-6">
+        <div className="panel pointer-events-auto max-w-md py-10 px-6 text-center text-sm text-muted">
+          {/* umbrella #432 G4: the read succeeded and nothing is wrong, so
+              this is not reporting a claim (Standing Copy Doctrine: inviting
+              register, nothing at stake). Off "scope" (console jargon the
+              operator never typed) and doesn't restate "Create media
+              workload", which already sits in the header above,
+              unconditionally (rule 2: no restating an adjacent control). One
+              sentence, active voice: "once created" states the actor. */}
+          {"No media workloads yet — they'll appear here once you create one."}
+        </div>
+      </div>
     </div>
   )
 }

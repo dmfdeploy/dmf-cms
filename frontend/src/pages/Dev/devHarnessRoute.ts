@@ -106,3 +106,21 @@ export function stripBase(pathname: string, base: string): string {
 export function isDevHarnessRoute(pathname: string, base: string = import.meta.env.BASE_URL): boolean {
   return import.meta.env.DEV && stripBase(pathname, base) === DEV_HARNESS_ROUTE
 }
+
+/**
+ * The ghost-grid inspection harness's own route (umbrella
+ * dmfdeploy/dmfdeploy#498). A SIBLING constant/gate pair, not a generalized
+ * multi-route version of the pair above — `isDevHarnessRoute`'s exact
+ * boolean contract is pinned in real depth by this file's own test suite's
+ * base-prefix-tolerance fix-round history, and widening its signature to
+ * cover a second route for the sake of a few avoided lines wasn't worth
+ * that risk. `stripBase` (the actually-reusable logic) is shared as-is.
+ */
+export const GHOST_GRID_HARNESS_ROUTE = '/__dev/ghost-grid'
+
+export function isGhostGridHarnessRoute(
+  pathname: string,
+  base: string = import.meta.env.BASE_URL,
+): boolean {
+  return import.meta.env.DEV && stripBase(pathname, base) === GHOST_GRID_HARNESS_ROUTE
+}

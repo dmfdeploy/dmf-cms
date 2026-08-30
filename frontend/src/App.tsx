@@ -17,8 +17,9 @@ import MediaWorkloads from './pages/MediaWorkloads'
 import Catalog from './pages/Catalog'
 import Admin from './pages/Admin'
 import Settings from './pages/Settings'
-import { isDevHarnessRoute } from './pages/Dev/devHarnessRoute'
+import { isDevHarnessRoute, isGhostGridHarnessRoute } from './pages/Dev/devHarnessRoute'
 import LifecycleRailHarness from './pages/Dev/LifecycleRailHarness'
+import GhostGridHarness from './pages/Dev/GhostGridHarness'
 
 export default function App() {
   // dmf-cms#391: checked ahead of every auth-derived branch below,
@@ -27,18 +28,25 @@ export default function App() {
   // (auth-gated) production route table below.
   const location = useLocation()
   const devHarness = isDevHarnessRoute(location.pathname)
+  // dmfdeploy/dmfdeploy#498 — the ghost-grid harness, same bypass shape.
+  const ghostGridHarness = isGhostGridHarnessRoute(location.pathname)
+  const anyHarness = devHarness || ghostGridHarness
 
   // FIX ROUND (dmf-cms#391, codex gate — D): `enabled: !devHarness` makes
   // the dev-harness route genuinely fire zero network calls, rather than
   // firing an unstubbed /api/me it never reads the result of and merely
   // hoping that's harmless. See useCurrentUser's own docstring for why this
   // is safe to add (additive, defaults to enabled, and this is the only
-  // mounted instance on this particular route).
-  const { data: user, isLoading: userLoading, isError } = useCurrentUser(!devHarness)
+  // mounted instance on this particular route). Widened to `!anyHarness`
+  // for #498 — the SAME zero-network-call contract applies to the
+  // ghost-grid harness, for the same reason (its own specimens stub
+  // `window.fetch` themselves; App.tsx's own /api/me call must not race
+  // ahead of that stub).
+  const { data: user, isLoading: userLoading, isError } = useCurrentUser(!anyHarness)
   const { setUser, setLoading } = useAuthStore()
 
   useEffect(() => {
-    if (devHarness) return
+    if (anyHarness) return
     if (userLoading) {
       setLoading(true)
     } else if (user) {
@@ -47,10 +55,14 @@ export default function App() {
       // Not authenticated, redirect to login
       window.location.href = '/auth/login'
     }
-  }, [devHarness, user, userLoading, isError, setUser, setLoading])
+  }, [anyHarness, user, userLoading, isError, setUser, setLoading])
 
   if (devHarness) {
     return <LifecycleRailHarness />
+  }
+
+  if (ghostGridHarness) {
+    return <GhostGridHarness />
   }
 
   if (userLoading) {

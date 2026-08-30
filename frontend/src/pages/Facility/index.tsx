@@ -3,6 +3,7 @@ import { useFacilitySummary } from '@/api/hooks'
 import { settleQuery } from '@/lib/queryState'
 import PageHeading from '@/components/PageHeading'
 import Tile from '@/components/Tile'
+import CanvasGrid from '@/components/CanvasGrid'
 import { usePageTitle } from '@/hooks/usePageTitle'
 
 // Facilities (S1, #285): a single-facility console has exactly one entry
@@ -162,7 +163,11 @@ function FacilityEntry({ data }: { data: ReturnType<typeof useFacilitySummary>['
           provider mark is a skin concern AND a data-driven one (envs rotate
           providers), so the generic building glyph stands in rather than a
           hardcoded logo. */}
-      <div className="mt-4 grid grid-cols-1 gap-4 sm:grid-cols-2 xl:grid-cols-3">
+      {/* umbrella #498: the same ghost-grid shell Media Workloads mounts —
+          this page always has exactly one real tile (single-facility
+          console, see the file docstring), so `itemCount={1}` is a
+          constant, not a derived count. */}
+      <CanvasGrid itemCount={1}>
         <Tile to={`/facilities/${encodeURIComponent(site.slug)}`} ariaLabel={`Open ${site.name} facility detail`}>
           <div className="flex aspect-video w-full items-center justify-center rounded-md border border-white/10 bg-black/40">
             <Building2 className="h-8 w-8 text-blue-400" />
@@ -174,7 +179,7 @@ function FacilityEntry({ data }: { data: ReturnType<typeof useFacilitySummary>['
             </p>
           </div>
         </Tile>
-      </div>
+      </CanvasGrid>
     </>
   )
 }

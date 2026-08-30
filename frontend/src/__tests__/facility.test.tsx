@@ -87,6 +87,23 @@ describe('Facilities list (S1, #285)', () => {
     expect(screen.queryByText(/^Status:/)).toBeNull()
   })
 
+  // umbrella #498: this page's one tile mounts inside the shared CanvasGrid
+  // (components/CanvasGrid.tsx) instead of a bare grid div. Under jsdom (no
+  // real layout engine) CanvasGrid always measures zero ghosts — see
+  // canvasGrid.test.tsx for the component's own measured-slack tests — so
+  // this pins the thing jsdom actually CAN prove: the real tile still
+  // renders, and no decorative ghost cell sneaks into the DOM unmeasured.
+  it('mounts the tile inside CanvasGrid with zero ghosts under jsdom', async () => {
+    stubFetch({ '/api/facility/summary': summary() })
+    renderWithQuery(
+      <MemoryRouter>
+        <Facility />
+      </MemoryRouter>,
+    )
+    expect(await screen.findByRole('link', { name: /DMF Lab/ })).toBeTruthy()
+    expect(screen.queryAllByTestId('canvas-grid-ghost')).toHaveLength(0)
+  })
+
   // umbrella #339 item 4: the single facility rendered as a wide row-card
   // while Media Workloads rendered square control-surface tiles, so the two
   // single-entry pages the S1 cut created did not look like one console. The
