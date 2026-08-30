@@ -1152,12 +1152,19 @@ describe('the destination never denies a just-launched workload', () => {
       await armAndConfirm()
       await screen.findByText('Deploy accepted.')
 
-      const lead = screen.getByText(/The automation is running/)
-      expect(lead.className).toMatch(/text-lg/)
+      // dmfdeploy/dmfdeploy#390: the big action label and the duration
+      // claim are now two separate lines (spinner+clock sit alongside the
+      // former) — "Provisioning under way", not the bare "Provisioning"
+      // the page's own <h1> already uses (pageIdentitySweep.test.tsx pins
+      // that h1 as the page's only occurrence of that exact string).
+      const heading = screen.getByText('Provisioning under way')
+      expect(heading.className).toMatch(/text-lg/)
+
       // Constitution hard gate 1 — no uncertainty stated as certainty: a
       // duration claim has to read as typical, never promised.
-      expect(lead.textContent).toMatch(/typically takes/)
-      expect(lead.textContent).not.toMatch(/\bwill take\b/)
+      const duration = screen.getByText(/Typically takes/)
+      expect(duration.textContent).toMatch(/typically takes/i)
+      expect(duration.textContent).not.toMatch(/\bwill take\b/)
     })
 
     it('links to Workspace and to Media Workloads, worded as facts rather than instructions', async () => {
@@ -1188,7 +1195,7 @@ describe('the destination never denies a just-launched workload', () => {
       await armAndConfirm()
       await screen.findByText('Deploy accepted.')
 
-      expect(screen.getByText(/The automation is running/)).toBeTruthy()
+      expect(screen.getByText('Provisioning under way')).toBeTruthy()
       expect(
         screen.getByText(/The launcher does that PART-WAY through the job below/),
       ).toBeTruthy()

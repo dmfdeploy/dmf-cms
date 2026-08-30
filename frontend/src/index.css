@@ -82,8 +82,28 @@
   animation: grain-flow 1.35s linear infinite;
 }
 
+/* dmfdeploy/dmfdeploy#390 — AutomationInProgressNotice's throbber. Slow and
+   calm (~1.5s/turn) deliberately: decisions record §3, "no fancy mechanics".
+   Killed under prefers-reduced-motion exactly like .grain-stream above — the
+   elapsed clock next to it (a React-driven text update, not a CSS animation,
+   so untouched by this media query) is the liveness cue that must survive
+   when this one dies. */
+@keyframes throbber-spin {
+  from {
+    transform: rotate(0deg);
+  }
+  to {
+    transform: rotate(360deg);
+  }
+}
+
+.throbber-spin {
+  animation: throbber-spin 1.5s linear infinite;
+}
+
 @media (prefers-reduced-motion: reduce) {
-  .grain-stream {
+  .grain-stream,
+  .throbber-spin {
     animation: none !important;
   }
 }

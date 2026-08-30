@@ -4,6 +4,8 @@ import { useCatalog, useCurrentUser, useMediaWorkloadsGrouped } from '../../api/
 import {
   stageActions,
   buildWorkloadLifecycleInput,
+  isGroupedReadTrustworthy,
+  runningReadoutFromInstances,
   type WorkloadLifecycleInput,
 } from '../../lib/workloadLifecycle'
 import { useTopbarMessageStore } from '../../store/topbarMessage'
@@ -463,6 +465,19 @@ function WorkloadWizard({
 
   const jobInFlight = launching || switching || tearingDown
 
+  // dmfdeploy/dmfdeploy#390 (tail-coverage running count): the SAME
+  // running/total formula (lib/workloadLifecycle.ts's
+  // runningReadoutFromInstances, pulled out specifically so this and
+  // store/headerSlot.ts's own inline version compute identically) and the
+  // SAME trust gate (isGroupedReadTrustworthy) already paired for
+  // LifecycleStrip's own "N of M running" readout — computed once here,
+  // from the SAME `workload`/`groupedRead` this component already holds,
+  // and threaded into FinaliseStage rather than a second derivation there.
+  const runningReadout = {
+    ...runningReadoutFromInstances(workload.instances),
+    trustworthy: isGroupedReadTrustworthy(groupedRead),
+  }
+
   // FIX ROUND (WP-3 spec B gate, P2-3; strengthened P3-5): built through the
   // ONE shared constructor WorkloadHome.tsx now also uses
   // (lib/workloadLifecycle.ts's buildWorkloadLifecycleInput) — member-state/
@@ -842,6 +857,7 @@ function WorkloadWizard({
         // FinaliseStage subscribing to useCurrentUser() itself — see that
         // prop's own docstring for why a second subscriber is the bug.
         user={userQuery.data}
+        runningReadout={runningReadout}
       />
     ),
   }

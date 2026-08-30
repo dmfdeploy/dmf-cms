@@ -12,7 +12,9 @@ import {
 } from '../../../api/hooks'
 import { useActivityStore } from '../../../store/activity'
 import ReasonConfirm from '../../../components/ReasonConfirm'
-import AutomationInProgressNotice from '../../../components/AutomationInProgressNotice'
+import AutomationInProgressNotice, {
+  type AutomationRunningReadout,
+} from '../../../components/AutomationInProgressNotice'
 import type { CatalogEntry, MediaWorkload, Operation, SwitchSourceResult, UserIdentity } from '../../../api/types'
 import type { StageActionId, StageState } from '../../../lib/workloadLifecycle'
 import StageCard from './StageCard'
@@ -51,9 +53,20 @@ import { settleQuery } from '../../../lib/queryState'
 interface EntryTrack {
   jobId: number | null
   opId: string | null
+  // dmfdeploy/dmfdeploy#390: the SAME identity `opId` was created with,
+  // but — unlike `opId` — NEVER cleared to null on the operation->job
+  // hand-off (onOpLaunched below). `opId`/`jobId` decide which status
+  // line currently drives onTerminal/onComplete (OperationStatusLine vs
+  // JobStatusLine, mutually exclusive by design); `progressOpId` is
+  // orthogonal to that and exists purely to keep feeding
+  // AutomationInProgressNotice's elapsed clock + progress step for the
+  // WHOLE in-flight window, not just the pre-handoff slice of it. Cleared
+  // back to null only when the entry returns to EMPTY_TRACK (teardown
+  // fully resolved, one way or another).
+  progressOpId: string | null
 }
 
-const EMPTY_TRACK: EntryTrack = { jobId: null, opId: null }
+const EMPTY_TRACK: EntryTrack = { jobId: null, opId: null, progressOpId: null }
 
 // umbrella #347 / #407: DERIVED from hooks.ts's own _WATCHED_TERMINAL_STATES
 // — the terminal set useOperationStatus itself stops polling a purge
@@ -80,6 +93,7 @@ export default function FinaliseStage({
   lastSwitchResult,
   onJobStart,
   user,
+  runningReadout,
 }: {
   workload: MediaWorkload
   state: StageState
@@ -104,6 +118,19 @@ export default function FinaliseStage({
    * same discipline as membersDataTrustworthy above it.
    */
   user: UserIdentity | undefined
+  /**
+   * dmfdeploy/dmfdeploy#390 (tail-coverage running count) — the SAME
+   * running/total/trustworthy triple LifecycleStrip's own "N of M running"
+   * readout already shows elsewhere on this page, computed by the parent
+   * from `workload.instances` (`lib/workloadLifecycle.ts`'s
+   * `runningReadoutFromInstances` + `isGroupedReadTrustworthy`) rather
+   * than a second subscription/derivation here — same discipline as
+   * `user` above. Threaded down into FinaliseEntry, which decides WHEN
+   * (only once its own operation's progress step reaches "finalising",
+   * the last token in the teardown vocabulary) to actually hand it to
+   * AutomationInProgressNotice; this component does no gating of its own.
+   */
+  runningReadout: AutomationRunningReadout
 }) {
   // fix-round 5 (PR #81, codex sibling sweep): `catalogFailed` threaded into
   // the absence claim below — see ProvisionStage.tsx's identical fix for
@@ -239,8 +266,8 @@ export default function FinaliseStage({
     setTrack((prev) => ({
       ...prev,
       [entry.key]: isOperation(result)
-        ? { jobId: null, opId: result.operation_id }
-        : { jobId: result.job_id, opId: null },
+        ? { jobId: null, opId: result.operation_id, progressOpId: result.operation_id }
+        : { jobId: result.job_id, opId: null, progressOpId: null },
     }))
   }
 
@@ -314,11 +341,21 @@ export default function FinaliseStage({
                     isTearingDown={teardownMutation.isPending && teardownMutation.variables?.key === entry.key}
                     teardownError={teardownMutation.variables?.key === entry.key ? teardownMutation.error : null}
                     onTeardown={(reason) => handleTeardown(entry, reason)}
-                    onOpLaunched={(jobId) => setTrack((prev) => ({ ...prev, [entry.key]: { jobId, opId: null } }))}
+                    onOpLaunched={(jobId) =>
+                      setTrack((prev) => ({
+                        ...prev,
+                        // dmfdeploy/dmfdeploy#390: progressOpId carried
+                        // forward from whatever it already was — see its
+                        // own field comment on EntryTrack for why this
+                        // hand-off must NOT clear it the way opId does.
+                        [entry.key]: { jobId, opId: null, progressOpId: prev[entry.key]?.progressOpId ?? null },
+                      }))
+                    }
                     onOpError={() => setTrack((prev) => ({ ...prev, [entry.key]: EMPTY_TRACK }))}
                     onOpTerminal={(operation) => handleOpTerminal(entry.key, operation)}
                     onStatusChange={statusCallbackFor(entry.key)}
                     onJobComplete={() => handleJobComplete(entry.key)}
+                    runningReadout={runningReadout}
                   />
                 )
               })}
@@ -514,6 +551,7 @@ function FinaliseEntry({
   onOpTerminal,
   onStatusChange,
   onJobComplete,
+  runningReadout,
 }: {
   entry: CatalogEntry
   allowed: boolean
@@ -526,9 +564,25 @@ function FinaliseEntry({
   onOpTerminal: (operation: Operation) => void
   onStatusChange: (status: string) => void
   onJobComplete: () => void
+  runningReadout: AutomationRunningReadout
 }) {
   const [arming, setArming] = useState(false)
   const inFlight = track.jobId !== null || track.opId !== null
+  // dmfdeploy/dmfdeploy#390: SEPARATE, independent subscription to the
+  // SAME query OperationStatusLine below already polls while track.opId is
+  // set (react-query dedupes by query key — no second network cycle) — see
+  // EntryTrack.progressOpId's own comment for why this reads that field,
+  // not track.opId, to survive the operation->job hand-off.
+  const { data: progressOperation, failed: progressReadFailed } = settleQuery(
+    useOperationStatus(track.progressOpId),
+  )
+  // Tail-coverage handoff (operator ruling): only once THIS teardown's own
+  // progress has reached "finalising" — the last token in the teardown
+  // vocabulary (dmf-cms main.py's _L3_MILESTONE_ORDER) — does the running
+  // count take over from the frozen step phrase. Computed here, not inside
+  // AutomationInProgressNotice, because only this call site knows which
+  // token is "last" for its own action.
+  const inTail = progressOperation?.progress_step === 'finalising'
 
   return (
     <div className="border-t border-white/5 pt-3 first:border-t-0 first:pt-0">
@@ -610,10 +664,21 @@ function FinaliseEntry({
           not on a separate page — never got it. Same shared visual
           treatment (AutomationInProgressNotice), own wording: a teardown on
           this environment ran two to three minutes, faster than a
-          provision, so it does not borrow that duration. */}
+          provision, so it does not borrow that duration.
+
+          dmfdeploy/dmfdeploy#390: runningReadout is only ever HANDED to the
+          notice once inTail is true — see FinaliseEntry's own comment on
+          why that decision lives here, not inside the component. */}
       {inFlight && (
         <div className="mt-2">
-          <AutomationInProgressNotice lead="The automation is running — tearing down like this typically takes two to three minutes.">
+          <AutomationInProgressNotice
+            action="Tearing down"
+            startedAt={progressOperation?.created_at ?? null}
+            progressStep={progressOperation?.progress_step}
+            typicalDuration="two to three minutes"
+            runningReadout={inTail ? runningReadout : null}
+            stale={progressReadFailed}
+          >
             It shows up on{' '}
             <Link to="/" className="text-accent hover:underline">
               Workspace
