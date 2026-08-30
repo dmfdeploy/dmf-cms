@@ -247,8 +247,11 @@ describe('lifecycle badge grammar (umbrella #285 addendum)', () => {
       label: 'configuring',
       grammar: 'in-flight',
     })
+    // umbrella #499: "finalising", not "finalizing" — the EBU-spelled
+    // participle, so this badge never contradicts the rail's "Finalise &
+    // Review" on the same screen. See IN_FLIGHT_GRAMMAR's own comment.
     expect(lifecycleBadge({ lifecycle: 'operate', tearingDown: true })).toEqual({
-      label: 'finalizing',
+      label: 'finalising',
       grammar: 'in-flight',
     })
   })
@@ -261,7 +264,7 @@ describe('lifecycle badge grammar (umbrella #285 addendum)', () => {
       switching: true,
       tearingDown: true,
     })
-    expect(badge.label).toBe('finalizing')
+    expect(badge.label).toBe('finalising')
   })
 
   it('keeps unknown honest rather than inventing a participle', () => {
@@ -282,7 +285,7 @@ describe('lifecycle badge grammar (umbrella #285 addendum)', () => {
   })
 
   it('never renders a progressive form without a job in flight', () => {
-    const progressives = ['provisioning', 'configuring', 'finalizing']
+    const progressives = ['provisioning', 'configuring', 'finalising']
     for (const input of ALL_INPUTS) {
       const { label } = lifecycleBadge(input)
       if (progressives.includes(label)) {
