@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useRef, useState } from 'react'
+import { useEffect, useMemo, useState } from 'react'
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query'
 import MediaWorkloads from '../MediaWorkloads'
 import Facility from '../Facility'
@@ -197,6 +197,29 @@ function useViewportSize() {
 // acceptance criteria's own named hard case.
 const DEFAULT_SPECIMEN = SPECIMENS[1]
 
+// The TRUE original `window.fetch`, captured ONCE at module evaluation —
+// before this module ever gets a chance to install a specimen stub.
+//
+// FIX ROUND (dmfdeploy/dmf-cms#126 review): an earlier version captured this
+// per-render, inside the component, via a `useRef` written by the same
+// `useState` lazy initializer that installs the stub below. That looked
+// safe — `useRef` hands back the SAME object on every render of a given
+// component instance, so a write from one render is visible to the next —
+// but it missed what React StrictMode's double-invoked mount render is FOR:
+// it calls a `useState` lazy initializer twice against that same hook
+// state specifically to surface non-idempotent side effects like this one.
+// Verified empirically (a throwaway probe rendering a minimal component
+// under `<React.StrictMode>` and inspecting `useRef` identity across both
+// calls): the ref object IS the same instance both times, and `.current`
+// from the first call IS visible to the second — so the first call
+// correctly captured the real fetch and installed the stub, then the
+// SECOND call read `window.fetch` again — already the stub — and
+// overwrote the captured "original" with it. Unmount then restored the
+// stub permanently. A module-scope capture sidesteps hook/render semantics
+// entirely: this line runs exactly once, at import time, before any
+// specimen has ever been installed, so there is no second call to race.
+const TRUE_ORIGINAL_FETCH = window.fetch
+
 export default function GhostGridHarness() {
   const [activeId, setActiveId] = useState(DEFAULT_SPECIMEN.id)
   const specimen = SPECIMENS.find((s) => s.id === activeId) ?? SPECIMENS[0]
@@ -212,23 +235,33 @@ export default function GhostGridHarness() {
   // server. The lazy `useState` initializer instead runs synchronously,
   // top-down, as part of calling this function component — closing the
   // race entirely. (React StrictMode, which main.tsx enables, invokes this
-  // twice on mount; reassigning `window.fetch` to the same function twice
-  // is harmless.) The TRUE original `window.fetch` is restored once, on
-  // this component's own unmount (navigating away from the dev route
-  // entirely) — never per specimen switch, see `selectSpecimen` below for
-  // why that would be the wrong place for it.
-  const originalFetchRef = useRef<typeof window.fetch | null>(null)
+  // initializer twice on mount — see `TRUE_ORIGINAL_FETCH` above for why the
+  // original is captured at module scope rather than here.) `window.fetch`
+  // is restored once, on this component's own unmount (navigating away from
+  // the dev route entirely) — never per specimen switch, see
+  // `selectSpecimen` below for why that would be the wrong place for it.
   useState(() => {
-    originalFetchRef.current = window.fetch
     window.fetch = DEFAULT_SPECIMEN.fetchImpl
     return null
   })
-  useEffect(
-    () => () => {
-      if (originalFetchRef.current) window.fetch = originalFetchRef.current
-    },
-    [],
-  )
+  // Reinstalls the stub on setup, not just the lazy initializer above. Needed
+  // because this effect's cleanup unconditionally restores the true fetch —
+  // and React StrictMode simulates a full unmount+remount of every effect
+  // right after the real mount commits. Without a setup body here, that
+  // simulated cycle would fire this cleanup (wiping the stub back to the
+  // true fetch) and then re-run setup with nothing to reinstall it, leaving
+  // the REAL fetch in place for the rest of the mounted session — exactly
+  // the kind of gap the empty-bodied version of this effect had, previously
+  // hidden by the `TRUE_ORIGINAL_FETCH` capture bug fixed above (that bug
+  // made the old cleanup's "restore" a no-op, since it was restoring the
+  // stub to itself). The reassignment here is otherwise harmless on the
+  // real first mount, where `window.fetch` is already this same stub.
+  useEffect(() => {
+    window.fetch = DEFAULT_SPECIMEN.fetchImpl
+    return () => {
+      window.fetch = TRUE_ORIGINAL_FETCH
+    }
+  }, [])
 
   /**
    * Switching specimens remounts the whole SpecimenStage subtree below
