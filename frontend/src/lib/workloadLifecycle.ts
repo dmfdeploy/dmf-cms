@@ -465,6 +465,36 @@ export function isGroupedReadTrustworthy(read: {
 }
 
 /**
+ * dmfdeploy/dmfdeploy#390 (Phase 1, "the throbber" — tail-coverage running
+ * count): the SAME "running of total" formula `store/headerSlot.ts`'s
+ * `classifyWorkloadForHeaderSlot` already uses to feed `LifecycleStrip`'s
+ * own "N of M running" readout — `instances.filter((i) =>
+ * i.observed_state === 'running').length` over `instances.length` — pulled
+ * out here as its own small, testable, EXPORTED function so a second call
+ * site (AutomationInProgressNotice's tail-coverage count) can reuse the
+ * identical count rather than hand-rolling a second copy that could drift
+ * out of step with the first (the exact class of bug this codebase treats
+ * as load-bearing to avoid — see this file's own module docstring on why
+ * lifecycle position has ONE derivation, not several that happen to agree
+ * today). Deliberately does NOT decide trustworthiness — pair with
+ * `isGroupedReadTrustworthy` above, the same gate the header-slot rail
+ * already pairs it with, rather than inventing a third formula for that.
+ * `store/headerSlot.ts` itself is intentionally NOT refactored to call this
+ * — that module's own TRUST side-table machinery is a fortified, security-
+ * reviewed boundary (see its own docstring) and touching it is out of this
+ * change's scope; its inline one-liner and this function compute the exact
+ * same thing by construction, not by convention.
+ */
+export function runningReadoutFromInstances(
+  instances: { observed_state: string }[],
+): { running: number; total: number } {
+  return {
+    running: instances.filter((i) => i.observed_state === 'running').length,
+    total: instances.length,
+  }
+}
+
+/**
  * umbrella #432 fix round: `isGroupedReadTrustworthy` above, minus the
  * `!isFetching` conjunct — see `membersDataRetained`'s own docstring for why
  * this is a SEPARATE formula rather than a change to that one. A read that

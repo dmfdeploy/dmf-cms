@@ -1,6 +1,8 @@
 import { useCallback, useState } from 'react'
 import { Link } from 'react-router-dom'
 import { useQueryClient } from '@tanstack/react-query'
+import { useOperationStatus } from '../../api/hooks'
+import { settleQuery } from '../../lib/queryState'
 import { JobStatusLine, OperationStatusLine } from './stages/JobProgress'
 import type { Operation } from '../../api/types'
 import ViewLiveExit from './ViewLiveExit'
@@ -132,6 +134,20 @@ export default function WorkloadMaterializing({
   launch: WorkloadLaunchState
 }) {
   const queryClient = useQueryClient()
+  // dmfdeploy/dmfdeploy#390: a SEPARATE, independent subscription to the
+  // SAME query OperationStatusLine below already polls (react-query dedupes
+  // by query key — no second network cycle) — deliberately not threaded
+  // through OperationStatusLine's own props, because that component
+  // UNMOUNTS the instant jobId is known (see its own render condition
+  // below) and hands the UI off to JobStatusLine, but the throbber's
+  // elapsed clock and progress step need to keep reading the operation for
+  // the WHOLE in-flight window, not just the pre-jobId slice of it.
+  // `launch.operationId` is a stable prop (never reassigned after mount,
+  // unlike `jobId` below), so this call's `operationId` argument never
+  // changes mid-life. `useOperationStatus` already stops polling on its
+  // own once the operation reaches a terminal state (Art. 4) — nothing
+  // extra needed here for that.
+  const { data: operation, failed: operationReadFailed } = settleQuery(useOperationStatus(launch.operationId ?? null))
   // Job id may arrive with the handoff (sync path) or later from the
   // operation (async path); both land here.
   const [jobId, setJobId] = useState<number | null>(launch.jobId ?? null)
@@ -310,8 +326,28 @@ export default function WorkloadMaterializing({
                 own teardown in-flight state can reuse the SAME visual
                 treatment — see that component's own docstring for why the
                 wording itself is NOT shared (this sentence is true of
-                provisioning specifically, not of teardown). */}
-            <AutomationInProgressNotice lead="The automation is running — provisioning like this typically takes a few minutes.">
+                provisioning specifically, not of teardown).
+
+                dmfdeploy/dmfdeploy#390: no runningReadout is ever passed
+                here — this component renders ONLY before the workload
+                exists in NetBox (see this file's own module docstring), so
+                there is structurally no instances/functions array to count
+                yet; the throbber's own G1 guardrail (never "0 of 0") means
+                it just shows the frozen step phrase for this whole call
+                site's tail, which is honest, not a gap.
+
+                action reads "Provisioning under way", not the bare
+                "Provisioning" the page's own <h1> above already uses —
+                pageIdentitySweep.test.tsx pins that h1 as the page's ONLY
+                occurrence of that exact string; this label needs to say
+                the same thing without literally repeating it. */}
+            <AutomationInProgressNotice
+              action="Provisioning under way"
+              startedAt={operation?.created_at ?? null}
+              progressStep={operation?.progress_step}
+              typicalDuration="a few minutes"
+              stale={operationReadFailed}
+            >
               It shows up on{' '}
               <Link to="/" className="text-accent hover:underline">
                 Workspace

@@ -1028,10 +1028,13 @@ describe('Finalise & Review: teardown click path', () => {
     })
     fireEvent.click(within(finaliseSection).getByRole('button', { name: 'Confirm teardown' }))
 
-    const lead = await within(finaliseSection).findByText(/The automation is running/)
-    expect(lead.className).toMatch(/text-lg/)
-    expect(lead.textContent).toMatch(/typically takes/)
-    expect(lead.textContent).not.toMatch(/\bwill take\b/)
+    // dmfdeploy/dmfdeploy#390: the big action label and the duration claim
+    // are now two separate lines (spinner+clock sit alongside the former).
+    const heading = await within(finaliseSection).findByText('Tearing down')
+    expect(heading.className).toMatch(/text-lg/)
+    const duration = within(finaliseSection).getByText(/Typically takes/)
+    expect(duration.textContent).toMatch(/typically takes/i)
+    expect(duration.textContent).not.toMatch(/\bwill take\b/)
 
     const workspace = within(finaliseSection).getByRole('link', { name: 'Workspace' })
     expect(workspace.getAttribute('href')).toBe('/')

@@ -87,6 +87,14 @@ export interface Operation {
   // Spread onto the 202/200 async write response by the operator-gated write
   // (#185 WP-E); absent on later poll reads of the operation itself.
   request_id?: string
+  // dmfdeploy/dmfdeploy#390 (Phase 1, "the throbber"): latest raw
+  // DMF_L3_MILESTONE token observed for this op — a best-effort,
+  // side-channel progress signal, set only for deploy/teardown ops while
+  // non-terminal (see dmf-cms main.py's _L3_MILESTONE_ORDER). null means
+  // "no milestone observed yet", never a value to fake — AutomationInProgress
+  // Notice's own degrade path (elapsed+phase, never a blank throbber) is
+  // what handles that, not this field.
+  progress_step?: string | null
 }
 
 // Union type: sync response (200) or async operation (202)
