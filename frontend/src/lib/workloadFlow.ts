@@ -410,11 +410,20 @@ const RESTING_GRAMMAR: Record<WorkloadLifecycle, string> = {
  * In-flight grammar: the progressive names the stage whose job is running
  * right now. Keyed to the stage, so each pairs with its own resting form
  * exactly as the operator asked ("provisioned / provisioning").
+ *
+ * `finalise` conjugates to "finalising", not "finalizing" (umbrella #499).
+ * "Finalise & Review" is quoted EBU vocabulary — verified against the EBU
+ * white paper *The Dynamic Media Facility Reference Architecture* (6
+ * occurrences of `Finalise`, 0 of `Finalize`) — and this badge renders on
+ * the SAME screen as LifecycleStrip's rail, which spells the stage name
+ * with an s. A US-spelled participle here would contradict it in place.
+ * DO NOT "fix" this back to the z spelling: that is the near-miss umbrella
+ * #499 named outright — normalise toward `Finalise`, never `Finalize`.
  */
 const IN_FLIGHT_GRAMMAR: Record<'provision' | 'configure' | 'finalise', string> = {
   provision: 'provisioning',
   configure: 'configuring',
-  finalise: 'finalizing',
+  finalise: 'finalising',
 }
 
 export interface LifecycleBadge {
