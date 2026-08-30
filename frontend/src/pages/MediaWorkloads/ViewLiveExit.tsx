@@ -50,6 +50,17 @@ import { workloadHomePath } from '../../lib/routes'
  * status, including FAILED — a real failure is something to go and look
  * at, not a reason to keep the operator here). Once a job settles, the
  * exit is a real link again.
+ *
+ * `jobReasonText` IS ON DEMAND, NOT PAINTED (umbrella #499). It used to
+ * render inline — "View live — Unavailable until the job finishes." next
+ * to a screen that ALSO said a job was running via the rail band, the
+ * top-right readout, and the stage card, all at once. A disabled control
+ * explaining itself is legitimate (umbrella #499's own words); restating
+ * "a job is running" a fourth time on the same screen is not. The reason
+ * still exists — in `title` for a sighted hover/focus, and in a visually
+ * hidden node so the accessible name carries it regardless of hover — it
+ * is just no longer FORCED into view for an operator who already read it
+ * somewhere else on this screen.
  */
 export default function ViewLiveExit({
   slug,
@@ -62,8 +73,9 @@ export default function ViewLiveExit({
 }) {
   if (jobInFlight) {
     return (
-      <span role="status" className="shrink-0 whitespace-nowrap text-sm text-muted">
-        View live — {jobReasonText}
+      <span role="status" className="shrink-0 whitespace-nowrap text-sm text-muted" title={jobReasonText}>
+        View live
+        {jobReasonText && <span className="sr-only"> — {jobReasonText}</span>}
       </span>
     )
   }

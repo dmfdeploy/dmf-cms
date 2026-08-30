@@ -1265,9 +1265,11 @@ describe('the destination never denies a just-launched workload', () => {
     await armAndConfirm()
     await screen.findByText('Deploy accepted.')
 
-    // Locked: inert text naming the reason, never a disabled link.
+    // Locked: inert text naming the reason, never a disabled link. umbrella
+    // #499: the reason is on demand (title + sr-only text) rather than
+    // painted inline — see ViewLiveExit.tsx's own docstring.
     expect(screen.queryByRole('link', { name: 'View live' })).toBeNull()
-    expect(screen.getByText(/View live — The launch job is in progress/)).toBeTruthy()
+    expect(screen.getByText('View live').getAttribute('title')).toBe('The launch job is in progress.')
 
     h.setJobStatus(900, { status: 'successful', is_done: true })
 
@@ -1392,7 +1394,8 @@ describe('the destination never denies a just-launched workload', () => {
     // "Loading workload…" here, forever.
     await screen.findByText('Deploy accepted.')
     expect(screen.queryByRole('link', { name: 'View live' })).toBeNull()
-    expect(screen.getByText(/View live — /)).toBeTruthy()
+    // umbrella #499: the reason is on demand (title), not painted inline.
+    expect(screen.getByText('View live').getAttribute('title')).toBe('The launch job is in progress.')
   })
 
   it('the exit is locked, not active, when the grouped read is persistently failing for a launch handoff', async () => {
@@ -1404,7 +1407,7 @@ describe('the destination never denies a just-launched workload', () => {
     // materializing view, not WorkloadSetup's "could not be loaded" panel.
     expect(screen.queryByText(/could not be loaded right now/)).toBeNull()
     expect(screen.queryByRole('link', { name: 'View live' })).toBeNull()
-    expect(screen.getByText(/View live — /)).toBeTruthy()
+    expect(screen.getByText('View live').getAttribute('title')).toBe('The launch job is in progress.')
   })
 
   it('the exit is locked, not active, when the environment reports unconfigured for a launch handoff', async () => {
@@ -1414,7 +1417,7 @@ describe('the destination never denies a just-launched workload', () => {
     await screen.findByText('Deploy accepted.')
     expect(screen.queryByText(/not configured for this environment/)).toBeNull()
     expect(screen.queryByRole('link', { name: 'View live' })).toBeNull()
-    expect(screen.getByText(/View live — /)).toBeTruthy()
+    expect(screen.getByText('View live').getAttribute('title')).toBe('The launch job is in progress.')
   })
 })
 
