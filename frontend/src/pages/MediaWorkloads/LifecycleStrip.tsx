@@ -64,10 +64,18 @@ import { RAIL_FILL, RAIL_INK } from '../../lib/stagePalette'
  *      the contradiction, not fixed it. SELECTION IS NOW THE RAIL'S ONLY
  *      STATE. The per-stage actionable/uncommitted question is the badge
  *      slot below, reserved and empty until dmfdeploy#495/ADR-0046 lands.
- *   C. ROUNDED CHEVRONS remain from this same round — matching
- *      Sidebar.tsx's `rounded-lg` (8px), radius only, not its
- *      `bg-accent/20` tint (cyan is the action accent, never used here).
- *      See `chevronClipPath` below for the geometry.
+ *   C. ROUNDED CHEVRONS, now with genuine curves everywhere instead of a
+ *      mix of arcs, flat chamfers, and untreated vertices (a follow-up fix
+ *      round found that inconsistency was the actual "oddly sharp corners"
+ *      complaint, not the radius). TWO deliberately different radii: the
+ *      box terminal corners still match Sidebar.tsx's `rounded-lg` (8px,
+ *      radius only, not its `bg-accent/20` tint — cyan is the action
+ *      accent, never used here) and are unchanged by that follow-up round;
+ *      the arrow (the point/notch tips and the four corners where a flat
+ *      edge meets a diagonal one) gets its own, more generous curve. See
+ *      `chevronClipPath` and the ROUNDING comment above it for the full
+ *      derivation, including why the arrow itself needs two sizes, not
+ *      one.
  *
  * WHAT SURVIVES UNCHANGED: equal columns, per-key icons unconditionally
  * (dmfdeploy#482), no padlock (IA doc #493 amendment), no indicators in the
@@ -174,73 +182,235 @@ const RADIUS_PX = 8
 const ARC_OFFSET = (RADIUS_PX - RADIUS_PX * Math.SQRT1_2).toFixed(3) // 2.343
 
 /**
- * Replacement points for the point/notch tip corners (interior angle
- * ~120.5 degrees, from the fixed button height 28px and NOTCH_PX — both
- * constants, so this angle does not depend on the button's variable
- * width). Chamfered with a straight line between the two tangent points
- * rather than a full arc: a chamfer needs no "which way does the arc
- * bulge" sign-handling (the point's convex vs the notch's concave case are
- * otherwise mirror images that bulge opposite ways), which matters because
- * getting that sign wrong is a real, easy-to-miss failure mode, and a
- * chamfer softens the tip visibly at RADIUS_PX without it. See the PR
- * description for the full trig derivation (interior angle, tangent
- * distance from the vertex along each edge).
+ * ROUNDING, FIX ROUND — TWO DELIBERATELY DIFFERENT RADII, per the operator's
+ * final word on this (two earlier readings of a visual mockup over- and
+ * under-shot it; see git history for the full back-and-forth, not repeated
+ * here since neither earlier reading is the target any more). The BOX
+ * corners (RADIUS_PX/ARC_OFFSET above — Design's left edge, Finalise &
+ * Review's right edge) are UNCHANGED by this pass, still Sidebar.tsx:127's
+ * rounded-lg. What changes is the ARROW: the chevron point's tip, the
+ * receiving notch's tip, and the four corners where a flat top/bottom edge
+ * meets a notch/point's diagonal edge (previously raw, untreated vertices —
+ * the prior round's own "OUT OF SCOPE, DELIBERATELY" note, now addressed)
+ * are treated as one unit — "part of the arrow, softened with it" — and get
+ * a distinctly softer curve than the box.
  *
- * OUT OF SCOPE, DELIBERATELY (recorded so it isn't silently assumed done):
- * the four corners where a flat top/bottom edge meets a notch/point's
- * diagonal edge (e.g. the very start of the top edge on a 'middle' key)
- * are NOT rounded this round — a third distinct corner angle, and the
- * least visually prominent of the three. Flagged for the next round rather
- * than guessed at under time pressure.
+ * WHY TWO ARROW RADII, NOT ONE (found while building this, not guessed):
+ * the tip corners (ARROW_TIP_RADIUS) and the four transition corners
+ * (ARROW_TRANS_RADIUS) are NOT the same size, because a uniform enlarged
+ * radius does not fit. Each diagonal edge (flat-edge corner to tip apex)
+ * has to host BOTH that corner's own fillet and the tip's, and the tangent
+ * distance a fillet consumes along its edge is `R / tan(interior-angle /
+ * 2)` — small for an obtuse angle, large for an acute one. The receiving
+ * notch's own diagonal edge is short (~14.35px — NOTCH_APEX_DEPTH below is
+ * an EXISTING, unchanged dimension this round preserves rather than
+ * redesigns, not something this pass gets to make deeper) and its
+ * transition corner's interior angle (~77°, far more acute than the
+ * point-side's ~120°) eats disproportionate edge length per radius pixel.
+ * A single uniform radius applied to both the notch's tip and its
+ * transition corner overflows that 14.35px budget once R passes roughly
+ * 8.7px — indistinguishable from the box's own 8px, not "noticeably
+ * softer" as asked for. Splitting the radius resolves it: the tip gets the
+ * generous curve (it is, in the operator's own words, "the most looked-at
+ * point"), the transition corners get a smaller but still real one — going
+ * from zero rounding to any genuine curve is already the fix for "oddly
+ * sharp corners" there. Verified by direct tangent-distance-vs-edge-length
+ * computation for every corner at the chosen radii (positive margin, >3px,
+ * on both the point's 16.12px edge and the notch's 14.35px one) — see the
+ * PR description for the scratch script and its output, not eyeballed.
  */
-const CHAMFER_X = '2.268'
-const CHAMFER_Y = '3.969'
+const ARROW_TIP_RADIUS = 16
+const ARROW_TRANS_RADIUS = 6
+
+/**
+ * The receiving notch's own apex depth — how far its concave cut actually
+ * reaches in from the left edge, in px. NOT a fresh design choice: this is
+ * the EXISTING, shipped notch depth, reconstructed (not re-derived from
+ * scratch) by intersecting the two diagonal edges of the prior round's own
+ * chamfer construction and solving for where they'd meet at a single sharp
+ * vertex — confirmed against the live-rendered `getComputedStyle().clipPath`
+ * of a real 'middle' key, not just the source constants. It is asymmetric
+ * with the point's own protrusion (which reaches fully to the opposite
+ * edge, depth 0) — an existing asymmetry, not something this rounding pass
+ * introduces or corrects. Preserved exactly so this round changes ONLY how
+ * corners are rounded, not the silhouette's underlying proportions.
+ */
+const NOTCH_APEX_DEPTH = 3.165
+
+/**
+ * Segments per rounded arc. Sagitta (max deviation from a true circle) for
+ * N segments over sweep angle θ is `R * (1 - cos(θ / (2N)))` — worst case
+ * here is the tip fillet's ~59.5° sweep at the larger ARROW_TIP_RADIUS
+ * (16px): at N=8 that is 16 * (1 - cos(3.72°)) ≈ 0.03px, imperceptible even
+ * magnified (the operator's own explicit "judge it magnified" bar). Kept
+ * as one shared constant rather than tuned per-arc — every other arc here
+ * is smaller-radius and/or narrower-sweep, so N=8 has strictly more margin
+ * there, not less.
+ */
+const ARC_SEGMENTS = 8
+
+/** A 2D point in one key's own local px frame: `u` is the distance INTO
+ *  the shape from whichever edge the arrow-point in question is anchored
+ *  to (0 at the edge, growing inward) — NOT an absolute x. `y` is measured
+ *  from the top (0 to the button's fixed 28px height H, below). This one
+ *  local frame is shared by both the point (anchored to the right edge,
+ *  protruding fully out to it — apex at u=0) and the notch (anchored to
+ *  the left edge, apex at u=NOTCH_APEX_DEPTH) — see `pointU`/`notchU`
+ *  below for the only place that distinction is made. */
+interface LocalPoint {
+  u: number
+  y: number
+}
+
+const H = 28 // the button's own fixed height — see NOTCH_PX's docstring above for how this was measured.
+
+/**
+ * Standard circle-tangent fillet construction: replaces a sharp vertex `v`
+ * with an `segments`-segment arc of radius `r`, given the two OUTGOING unit
+ * edge directions from it (`dirA`/`dirB`, each pointing from `v` toward one
+ * of its two neighbours). Tangent points sit `r / tan(θ/2)` back from `v`
+ * along each edge (θ = the interior angle between `dirA`/`dirB`, via their
+ * dot product); the arc's own centre sits `r / sin(θ/2)` from `v` along the
+ * bisector of `dirA`/`dirB`. Returns `segments + 1` points, ordered from
+ * the tangent point on edge A to the tangent point on edge B — callers
+ * splice this directly into a boundary point list, no separate "is this a
+ * point's convex bulge or a notch's concave one" branch needed, because
+ * both corners rounded this round are convex from the polygon's OWN
+ * interior (verified directly, not assumed — see NOTCH_APEX_DEPTH's own
+ * derivation: the notch's apex interior angle came out ~154.5°, obtuse but
+ * still convex, not the reflex angle "concave" would imply). Pure
+ * geometry, no dependency on props/state — every call site below is
+ * evaluated once at module load, not per render.
+ */
+function filletArc(v: LocalPoint, dirA: LocalPoint, dirB: LocalPoint, r: number, segments: number): LocalPoint[] {
+  const dot = Math.max(-1, Math.min(1, dirA.u * dirB.u + dirA.y * dirB.y))
+  const theta = Math.acos(dot)
+  const d = r / Math.tan(theta / 2)
+  const tA: LocalPoint = { u: v.u + d * dirA.u, y: v.y + d * dirA.y }
+  const tB: LocalPoint = { u: v.u + d * dirB.u, y: v.y + d * dirB.y }
+  const bisRaw = { u: dirA.u + dirB.u, y: dirA.y + dirB.y }
+  const bisLen = Math.hypot(bisRaw.u, bisRaw.y)
+  const bisector = { u: bisRaw.u / bisLen, y: bisRaw.y / bisLen }
+  const centreDist = r / Math.sin(theta / 2)
+  const centre: LocalPoint = { u: v.u + centreDist * bisector.u, y: v.y + centreDist * bisector.y }
+  const startAngle = Math.atan2(tA.y - centre.y, tA.u - centre.u)
+  const endAngle = Math.atan2(tB.y - centre.y, tB.u - centre.u)
+  let delta = endAngle - startAngle
+  while (delta > Math.PI) delta -= 2 * Math.PI
+  while (delta < -Math.PI) delta += 2 * Math.PI
+  const points: LocalPoint[] = []
+  for (let i = 0; i <= segments; i++) {
+    const a = startAngle + (delta * i) / segments
+    points.push({ u: centre.u + r * Math.cos(a), y: centre.y + r * Math.sin(a) })
+  }
+  return points
+}
+
+function normalize(p: LocalPoint): LocalPoint {
+  const m = Math.hypot(p.u, p.y)
+  return { u: p.u / m, y: p.y / m }
+}
+
+/**
+ * Builds one arrow-bump's full set of rounded points (both transition
+ * corners plus the tip), in the shared local (u, y) frame — `apexU` is the
+ * only thing that differs between the point (0) and the notch
+ * (NOTCH_APEX_DEPTH), so this one function produces both. `flatBack` is the
+ * direction, in u, of "back along the flat edge, away from the transition
+ * vertex" — always +1 in this frame (the flat edge always runs toward
+ * larger u on both sides; see the point/notch call sites for why this does
+ * not need to differ between them either).
+ */
+function buildArrowBump(apexU: number) {
+  const flatTopEnd: LocalPoint = { u: NOTCH_PX, y: 0 }
+  const flatBotEnd: LocalPoint = { u: NOTCH_PX, y: H }
+  const apex: LocalPoint = { u: apexU, y: H / 2 }
+
+  const transTop = filletArc(
+    flatTopEnd,
+    { u: 1, y: 0 },
+    normalize({ u: apex.u - flatTopEnd.u, y: apex.y - flatTopEnd.y }),
+    ARROW_TRANS_RADIUS,
+    ARC_SEGMENTS,
+  )
+  const transBot = filletArc(
+    flatBotEnd,
+    { u: 1, y: 0 },
+    normalize({ u: apex.u - flatBotEnd.u, y: apex.y - flatBotEnd.y }),
+    ARROW_TRANS_RADIUS,
+    ARC_SEGMENTS,
+  )
+  const tip = filletArc(
+    apex,
+    normalize({ u: flatTopEnd.u - apex.u, y: flatTopEnd.y - apex.y }),
+    normalize({ u: flatBotEnd.u - apex.u, y: flatBotEnd.y - apex.y }),
+    ARROW_TIP_RADIUS,
+    ARC_SEGMENTS,
+  )
+  return { transTop, tip, transBot }
+}
+
+const POINT_BUMP = buildArrowBump(0) // protrudes fully to the edge — apex depth 0
+const NOTCH_BUMP = buildArrowBump(NOTCH_APEX_DEPTH)
+
+/** Formats a local point as a clip-path coordinate pair. `anchor` picks
+ *  which edge `u` is measured from: `'right'` emits `calc(100% - Upx)`
+ *  (the point, protruding out toward 100%), `'left'` emits `Upx` directly
+ *  (the notch, receding in from 0). `y` is always emitted relative to the
+ *  vertical centre (`50% ± Δpx`), matching the rest of this file's
+ *  existing coordinates, including the box-terminal ones above. */
+function fmt(p: LocalPoint, anchor: 'left' | 'right'): string {
+  const x = anchor === 'right' ? `calc(100% - ${p.u.toFixed(3)}px)` : `${p.u.toFixed(3)}px`
+  const dy = p.y - H / 2
+  const y = Math.abs(dy) < 1e-6 ? '50%' : dy > 0 ? `calc(50% + ${dy.toFixed(3)}px)` : `calc(50% - ${(-dy).toFixed(3)}px)`
+  return `${x} ${y}`
+}
+
+function bumpPath(bump: ReturnType<typeof buildArrowBump>, anchor: 'left' | 'right'): string {
+  return [...bump.transTop, ...bump.tip, ...bump.transBot].map((p) => fmt(p, anchor)).join(', ')
+}
+
+const POINT_PATH = bumpPath(POINT_BUMP, 'right')
+const NOTCH_PATH = bumpPath(NOTCH_BUMP, 'left')
 
 /**
  * The clip-path polygon for one rail key, by its position in the row.
  * `first`/`last` carry FLAT terminals (#483: "a lifecycle is a bounded
  * process; pointed terminals read as 'continues off-screen'") — Design's
  * left edge and Finalise & Review's right edge are plain vertical cuts
- * (rounded, RADIUS_PX), no point and no notch. Every other edge either
- * points OUT (the right side of every key but the last, a chamfered tip
- * near 100% 50%) or is notched IN (the left side of every key but the
- * first, a chamfered cut near NOTCH_PXpx 50%) — adjacent keys' point/notch
- * pairs read as one interlocking ribbon, separated only by the `<ol>`'s own
- * thin (3px) gap.
+ * (rounded, RADIUS_PX, the box treatment, unchanged this round). Every
+ * other edge either points OUT (the right side of every key but the last —
+ * POINT_PATH, rounded per the ARROW_TIP_RADIUS/ARROW_TRANS_RADIUS
+ * derivation above) or is notched IN (the left side of every key but the
+ * first — NOTCH_PATH, same treatment) — adjacent keys' point/notch pairs
+ * read as one interlocking ribbon, separated only by the `<ol>`'s own thin
+ * (3px) gap.
  */
 function chevronClipPath(position: 'first' | 'middle' | 'last'): string {
-  const n = `${NOTCH_PX}px`
   const r = `${RADIUS_PX}px`
   const arc = `${ARC_OFFSET}px`
-  const cx = `${CHAMFER_X}px`
-  const cy = `${CHAMFER_Y}px`
   if (position === 'first') {
     return `polygon(
       0 ${r}, ${arc} ${arc}, ${r} 0,
-      calc(100% - ${n}) 0,
-      calc(100% - ${cx}) calc(50% - ${cy}), calc(100% - ${cx}) calc(50% + ${cy}),
-      calc(100% - ${n}) 100%,
-      ${r} 100%, ${arc} calc(100% - ${arc}), 0 calc(100% - ${r})
+      ${POINT_PATH}
     )`
   }
   if (position === 'last') {
     return `polygon(
       0 0,
-      calc(100% - ${n}) 0,
+      calc(100% - ${r}) 0,
       calc(100% - ${arc}) ${arc}, 100% ${r},
       100% calc(100% - ${r}), calc(100% - ${arc}) calc(100% - ${arc}),
-      calc(100% - ${n}) 100%,
+      calc(100% - ${r}) 100%,
       0 100%,
-      ${cx} calc(50% + ${cy}), ${cx} calc(50% - ${cy})
+      ${NOTCH_PATH}
     )`
   }
   return `polygon(
     0 0,
-    calc(100% - ${n}) 0,
-    calc(100% - ${cx}) calc(50% - ${cy}), calc(100% - ${cx}) calc(50% + ${cy}),
-    calc(100% - ${n}) 100%,
+    ${POINT_PATH},
     0 100%,
-    ${cx} calc(50% + ${cy}), ${cx} calc(50% - ${cy})
+    ${NOTCH_PATH}
   )`
 }
 
