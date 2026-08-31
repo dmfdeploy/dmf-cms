@@ -440,6 +440,57 @@ function chevronStyle(position: 'first' | 'middle' | 'last'): CSSProperties {
   return { clipPath: position === 'first' ? FIRST_SHAPE : position === 'last' ? LAST_SHAPE : MIDDLE_SHAPE }
 }
 
+/**
+ * FIX ROUND — CONTENT RE-CENTRING. The icon+label group is centred by the
+ * flex `<button>`'s own `justify-center` against the BOX, but a notched
+ * key's PAINTED shape isn't the box — the notch removes NOTCH_DEPTH px of
+ * material from the left side only (see MIDDLE_VERTICES/LAST_VERTICES),
+ * which moves the shape's own optical centre right by half that. Measured
+ * on a real render (operator finding against a90bfd2's own harness): the
+ * content group sat exactly NOTCH_DEPTH / 2 = 6px left of the painted
+ * centre on every notched key (Plan, Provision, Configure, Finalise &
+ * Review) — visible first on Finalise & Review, the longest label with
+ * the least slack, but present on all four. Design was the one key
+ * already correct: no notch, flat left edge, box centre and painted
+ * centre already coincide.
+ *
+ * Derived from NOTCH_DEPTH rather than hardcoded so a future retune of
+ * the notch depth stays correct here too. Exported so
+ * lifecycleStrip.test.tsx can pin the exact figure rather than
+ * re-deriving or hardcoding its own copy.
+ */
+export const CONTENT_OFFSET_PX = NOTCH_DEPTH / 2
+
+/**
+ * The content group's own style for one key's position. `shapeIsPainted`
+ * is threaded in explicitly (SUPPORTS_SHAPE_CURVE at the one real call
+ * site below) rather than read off the module-level constant directly —
+ * this is the one function in this file a test needs to exercise both
+ * branches of, and SUPPORTS_SHAPE_CURVE itself is fixed for the whole
+ * module's lifetime (jsdom has no `CSS` global, so it is always `false`
+ * under the test suite — see SUPPORTS_SHAPE_CURVE's own comment). An
+ * explicit parameter is what makes both branches reachable from a test
+ * without mocking `CSS.supports`.
+ *
+ * Two conditions, both required, for the offset to apply:
+ *   - `position !== 'first'` — a first key has no notch (flat left edge),
+ *     so its box centre and painted centre already coincide; a blanket
+ *     offset would push it OFF centre instead of fixing anything.
+ *   - `shapeIsPainted` — the border-radius fallback (no `shape()`
+ *     support) is a plain, un-notched rectangle on every position, so its
+ *     painted centre already coincides with the box centre everywhere;
+ *     applying this offset there would introduce the exact off-centre
+ *     defect it exists to fix, on a shape that never had it.
+ * `middle` AND `last` both get the shift, not just `middle` — `last`
+ * carries the same LEFT notch as `middle` (its box-corner treatment is on
+ * its RIGHT edge only, see LAST_VERTICES), so it needs the identical
+ * correction, not the mirror-image one.
+ */
+export function contentOffsetStyle(position: 'first' | 'middle' | 'last', shapeIsPainted: boolean): CSSProperties {
+  if (!shapeIsPainted || position === 'first') return {}
+  return { transform: `translateX(${CONTENT_OFFSET_PX}px)` }
+}
+
 export default function LifecycleStrip({
   steps,
   activeChip,
@@ -557,7 +608,9 @@ export default function LifecycleStrip({
                   onClick={() => onSelect(id)}
                 >
                   <span aria-hidden="true" data-testid="key-fill" className={`absolute inset-0 ${fillClass}`} style={chevronStyle(position)} />
-                  <span className="relative z-10 flex items-center justify-center gap-1.5">{inner}</span>
+                  <span data-testid="key-content" className="relative z-10 flex items-center justify-center gap-1.5" style={contentOffsetStyle(position, SUPPORTS_SHAPE_CURVE)}>
+                    {inner}
+                  </span>
                 </button>
               ) : (
                 <div
@@ -566,7 +619,7 @@ export default function LifecycleStrip({
                   aria-describedby={locked ? descriptionId : undefined}
                 >
                   <span aria-hidden="true" data-testid="key-fill" className={`absolute inset-0 ${fillClass}`} style={chevronStyle(position)} />
-                  <span className="relative z-10 flex items-center justify-center gap-1.5">
+                  <span data-testid="key-content" className="relative z-10 flex items-center justify-center gap-1.5" style={contentOffsetStyle(position, SUPPORTS_SHAPE_CURVE)}>
                     {inner}
                     {/* A job-in-flight chip can still be the SELECTED one —
                         see the file docstring's "SELECTION — WHICH
