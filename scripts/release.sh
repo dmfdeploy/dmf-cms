@@ -146,9 +146,9 @@ see STATUS.md in the umbrella repo.
 
   2. Publish image to GHCR (canonical public source):
        cd $CMS_HINT
-       # macOS Keychain (token never typed):
-       security find-generic-password -s "ghcr.io" -a "<github-username>" -w \\
-         | GHCR_USER="<github-username>" scripts/publish-to-ghcr.sh
+       gh auth token | GHCR_USER="<github-username>" scripts/publish-to-ghcr.sh
+       # needs write:packages — 'gh auth status' to check,
+       # 'gh auth refresh -s write:packages' if absent.
 
   3. Mirror GHCR → cluster-internal Zot (playbook 630):
        cd $ENV_HINT

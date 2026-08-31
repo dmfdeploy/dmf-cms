@@ -106,8 +106,7 @@ To complete the release:
 git push origin HEAD && git push origin v0.4.0
 
 # 1. Publish to GHCR (the canonical public source)
-security find-generic-password -s "ghcr.io" -a "<github-username>" -w \
-  | GHCR_USER="<github-username>" scripts/publish-to-ghcr.sh
+gh auth token | GHCR_USER="<github-username>" scripts/publish-to-ghcr.sh
 
 # 2. Mirror GHCR → cluster-internal Zot
 cd $DMFDEPLOY_UMBRELLA/dmf-env
@@ -130,9 +129,8 @@ handles secrets safely:
 - Cleanup via `trap` even on failure
 
 ```bash
-# macOS Keychain (no token typed into terminal)
-security find-generic-password -s "ghcr.io" -a "<github-username>" -w \
-  | GHCR_USER="<github-username>" scripts/publish-to-ghcr.sh
+# Token from the gh CLI (nothing typed into the terminal)
+gh auth token | GHCR_USER="<github-username>" scripts/publish-to-ghcr.sh
 ```
 
 ### `verify-cluster.sh`
@@ -182,20 +180,22 @@ Use `scripts/publish-to-ghcr.sh`. It delegates to the umbrella helper which:
 - Cleans up via `trap` even on failure
 
 ```bash
-# Recommended: token from macOS Keychain, never typed
-security find-generic-password -s "ghcr.io" -a "<github-username>" -w \
-  | GHCR_USER="<github-username>" scripts/publish-to-ghcr.sh
+# Recommended: token from the gh CLI, never typed
+gh auth token | GHCR_USER="<github-username>" scripts/publish-to-ghcr.sh
 
 # Or interactive (umbrella helper prompts via `read -s`)
 GHCR_USER="<github-username>" scripts/publish-to-ghcr.sh
 ```
 
-If you don't yet have a GHCR token, create a fine-grained PAT with
-`write:packages` scope on `dmfdeploy/dmf-cms` and stash it in Keychain:
+The piped credential must carry `write:packages`. Check with `gh auth status`
+and add it with `gh auth refresh -s write:packages`; a fine-grained PAT with
+that scope on `dmfdeploy/dmf-cms`, piped the same way, works equally well.
 
-```bash
-security add-generic-password -s "ghcr.io" -a "<github-username>" -w '<paste-token>'
-```
+**An account password is not a substitute for a token.** GHCR rejects one with
+exactly the same `denied: denied` as a bad or under-scoped token, so the
+failure reads as a scope problem and is not — which is why this flow names one
+credential source rather than leaving the operator to supply "the GHCR
+password" from a general-purpose store.
 
 ### Mirroring GHCR → Zot (playbook 630)
 
