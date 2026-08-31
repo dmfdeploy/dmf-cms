@@ -258,11 +258,14 @@ function SpecimenRow({ specimen }: { specimen: Specimen }) {
 
       {/* Reproduces Topbar's real header-slot row (header bg + the row's own
           border/padding) so what renders here matches what actually ships —
-          not a bare, unstyled mount. */}
+          not a bare, unstyled mount. VISUAL PARITY FIX ROUND (#512): kept in
+          sync with Topbar.tsx's own className change — bg-sidebar, no
+          border-b — so this harness previews the real merged-with-the-nav
+          look, not the pre-fix seam. */}
       <div className="mt-3 bg-bg">
         <div
           data-testid="header-slot-row"
-          className="relative flex flex-nowrap items-center gap-3 border-b border-border px-4 py-2"
+          className="relative flex flex-nowrap items-center gap-3 bg-sidebar px-4 py-2"
         >
           <div className="min-w-0 flex-1 overflow-x-auto">
             {/* Same spread Topbar.tsx and testUtils/HeaderSlotProbe.tsx both

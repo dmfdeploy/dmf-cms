@@ -441,7 +441,23 @@ export default function Topbar() {
           // now that it's a sibling, so the promoted-action popover (which
           // opens position:absolute within this row) still paints above
           // the scrollable main/sidebar row below it, not underneath.
-          className="relative z-20 flex flex-nowrap shrink-0 items-center gap-3 border-b border-border bg-bg px-4 py-2"
+          //
+          // VISUAL PARITY FIX ROUND (dmfdeploy/dmfdeploy#512, operator
+          // finding against a live provision run): this row used to be
+          // `bg-bg border-b border-border` — a background one shade off
+          // Sidebar.tsx's own `bg-sidebar` (#0a0a0b vs #101012) PLUS a
+          // full-width divider running directly across the sidebar
+          // column's own top edge, immediately above where Sidebar.tsx's
+          // `border-r` begins. Together those read as a separate strip
+          // dropped on top of the shell rather than something belonging to
+          // the nav column beneath it. `bg-sidebar` here matches
+          // Sidebar.tsx's token exactly, and the border is dropped
+          // entirely — nothing now marks a seam between this row and the
+          // sidebar/main content below it. This is a background-token and
+          // border change only; Shell.tsx's layout (this row still spans
+          // the full width, above BOTH the sidebar column and main) is
+          // unchanged.
+          className="relative z-20 flex flex-nowrap shrink-0 items-center gap-3 bg-sidebar px-4 py-2"
         >
           <div className="min-w-0 flex-1 overflow-x-auto">
             <LifecycleStrip {...slotContent.rail} />

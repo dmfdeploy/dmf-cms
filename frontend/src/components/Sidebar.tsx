@@ -124,8 +124,41 @@ function renderItem(item: NavItem, pathname: string) {
       key={item.label}
       to={item.path}
       aria-label={item.label}
+      // VISUAL PARITY FIX ROUND (dmfdeploy/dmfdeploy#512, operator ruling
+      // off a rendered A/B/C comparison — see lib/stagePalette.ts's own
+      // docstring for the full account). This tile's selected state was
+      // `bg-accent/20 text-accent` (1.49:1 fill-vs-fill against this
+      // tile's own resting state — under WCAG 1.4.11's 3:1 state-change
+      // floor, i.e. a selection a sighted operator cannot see, while
+      // isActive and every test stayed correct throughout); an interim
+      // attempt raised that to `bg-accent/55`, which fixed the
+      // state-change number but failed a DIFFERENT check nobody had run
+      // yet (icon-vs-tile text/icon contrast) and rendered a visibly
+      // different colour than the lifecycle rail's own matching attempt
+      // (dE2000 4.63 between them — see stagePalette.ts). Both retired.
+      // `bg-selected-face text-bg`: an OPAQUE shared literal
+      // (--color-selected-face, index.css) — the SAME value the rail's
+      // own selected key now paints, not merely "the same idea" — with
+      // dark ink, so dE2000 between this tile and the rail's selected key
+      // is exactly 0 by construction, and both clear every contrast floor
+      // with real margin (measured, not estimated — see stagePalette.ts).
+      //
+      // RESTING/HOVER, FOLLOW-ON RULING: `text-muted` (was the resting ink)
+      // -> `text-resting-ink` (--color-resting-ink, #b4b4b8, shared with
+      // the rail's own resting label/icon — same "one token, both
+      // consumers" reasoning as the selected face). The operator's first
+      // instinct here was `--color-text` at rest in both surfaces, but
+      // that leaves `hover:text-text` nowhere to brighten TO — it becomes
+      // a no-op, and `hover:bg-panel/50` measures ~1.03:1 against
+      // --color-sidebar even fully opaque (real render), so it was never
+      // doing anything either. Dropped outright rather than left as dead
+      // decoration. `text-resting-ink` restores a real (if softer than
+      // shipped) hover delta by leaving headroom above rest for
+      // `hover:text-text` to spend — see index.css's own
+      // `--color-resting-ink` comment for the measured figures and the
+      // stated trade.
       className={`group relative flex h-10 w-10 mx-auto items-center justify-center rounded-lg outline-offset-2 transition-colors focus-visible:outline focus-visible:outline-2 focus-visible:outline-accent ${
-        isActive ? 'bg-accent/20 text-accent' : 'text-muted hover:text-text hover:bg-panel/50'
+        isActive ? 'bg-selected-face text-bg' : 'text-resting-ink hover:text-text'
       }`}
     >
       <svg className="w-5 h-5 shrink-0" viewBox="0 0 24 24" fill="none" aria-hidden="true">
