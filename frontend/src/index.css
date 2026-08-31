@@ -22,6 +22,125 @@
   --color-warning: #efc15a;
   --color-muted: #9a9aa2;
   --color-text: #e8e8ea;
+
+  /* SHARED SELECTION FACE (dmfdeploy/dmfdeploy#512 visual parity fix round,
+   * operator ruling, decided off a rendered A/B/C comparison board — see
+   * pages/Dev/SelectionOptionsHarness.tsx in this round's git history, since
+   * that harness is deleted before the PR). ONE token, TWO consumers —
+   * Sidebar.tsx's selected nav tile and LifecycleStrip.tsx's selected rail
+   * key — deliberately sharing this literal rather than each computing its
+   * own "same idea" approximation, which is exactly how they drifted apart
+   * in the first place (see below).
+   *
+   * THE SHIPPED SIDEBAR'S ACTUAL WEAKNESS, STATED CORRECTLY (an earlier
+   * account of this round wrongly attributed a 2.76:1 icon-contrast failure
+   * to the ALREADY-SHIPPED sidebar — corrected here, do not reintroduce
+   * that version). The originally-shipped `bg-accent/20 text-accent` tile's
+   * icon is perfectly legible on its own terms: 7.50:1 against its own
+   * tinted background, comfortably over the 3:1 non-text floor. Its real
+   * weakness is the STATE CHANGE itself — selected vs resting measures only
+   * 1.52:1 (WCAG 1.4.11 wants 3:1), and the luminance component of that
+   * shift alone is only 1.68:1, meaning the signal an operator actually
+   * perceives is carried mostly by HUE (going cyan), not brightness — a
+   * borderline case against Art. 11's "colour is never the only signal."
+   * The 2.76:1 icon-contrast figure IS real, but it belongs to a DIFFERENT,
+   * never-shipped design: this round's own interim `bg-accent/55
+   * text-accent` attempt (raising alpha specifically to fix the 1.52:1
+   * state-change number) — a regression this round introduced and measured
+   * against itself, not a defect that ever reached users. The rail's
+   * matching interim attempt had the same-shaped problem on its own label
+   * TEXT specifically (2.34:1, judged against the stricter 4.5:1 floor
+   * since a label is always-visible text, not an icon) — see
+   * lib/stagePalette.ts's own docstring for that half of the account.
+   *
+   * THE SECOND, INDEPENDENT PROBLEM WITH THAT INTERIM ATTEMPT: the two
+   * "same idea" tints were never the same colour. Sidebar's tinted over
+   * `--color-sidebar` (#101012); the rail's tinted over the darker
+   * `--color-rail-fill` (#2c2c2e) — same alpha, different substrate,
+   * different resulting pixel (rgb(76,123,146) vs rgb(88,135,158)). dE2000
+   * between them: 4.63 — perceptible at a glance (this codebase's own
+   * prior CVD work treated ~1.0 as the imperceptibility floor), and this
+   * round's OWN change 5 (Topbar.tsx) put these two surfaces adjacent, the
+   * worst case for a near-miss: close enough to read as a mistake, not a
+   * shared design language.
+   *
+   * THE FIX, RULED ON A RENDERED COMPARISON, NOT PROSE: invert the ink
+   * instead of tinting the fill. Dark ink (`--color-bg`) on an OPAQUE
+   * selected face clears the interim attempt's text-contrast failure with
+   * real margin (5.06:1, vs the 4.5 floor) — and reusing the exact SAME
+   * literal fill in both places (this token) makes dE2000 exactly 0 by
+   * construction, closing the drift problem too, not something to keep
+   * re-measuring after every future change to either surface's own
+   * unselected state. `#58879e` is not a new colour choice — it is
+   * `rgb(88,135,158)`, the pixel the rail's own (now-retired) `bg-accent/
+   * 55` tint already rendered, kept byte-for-byte rather than re-derived,
+   * so the rail's own selected look does not move; the sidebar moves to
+   * meet it, and its selected icon visibly changes colour (cyan -> dark)
+   * as a result — deliberate and operator-approved, not a side effect to
+   * soften back toward accent ink because it looks unfamiliar.
+   *
+   * MEASURED, on the real render (LifecycleStrip.tsx + Sidebar.tsx's own
+   * markup, not the comparison harness's stand-in copies of either):
+   *   rail label (`--color-bg`) vs this face ........ 5.06:1  (floor 4.5)
+   *   sidebar icon (`--color-bg`) vs this face ....... 5.06:1  (floor 3.0)
+   *   rail selected vs rail's own unselected face .... 3.57:1  (floor 3.0)
+   *   sidebar selected vs its own resting ground ..... 4.86:1  (floor 3.0)
+   *   dE2000, rail selected vs sidebar selected ...... 0.00
+   * This face is now a flat, opaque literal, painted directly — there is
+   * no compositing happening any more, so there is no blend-model (OKLab
+   * vs sRGB) question left to caveat here the way the retired alpha-tint
+   * design had (stagePalette.ts's own docstring, in this round's git
+   * history, recorded that caveat for exactly as long as it applied and no
+   * longer). "Selected" is carried by the FACE turning this colour — an
+   * unmistakable, always->3:1 luminance jump off the resting dark state —
+   * the ink's job is only to stay legible on top of it. */
+  --color-selected-face: #58879e;
+
+  /* SHARED RESTING INK (dmfdeploy/dmfdeploy#512, operator ruling, decided
+   * after --color-selected-face above surfaced a real cost the operator's
+   * OWN interim ruling had not accounted for). ONE token, TWO consumers,
+   * same reasoning as --color-selected-face — Sidebar.tsx's resting icon
+   * and LifecycleStrip.tsx's resting label/icon, sharing this literal
+   * rather than each keeping its own value.
+   *
+   * WHY THIS EXISTS: the operator first ruled resting ink should become
+   * `--color-text` in both places (the rail already rested there; the
+   * sidebar would move up from `--color-muted`) — reasoned as "selection
+   * darkens now, not brightens, so the old reason to keep resting dim
+   * (leaving headroom for a brightening step) is gone." That is correct as
+   * far as it goes, but it missed a second consumer of the same headroom:
+   * Sidebar.tsx's HOVER state is ink-only in effect (`hover:text-text` on
+   * top of a `hover:bg-panel/50` that measures ~1.03:1 against
+   * `--color-sidebar` — real render, fully opaque `--color-panel` against
+   * `--color-sidebar` is 1.03:1, so no alpha of it does anything; a
+   * background-carried hover was never actually viable here). Resting AT
+   * `--color-text` leaves hover nowhere to go — `hover:text-text` becomes
+   * a no-op the instant resting already IS `--color-text`, silently
+   * deleting the sidebar's only working hover affordance.
+   *
+   * THE FIX: a genuine third value, between `--color-muted` (Y=0.326) and
+   * `--color-text` (Y=0.808) — resting sits here, hover still brightens to
+   * `--color-text` on top of it, keeping a real (if softer) hover
+   * transition instead of none at all. `#b4b4b8` (Y≈0.458) chosen as a
+   * clean value with real margin on both floors it needs to clear (real
+   * render, not hand arithmetic — see stagePalette.ts for the fuller
+   * account):
+   *   rail resting label vs its own key-fill ....... 6.74:1  (floor 4.5)
+   *   sidebar resting icon vs --color-sidebar ...... 9.20:1  (floor 3.0)
+   *   hover delta, this token -> --color-text ...... 1.69:1  (perceivable,
+   *     though softer than today's shipped 2.28:1 muted->text delta — a
+   *     genuine, stated trade: WCAG governs the two STATIC states above,
+   *     not the size of a hover transition, so a softer hover in exchange
+   *     for a comfortably-clear, single shared resting ink is a legitimate
+   *     trade, not a silently-absorbed regression. Matching today's 2.28
+   *     would mean resting back at `--color-muted` — the already-rejected
+   *     barely-over-the-floor value (4.99:1 on the rail label, the
+   *     "conformant but not comfortable" case this ruling moved away
+   *     from). See stagePalette.ts's own docstring for the full board this
+   *     was decided against, including the discarded `--color-text`-both
+   *     and `#ffffff`-both alternatives. */
+  --color-resting-ink: #b4b4b8;
+
   /* umbrella #347 WP-2's own frozen palette above stopped short of a form
      control's own boundary: --color-border measures only ~1.2:1 against
      --color-panel, nowhere near non-text's 3:1 floor (WCAG 1.4.11) — it was
@@ -89,14 +208,62 @@
      plus the one number that decided hue isn't shipping. See git history
      for the full arc if more detail is ever needed.
 
-     --color-rail-fill: #616161, Y=0.1195 — clears 3:1 against --color-bg
-     (3.20, the fill IS the key's edge, a clipped shape carries no border,
-     #483) and 4.5:1 against the SINGLE shared ink, --color-text (5.06).
-     Selection (fill-invert to --color-text/--color-bg, unchanged mechanism)
-     measures 5.06:1 fill-vs-fill on every key — comfortably over WCAG
-     1.4.11's 3:1 floor for a UI state change, uniform because both fills
-     are single shared tokens now, not five separately-tuned ones. */
-  --color-rail-fill: #616161;
+     --color-rail-fill (below) went through several intermediate designs
+     within the dmfdeploy/dmfdeploy#512 visual parity fix round before
+     landing on its final shape — none of those intermediate figures are
+     reproduced here (git history has the full account if ever needed);
+     what follows describes what actually ships.
+
+     --color-rail-fill: #2c2c2e, Y=0.0253 — the rail key's face, at every
+     state (LifecycleStrip.tsx's `key-fill`, inset 2px inside `key-edge`).
+     Deliberately dark: 4.5:1 against the shared ink at its lightest
+     (--color-text, Y=0.8081) measures 11.4:1, comfortably clear, and
+     nothing else constrains it darker since (per the edge account
+     immediately below) this token no longer carries its own independent
+     3:1 boundary guarantee — the boundary job moved to the VISIBLE LABEL
+     TEXT every key already carries, not to the shape's silhouette.
+     4.5:1 against --color-resting-ink (Y=0.458, the shared resting-ink
+     token, see that token's own comment) measures 6.74:1, also clear.
+
+     THE EDGE, FINAL SHAPE (#512, ruled in two passes, off two separate
+     rendered comparison boards — see lib/stagePalette.ts's own docstring
+     point (4) for the full account, including the rejected first pass and
+     the hover-target pointer-events bug caught before shipping). There is
+     no longer a separate `--color-rail-edge` token: the FIRST pass kept
+     #616161 visible as a constant ring at rest, measured at exactly 3.07:1
+     against the real band ground (--color-sidebar, #101012, real render —
+     not the 3.20 a stale `--color-bg` comparison would have kept
+     suggesting after change 5 moved the row's own background). That ring
+     is GONE in the final shape:
+       - RESTING: the edge is repainted `--color-rail-fill` itself — same
+         colour as the face, i.e. no ring, expressed as a colour choice
+         (not a transparent edge, which would let the band show through
+         and change the painted region's SIZE between rest and hover,
+         moving whatever `contentOffsetStyle()` centres on). Resting
+         silhouette contrast against the band ground, with no ring at all:
+         ~1.36:1 (real render) — READ THIS AS CONFORMANT, not a lapsed
+         boundary: WCAG 1.4.11 requires 3:1 for visual information
+         REQUIRED to identify a control, and here it is not required —
+         every key's own always-visible TEXT LABEL already does that job,
+         independently, at 6.74:1 (--color-resting-ink) against this same
+         fill. 1.36 is fine BECAUSE the label exists, not because 1.36
+         itself clears anything; do not read a missing ring here as an
+         oversight and restore one "for safety."
+       - HOVER: the edge repaints `--color-selected-face` (#58879e) — the
+         SAME colour selecting the key would produce, a deliberate preview
+         of selection, not an independent hover colour. Real render:
+         4.86:1 against the band ground, 3.57:1 against the resting face
+         (`--color-rail-fill`) — both comfortably over the 3:1 floor,
+         confirming the outline is genuinely perceivable once it does
+         appear.
+       - SELECTED: `--color-selected-face` unconditionally (see that
+         token's own comment below) — unaffected by hover, and unaffected
+         by this whole edge account, since a selected key's face already
+         carries its own 3:1 guarantee unaided.
+     `railEdgeContrast.test.tsx` asserts the live pair that actually
+     matters now (`--color-selected-face` vs the Topbar-derived band
+     ground), not a retired `--color-rail-edge` figure. */
+  --color-rail-fill: #2c2c2e;
 
   /* Micro-label size (Arc 4 WP-2): one token for the duplicated arbitrary
      text-[10px] (LifecycleStrip) / text-[11px] (.metric-label) micro-copy
@@ -162,9 +329,11 @@
 @media (width < 390px) {
   .lifecycle-rail-chevron {
     clip-path: none !important;
-    border-radius: 6px !important; /* BOX_RADIUS, LifecycleStrip.tsx — kept
-      in sync by hand, same as CONTENT_OFFSET_PX's own test-side literal
-      (lifecycleStrip.test.tsx). */
+    border-radius: 8px !important; /* BOX_RADIUS, LifecycleStrip.tsx — 6 ->
+      8 in the #512 visual parity fix round (28px -> 40px key). Kept in
+      sync by hand, same as CONTENT_OFFSET_PX's own test-side literal
+      (lifecycleStrip.test.tsx). Applies identically to both stacked
+      fill layers (key-edge/key-fill) — they share this class. */
   }
 
   .lifecycle-rail-content {

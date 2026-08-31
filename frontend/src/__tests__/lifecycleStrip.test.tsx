@@ -79,12 +79,26 @@ function chip(label: string): HTMLElement {
   return screen.getByLabelText(label)
 }
 
-/** The chip's clipped fill layer (SHELL ROUND 2) — carries the fill/edge
- *  colour class; the outer chip element itself stays transparent so the
- *  chevron notch/point actually shows the page behind it rather than a
- *  rectangular background masking the cutout. */
+/** The chip's clipped fill layer (SHELL ROUND 2) — carries the fill colour
+ *  class; the outer chip element itself stays transparent so the chevron
+ *  notch/point actually shows the page behind it rather than a
+ *  rectangular background masking the cutout.
+ *
+ *  VISUAL PARITY FIX ROUND (#512): swaps between RAIL_FILL (unselected)
+ *  and RAIL_SELECTED_FACE (selected) — a plain two-state class swap, not
+ *  an added layer. See edgeLayer() below for the OTHER clipped layer,
+ *  which varies by its own resting/hover/selected state machine. */
 function fillLayer(chipEl: HTMLElement): HTMLElement {
   return chipEl.querySelector('[data-testid="key-fill"]') as HTMLElement
+}
+
+/** The chip's edge layer — the outermost clipped shape, `key-edge`. Its
+ *  own class is state-dependent (point (4) of stagePalette.ts's
+ *  docstring): the same token as the fill at rest (no ring), a
+ *  `group-hover:` class that repaints it RAIL_SELECTED_FACE on hover, and
+ *  RAIL_SELECTED_FACE unconditionally once selected. */
+function edgeLayer(chipEl: HTMLElement): HTMLElement {
+  return chipEl.querySelector('[data-testid="key-edge"]') as HTMLElement
 }
 
 function LabelFor(id: FlowStepId): string {
@@ -323,8 +337,42 @@ describe('the rail carries no position marker of any kind — selection is its o
   })
 })
 
-describe('selection inverts fill and ink (bg-text/text-bg), and is aria-pressed', () => {
-  it('the selected chip inverts; an unselected sibling does not', () => {
+// VISUAL PARITY FIX ROUND (dmfdeploy/dmfdeploy#512, operator finding
+// against a live provision run): the achromatic bg-text/text-bg invert
+// this describe block used to pin is GONE. Selection is now the sidebar's
+// own cyan-tint treatment (Sidebar.tsx:127's `bg-accent/55 text-accent`) —
+// see LifecycleStrip.tsx's own "SELECTION — REBUILT" docstring and
+// lib/stagePalette.ts's docstring for the full alpha derivation. Ink still
+// lives on the chip element itself; the tint lives on a NEW third layer
+// (key-tint) stacked on top of the constant key-fill layer, not a class
+// swap on key-fill itself any more.
+//
+// MUTATION-VERIFIED: forcing `tinted` to always resolve `false` (i.e.
+// deleting the tint layer's render condition) makes the second assertion
+// below fail — `expected null not to be null` — naming the missing tint
+// element directly. Forcing `inkClass` to always resolve `RAIL_INK`
+// (deleting the ink swap) makes the first assertion fail —
+// `expected '...text-text' to contain 'text-accent'`. Both checked by hand
+// during this fix round, then restored.
+// VISUAL PARITY FIX ROUND (#512, operator ruling off two rendered
+// comparison boards — see stagePalette.ts's own docstring for the full,
+// multi-pass account: achromatic invert -> alpha tint -> shared opaque
+// face). FINAL SHAPE: `key-fill` swaps RAIL_FILL/RAIL_SELECTED_FACE, ink
+// swaps RAIL_INK/RAIL_SELECTED_INK (text-bg, dark) — a plain two-state
+// swap on each, no added layer. `key-edge` ALSO varies, but on its OWN
+// resting/hover/selected machine (point (4)): the same token as the fill
+// at rest (no ring), RAIL_SELECTED_FACE on hover (`group-hover:`, a
+// preview of selection) and RAIL_SELECTED_FACE unconditionally once
+// selected — so a SELECTED key's edge and fill are the same class,
+// confirmable directly.
+//
+// MUTATION-VERIFIED: forcing `fillClass` to always resolve `RAIL_FILL`
+// (deleting the selected-fill swap) makes the discriminating assertion
+// below fail — `expected 'absolute...bg-rail-fill' to contain
+// 'bg-selected-face'` — naming the missing token directly. Checked by
+// hand during this fix round, then restored.
+describe('selection swaps fill/edge to the shared opaque face and inks the label dark, and is aria-pressed', () => {
+  it('the selected chip carries the shared face on both fill and edge, and dark ink; an unselected sibling carries neither', () => {
     const steps: Record<FlowStepId, FlowStepState> = {
       design: 'complete',
       plan: 'complete',
@@ -336,47 +384,23 @@ describe('selection inverts fill and ink (bg-text/text-bg), and is aria-pressed'
 
     const design = chip('Design')
     expect(design.getAttribute('aria-pressed')).toBe('true')
-    // Ink lives on the chip element itself; fill lives on its clipped
-    // layer (see this file's own fillLayer() helper docstring) — SHELL
-    // ROUND 2's chevron shape needs the outer chip to stay unfilled so the
-    // notch/point cutout is actually visible, not masked by a rectangular
-    // background.
     expect(design.className).toContain('text-bg')
-    expect(fillLayer(design).className).toContain('bg-text')
+    // THE DISCRIMINATING ASSERTION.
+    expect(fillLayer(design).className).toContain('bg-selected-face')
+    expect(fillLayer(design).className).not.toContain('bg-rail-fill')
+    expect(edgeLayer(design).className).toContain('bg-selected-face')
 
     const provision = chip('Provision')
     expect(provision.getAttribute('aria-pressed')).toBe('false')
     expect(provision.className).not.toContain('text-bg')
-    expect(fillLayer(provision).className).not.toContain('bg-text')
+    expect(fillLayer(provision).className).toContain('bg-rail-fill')
+    expect(fillLayer(provision).className).not.toContain('bg-selected-face')
+    // Unselected edge is the SAME token as the unselected fill (no ring at
+    // rest — see stagePalette.ts point (4)), plus its own group-hover class.
+    expect(edgeLayer(provision).className).toContain('bg-rail-fill')
   })
-})
 
-// FIX ROUND (orchestrator/codex gate, redesign): the achromatic fill-invert
-// alone was invisible as a selection cue when the fill varied per stage
-// (2.82:1 / 2.04:1 / 1.49:1 fill-vs-fill on provision/configure/finalise,
-// all under WCAG 1.4.11's 3:1 floor) — that defect is what the ring two
-// prior fix rounds added existed to cover. The redesign removes the per-
-// stage fill instead (see LifecycleStrip.tsx's own docstring): with ONE
-// shared neutral fill token on every key, fill-vs-fill selection contrast
-// measures 5.06:1 — uniform by construction — so the ring is gone too (the
-// operator objected to its boxy look, and measurement supported removing
-// it rather than keeping it as a silhouette-following shape).
-//
-// WHICH GUARANTEE LIVES WHERE, split honestly rather than conflated into
-// one over-claiming test: jsdom cannot measure the real 5.06:1 contrast
-// number (that lives in LifecycleStrip.tsx's own docstring and the PR
-// description, render-measured) — what jsdom CAN prove, and what this test
-// pins, is that selection is still marked by a genuinely DIFFERENT fill
-// token, not merely a class that happens to still be there.
-//
-// MUTATION-VERIFIED: forcing `fillClass` to always resolve to `RAIL_FILL`
-// regardless of `isSelected` (i.e. deleting the token swap) makes the
-// assertion below fail — `expected 'absolute inset-0 bg-rail-fill' to
-// contain 'bg-text'` — naming the missing selected-fill token directly.
-// Checked by hand during this fix round (see the PR description for the
-// actual failure output), then restored.
-describe('selection is a genuinely different fill token, not a ring (redesign fix round)', () => {
-  it.each(FLOW_STEPS)('%s: selected carries bg-text, unselected carries bg-rail-fill — never the same token', (id) => {
+  it.each(FLOW_STEPS)('%s: selected carries bg-selected-face on both layers, unselected carries bg-rail-fill — never the same token', (id) => {
     const steps: Record<FlowStepId, FlowStepState> = {
       design: 'complete',
       plan: 'complete',
@@ -388,16 +412,15 @@ describe('selection is a genuinely different fill token, not a ring (redesign fi
     renderRail({ steps, activeChip: id })
 
     const selectedFill = fillLayer(chip(LabelFor(id)))
-    // THE DISCRIMINATING ASSERTION.
-    expect(selectedFill.className, `${id} (selected) must carry the achromatic selected-fill token`).toContain('bg-text')
+    expect(selectedFill.className, `${id} (selected) must carry the shared selected-face token`).toContain('bg-selected-face')
     expect(selectedFill.className, `${id} (selected) must not still carry the neutral unselected token`).not.toContain('bg-rail-fill')
 
     const unselectedFill = fillLayer(chip(LabelFor(sibling)))
     expect(unselectedFill.className, `${LabelFor(sibling)} (not selected) must carry the neutral fill token`).toContain('bg-rail-fill')
-    expect(unselectedFill.className, `${LabelFor(sibling)} (not selected) must not carry the selected token`).not.toContain('bg-text')
+    expect(unselectedFill.className, `${LabelFor(sibling)} (not selected) must not carry the selected token`).not.toContain('bg-selected-face')
   })
 
-  it('no rectangular selection ring is rendered any more — the operator objected to it, and measurement supported removing it', () => {
+  it('no separate rectangular selection ring element is rendered — selection is the fill/edge tokens themselves', () => {
     const steps: Record<FlowStepId, FlowStepState> = {
       design: 'complete',
       plan: 'complete',
@@ -407,6 +430,7 @@ describe('selection is a genuinely different fill token, not a ring (redesign fi
     }
     renderRail({ steps, activeChip: 'finalise' })
     expect(screen.queryByTestId('selection-ring')).toBeNull()
+    expect(screen.queryByTestId('key-tint')).toBeNull()
   })
 })
 
@@ -418,11 +442,19 @@ describe('selection is a genuinely different fill token, not a ring (redesign fi
 // now. This describe block pins that ABSENCE, replacing the retired
 // hue-line describe block outright.
 //
+// VISUAL PARITY FIX ROUND (#512): an INTERIM design (see stagePalette.ts)
+// briefly put accent on the rail as the selection cue — that attempt was
+// itself retired in favour of a shared opaque `--color-selected-face`
+// (a distinct blue-teal, never `--color-accent`), so the ORIGINAL "cyan
+// never appears on the rail" claim this block made is true again, fully,
+// not just for unselected keys. Restored to an unconditional assertion
+// rather than the interim hedge a prior version of this test carried.
+//
 // MUTATION-VERIFIED: reinstating a `bg-rail-design`-style class on the fill
-// layer (the exact pre-removal per-stage token) makes the assertion below
-// fail — naming a stage-hue class where none should exist. Checked by hand
-// during this fix round, then reverted.
-describe('no key carries any per-stage hue, anywhere — identity rests on icon and label alone (redesign, operator ruling)', () => {
+// layer (the exact pre-removal per-stage token) makes the first assertion
+// below fail — naming a stage-hue class where none should exist. Checked
+// by hand during this fix round, then reverted.
+describe('no key carries any per-stage hue, or accent, anywhere — identity rests on icon and label alone (redesign, operator ruling; revised #512)', () => {
   it('carries no bg-rail-<stage> class, no hue-line element, on any key in any state', () => {
     const steps: Record<FlowStepId, FlowStepState> = {
       design: 'open',
@@ -438,13 +470,23 @@ describe('no key carries any per-stage hue, anywhere — identity rests on icon 
       expect(el.querySelector('[data-testid="hue-line"]'), `${id} must carry no hue-line element`).toBeNull()
       expect(fillLayer(el).className, `${id} must carry no per-stage hue class`).not.toMatch(/\bbg-rail-(design|plan|provision|configure|finalise)\b/)
     }
+  })
 
-    // Cyan (the action accent) never appears on the rail either — it would
-    // make the promoted primary action ambiguous with "where you are".
+  it('carries no accent class anywhere, selected or not — the selected face is --color-selected-face, never --color-accent', () => {
+    const steps: Record<FlowStepId, FlowStepState> = {
+      design: 'open',
+      plan: 'locked',
+      provision: 'current',
+      configure: 'record',
+      finalise: 'complete',
+    }
+    renderRail({ steps, activeChip: 'provision' })
+
     for (const id of FLOW_STEPS) {
       const el = chip(LabelFor(id))
-      expect(el.className).not.toMatch(/\b(bg|text)-accent\b/)
-      expect(fillLayer(el).className).not.toMatch(/\b(bg|text)-accent\b/)
+      expect(el.className, `${id} must carry no accent class`).not.toMatch(/\b(bg|text)-accent(\/\d+)?\b/)
+      expect(fillLayer(el).className, `${id} fill must carry no accent class`).not.toMatch(/\b(bg|text)-accent(\/\d+)?\b/)
+      expect(edgeLayer(el).className, `${id} edge must carry no accent class`).not.toMatch(/\b(bg|text)-accent(\/\d+)?\b/)
     }
   })
 })
@@ -584,11 +626,13 @@ describe('content re-centring on a notched key (fix round, contentOffsetStyle)',
     expect(contentOffsetStyle('last', false)).toEqual({})
   })
 
-  it('is exactly half the notch depth (12px), not an independently-tunable number', () => {
-    // 6, not re-derived here from NOTCH_DEPTH (not exported — the constant
-    // this pins is the one lifecycleStrip.tsx's own "CONTENT RE-CENTRING"
-    // comment states as the measured, shipped figure).
-    expect(CONTENT_OFFSET_PX).toBe(6)
+  it('is exactly half the notch depth (17px), not an independently-tunable number', () => {
+    // VISUAL PARITY FIX ROUND (#512): 6 -> 8.5, following NOTCH_DEPTH's own
+    // 12 -> 17 rescale (28px -> 40px key). Not re-derived here from
+    // NOTCH_DEPTH (not exported — the constant this pins is the one
+    // lifecycleStrip.tsx's own "CONTENT RE-CENTRING" comment states as the
+    // measured, shipped figure).
+    expect(CONTENT_OFFSET_PX).toBe(8.5)
   })
 
   // Render-level safety net, independent of the above: every call site in

@@ -6,7 +6,7 @@ import {
   type FlowStepState,
 } from '../../lib/workloadFlow'
 import { STAGE_ICON } from '../../lib/stageIcons'
-import { RAIL_FILL, RAIL_INK } from '../../lib/stagePalette'
+import { RAIL_EDGE_HOVER, RAIL_FILL, RAIL_HOVER_INK, RAIL_INK, RAIL_SELECTED_FACE, RAIL_SELECTED_INK } from '../../lib/stagePalette'
 
 /**
  * The wizard rail (umbrella #347 WO-D1, operator direction 2026-08-02).
@@ -137,55 +137,92 @@ import { RAIL_FILL, RAIL_INK } from '../../lib/stagePalette'
  * node instead (WAI-ARIA 1.2 defines `aria-pressed` only for
  * `role="button"`).
  *
- * SELECTION — WHICH GUARANTEE LIVES WHERE. Two separate facts, deliberately
- * not conflated:
+ * SELECTION — REBUILT, VISUAL PARITY FIX ROUND (dmfdeploy/dmfdeploy#512,
+ * operator ruling off two separate rendered comparison boards — see
+ * stagePalette.ts's own docstring for the full derivation, including the
+ * retired achromatic invert AND the retired alpha-tint attempt this
+ * superseded). Selection is a plain two-state class swap on `key-fill`
+ * (RAIL_FILL <-> RAIL_SELECTED_FACE) plus a matching ink swap (RAIL_INK
+ * <-> RAIL_SELECTED_INK) — no added layer. `key-edge` ALSO varies (see the
+ * "EDGE CONTRAST WITHOUT A BORDER" section below, and stagePalette.ts
+ * point (4)), but by its OWN state machine (resting/hover/selected), not
+ * by selection alone. `RAIL_SELECTED_FACE` is the SAME literal
+ * (`--color-selected-face`) Sidebar.tsx's own selected tile paints — a
+ * shared opaque token, not merely "the same idea" — so the two surfaces
+ * cannot drift apart the way two independently-tuned alpha tints once did.
+ *
  *   - jsdom-provable (pinned in lifecycleStrip.test.tsx): a selected key's
- *     fill layer carries a DIFFERENT token (`bg-text`) than an unselected
- *     key's (`bg-rail-fill`) — structural, not a contrast claim.
+ *     `key-fill` carries a DIFFERENT class (RAIL_SELECTED_FACE) than an
+ *     unselected key's (RAIL_FILL), and its ink class differs
+ *     (RAIL_SELECTED_INK vs RAIL_INK) — structural, not a contrast claim.
  *   - Render-measured, NOT jsdom-provable (recorded here and in the PR
- *     description; mutation-checked by hand each fix round): `bg-rail-fill`
- *     (#616161, Y=0.1195) vs `bg-text`/--color-text (#E8E8EA, Y=0.8081) =
- *     5.06:1 WCAG contrast — comfortably over the 1.4.11 3:1 floor for a UI
- *     state change, and identical on every key since both fills are single
- *     shared tokens. jsdom computes no pixels; this number is the actual
- *     guarantee, the test only proves the mechanism producing it is intact.
+ *     description): the RAIL_SELECTED_FACE/RAIL_FILL fill-vs-fill contrast
+ *     and the RAIL_SELECTED_INK label-text contrast — see stagePalette.ts.
+ *     jsdom computes no pixels; those numbers are the actual guarantee, the
+ *     tests here only prove the mechanism producing them is intact.
  *
- * FOCUS RING — JUSTIFICATION RESTATED for the hue-free state space (fix
- * round; the PRIOR version of this comment justified the inner stroke by
- * "every identity hue clears 3:1 against bg" — that reasoning no longer
- * applies now that hue is gone, and restyling the comment without
- * re-deriving it would have been exactly the unchecked-claim failure this
- * whole round kept finding). Two layers, on the unclipped `<button>` (the
- * clipped inner `<span>` paints the chevron fill; `clip-path` would clip
- * an outline/shadow placed on it instead, #483 caution 1):
- *   - `outline-current` reuses RAIL_INK (unselected) or the selected ink
- *     (`text-bg`). For the UNSELECTED case specifically, RAIL_INK is
- *     `--color-text` (light) — which now clears BOTH "vs the neutral fill"
- *     (5.06:1) AND "vs the page background" (16.17:1) on its own, since
- *     there is only one fill state to check any more, not five hues that
- *     needed splitting into light/dark ink zones. `outline` is also what
- *     survives Windows forced-colors mode (the OS recolours it; `box-
- *     shadow` is simply dropped there).
+ * FOCUS RING — RE-VERIFIED against the new geometry AND the final ink/edge
+ * tokens (the ring's OWN mechanism is unchanged across every pass of this
+ * fix round — `outline-current` plus a fixed two-tone `box-shadow`
+ * sandwich, on the unclipped `<button>` rather than the clipped fill
+ * `<span>`, #483 caution 1 — only what it composites against moved, and
+ * moved more than once):
+ *   - `outline-current` reuses RAIL_INK (unselected/resting,
+ *     `--color-resting-ink`, #b4b4b8) or RAIL_SELECTED_INK (selected,
+ *     `text-bg`, dark). Unselected clears the page background comfortably
+ *     alone (~9.6:1). SELECTED DOES NOT — dark-on-near-black is close to
+ *     1:1 there, which is exactly the case the box-shadow sandwich below
+ *     exists for; an EARLIER draft of this comment (written when
+ *     RAIL_SELECTED_INK was briefly `text-accent`, a bright colour)
+ *     claimed the sandwich was no longer load-bearing — that stopped
+ *     being true the moment selected ink reverted to dark, and is
+ *     corrected here rather than left for a future reader to trust the
+ *     stale version.
  *   - The `box-shadow` two-tone sandwich (`--color-bg` inner, `--color-
- *     text` outer) is still needed, but now for exactly ONE case: SELECTED
- *     AND focused, where ink flips to `text-bg` (`--color-bg`) — which
- *     matches the page background at 1:1 and would otherwise be invisible
- *     on the ring's outward-facing stroke. `--color-bg` (inner stroke) vs
- *     the neutral fill clears 3:1 (3.20, same number constraint 1 already
- *     established) and vs the selected fill clears 16.17:1; `--color-text`
- *     (outer stroke) vs page bg clears 16.17:1 — between the two, the ring
- *     is visible regardless of which of the two fill states it sits over.
- *     Unaffected by the polygon-to-shape() change below: the ring lives on
- *     the unclipped `<button>`, never the clipped fill `<span>`, in either
- *     mechanism.
+ *     text` outer) is unconditional, and — per the correction just above —
+ *     IS load-bearing again for the selected-and-focused case: `--color-
+ *     bg` (inner stroke) clears 3:1 against `--color-rail-fill`/
+ *     `--color-selected-face` (both faces a selected+focused key's ring
+ *     might sit near); `--color-text` (outer stroke) clears 16.17:1
+ *     against the page background regardless of what fill is behind it.
+ *     Between the two, the ring stays visible regardless of ink state.
+ *   - HOVER AND FOCUS DO NOT COLLIDE, verified on a real render with real
+ *     pointer + Tab automation (not `element.focus()`, which does not
+ *     reliably produce `:focus-visible`), hover alone / focus alone / both
+ *     at once. They differ in POSITION as well as colour: hover
+ *     (`key-edge`, `RAIL_EDGE_HOVER`) follows the clipped chevron's own
+ *     silhouette, INSIDE the button's rectangular box; focus (this ring)
+ *     sits OUTSIDE that same box, in the inter-key gap. A hovered-but-
+ *     unfocused key never reads as focused in either combination checked.
+ *   - GEOMETRY: total outward reach is governed by `outline-2`
+ *     (2px, offset 0) and the box-shadow's own 2px second ring — both
+ *     unaffected by the H/notch rescale above (the 3px inter-key gap is a
+ *     `<ol>` layout constant, never derived from H), so the ring still
+ *     fits inside the gap without touching a neighbouring key, unchanged
+ *     from before this round.
  *
- * EDGE CONTRAST WITHOUT A BORDER (#483 caution 2). A clipped shape cannot
- * carry a normal 1px border, so the key's edge IS its fill's contrast
- * against the page background — `--color-rail-fill` clears WCAG 3:1
- * non-text contrast against --color-bg (3.20, see index.css). The
- * `border-radius` fallback (no `shape()` support) carries the same
- * constraint the same way — its edge is still just the fill colour, radius
- * is the only difference from the clipped case.
+ * EDGE CONTRAST WITHOUT A BORDER (#483 caution 2) — RE-RESOLVED TWICE this
+ * fix round, final shape below (see stagePalette.ts's own docstring, point
+ * (4), for the two-pass account). A clipped shape still cannot carry a
+ * normal border, and a single fill can no longer both clear 3:1 against
+ * the page AND read as the darker, subtler face the operator asked for —
+ * those two constraints conflict on ONE layer. The FIRST pass resolved
+ * that with a "two-tone sandwich," a separate `key-edge` layer holding a
+ * lighter neutral (#616161) permanently visible as a ring around the
+ * darker `key-fill`; the SECOND pass, after a live-environment complaint
+ * that the shipped selected face read "too bright," went further and
+ * dropped the ring at rest too, not just when selected — `key-edge` now
+ * repaints `key-fill`'s OWN colour at rest (no ring, expressed as same-
+ * colour rather than transparency, so the painted region's size never
+ * changes between states) and only shows a real ring — `--color-selected-
+ * face`, previewing selection — on hover. The `border-radius` fallback (no
+ * `shape()` support) carries the same two-layer construction the same
+ * way regardless of which colour either layer currently holds — the
+ * inner rectangle is just 2px smaller than the outer one, radius is the
+ * only difference from the clipped case. See stagePalette.ts's own
+ * docstring for why a boundary with no independent 3:1 guarantee at rest
+ * is still WCAG 1.4.11-conformant here (the visible label text does that
+ * job instead).
  *
  * NARROW-WIDTH FIX ROUND (dmf-cms#128). lkirc's review correctly called the
  * `justify-center` change above a narrow-width regression, but predicted the
@@ -238,8 +275,22 @@ const STEP_LABEL: Record<FlowStepId, string> = {
 /** The button's own fixed content height, and half of it — every
  *  coordinate below is relative to the vertical centre (`50% ± Dpx`, see
  *  `fmt`), so this is only used to work out each vertex's own position,
- *  never emitted directly. */
-const H = 28
+ *  never emitted directly.
+ *
+ *  VISUAL PARITY FIX ROUND (dmfdeploy/dmfdeploy#512, operator finding
+ *  against a live provision run): 28 -> 40, matching Sidebar.tsx:127's
+ *  `h-10 w-10` selected tile exactly — the rail key and the nav tile are now
+ *  the same control at the same size, not two different-sized buckets. This
+ *  is no longer implicit in padding arithmetic (28px used to fall out of
+ *  `py-1.5` plus the 14px icon/16px label line-height by coincidence, with
+ *  nothing pinning it): the button/div elements below now also carry an
+ *  explicit `h-10`, so H is an enforced fact about the box, not a value
+ *  this file merely assumes the DOM will happen to produce. Every other
+ *  geometry constant below is DERIVED from this one by the same scale
+ *  factor (40/28 = 10/7 ≈ 1.43), then hand-judged on a real render — see
+ *  each constant's own comment for the rounding and, where it changed the
+ *  proportions rather than just scaling them, why. */
+const H = 40
 const M = H / 2
 
 /**
@@ -251,29 +302,47 @@ const M = H / 2
  * sequence on a key this wide without being aggressive, which matters
  * because these stages are peer views, not a gated flow; an overstated
  * arrow would misstate that model.
+ *
+ * VISUAL PARITY FIX ROUND (#512): 12 -> 17 (12 * 40/28 = 17.14, rounded).
+ * Scaling this one linearly with H, rather than judging it fresh, is
+ * deliberate: the notch's horizontal reach is what makes the interlock
+ * read as an ARROW rather than a bar with a bite taken out, and that
+ * proportion (notch depth : key height) is exactly what a real render at
+ * 40px confirmed still reads correctly unscaled — nothing about a taller
+ * key changes what fraction of it should be "the arrow."
  */
-const NOTCH_DEPTH = 12
+const NOTCH_DEPTH = 17
 
 /**
  * The tip radius — the protruding point's own apex AND the concave
  * notch's own apex, the SAME radius for both. Small deliberately: on a
- * 14px half-height (M above), the operator's own reference image keeps
+ * 20px half-height (M above), the operator's own reference image keeps
  * its tips crisply pointed with restrained rounding, and a rendered
  * variant board found 7px+ turns the tip into a blob and loses the
  * directional read entirely.
+ *
+ * VISUAL PARITY FIX ROUND (#512): 5 -> 7 (5 * 40/28 = 7.14, rounded) — the
+ * plain linear scale, confirmed still crisp (not blob-y) on a real render
+ * at the new size, so no separate hand-tuning was needed here.
  */
-const TIP_RADIUS = 5
+const TIP_RADIUS = 7
 
 /**
  * The outer box terminal corner radius — Design's left end, Finalise &
- * Review's right end. Deliberately NOT Sidebar.tsx:127's 8px `rounded-lg`
- * any more (an earlier round's reference, which this round's variant
- * board superseded): standard practice scales corner radius by element
- * size bucket, and this rail's 28px key and that sidebar's 40px active
- * tile are different buckets — 6px is the size-correct value here, not a
- * copy of the tile's own.
+ * Review's right end.
+ *
+ * VISUAL PARITY FIX ROUND (#512): 6 -> 8. This is NOT just the linear
+ * scale (6 * 40/28 = 8.57, which would round to 9) — it is Sidebar.tsx:127's
+ * own `h-10 w-10 rounded-lg` value (`rounded-lg` = 8px), taken deliberately
+ * exact rather than independently rounded. The PRIOR round of this comment
+ * argued 6px specifically BECAUSE the rail's 28px key and the sidebar's
+ * 40px tile were different size buckets, and standard practice scales
+ * corner radius by bucket — that reasoning is why this round does NOT
+ * independently re-derive a rail-specific radius any more: the rail key IS
+ * now the sidebar tile's bucket (both 40px, per H above), so the same
+ * radius is the size-correct value, not a coincidence to round away.
  */
-const BOX_RADIUS = 6
+const BOX_RADIUS = 8
 
 /**
  * TWO DELIBERATELY UNEQUAL JOINT RADII — the corners where a flat top/
@@ -284,14 +353,18 @@ const BOX_RADIUS = 6
  * corner reads visibly sharper than the obtuse one, because perceived
  * softness depends on the included angle, not the radius alone. This is
  * not a guess: the operator circled exactly the notch-side joints twice,
- * on two different equal-radius attempts, as still too sharp. 6px and 8px
- * read as equally soft — the fix was splitting the radius, not raising
- * it everywhere (raising a shared radius enough to soften the acute
- * corner would have over-rounded the obtuse one into the same "blob"
- * territory TIP_RADIUS above was kept small to avoid).
+ * on two different equal-radius attempts, as still too sharp.
+ *
+ * VISUAL PARITY FIX ROUND (#512): 6/8 -> 9/12 — the linear scale is
+ * 8.57/11.43; rounded independently that lands on 9/11, which would quietly
+ * shift the ratio between the two (0.818, vs the original 0.75) and reopen
+ * exactly the "acute corner reads sharper" gap the split radius exists to
+ * close. 9/12 keeps the ratio EXACTLY 0.75 — both joints stay equally soft
+ * by construction, not by accident of rounding — and reads correctly on a
+ * real render at the new size.
  */
-const JOINT_TIP_RADIUS = 6
-const JOINT_NOTCH_RADIUS = 8
+const JOINT_TIP_RADIUS = 9
+const JOINT_NOTCH_RADIUS = 12
 
 /** A 2D point in one key's own local px frame: `u` is the distance INTO
  *  the shape from whichever edge the feature is anchored to (0 at the
@@ -497,6 +570,13 @@ function chevronStyle(position: 'first' | 'middle' | 'last'): CSSProperties {
  * the notch depth stays correct here too. Exported so
  * lifecycleStrip.test.tsx can pin the exact figure rather than
  * re-deriving or hardcoding its own copy.
+ *
+ * VISUAL PARITY FIX ROUND (#512): NOTCH_DEPTH's own rescale (12 -> 17)
+ * carries straight through — 8.5px now, not 6px. Left as a genuine half-
+ * integer rather than rounded to keep it exact for a browser that will
+ * itself render the resulting `calc()`/`translateX()` at sub-pixel
+ * precision; rounding here would reintroduce a fraction-of-a-pixel drift
+ * this formula exists specifically to avoid.
  */
 export const CONTENT_OFFSET_PX = NOTCH_DEPTH / 2
 
@@ -627,13 +707,49 @@ export default function LifecycleStrip({
           const descriptionId = `${railId}-${id}-state`
           const Icon = STAGE_ICON[id]
           const position = index === 0 ? 'first' : index === FLOW_STEPS.length - 1 ? 'last' : 'middle'
+          // Computed once per key, shared by both fill layers below — the
+          // edge/fill spans are two different ELEMENTS painting the SAME
+          // silhouette, not two different shapes.
+          const shapeStyle = chevronStyle(position)
 
-          // ONE shared fill/ink for every key, every state — see the file
-          // docstring's point A for why a per-stage hue could not survive
-          // its own CVD measurement. Selection is the sole thing that
-          // varies fill/edge (achromatic invert, unchanged mechanism).
-          const fillClass = isSelected ? 'bg-text' : RAIL_FILL
-          const inkClass = isSelected ? 'text-bg' : RAIL_INK
+          // VISUAL PARITY FIX ROUND (#512, operator ruling off a rendered
+          // A/B/C comparison — see stagePalette.ts's own docstring for the
+          // full derivation, including the interim alpha-tint attempt this
+          // superseded, and point (4) for the edge's own separate ruling).
+          // RAIL_FILL/RAIL_SELECTED_FACE and RAIL_INK/RAIL_SELECTED_INK are
+          // a plain two-state swap, the SAME shape this rail used before
+          // the alpha-tint detour (just different token values, and now
+          // shared byte-for-byte with Sidebar.tsx's own selected tile).
+          const fillClass = isSelected ? RAIL_SELECTED_FACE : RAIL_FILL
+          // Hover is a NEW state for this rail (it never had one before this
+          // fix round) — added as a consequence of the resting-ink ruling,
+          // not an independent decision: RAIL_INK moved off `--color-text`
+          // to leave hover somewhere to brighten TO, so the rail needed an
+          // actual hover rule to spend that headroom on, matching
+          // Sidebar.tsx's own resting/hover pair. Gated to the unselected
+          // case only, same as Sidebar.tsx's own `hover:` — a selected
+          // key's ink (RAIL_SELECTED_INK, dark-on-bright) has no matching
+          // hover concept.
+          const inkClass = isSelected ? RAIL_SELECTED_INK : `${RAIL_INK} ${RAIL_HOVER_INK}`
+          // The EDGE, point (4)'s own FINAL ruling (a first pass kept
+          // RAIL_EDGE #616161 visible at rest; superseded — see
+          // stagePalette.ts). No ring at rest OR selected, a hover-only
+          // preview-of-selection ring: resting is RAIL_FILL — THE SAME
+          // TOKEN AS THE FACE, a colour choice, not a transparent edge
+          // (transparent would let the band show through and change the
+          // painted region's size between states, moving whatever
+          // `contentOffsetStyle()` centres on). `RAIL_EDGE_HOVER`
+          // (`group-hover:bg-selected-face`) is a SECOND hover carrier
+          // alongside the ink, not an independent choice — deliberately
+          // the SELECTED face colour (a preview of selection), which also
+          // happens to keep hover and focus visually apart: this rail's
+          // OWN focus ring was never accent-coloured to begin with (see
+          // the "FOCUS RING" section below — it uses ink/neutral tokens,
+          // not `--color-accent`), so hover and focus differ in position
+          // (inside the shape vs outside it) as well as colour either way.
+          // Selected stays RAIL_SELECTED_FACE
+          // unconditionally, unaffected by hover.
+          const edgeClass = isSelected ? RAIL_SELECTED_FACE : `${RAIL_FILL} ${RAIL_EDGE_HOVER}`
 
           const inner = (
             <>
@@ -641,8 +757,14 @@ export default function LifecycleStrip({
                   are inline filled SVG now, not `lucide-react` — see
                   stageIcons.tsx's own docstring for the full provenance.
                   `strokeWidth` no longer applies to a filled silhouette,
-                  so it is dropped here rather than passed and ignored. */}
-              <Icon aria-hidden="true" className="h-3.5 w-3.5 shrink-0" />
+                  so it is dropped here rather than passed and ignored.
+                  VISUAL PARITY FIX ROUND (#512): h-3.5/w-3.5 (14px) ->
+                  h-5/w-5 (20px) — both are 50% of their container (28px
+                  key, 40px key respectively, matching Sidebar.tsx:131's
+                  `w-5 h-5` icon in its own 40px tile), so this falls
+                  straight out of the H rescale above rather than being an
+                  independent choice. */}
+              <Icon aria-hidden="true" className="h-5 w-5 shrink-0" />
               <span className="text-xs font-semibold">{STEP_LABEL[id]}</span>
               {/* Badge slot (Visual System doc §5): reserved geometry and
                   width budget for a future actionable-item count
@@ -666,12 +788,50 @@ export default function LifecycleStrip({
             </>
           )
 
+          // VISUAL PARITY FIX ROUND (#512): TWO stacked clipped layers,
+          // painting the same silhouette — see stagePalette.ts's own
+          // docstring for the full contrast derivation. Outer to inner:
+          //   - key-edge (`inset-0`): STATE-DEPENDENT (point (4)) — RAIL_FILL
+          //     at rest (same token as the face: a colour choice expressing
+          //     "no ring", not a transparent one — transparent would change
+          //     the painted region's SIZE between rest and hover), the
+          //     shared RAIL_SELECTED_FACE on `group-hover` (a preview of
+          //     selection, not accent — see stagePalette.ts for why), and
+          //     RAIL_SELECTED_FACE unconditionally once selected.
+          //   - key-fill (`inset-[2px]`, i.e. inset 2px on every side):
+          //     swaps between the darker RAIL_FILL (unselected) and the
+          //     shared opaque RAIL_SELECTED_FACE (selected) — a plain
+          //     two-state class swap, not an added layer.
+          // `pointer-events-none` on BOTH — see the "HOVER TARGET BUG"
+          // account in stagePalette.ts: these are purely decorative
+          // (`aria-hidden`) clipped layers, and letting either one
+          // intercept the pointer meant hovering the label or icon (which
+          // `key-fill` visually covers) missed `key-edge`'s own `:hover`
+          // entirely, since a bare `hover:` class only fires for pointer
+          // positions over THAT element's own clipped hit-test region.
+          // With pointer-events disabled here, the unclipped BUTTON below
+          // is always the actual pointer target, and both layers now key
+          // off ITS `group` hover state via `group-hover:`, not their own.
+          // Both share `shapeStyle` (computed once above) and the
+          // `lifecycle-rail-chevron` CSS hook class, so the narrow-width
+          // notch-drop override below applies to both identically.
+          const fillLayers = (
+            <>
+              <span aria-hidden="true" data-testid="key-edge" className={`pointer-events-none absolute inset-0 lifecycle-rail-chevron ${edgeClass}`} style={shapeStyle} />
+              <span aria-hidden="true" data-testid="key-fill" className={`pointer-events-none absolute inset-[2px] lifecycle-rail-chevron ${fillClass}`} style={shapeStyle} />
+            </>
+          )
+
           return (
             <li key={id} className="flex items-center">
               {interactive ? (
                 <button
                   type="button"
-                  className={`relative flex w-full items-center justify-center gap-1.5 whitespace-nowrap px-3 py-1.5 focus-visible:outline-2 focus-visible:outline-offset-0 focus-visible:outline-current focus-visible:shadow-[0_0_0_1px_var(--color-bg),0_0_0_2px_var(--color-text)] ${inkClass}`}
+                  // `group`: see `fillLayers`'s own comment just above — the
+                  // key-edge layer's `group-hover:` binding needs this on
+                  // an ancestor, and the button is the correct one since it
+                  // is the sole real pointer target now.
+                  className={`group relative flex h-10 w-full items-center justify-center gap-1.5 whitespace-nowrap px-3 py-1.5 focus-visible:outline-2 focus-visible:outline-offset-0 focus-visible:outline-current focus-visible:shadow-[0_0_0_1px_var(--color-bg),0_0_0_2px_var(--color-text)] ${inkClass}`}
                   // Explicit accessible name — the key's own label is all
                   // there is now (no trailing state word to exclude), but an
                   // explicit aria-label keeps this independent of whatever
@@ -681,18 +841,18 @@ export default function LifecycleStrip({
                   aria-pressed={isSelected}
                   onClick={() => onSelect(id)}
                 >
-                  <span aria-hidden="true" data-testid="key-fill" className={`absolute inset-0 lifecycle-rail-chevron ${fillClass}`} style={chevronStyle(position)} />
+                  {fillLayers}
                   <span data-testid="key-content" className="relative z-10 flex items-center justify-center gap-1.5 lifecycle-rail-content" style={contentOffsetStyle(position, SUPPORTS_SHAPE_CURVE)}>
                     {inner}
                   </span>
                 </button>
               ) : (
                 <div
-                  className={`relative flex w-full items-center justify-center gap-1.5 whitespace-nowrap px-3 py-1.5 ${inkClass}`}
+                  className={`relative flex h-10 w-full items-center justify-center gap-1.5 whitespace-nowrap px-3 py-1.5 ${inkClass}`}
                   aria-label={STEP_LABEL[id]}
                   aria-describedby={locked ? descriptionId : undefined}
                 >
-                  <span aria-hidden="true" data-testid="key-fill" className={`absolute inset-0 lifecycle-rail-chevron ${fillClass}`} style={chevronStyle(position)} />
+                  {fillLayers}
                   <span data-testid="key-content" className="relative z-10 flex items-center justify-center gap-1.5 lifecycle-rail-content" style={contentOffsetStyle(position, SUPPORTS_SHAPE_CURVE)}>
                     {inner}
                     {/* A job-in-flight chip can still be the SELECTED one —
