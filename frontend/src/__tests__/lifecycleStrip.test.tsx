@@ -1,7 +1,7 @@
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import { cleanup, fireEvent, render, screen, within } from '@testing-library/react'
 import { MemoryRouter } from 'react-router-dom'
-import LifecycleStrip from '../pages/MediaWorkloads/LifecycleStrip'
+import LifecycleStrip, { CONTENT_OFFSET_PX, contentOffsetStyle } from '../pages/MediaWorkloads/LifecycleStrip'
 import { FLOW_STEPS, type FlowStepId, type FlowStepState } from '../lib/workloadFlow'
 
 /**
@@ -553,5 +553,64 @@ describe('a job-in-flight chip that is also the SELECTED one still carries that 
     expect(provision.tagName).toBe('BUTTON')
     expect(provision.getAttribute('aria-pressed')).toBe('false')
     expect(within(provision).queryByText('Selected')).toBeNull()
+  })
+})
+
+// FIX ROUND (operator finding against a90bfd2's live render): the content
+// group is centred by the flex button against the BOX, but a notched key's
+// PAINTED shape isn't the box — the notch removes CONTENT_OFFSET_PX * 2 px
+// of material from the left side only, which silently pushed the icon+
+// label group left of the shape's own optical centre on every key except
+// Design (LifecycleStrip.tsx's own "CONTENT RE-CENTRING" comment has the
+// full measurement). jsdom computes no pixels and cannot render the
+// shape()'d chevron at all (SUPPORTS_SHAPE_CURVE is always false there —
+// see that constant's own comment), so the property this regressed can
+// only be pinned by calling `contentOffsetStyle` directly with an explicit
+// `shapeIsPainted` argument, exactly what exporting it as a parameter
+// (rather than a module-level flag) was for.
+describe('content re-centring on a notched key (fix round, contentOffsetStyle)', () => {
+  it('is zero on a first key (no notch) regardless of whether the chevron is painted', () => {
+    expect(contentOffsetStyle('first', true)).toEqual({})
+    expect(contentOffsetStyle('first', false)).toEqual({})
+  })
+
+  it('shifts middle AND last keys right by CONTENT_OFFSET_PX when the chevron is painted — last is not mirrored, it carries the same left notch as middle', () => {
+    expect(contentOffsetStyle('middle', true)).toEqual({ transform: `translateX(${CONTENT_OFFSET_PX}px)` })
+    expect(contentOffsetStyle('last', true)).toEqual({ transform: `translateX(${CONTENT_OFFSET_PX}px)` })
+  })
+
+  it('applies no offset on any position when the chevron is NOT painted (border-radius fallback is a plain, un-notched rectangle)', () => {
+    expect(contentOffsetStyle('middle', false)).toEqual({})
+    expect(contentOffsetStyle('last', false)).toEqual({})
+  })
+
+  it('is exactly half the notch depth (12px), not an independently-tunable number', () => {
+    // 6, not re-derived here from NOTCH_DEPTH (not exported — the constant
+    // this pins is the one lifecycleStrip.tsx's own "CONTENT RE-CENTRING"
+    // comment states as the measured, shipped figure).
+    expect(CONTENT_OFFSET_PX).toBe(6)
+  })
+
+  // Render-level safety net, independent of the above: every call site in
+  // the component threads SUPPORTS_SHAPE_CURVE through as the second
+  // argument rather than hardcoding `true`. jsdom's SUPPORTS_SHAPE_CURVE
+  // is always false (no `CSS` global), so if a call site ever stopped
+  // passing it through, this is what would catch it — every key's content
+  // span would start carrying a transform under jsdom, which should never
+  // happen since jsdom never paints the chevron.
+  it('never renders an inline transform on the content span in jsdom, on any key', () => {
+    const steps: Record<FlowStepId, FlowStepState> = {
+      design: 'complete',
+      plan: 'complete',
+      provision: 'complete',
+      configure: 'complete',
+      finalise: 'complete',
+    }
+    renderRail({ steps, activeChip: 'configure' })
+
+    for (const id of FLOW_STEPS) {
+      const content = chip(LabelFor(id)).querySelector('[data-testid="key-content"]') as HTMLElement
+      expect(content.style.transform, `${id}'s content span should carry no transform under jsdom`).toBe('')
+    }
   })
 })
