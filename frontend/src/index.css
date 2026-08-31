@@ -144,6 +144,37 @@
   }
 }
 
+/* dmf-cms#128 fix round — LifecycleStrip's narrow-width stacked layout
+   (LifecycleStrip.tsx's own docstring, "NARROW-WIDTH FIX ROUND", has the
+   full mechanism). Below ~390px the rail drops the notch for a plain
+   rounded rectangle per key — sequence is carried by vertical order instead
+   of the chevron's interlock. `clip-path`/`transform` are set as INLINE
+   styles by chevronStyle()/contentOffsetStyle() (computed per key, from
+   constants no CSS selector can see), so overriding them from here needs
+   `!important` — the only place in this rail a stylesheet rule has to
+   out-rank an inline one. `width < 390px` (not `max-width: 390px`)
+   deliberately matches Tailwind v4's own compiled output for the
+   `max-[390px]:` classes on LifecycleStrip.tsx's `<ol>` — a `max-width`
+   media query is inclusive of exactly 390px where Tailwind's range syntax
+   is not, and that mismatch would put the rail in a genuinely broken
+   halfway state (already stacked column geometry, still-clipped chevron
+   fill, or vice versa) for the one viewport width in between. */
+@media (width < 390px) {
+  .lifecycle-rail-chevron {
+    clip-path: none !important;
+    border-radius: 6px !important; /* BOX_RADIUS, LifecycleStrip.tsx — kept
+      in sync by hand, same as CONTENT_OFFSET_PX's own test-side literal
+      (lifecycleStrip.test.tsx). */
+  }
+
+  .lifecycle-rail-content {
+    transform: none !important; /* CONTENT_OFFSET_PX no longer applies: a
+      plain rectangle's painted centre already coincides with its box
+      centre — the same reason contentOffsetStyle() itself returns {} for
+      the border-radius-fallback browser case. */
+  }
+}
+
 @layer components {
   /* ---- Buttons ----
      umbrella #432 §D4: TWO deliberately different primary sizes below —
