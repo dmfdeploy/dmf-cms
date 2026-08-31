@@ -186,6 +186,45 @@ import { RAIL_FILL, RAIL_INK } from '../../lib/stagePalette'
  * `border-radius` fallback (no `shape()` support) carries the same
  * constraint the same way — its edge is still just the fill colour, radius
  * is the only difference from the clipped case.
+ *
+ * NARROW-WIDTH FIX ROUND (dmf-cms#128). lkirc's review correctly called the
+ * `justify-center` change above a narrow-width regression, but predicted the
+ * wrong MECHANISM — negative inline-start overflow pushing the leading keys
+ * out of the scroll container's reach. Measured on the real render at
+ * 900/600/400px instead: that never happens, the first key sits at +1.0px
+ * in every case, because something worse does — the `<ol>` SHRINKS rather
+ * than overflowing (400px container -> 400px `<ol>`, not its 843px
+ * max-content width; every key 166px -> 78px; "Finalise & Review"'s 142px
+ * label then overflows its own 78px key and spills across its neighbours).
+ * The `<ol>`'s own "`w-max` is load-bearing" comment was aspirational, not
+ * actual: `w-max` sets a flex item's PREFERRED width, and a flex item's
+ * default `flex-shrink: 1` overrides that regardless. Two-tier fix,
+ * operator-approved:
+ *   1. `shrink-0` on the `<ol>` makes `w-max` actually hold, restoring
+ *      scroll-not-wrap — Topbar.tsx's `overflow-x-auto` wrapper scrolls,
+ *      which is what it's for. `justify-center` on the `<nav>` becomes
+ *      `justify-center-safe` in the same round: with the `<ol>` no longer
+ *      shrinking, it genuinely CAN overflow the `<nav>` now, and safe
+ *      centring is what forecloses lkirc's originally predicted failure
+ *      mode for good, rather than that failure mode simply having had
+ *      nothing to trigger it yet.
+ *   2. Below ~390px the rail abandons the horizontal chevron entirely and
+ *      stacks vertically instead — from the approved design artifact,
+ *      verbatim: "It survives rotation - the notch is dropped and sequence
+ *      is carried by vertical order, which is the stronger cue on a phone
+ *      anyway. Full labels fit at 390px, so Finalise & Review never needs
+ *      abbreviating." Icons-only was considered and rejected: hue is gone
+ *      from this rail entirely (point A above), so identity already rests
+ *      on icon PLUS label alone — dropping labels at exactly the width
+ *      where space is tightest would leave a single carrier for the one
+ *      channel this round already spent its whole CVD budget protecting.
+ * The stacked layout is `max-[390px]:grid-cols-1`/`max-[390px]:w-full` on
+ * the `<ol>` (see that element's own comment above). The notch drop is
+ * `.lifecycle-rail-chevron`/`.lifecycle-rail-content` in index.css,
+ * `!important`-overriding chevronStyle()/contentOffsetStyle()'s INLINE
+ * styles below at that width — the one place in this rail a stylesheet rule
+ * has to out-rank an inline one, because those two functions compute a
+ * per-key value no CSS selector can see.
  */
 
 const STEP_LABEL: Record<FlowStepId, string> = {
@@ -518,23 +557,58 @@ export default function LifecycleStrip({
   return (
     // SHELL ROUND 2 (#481): centred, not left-hugging — there is no
     // right-pinned sibling left in this row to fight the centring. `w-full`
-    // so the centring has the row's full width to work against; the
-    // scroll behaviour at narrow widths is unchanged, still owned by
-    // Topbar's own `overflow-x-auto` wrapper around this component.
-    <nav aria-label="Media workload lifecycle" className="flex w-full flex-nowrap items-center justify-center">
+    // so the centring has the row's full width to work against.
+    //
+    // FIX ROUND (dmf-cms#128, lkirc's review + operator-measured
+    // mechanism): plain `justify-center` here was HALF of the narrow-width
+    // regression — `justify-center-safe` (`justify-content: safe center`)
+    // is the fix, not a defensive extra. See the `<ol>` comment just below
+    // for the other half (`shrink-0`, the actual defect) and this file's
+    // own docstring ("NARROW-WIDTH FIX ROUND") for the full mechanism.
+    <nav aria-label="Media workload lifecycle" className="flex w-full flex-nowrap items-center justify-center-safe">
       {/*
         EQUAL COLUMNS (dmfdeploy#449, plan §3.3, unchanged by this redesign).
-        `w-max` is load-bearing, not decoration. Tailwind's `grid-cols-5` is
-        `repeat(5, minmax(0, 1fr))` — a 0 minimum, not `auto` — so under the
-        horizontal-scroll ancestor this row lives in (Topbar's
-        overflow-x-auto wrapper) the tracks would happily shrink below their
-        content and wrap the labels rather than overflow. Pinning the grid to
-        its max-content width makes the tracks resolve to the widest key and
-        lets the ancestor scroll, which is what that ancestor is for. The
-        gap is 3px (#483: "a 2-3px band-coloured gap cut into the shape so
-        keys nest without visually touching").
+        `w-max` sets the grid's PREFERRED width, not its floor — Tailwind's
+        `grid-cols-5` is `repeat(5, minmax(0, 1fr))`, a 0 minimum, not
+        `auto`, so under the horizontal-scroll ancestor this row lives in
+        (Topbar's overflow-x-auto wrapper) the tracks would happily shrink
+        below their content and wrap the labels rather than overflow.
+
+        FIX ROUND (dmf-cms#128, lkirc's review + operator-measured
+        mechanism): `shrink-0` is what actually stops that, and it was
+        MISSING — this comment used to call `w-max` alone load-bearing, but
+        this `<ol>` is itself a flex ITEM of the `<nav>` above (`display:
+        flex`), and a flex item's default `flex-shrink: 1` shrinks it below
+        its own preferred width regardless of what that width is set to.
+        Measured on the real render at a 400px container: the `<ol>`
+        computed to 400px, not its 843px max-content width, every key
+        collapsed 166px -> 78px, and "Finalise & Review"'s 142px label then
+        overflowed its own 78px key and spilled across its neighbours.
+        `shrink-0` pins the grid to its max-content width for real, which is
+        what lets the ancestor scroll — the thing that ancestor exists for —
+        instead of the tracks collapsing. See the `<nav>` comment above for
+        why `justify-center` became `justify-center-safe` in the same fix:
+        once the `<ol>` can no longer shrink, it genuinely CAN overflow the
+        `<nav>` at narrow widths, and plain `justify-center` centres an
+        overflowing item symmetrically — including into negative
+        inline-start overflow, which a scroll container cannot reach (the
+        failure lkirc's review predicted, from the right cause-and-effect
+        shape but the wrong trigger — it doesn't fire today because nothing
+        has ever actually overflowed the nav until this fix makes the ol
+        stop shrinking). `safe center` falls back to start-alignment exactly
+        when that would happen, closing that door rather than merely not
+        having opened it yet.
+
+        The gap is 3px (#483: "a 2-3px band-coloured gap cut into the shape
+        so keys nest without visually touching") — `max-[390px]:` below
+        widens it to 8px, because the stacked, notch-dropped layout at that
+        width no longer interlocks and reads better with normal breathing
+        room between rows. `max-[390px]:grid-cols-1` / `max-[390px]:w-full`
+        are the OTHER tier of this fix round — see this file's own
+        docstring, "NARROW-WIDTH FIX ROUND", for why a rail this narrow
+        stacks vertically instead of continuing to scroll.
       */}
-      <ol className="grid w-max grid-cols-5 items-center gap-[3px]">
+      <ol className="grid w-max shrink-0 grid-cols-5 items-center gap-[3px] max-[390px]:w-full max-[390px]:grid-cols-1 max-[390px]:gap-2">
         {FLOW_STEPS.map((id, index) => {
           const state = steps[id]
           const locked = state === 'locked'
@@ -607,8 +681,8 @@ export default function LifecycleStrip({
                   aria-pressed={isSelected}
                   onClick={() => onSelect(id)}
                 >
-                  <span aria-hidden="true" data-testid="key-fill" className={`absolute inset-0 ${fillClass}`} style={chevronStyle(position)} />
-                  <span data-testid="key-content" className="relative z-10 flex items-center justify-center gap-1.5" style={contentOffsetStyle(position, SUPPORTS_SHAPE_CURVE)}>
+                  <span aria-hidden="true" data-testid="key-fill" className={`absolute inset-0 lifecycle-rail-chevron ${fillClass}`} style={chevronStyle(position)} />
+                  <span data-testid="key-content" className="relative z-10 flex items-center justify-center gap-1.5 lifecycle-rail-content" style={contentOffsetStyle(position, SUPPORTS_SHAPE_CURVE)}>
                     {inner}
                   </span>
                 </button>
@@ -618,8 +692,8 @@ export default function LifecycleStrip({
                   aria-label={STEP_LABEL[id]}
                   aria-describedby={locked ? descriptionId : undefined}
                 >
-                  <span aria-hidden="true" data-testid="key-fill" className={`absolute inset-0 ${fillClass}`} style={chevronStyle(position)} />
-                  <span data-testid="key-content" className="relative z-10 flex items-center justify-center gap-1.5" style={contentOffsetStyle(position, SUPPORTS_SHAPE_CURVE)}>
+                  <span aria-hidden="true" data-testid="key-fill" className={`absolute inset-0 lifecycle-rail-chevron ${fillClass}`} style={chevronStyle(position)} />
+                  <span data-testid="key-content" className="relative z-10 flex items-center justify-center gap-1.5 lifecycle-rail-content" style={contentOffsetStyle(position, SUPPORTS_SHAPE_CURVE)}>
                     {inner}
                     {/* A job-in-flight chip can still be the SELECTED one —
                         see the file docstring's "SELECTION — WHICH

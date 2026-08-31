@@ -672,3 +672,106 @@ describe('the supported-browser call sites thread SUPPORTS_SHAPE_CURVE through t
     }
   })
 })
+
+// -----------------------------------------------------------------------
+// NARROW-WIDTH FIX ROUND (dmf-cms#128). lkirc's review correctly flagged a
+// narrow-width regression from the `justify-center`/`w-full` centring
+// change; the actual mechanism (measured on a real render, see
+// LifecycleStrip.tsx's own docstring) is that the `<ol>` — a flex ITEM of
+// the `<nav>` above it — silently SHRINKS below its max-content width
+// instead of the ancestor scrolling, collapsing every key until
+// "Finalise & Review"'s label overflows its own key. jsdom computes no
+// pixels and cannot lay out a flexbox at all (there is no narrower-than-390
+// viewport to shrink against in the test environment, and no computed width
+// to read back even if there were) — this describe block cannot pin "the
+// key does not collapse below its content" as a measured fact, ONLY as a
+// STRUCTURAL one: that the exact mechanism the fix relies on
+// (`shrink-0`/`justify-center-safe` on the flex/grid classes,
+// `max-[390px]:` on the stacking classes, the CSS-hook classes the
+// `!important` notch-drop override in index.css targets) is actually
+// present on the actual render. The pixel-level claims themselves — 166px
+// keys holding at any width down to 390px, no overflow, the stacked layout
+// fitting "Finalise & Review" unabbreviated below that — are real-browser
+// facts, verified in the PR description, the same split this file's other
+// describe blocks already draw (see the file's own opening docstring).
+describe('the rail holds its width at narrow viewports instead of shrinking below its content (dmf-cms#128 fix round)', () => {
+  function renderFiveOpen() {
+    const steps: Record<FlowStepId, FlowStepState> = {
+      design: 'complete',
+      plan: 'open',
+      provision: 'open',
+      configure: 'open',
+      finalise: 'open',
+    }
+    renderRail({ steps, activeChip: 'design' })
+  }
+
+  // MUTATION-VERIFIED: dropping `shrink-0` from the `<ol>`'s className (the
+  // exact regression this fix round found — see LifecycleStrip.tsx's own
+  // "NARROW-WIDTH FIX ROUND" docstring for the measured 166px -> 78px
+  // collapse this class prevents) makes this assertion fail —
+  // `expected 'grid w-max grid-cols-5 items-center gap-[3px] max-[390px]:w-full max-[390px]:grid-cols-1 max-[390px]:gap-2' to contain 'shrink-0'`.
+  // Checked by hand during this fix round, then restored.
+  it('pins shrink-0 on the orchestration <ol> — without it, w-max is a preferred width the flex parent can shrink past, not a floor', () => {
+    renderFiveOpen()
+    const list = screen.getByRole('list')
+    expect(list.className.split(' '), 'the <ol> must carry shrink-0, or the flex parent can shrink it below w-max').toContain('shrink-0')
+    expect(list.className, 'w-max must still be present too — shrink-0 alone sets no preferred width to hold').toContain('w-max')
+  })
+
+  // MUTATION-VERIFIED: reverting the <nav> to plain `justify-center` (the
+  // pre-fix class, and exactly what lkirc's review was reviewing) makes the
+  // second assertion below fail — `expected [ 'flex', 'w-full',
+  // 'flex-nowrap', 'items-center', 'justify-center' ] not to contain
+  // 'justify-center'`. Checked by hand during this fix round, then restored.
+  //
+  // Split assertion deliberately: `justify-center-safe` CONTAINS the
+  // substring `justify-center`, so a plain `.not.toContain('justify-center')`
+  // on the raw string would pass even with the bug reintroduced — this
+  // checks token membership on the split class list instead, the same trap
+  // this file's own selection tests are careful about elsewhere with
+  // fillClass tokens.
+  it('pins justify-center-safe on the <nav>, not plain justify-center, now that the <ol> can genuinely overflow it', () => {
+    renderFiveOpen()
+    const nav = screen.getByRole('navigation', { name: 'Media workload lifecycle' })
+    const tokens = nav.className.split(' ')
+    expect(tokens, 'the <nav> must use safe centring — plain justify-center can push an overflowing <ol> into unreachable negative overflow').toContain(
+      'justify-center-safe',
+    )
+    expect(tokens).not.toContain('justify-center')
+  })
+
+  // MUTATION-VERIFIED: dropping either max-[390px]: class from the <ol>
+  // makes the corresponding assertion below fail, naming the missing class
+  // directly (e.g. `expected [...] to contain 'max-[390px]:grid-cols-1'`).
+  // Checked by hand during this fix round, then restored.
+  it('pins the stacked-layout classes on the <ol> for the ~390px-and-below breakpoint, per the approved design\'s mobile treatment', () => {
+    renderFiveOpen()
+    const tokens = screen.getByRole('list').className.split(' ')
+    expect(tokens, 'must switch to a single column (vertical stack) below 390px').toContain('max-[390px]:grid-cols-1')
+    expect(tokens, 'must drop the max-content width constraint below 390px so the stack uses the full available width').toContain('max-[390px]:w-full')
+  })
+
+  // MUTATION-VERIFIED: removing `lifecycle-rail-chevron` from a key-fill
+  // span's className makes this assertion fail for that key, naming it —
+  // e.g. `Finalise & Review key-fill missing lifecycle-rail-chevron`.
+  // Checked by hand during this fix round (removed it from the Design key
+  // specifically, confirmed only Design's assertion failed), then restored.
+  it('carries the CSS hook classes the narrow-width notch-drop override (index.css) targets, on every key', () => {
+    const steps: Record<FlowStepId, FlowStepState> = {
+      design: 'complete',
+      plan: 'complete',
+      provision: 'complete',
+      configure: 'complete',
+      finalise: 'complete',
+    }
+    renderRail({ steps, activeChip: null })
+
+    for (const id of FLOW_STEPS) {
+      const el = chip(LabelFor(id))
+      expect(fillLayer(el).className, `${LabelFor(id)} key-fill missing lifecycle-rail-chevron`).toContain('lifecycle-rail-chevron')
+      const content = el.querySelector('[data-testid="key-content"]') as HTMLElement
+      expect(content.className, `${LabelFor(id)} key-content missing lifecycle-rail-content`).toContain('lifecycle-rail-content')
+    }
+  })
+})
