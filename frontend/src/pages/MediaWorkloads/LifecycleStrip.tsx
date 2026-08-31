@@ -486,7 +486,12 @@ export default function LifecycleStrip({
 
           const inner = (
             <>
-              <Icon aria-hidden="true" className="h-3.5 w-3.5 shrink-0" strokeWidth={2} />
+              {/* FIX ROUND (operator ruling 2026-08-31): these five icons
+                  are inline filled SVG now, not `lucide-react` — see
+                  stageIcons.tsx's own docstring for the full provenance.
+                  `strokeWidth` no longer applies to a filled silhouette,
+                  so it is dropped here rather than passed and ignored. */}
+              <Icon aria-hidden="true" className="h-3.5 w-3.5 shrink-0" />
               <span className="text-xs font-semibold">{STEP_LABEL[id]}</span>
               {/* Badge slot (Visual System doc §5): reserved geometry and
                   width budget for a future actionable-item count

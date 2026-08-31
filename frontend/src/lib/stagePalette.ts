@@ -45,7 +45,7 @@ export const CONTROL_FILL = 'bg-stage-control text-stage-control-fg'
  * measurement: a cue that fails for roughly 1 in 12 males is not an
  * identity channel, and removed hue from the rail entirely rather than
  * keep paying for a line that could not do the job the fill couldn't
- * either. Icon shape (lib/stageIcons.ts) and the EBU label are the rail's
+ * either. Icon shape (lib/stageIcons.tsx) and the EBU label are the rail's
  * sole identity carriers now — both were already independently sufficient
  * (Art. 11 — "everything except hue survives greyscale"). None of the
  * measured figures from either abandoned design are reproduced here or
