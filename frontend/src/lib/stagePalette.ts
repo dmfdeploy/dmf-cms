@@ -29,23 +29,39 @@ export const STAGE_FILL: Record<FlowStepId, string> = {
 export const CONTROL_FILL = 'bg-stage-control text-stage-control-fg'
 
 /**
- * The lifecycle RAIL's own identity hues (dmfdeploy#481/#482/#483) — a
- * SEPARATE, muted palette from STAGE_FILL above, which stays retired
- * (Arc 4 WP-2, unused by LifecycleStrip.tsx today). See index.css's
- * --color-rail-* token block for the values and how they were picked
- * (CVD-simulated, each paired with the one ink — light or dark — that
- * actually clears 4.5:1 against it).
- *
- * Unlike STAGE_FILL, `fg` is exposed as its own key rather than folded into
- * one class string: LifecycleStrip applies `bg` to the key's clipped fill
- * layer and `fg` to a SEPARATE, unclipped content layer stacked on top of
- * it (the icon + label), not to the same element — see that file's own
- * docstring for why the fill and the content live in different layers.
+ * The lifecycle RAIL's own neutral fill + ink (dmfdeploy#481/#482/#483,
+ * redesign fix round). ONE shared token pair for all five keys — hue no
+ * longer lives on the fill at all (see index.css's own token comment for
+ * why: with five separately-hued fills, the light-zone stages could not
+ * simultaneously clear 4.5:1 against one ink AND 3:1 against the
+ * achromatic selected fill, a structural conflict two prior fix rounds
+ * fought and could not tune around). A single shared fill means selection's
+ * fill-invert contrast is identical, and adequate, on every key by
+ * construction — see LifecycleStrip.tsx's own docstring for the measured
+ * number and where that guarantee actually lives (a render measurement,
+ * not something jsdom can assert).
  */
-export const RAIL_FILL: Record<FlowStepId, { bg: string; fg: string }> = {
-  design: { bg: 'bg-rail-design', fg: 'text-rail-design-fg' },
-  plan: { bg: 'bg-rail-plan', fg: 'text-rail-plan-fg' },
-  provision: { bg: 'bg-rail-provision', fg: 'text-rail-provision-fg' },
-  configure: { bg: 'bg-rail-configure', fg: 'text-rail-configure-fg' },
-  finalise: { bg: 'bg-rail-finalise', fg: 'text-rail-finalise-fg' },
+export const RAIL_FILL = 'bg-rail-fill'
+export const RAIL_INK = 'text-text'
+
+/**
+ * The lifecycle RAIL's identity hues (dmfdeploy#481/#482/#483) — now a
+ * bottom-edge LINE, tally-style, not a fill (redesign fix round; the
+ * tally itself keeps the top edge — two different facts do not share an
+ * edge). A SEPARATE, muted palette from STAGE_FILL above, which stays
+ * retired (Arc 4 WP-2, unused by LifecycleStrip.tsx today). See index.css's
+ * --color-rail-* token block for the values, the small-area dE2000
+ * measurement, and the honest "reinforcing cue only" read that measurement
+ * produced.
+ *
+ * No `fg` here, unlike STAGE_FILL/the old RAIL_FILL shape — a decorative
+ * line carries no text of its own, so there is nothing to pair an ink
+ * against.
+ */
+export const RAIL_LINE: Record<FlowStepId, string> = {
+  design: 'bg-rail-design',
+  plan: 'bg-rail-plan',
+  provision: 'bg-rail-provision',
+  configure: 'bg-rail-configure',
+  finalise: 'bg-rail-finalise',
 }

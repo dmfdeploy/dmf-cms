@@ -8,29 +8,34 @@ import { FLOW_STEPS, type FlowStepId, type FlowStepState } from '../lib/workload
  * The rail's "never colour alone" contract (Constitution Art. 11, umbrella
  * #347 WO-D1 Acceptance Criterion 8).
  *
- * SHELL ROUND 2 (dmfdeploy#481/#482/#483) rewrote this file's fixtures and
- * most of its assertions — see LifecycleStrip.tsx's own docstring for the
- * full account of what changed. Per-fact status, stated plainly for the
- * CURRENT design:
- *   - IDENTITY (stage): a permanent hue (RAIL_FILL) PLUS an always-present
- *     icon PLUS the always-present EBU label — three independent carriers,
- *     two of which (icon, label) are pure shape/text and survive greyscale
- *     and total colour-blindness alike, not merely CVD.
- *   - LOCKED: a genuinely NEW state as of this round. Pass 2's dashed
- *     border and padlock icon are BOTH GONE — the Visual System doc §2
- *     rejects any fill/edge distinction for stage STATE at all (identity
- *     and selection are the only two axes fill/edge may vary on). A locked
- *     key is now visually IDENTICAL to an open key of the same stage; the
- *     only surviving non-colour cue is the `aria-describedby` reason text,
- *     which is words, not a glyph — see LifecycleStrip.tsx's own docstring.
+ * SHELL ROUND 2 REDESIGN (dmfdeploy#481/#482/#483, operator direction — hue
+ * off the fill entirely) rewrote this file's fixtures and most of its
+ * assertions again — see LifecycleStrip.tsx's own docstring for the full
+ * account. Per-fact status, stated plainly for the CURRENT design:
+ *   - IDENTITY (stage): an always-present icon PLUS the always-present EBU
+ *     label — both pure shape/text, survive greyscale and total colour-
+ *     blindness alike. A bottom-edge HUE LINE reinforces identity too, but
+ *     is explicitly NOT an independent channel any more (measured dE2000
+ *     on the line drops to imperceptible, 0.85-1.17, between plan/provision
+ *     under the two common CVDs — see index.css's own token comment) — this
+ *     file tests the line's PRESENCE/absence and stage mapping, not its
+ *     discriminability, which jsdom cannot measure anyway.
+ *   - LOCKED: visually IDENTICAL to an open key of the same stage — the
+ *     Visual System doc §2 rejects any fill/edge distinction for stage
+ *     STATE at all (identity and selection are the only two axes fill/edge
+ *     may vary on). The only surviving non-colour cue is the
+ *     `aria-describedby` reason text, which is words, not a glyph.
  *   - POSITION: passes cleanly — the tally bar is a real shape (a bar,
  *     present or absent) for sighted users, `aria-current="step"` for
- *     assistive tech; never colour.
- *   - SELECTION: the achromatic bg-text/text-bg inversion, unchanged from
- *     every prior pass.
+ *     assistive tech; never colour. Unmoved by the redesign (top edge).
+ *   - SELECTION: the achromatic bg-text/text-bg inversion — NOW THE ONLY
+ *     selection cue again (the ring two prior fix rounds added is gone;
+ *     see LifecycleStrip.tsx's own "SELECTION — WHICH GUARANTEE LIVES
+ *     WHERE" section for exactly what this file can and cannot prove about
+ *     that on its own).
  * This file is a rendering test, not a visual/storybook one — it asserts on
  * the actual DOM nodes and attributes present for each fact, not on how
- * the page looks. The chevron geometry itself (notch depth, gap, contrast)
+ * the page looks. The chevron geometry itself (notch/radius, gap, contrast)
  * is NOT this file's concern — jsdom computes no pixels; that is what
  * pages/Dev/LifecycleRailHarness.tsx plus a real-browser measurement pass
  * exist for (see the PR description).
@@ -86,13 +91,11 @@ function hasTally(chipEl: HTMLElement): boolean {
   return chipEl.querySelector('[data-testid="position-tally"]') !== null
 }
 
-/** The chip's selection-ring layer (fix round: the selection-invisibility
- *  defect the orchestrator/codex gate caught — see LifecycleStrip.tsx's own
- *  selectedRingClass comment for the full corridor-analysis proof). A
- *  SEPARATE element/property from both the fill layer and the focus ring,
- *  carrying `outline-current` only while `isSelected`. */
-function selectionRing(chipEl: HTMLElement): HTMLElement {
-  return chipEl.querySelector('[data-testid="selection-ring"]') as HTMLElement
+/** The chip's identity hue line (redesign fix round — a bottom-edge line,
+ *  not a fill any more). Present only when the chip is NOT selected — see
+ *  LifecycleStrip.tsx's own HueLine docstring for why. */
+function hueLine(chipEl: HTMLElement): HTMLElement | null {
+  return chipEl.querySelector('[data-testid="hue-line"]')
 }
 
 function LabelFor(id: FlowStepId): string {
@@ -368,15 +371,13 @@ describe('backend position and wizard selection are each their own signal', () =
   })
 })
 
-// SHELL ROUND 2 (dmfdeploy#482): colour now tracks STAGE IDENTITY again
-// (RAIL_FILL, permanent per stage), not "selected vs not" the way Arc 4
-// WP-2's neutral-everywhere ruling had it — see LifecycleStrip.tsx's own
-// docstring for the full reasoning. This replaces the retired
-// "colour now tracks SELECTION, not stage identity" describe block outright
-// (that ruling itself is what this round supersedes, deliberately, per the
-// Visual System design doc).
-describe('colour carries stage IDENTITY, permanently, independent of selection (Visual System doc §2/§4)', () => {
-  it('every non-selected chip carries its own stage hue — never the achromatic inverted fill, never the action accent', () => {
+// SHELL ROUND 2 REDESIGN (dmfdeploy#482, operator direction): stage
+// identity moved OFF the fill (now one shared neutral token, tested in the
+// SELECTION block below) onto a bottom-edge line, tally-style — see
+// LifecycleStrip.tsx's own HueLine docstring. This replaces the retired
+// "colour carries stage IDENTITY... via the fill" describe block outright.
+describe('the identity hue line — bottom edge, per-stage, hidden when selected (Visual System doc §4, redesign)', () => {
+  it('every non-selected chip carries its own stage hue as a bottom-edge line, never on the fill, never the action accent', () => {
     const steps: Record<FlowStepId, FlowStepState> = {
       design: 'open',
       plan: 'open',
@@ -386,7 +387,7 @@ describe('colour carries stage IDENTITY, permanently, independent of selection (
     }
     renderRail({ steps, activeChip: 'design', current: null })
 
-    const expectedFill: Record<FlowStepId, string> = {
+    const expectedLine: Record<FlowStepId, string> = {
       design: 'bg-rail-design',
       plan: 'bg-rail-plan',
       provision: 'bg-rail-provision',
@@ -395,24 +396,26 @@ describe('colour carries stage IDENTITY, permanently, independent of selection (
     }
     for (const id of ['plan', 'provision', 'configure', 'finalise'] as FlowStepId[]) {
       const el = chip(LabelFor(id))
-      expect(fillLayer(el).className, `${id} should carry its own stage hue`).toContain(expectedFill[id])
-      expect(fillLayer(el).className, `${id} should carry no inverted fill`).not.toContain('bg-text')
+      const line = hueLine(el)
+      expect(line, `${id} should carry a hue line`).not.toBeNull()
+      expect(line?.className, `${id}'s line should carry its own stage hue`).toContain(expectedLine[id])
+      // Hue lives ONLY on the line, never on the fill layer — the fill is
+      // one shared neutral token for every stage now (see the SELECTION
+      // block below).
+      expect(fillLayer(el).className, `${id}'s fill must not carry a stage hue`).not.toMatch(/\bbg-rail-(design|plan|provision|configure|finalise)\b/)
     }
 
-    // Cyan (the action accent) never appears on the rail AS A FILL/INK —
-    // it would make the promoted primary action ambiguous with "where you
-    // are". This check is unaffected by the ring mechanisms (focus-visible
-    // outline/box-shadow, both ink-adaptive via outline-current, and the
-    // selection ring, also outline-current) — none of those channels ever
-    // reach for an accent-coloured class either, so there is no exception
-    // to carve out here any more.
+    // Cyan (the action accent) never appears on the rail AS A FILL/INK/LINE
+    // — it would make the promoted primary action ambiguous with "where
+    // you are".
     for (const id of FLOW_STEPS) {
-      expect(chip(LabelFor(id)).className).not.toMatch(/\b(bg|text)-accent\b/)
-      expect(fillLayer(chip(LabelFor(id))).className).not.toMatch(/\b(bg|text)-accent\b/)
+      const el = chip(LabelFor(id))
+      expect(el.className).not.toMatch(/\b(bg|text)-accent\b/)
+      expect(fillLayer(el).className).not.toMatch(/\b(bg|text)-accent\b/)
     }
   })
 
-  it('each stage keeps its OWN hue regardless of state — open, locked, current and record all fill identically for the same stage', () => {
+  it('each stage keeps its OWN line colour regardless of state — open, locked, current and record all line identically for the same stage', () => {
     const steps: Record<FlowStepId, FlowStepState> = {
       design: 'open',
       plan: 'locked',
@@ -422,67 +425,19 @@ describe('colour carries stage IDENTITY, permanently, independent of selection (
     }
     renderRail({ steps, activeChip: null, current: 'provision' })
 
-    expect(fillLayer(chip('Design')).className).toContain('bg-rail-design')
-    expect(fillLayer(chip('Plan')).className).toContain('bg-rail-plan')
-    expect(fillLayer(chip('Provision')).className).toContain('bg-rail-provision')
-    expect(fillLayer(chip('Configure')).className).toContain('bg-rail-configure')
-    expect(fillLayer(chip('Finalise & Review')).className).toContain('bg-rail-finalise')
+    expect(hueLine(chip('Design'))?.className).toContain('bg-rail-design')
+    expect(hueLine(chip('Plan'))?.className).toContain('bg-rail-plan')
+    expect(hueLine(chip('Provision'))?.className).toContain('bg-rail-provision')
+    expect(hueLine(chip('Configure'))?.className).toContain('bg-rail-configure')
+    expect(hueLine(chip('Finalise & Review'))?.className).toContain('bg-rail-finalise')
   })
-})
 
-// FIX ROUND (orchestrator/codex gate, dmfdeploy#481): the achromatic
-// fill-invert ALONE is invisible as a selection cue on provision/configure/
-// finalise — measured fill-vs-fill at 2.82:1 / 2.04:1 / 1.49:1, all under
-// WCAG 1.4.11's 3:1 floor for a UI state change. A corridor analysis proved
-// no palette retune fixes this (the identity-fill luminance range and the
-// achromatic selected-fill luminance are structurally incompatible on one
-// axis — see LifecycleStrip.tsx's own selectedRingClass comment). Selection
-// now carries a SEPARATE ring, independent of the key's hue.
-//
-// MUTATION-VERIFIED: reverting `selectedRingClass` to the empty string
-// unconditionally (deleting the ring) makes the first assertion below fail
-// — `expected '' to match /\boutline\b/` — naming the missing outline
-// class directly, not an incidental symptom. Checked by hand during this
-// fix round (see the PR description for the actual failure output), then
-// restored.
-describe('selection carries an independent ring, not just the achromatic fill-invert (fix round)', () => {
-  it.each(['Design', 'Plan', 'Provision', 'Configure', 'Finalise & Review'])(
-    '%s: a selected key renders a real outline-current ring; an unselected sibling renders none',
-    (label) => {
-      const steps: Record<FlowStepId, FlowStepState> = {
-        design: 'complete',
-        plan: 'complete',
-        provision: 'complete',
-        configure: 'complete',
-        finalise: 'complete',
-      }
-      const id = FLOW_STEPS.find((s) => LabelFor(s) === label) as FlowStepId
-      const sibling = FLOW_STEPS.find((s) => s !== id) as FlowStepId
-      renderRail({ steps, activeChip: id, current: null })
-
-      const selected = selectionRing(chip(label))
-      // THE DISCRIMINATING ASSERTION — this is what breaks if the ring is
-      // removed, not a colour computation that could stay green against a
-      // stale class list.
-      expect(selected.className, `${label} (selected) must carry a ring outline`).toMatch(/\boutline\b/)
-      expect(
-        selected.className,
-        `${label}'s ring colour must be outline-current — it reuses inkClass, already proven >=4.5:1 against whatever fill it sits on, rather than a fixed colour (see the corridor analysis for why no fixed colour works here)`,
-      ).toContain('outline-current')
-
-      // The ring is CONDITIONAL on selection, not merely always-on — an
-      // unselected sibling of the SAME render carries none of it.
-      const unselected = selectionRing(chip(LabelFor(sibling)))
-      expect(unselected.className, `${LabelFor(sibling)} (not selected) must carry no ring`).not.toMatch(/\boutline\b/)
-    },
-  )
-
-  // The three stages the original defect actually lived on — pinned by
-  // name, not just swept up in the parametrised case above, since these are
-  // the ones a future regression would most plausibly reintroduce (e.g. by
-  // reverting to a fixed ring colour that happens to work for design/plan
-  // and silently fails again for the other three).
-  it('Provision, Configure and Finalise & Review — the three previously-invisible stages — each carry the ring when selected', () => {
+  // dE2000 discriminability of these five line colours under CVD is NOT
+  // this file's concern — jsdom computes no pixels, and the honest read
+  // (reinforcing cue only, imperceptible for one pair under two common
+  // CVDs) is recorded with its full pipeline in index.css's own token
+  // comment, not asserted here.
+  it('is absent on a selected chip — the fill-invert is the dominant signal there, and no single line colour clears 3:1 against both possible backdrops (see index.css)', () => {
     const steps: Record<FlowStepId, FlowStepState> = {
       design: 'complete',
       plan: 'complete',
@@ -490,14 +445,69 @@ describe('selection carries an independent ring, not just the achromatic fill-in
       configure: 'complete',
       finalise: 'complete',
     }
-    for (const id of ['provision', 'configure', 'finalise'] as FlowStepId[]) {
-      cleanup()
-      renderRail({ steps, activeChip: id, current: null })
-      expect(
-        selectionRing(chip(LabelFor(id))).className,
-        `${id} was the stage this defect actually shipped on (1.49-2.82:1 fill-vs-fill) — its ring must be present`,
-      ).toMatch(/\boutline\b/)
+    renderRail({ steps, activeChip: 'provision', current: null })
+
+    expect(hueLine(chip('Provision')), 'the selected chip must carry no hue line').toBeNull()
+    expect(hueLine(chip('Design')), 'an unselected sibling must still carry its line').not.toBeNull()
+  })
+})
+
+// FIX ROUND (orchestrator/codex gate, redesign): the achromatic fill-invert
+// alone was invisible as a selection cue when the fill varied per stage
+// (2.82:1 / 2.04:1 / 1.49:1 fill-vs-fill on provision/configure/finalise,
+// all under WCAG 1.4.11's 3:1 floor) — that defect is what the ring two
+// prior fix rounds added existed to cover. The redesign removes the per-
+// stage fill instead (see LifecycleStrip.tsx's own docstring): with ONE
+// shared neutral fill token on every key, fill-vs-fill selection contrast
+// measures 5.06:1 — uniform by construction — so the ring is gone too (the
+// operator objected to its boxy look, and measurement supported removing
+// it rather than keeping it as a silhouette-following shape).
+//
+// WHICH GUARANTEE LIVES WHERE, split honestly rather than conflated into
+// one over-claiming test: jsdom cannot measure the real 5.06:1 contrast
+// number (that lives in LifecycleStrip.tsx's own docstring and the PR
+// description, render-measured) — what jsdom CAN prove, and what this test
+// pins, is that selection is still marked by a genuinely DIFFERENT fill
+// token, not merely a class that happens to still be there.
+//
+// MUTATION-VERIFIED: forcing `fillClass` to always resolve to `RAIL_FILL`
+// regardless of `isSelected` (i.e. deleting the token swap) makes the
+// assertion below fail — `expected 'absolute inset-0 bg-rail-fill' to
+// contain 'bg-text'` — naming the missing selected-fill token directly.
+// Checked by hand during this fix round (see the PR description for the
+// actual failure output), then restored.
+describe('selection is a genuinely different fill token, not a ring (redesign fix round)', () => {
+  it.each(FLOW_STEPS)('%s: selected carries bg-text, unselected carries bg-rail-fill — never the same token', (id) => {
+    const steps: Record<FlowStepId, FlowStepState> = {
+      design: 'complete',
+      plan: 'complete',
+      provision: 'complete',
+      configure: 'complete',
+      finalise: 'complete',
     }
+    const sibling = FLOW_STEPS.find((s) => s !== id) as FlowStepId
+    renderRail({ steps, activeChip: id, current: null })
+
+    const selectedFill = fillLayer(chip(LabelFor(id)))
+    // THE DISCRIMINATING ASSERTION.
+    expect(selectedFill.className, `${id} (selected) must carry the achromatic selected-fill token`).toContain('bg-text')
+    expect(selectedFill.className, `${id} (selected) must not still carry the neutral unselected token`).not.toContain('bg-rail-fill')
+
+    const unselectedFill = fillLayer(chip(LabelFor(sibling)))
+    expect(unselectedFill.className, `${LabelFor(sibling)} (not selected) must carry the neutral fill token`).toContain('bg-rail-fill')
+    expect(unselectedFill.className, `${LabelFor(sibling)} (not selected) must not carry the selected token`).not.toContain('bg-text')
+  })
+
+  it('no rectangular selection ring is rendered any more — the operator objected to it, and measurement supported removing it', () => {
+    const steps: Record<FlowStepId, FlowStepState> = {
+      design: 'complete',
+      plan: 'complete',
+      provision: 'complete',
+      configure: 'complete',
+      finalise: 'complete',
+    }
+    renderRail({ steps, activeChip: 'finalise', current: null })
+    expect(screen.queryByTestId('selection-ring')).toBeNull()
   })
 })
 
