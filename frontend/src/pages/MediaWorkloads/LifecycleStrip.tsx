@@ -278,6 +278,22 @@ export default function LifecycleStrip({
           const fill = RAIL_FILL[id]
           const fillClass = isSelected ? 'bg-text' : fill.bg
           const inkClass = isSelected ? 'text-bg' : fill.fg
+          // SHELL ROUND 2 FIX ROUND (orchestrator/codex gate — selection
+          // invisibility, dmfdeploy#481). The achromatic fill-invert alone is
+          // invisible on provision/configure/finalise (2.82:1 / 2.04:1 /
+          // 1.49:1 fill-vs-fill, all under WCAG 1.4.11's 3:1 floor for a UI
+          // state change) — a corridor analysis proved no retuned palette can
+          // fix this: the identity-fill luminance range and the selected-fill
+          // luminance are structurally incompatible on one axis (see the PR
+          // description for the full derivation). Selection now gets its OWN
+          // ring, independent of the key's hue, layered ON TOP of the
+          // unchanged fill-invert (which stays because it still genuinely
+          // helps on design/plan). `outline-current` on this ring reuses
+          // `inkClass` — already guaranteed >=4.5:1 against whatever fill is
+          // currently showing, by the exact same derivation that picked
+          // `inkClass` in the first place — rather than inventing a second
+          // colour that would reopen the same class of defect one level out.
+          const selectedRingClass = isSelected ? 'outline outline-2 outline-current' : ''
 
           const inner = (
             <>
@@ -312,7 +328,53 @@ export default function LifecycleStrip({
               {interactive ? (
                 <button
                   type="button"
-                  className={`relative flex w-full items-center justify-center gap-1.5 whitespace-nowrap px-3 py-1.5 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-accent ${inkClass}`}
+                  // FIX ROUND: two layers, deliberately, not one.
+                  //
+                  // `outline-current` (unchanged property from before)
+                  // reuses inkClass — already proven >=4.5:1 against
+                  // whatever fill is CURRENTLY showing — so it is always
+                  // correct against the fill, and it is what survives
+                  // Windows forced-colors mode (the OS recolours `outline`
+                  // to a guaranteed-visible system colour; `box-shadow` is
+                  // simply dropped there, per the CSS Forced Colors spec —
+                  // this is the exact reason #483 named for choosing
+                  // `outline` over `drop-shadow` in the first place).
+                  //
+                  // But `outline-current` alone leaves a REAL gap this fix
+                  // round found and measured, not merely a corner artifact:
+                  // for provision/configure/finalise (dark ink) and any
+                  // SELECTED key (ink = text-bg = --color-bg), the ring's
+                  // OUTWARD-facing 2px band sits over the page background
+                  // (--color-bg) — and dark ink / text-bg are themselves
+                  // near-identical to that same background (1.10:1 / 1.00:1
+                  // measured), so the ring is invisible there, uniformly
+                  // around the whole outward stroke, not just at the notch
+                  // corners. No single ink clears both "vs its own fill"
+                  // and "vs page bg" at once for those three stages — the
+                  // same structural shape as the selection-fill defect this
+                  // round started from (see the PR description for the
+                  // per-stage proof).
+                  //
+                  // The second layer — a two-tone sandwich, dark inner
+                  // stroke then light outer stroke — closes that gap
+                  // properly in ordinary rendering: `--color-bg` already
+                  // clears 3:1 against every one of the five identity fills
+                  // AND the selected fill (that is constraint 1, reused for
+                  // free), and `--color-text` clears 3:1 against `--color-bg`
+                  // itself (16.17:1) — between the two, at least one stroke
+                  // has real contrast against whatever this ring sits over,
+                  // regardless of state. `box-shadow` is a DIFFERENT CSS
+                  // property from `outline`, so the two compose without
+                  // clobbering each other — under forced-colors this layer
+                  // drops out and the outline above carries the guarantee
+                  // alone, exactly as intended.
+                  //
+                  // Total outward reach kept at 2px on both layers (offset-0
+                  // outline, 1px/2px shadow spreads) — inside the 3px
+                  // inter-key gap (measured on a real render) with a 1px
+                  // margin, so a focused key's ring never touches its
+                  // neighbour.
+                  className={`relative flex w-full items-center justify-center gap-1.5 whitespace-nowrap px-3 py-1.5 focus-visible:outline-2 focus-visible:outline-offset-0 focus-visible:outline-current focus-visible:shadow-[0_0_0_1px_var(--color-bg),0_0_0_2px_var(--color-text)] ${inkClass}`}
                   // Explicit accessible name — the key's own label is all
                   // there is now (no trailing state word to exclude), but an
                   // explicit aria-label keeps this independent of whatever
@@ -326,7 +388,16 @@ export default function LifecycleStrip({
                   <span aria-hidden="true" data-testid="key-fill" className={`absolute inset-0 ${fillClass}`} style={{ clipPath: chevronClipPath(position) }}>
                     {showTally && <PositionTally />}
                   </span>
-                  <span className="relative z-10 flex items-center justify-center gap-1.5">{inner}</span>
+                  {/* Selection ring: a SEPARATE element/property from the
+                      focus ring above (outline on THIS span, not the
+                      button), so both can render at once without one
+                      clobbering the other's `outline` — see the
+                      selectedRingClass comment for the contrast derivation.
+                      offset-0 on this span's own (small) box keeps its
+                      total reach within the tightest content margin across
+                      all five keys (Finalise & Review's, measured), clear
+                      of the chevron notch with room to spare. */}
+                  <span data-testid="selection-ring" className={`relative z-10 flex items-center justify-center gap-1.5 ${selectedRingClass}`}>{inner}</span>
                 </button>
               ) : (
                 <div
@@ -338,7 +409,7 @@ export default function LifecycleStrip({
                   <span aria-hidden="true" data-testid="key-fill" className={`absolute inset-0 ${fillClass}`} style={{ clipPath: chevronClipPath(position) }}>
                     {showTally && <PositionTally />}
                   </span>
-                  <span className="relative z-10 flex items-center justify-center gap-1.5">
+                  <span data-testid="selection-ring" className={`relative z-10 flex items-center justify-center gap-1.5 ${selectedRingClass}`}>
                     {inner}
                     {/* A job-in-flight chip can still be the SELECTED one — see
                         the file docstring's "SELECTION AND POSITION ARE STILL
