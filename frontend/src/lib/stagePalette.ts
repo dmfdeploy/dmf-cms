@@ -30,38 +30,32 @@ export const CONTROL_FILL = 'bg-stage-control text-stage-control-fg'
 
 /**
  * The lifecycle RAIL's own neutral fill + ink (dmfdeploy#481/#482/#483,
- * redesign fix round). ONE shared token pair for all five keys — hue no
- * longer lives on the fill at all (see index.css's own token comment for
- * why: with five separately-hued fills, the light-zone stages could not
- * simultaneously clear 4.5:1 against one ink AND 3:1 against the
- * achromatic selected fill, a structural conflict two prior fix rounds
- * fought and could not tune around). A single shared fill means selection's
- * fill-invert contrast is identical, and adequate, on every key by
- * construction — see LifecycleStrip.tsx's own docstring for the measured
- * number and where that guarantee actually lives (a render measurement,
- * not something jsdom can assert).
+ * redesign fix round). ONE shared token pair for all five keys — hue does
+ * not live anywhere on the rail any more.
+ *
+ * FULL ACCOUNT, so a future reader does not have to reconstruct it from
+ * git blame: hue started as five per-stage FILL colours; a fix round found
+ * those could not simultaneously clear 4.5:1 against one ink AND 3:1
+ * against the achromatic selected fill for the light-zone stages (a
+ * structural conflict, not a tuning gap). The next round moved hue to a
+ * bottom-edge LINE instead, keeping one shared neutral fill — but small-
+ * area colour is the worst case for hue discrimination, and a real dE2000
+ * measurement on that line found plan/provision imperceptible (dE00
+ * 0.85-1.17) under the two common CVDs. The operator's ruling from that
+ * measurement: a cue that fails for roughly 1 in 12 males is not an
+ * identity channel, and removed hue from the rail entirely rather than
+ * keep paying for a line that could not do the job the fill couldn't
+ * either. Icon shape (lib/stageIcons.ts) and the EBU label are the rail's
+ * sole identity carriers now — both were already independently sufficient
+ * (Art. 11 — "everything except hue survives greyscale"). None of the
+ * measured figures from either abandoned design are reproduced here or
+ * anywhere else; the surface they described no longer exists.
+ *
+ * A single shared fill means selection's fill-invert contrast is
+ * identical, and adequate, on every key by construction — see
+ * LifecycleStrip.tsx's own docstring for the measured number and where
+ * that guarantee actually lives (a render measurement, not something
+ * jsdom can assert).
  */
 export const RAIL_FILL = 'bg-rail-fill'
 export const RAIL_INK = 'text-text'
-
-/**
- * The lifecycle RAIL's identity hues (dmfdeploy#481/#482/#483) — now a
- * bottom-edge LINE, tally-style, not a fill (redesign fix round; the
- * tally itself keeps the top edge — two different facts do not share an
- * edge). A SEPARATE, muted palette from STAGE_FILL above, which stays
- * retired (Arc 4 WP-2, unused by LifecycleStrip.tsx today). See index.css's
- * --color-rail-* token block for the values, the small-area dE2000
- * measurement, and the honest "reinforcing cue only" read that measurement
- * produced.
- *
- * No `fg` here, unlike STAGE_FILL/the old RAIL_FILL shape — a decorative
- * line carries no text of its own, so there is nothing to pair an ink
- * against.
- */
-export const RAIL_LINE: Record<FlowStepId, string> = {
-  design: 'bg-rail-design',
-  plan: 'bg-rail-plan',
-  provision: 'bg-rail-provision',
-  configure: 'bg-rail-configure',
-  finalise: 'bg-rail-finalise',
-}

@@ -559,9 +559,20 @@ describe('the rail is exactly the five orchestration steps (dmfdeploy#414)', () 
 // have a real action the instant they are NOT busy: deploy, switch-source).
 // So the FAR MORE COMMON case is the position sitting behind a "Ready"
 // badge, not "Now" — the caption was never purely a "Now" echo; it was
-// redundant with the RAIL's own position marker instead (aria-current
-// "step" + PositionTally, both still present and untouched by this fix,
-// mounted directly above via the header slot). Both cases are pinned below.
+// redundant with the RAIL's own position marker at the time (aria-current
+// "step" + PositionTally, mounted directly above via the header slot).
+//
+// FIX ROUND (orchestrator/codex gate, redesign): that rail-side position
+// marker this comment used to point to is GONE — removed entirely, not
+// restyled (see LifecycleStrip.tsx's own docstring point B: the backend
+// can never derive design/plan/finalise as a position, so a marker could
+// only ever land on two of five keys, and aria-current="step" contradicted
+// the IA doc's #493 "peer view, not a gated sequence" amendment). This
+// comment's OWN claim — that the caption was redundant with the rail's
+// marker — is now a historical fact about why the caption stayed removed,
+// not a description of anything currently on screen. Both cases below are
+// still pinned; neither ever asserted on the rail's marker directly, so
+// nothing here needed re-pointing beyond this comment.
 //
 // DISCRIMINATING at the wizard level, not FlowStep's own unit tests:
 // FlowStep's `isCurrentPosition` prop was removed outright (see
