@@ -189,12 +189,17 @@ export const CONTROL_FILL = 'bg-stage-control text-stage-control-fg'
  * point (3) was ruled, moving resting ink up cost the sidebar's shipped
  * hover delta 2.28:1 (muted->text) down to 1.69:1 (this-token->text) — a
  * real, deliberate cost, recorded as a net loss at the time. Point (4)
- * below (the edge ruling) repays it: a hover EDGE adds a second carrier at
- * 5.06:1 (#616161->#e8e8ea) on top of the ink delta, so hover ends up
- * STRONGER than it was before this round touched anything, not weaker. An
- * earlier version of this comment described the 1.69 figure as the
- * standing cost — that stopped being accurate the moment (4) shipped, and
- * is corrected here rather than left for a future reader to rediscover.
+ * below (the edge ruling, FINAL PASS) repays it: a hover EDGE adds a
+ * second carrier, `--color-rail-fill` -> `--color-selected-face`
+ * (#2c2c2e -> #58879e), at 3.57:1 — the same figure already cited above
+ * for the face's own selected-state change, since hover and selected
+ * share the identical edge/face colour by construction — on top of the
+ * ink delta, so hover ends up STRONGER than it was before this round
+ * touched anything, not weaker. CODEX GATE P3 (dmfdeploy/dmfdeploy#512):
+ * an earlier version of this paragraph cited the FIRST PASS edge design's
+ * own figures here (#616161->#e8e8ea, 5.06:1) after the edge ruling had
+ * already moved on to the FINAL PASS tokens above — corrected to the
+ * numbers the shipped design actually uses.
  *
  * (4) THE CHEVRON EDGE, RULED SEPARATELY FROM (1)-(3), IN TWO PASSES. The
  * FIRST pass (rendered off an A/B/C-of-its-own board: fixed edge vs. two
@@ -217,10 +222,15 @@ export const CONTROL_FILL = 'bg-stage-control text-stage-control-fg'
  *     colour changes.
  *   - HOVER: `RAIL_SELECTED_FACE` — THE SELECTED FILL COLOUR, not a bright
  *     accent and not `--color-text` (the first pass's choice, superseded).
- *     Operator-explicit, and deliberate for two reasons: it makes hover a
- *     PREVIEW of what selecting the key will look like, and it reserves
- *     accent hue for focus alone, which is what dissolves the hover/focus
- *     collision risk (below) rather than merely managing around it.
+ *     Operator-explicit, and deliberate: it makes hover a PREVIEW of what
+ *     selecting the key will look like. (CODEX GATE P3,
+ *     dmfdeploy/dmfdeploy#512: an earlier version of this bullet also
+ *     justified the choice as "reserves accent hue for focus alone" — that
+ *     was never accurate, not even under the pre-P1-fix design; see the
+ *     CORRECTION below, this file's own paragraph a few lines down. What
+ *     actually dissolves the hover/focus collision risk is POSITION plus
+ *     the fact that hover's teal face is visually distinct from focus's
+ *     own ring regardless of any accent question.)
  *   - SELECTED: `RAIL_SELECTED_FACE`, unchanged from the first pass — the
  *     face alone already clears 3:1 against the band ground unaided
  *     (measured, not assumed — see the figures below), so the edge has no
@@ -258,28 +268,40 @@ export const CONTROL_FILL = 'bg-stage-control text-stage-control-fg'
  * from the fix alone.
  *
  * HOVER AND FOCUS, VERIFIED NOT TO COLLIDE, TWICE ACROSS TWO EDGE DESIGNS.
- * Both are outline-shaped and both are now 2px, so colour and position are
- * the only remaining differentiators — checked, not assumed, with a real
- * Tab keypress (not `element.focus()`, which does not reliably produce
+ * Both are outline-shaped and both are 2px, so colour and position are the
+ * only remaining differentiators — checked, not assumed, with a real Tab
+ * keypress (not `element.focus()`, which does not reliably produce
  * `:focus-visible`) and a real pointer hover, separately and together
  * (hover+focus-visible simultaneously is the actual case when a keyboard
  * user tabs onto a key their pointer already rests on). CORRECTION WHILE
- * VERIFYING THIS: the rail's own focus ring was never accent-coloured in
- * the first place — unlike Sidebar.tsx's tiles (`focus-visible:outline-
- * accent`), LifecycleStrip.tsx's ring has always used `outline-current`
- * (RAIL_INK/RAIL_SELECTED_INK — i.e. `--color-resting-ink` or `--color-
- * bg`, per whichever ink is active) plus the fixed `--color-bg`/`--color-
- * text` box-shadow sandwich (LifecycleStrip.tsx's own "FOCUS RING"
- * section) — confirmed on the real render (`outlineColor` reads
- * `rgb(10, 10, 11)`, `--color-bg`, on a selected+focused key), not
- * assumed from the class list. So the two never shared accent's hue to
- * begin with; what actually keeps them apart is POSITION (hover, on
+ * VERIFYING THIS (pre-CODEX-GATE state, superseded below): the rail's own
+ * focus ring was never accent-coloured in the first place — unlike
+ * Sidebar.tsx's tiles (`focus-visible:outline-accent`), LifecycleStrip.tsx's
+ * ring at this point used `outline-current` (RAIL_INK/RAIL_SELECTED_INK —
+ * i.e. `--color-resting-ink` or `--color-bg`, per whichever ink is active)
+ * plus a fixed `--color-bg`/`--color-text` box-shadow sandwich — confirmed
+ * on the real render (`outlineColor` reads `rgb(10, 10, 11)`, `--color-bg`,
+ * on a selected+focused key), not assumed from the class list. So the two
+ * never shared accent's hue; what kept them apart was POSITION (hover, on
  * `key-edge`, sits INSIDE the button following the clipped silhouette;
- * focus sits OUTSIDE it, in the inter-key gap) plus the fact that hover's
- * `--color-selected-face` teal is visibly distinct from either of the
- * focus ring's own neutral/ink colours regardless. Confirmed to read as
- * visually distinct in all three combinations on the real render, not
- * inferred from the colour values alone.
+ * focus sits OUTSIDE it, in the inter-key gap) plus hue.
+ *
+ * CODEX GATE P1 (dmfdeploy/dmfdeploy#512) FOUND A REAL BUG IN THAT DESIGN,
+ * SUPERSEDING THE PARAGRAPH ABOVE: `outline` paints on top of an element's
+ * own `box-shadow`, so on a SELECTED key (`RAIL_SELECTED_INK` = `text-bg`,
+ * i.e. `currentColor` = `--color-bg`) the ink-dependent `outline-current`
+ * rendered in the exact same colour as the box-shadow sandwich's own first
+ * layer and fully occluded both shadows underneath it — measured at
+ * ~1.04:1 against `--color-sidebar` on a real focused+selected render, far
+ * under the 3:1 non-text floor, reproducing codex's prediction almost
+ * exactly. Fixed by dropping the ink dependency entirely: the ring is now
+ * a fixed `focus-visible:outline-text` (never `currentColor`, never keyed
+ * to selection state), and the now-fully-redundant box-shadow sandwich is
+ * removed rather than kept as dead code. Verified 15.53:1 on a real render
+ * in all four combinations (selected/unselected × hover/no-hover, each
+ * focused) — see LifecycleStrip.tsx's own "FOCUS RING" section for the
+ * full account and figures; not duplicated here to avoid the two files
+ * drifting out of sync again the way this very paragraph did.
  *
  * A single shared fill/edge pair means the fill-vs-selected-face contrast
  * is identical, and adequate, on every key by construction — see

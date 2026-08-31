@@ -41,21 +41,94 @@ import { contrastRatio, cssVar } from './testUtils/contrast'
 /**
  * The single background colour TOKEN NAME (e.g. `sidebar`, not `bg-sidebar`
  * and not a hex) that Topbar.tsx's header-slot row actually renders, read
- * from the component's own source text. Deliberately tolerant of arbitrary
- * prose BETWEEN the `data-testid` and `className` attributes (this file
- * carries a long doc comment there) via a non-greedy `[\s\S]*?` — brittle
- * only to the row losing its `data-testid` or its `className` attribute
- * entirely, which is exactly the "structural drift" this needs to fail
- * loudly on, not silently paper over.
+ * from the component's own source text.
+ *
+ * CODEX GATE, P2 (dmfdeploy/dmfdeploy#512) — REPRODUCED AND FIXED. The
+ * first version of this function found the row's className text, then ran
+ * `/\bbg-([a-z][\w-]*)\b/` (no `^`/`$` anchors) against the WHOLE string —
+ * a SUBSTRING search, not a token match. Reproduced with codex's own exact
+ * string, `className="hover:bg-bg bg-selected-face"`: the regex matches
+ * `bg-bg` INSIDE `hover:bg-bg` first (it appears earlier in the string),
+ * so the test would have measured against `--color-bg` and reported a
+ * passing ~5:1 while the REAL resting background is `selected-face` and
+ * the true ratio is 1:1 — the exact "fail open, not fail closed" defect
+ * this function exists to prevent, one layer further out than the first
+ * version closed it. The same shape of bug covers any variant prefix
+ * (`hover:`, `focus:`, …) or opacity modifier (`bg-x/50`) appearing before
+ * the row's real bg-* utility in its class list.
+ *
+ * FIXED by matching whole TOKENS, not substrings: the className is split
+ * on whitespace, and each token is tested against `/^bg-[a-z][\w-]*$/`
+ * anchored at BOTH ends — `hover:bg-bg` fails immediately (the token does
+ * not START with `bg-`, it starts with `hover:`), and `bg-x/50` fails too
+ * (the trailing `/50` cannot match `$` right after `[\w-]*`, since `/` is
+ * outside that character class). Any token this anchored pattern accepts
+ * is unambiguously a bare, unprefixed, unmodified `bg-*` utility. If MORE
+ * than one such token is found, or NONE, this throws rather than silently
+ * picking the first candidate ("fail loudly on multiple candidates rather
+ * than taking the first" — the property this test cares about is "there
+ * is exactly one bg-* utility, and this is it," not "here is A candidate").
+ *
+ * ALSO FIXED: the row-locating regex used `[\s\S]*?` between `data-testid`
+ * and `className`, which does not stop at the row's own closing `>` — a
+ * descendant element's className, if one existed earlier in the source
+ * than the row's own, could win the (non-greedy but still cross-tag) match.
+ * A plain `[^>]*?` bound is NOT the fix, despite looking like the obvious
+ * one — this file's own doc comment between the two attributes mentions
+ * `<header>` in prose, a literal `<`/`>` pair that has nothing to do with
+ * JSX structure, and a bare character-class exclusion cannot tell prose
+ * from markup. What actually distinguishes them in this codebase's own
+ * formatting convention is that a REAL child/sibling element starts a NEW
+ * LINE, indented, whereas an inline mention like `<header>` sits inside a
+ * comment's running prose on an existing line. The negative lookahead
+ * `(?!\n\s*<)` bounds the search to "not preceded by a line that starts a
+ * new tag" — tolerant of `<header>`-in-prose, still stopping before any
+ * genuine descendant markup.
  */
-function bandBackgroundToken(): string {
-  const rowMatch = topbarSource.match(/data-testid="header-slot-row"[\s\S]*?className="([^"]+)"/)
-  if (!rowMatch) throw new Error('header-slot-row element (or its className) not found in Topbar.tsx — this test can no longer locate the rail band to check its backdrop')
-  const classes = rowMatch[1]
-  const bgMatch = classes.match(/\bbg-([a-z][\w-]*)\b/)
-  if (!bgMatch) throw new Error(`header-slot-row className carries no bg-* utility to check: "${classes}"`)
-  return bgMatch[1]
+/** `source` defaults to the real Topbar.tsx text; overridable so codex's
+ *  exact repro strings can be pinned as permanent regression tests below
+ *  without needing to actually mutate the real component file for each. */
+function bandBackgroundToken(source: string = topbarSource): string {
+  const rowMatch = source.match(/data-testid="header-slot-row"((?:(?!\n\s*<)[\s\S])*?)className="([^"]+)"/)
+  if (!rowMatch) throw new Error('header-slot-row element (or its className, within the SAME opening tag) not found — this test can no longer locate the rail band to check its backdrop')
+  const classes = rowMatch[2]
+  const bareBgTokens = classes.split(/\s+/).filter((token) => /^bg-[a-z][\w-]*$/.test(token))
+  if (bareBgTokens.length === 0) {
+    throw new Error(`header-slot-row className carries no unambiguous, unprefixed bg-* utility to check: "${classes}"`)
+  }
+  if (bareBgTokens.length > 1) {
+    throw new Error(`header-slot-row className carries MULTIPLE candidate bg-* utilities, ambiguous which is the real backdrop: ${bareBgTokens.join(', ')} (from "${classes}")`)
+  }
+  return bareBgTokens[0].slice('bg-'.length)
 }
+
+describe('bandBackgroundToken, pinned against codex’s own repro strings', () => {
+  it('extracts the real bg-* utility even when a variant-prefixed one appears earlier — codex’s exact repro', () => {
+    const fakeSource = 'data-testid="header-slot-row" className="hover:bg-bg bg-selected-face"'
+    expect(bandBackgroundToken(fakeSource)).toBe('selected-face')
+  })
+
+  it('rejects an opacity-modified utility rather than matching it', () => {
+    const fakeSource = 'data-testid="header-slot-row" className="bg-selected-face/50"'
+    expect(() => bandBackgroundToken(fakeSource)).toThrow(/no unambiguous/)
+  })
+
+  it('throws on multiple bare bg-* candidates rather than silently taking the first', () => {
+    const fakeSource = 'data-testid="header-slot-row" className="bg-sidebar bg-selected-face"'
+    expect(() => bandBackgroundToken(fakeSource)).toThrow(/MULTIPLE candidate/)
+  })
+
+  it('does not cross into a descendant element’s own className, even past an inline <tag>-in-prose mention', () => {
+    const fakeSource = [
+      'data-testid="header-slot-row"',
+      '// see <header> for the ancestor role this maps to',
+      'className="bg-sidebar"',
+      '>',
+      '  <div className="bg-wrong-descendant" />',
+    ].join('\n')
+    expect(bandBackgroundToken(fakeSource)).toBe('sidebar')
+  })
+})
 
 describe('the rail selected/hover face, read from index.css and Topbar.tsx themselves', () => {
   it('Topbar.tsx header-slot row and this test agree on which token is the backdrop, and --color-selected-face clears >=3:1 against it', () => {

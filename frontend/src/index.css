@@ -215,7 +215,13 @@
      what follows describes what actually ships.
 
      --color-rail-fill: #2c2c2e, Y=0.0253 — the rail key's face, at every
-     state (LifecycleStrip.tsx's `key-fill`, inset 2px inside `key-edge`).
+     state (LifecycleStrip.tsx's `key-fill`, eroded 2px inward from
+     `key-edge`'s own shape — CODEX GATE P3, dmfdeploy/dmfdeploy#512: an
+     earlier version of this line said "inset 2px inside key-edge," which
+     described a physically smaller box; the CODEX GATE P2 fix made
+     `key-fill` the SAME full-size box as `key-edge`, `inset-0` in both the
+     `shape()` and fallback paths, with the 2px expressed geometrically —
+     see LifecycleStrip.tsx's `chevronInnerStyle`/`RING_INSET`).
      Deliberately dark: 4.5:1 against the shared ink at its lightest
      (--color-text, Y=0.8081) measures 11.4:1, comfortably clear, and
      nothing else constrains it darker since (per the edge account
@@ -332,8 +338,28 @@
     border-radius: 8px !important; /* BOX_RADIUS, LifecycleStrip.tsx — 6 ->
       8 in the #512 visual parity fix round (28px -> 40px key). Kept in
       sync by hand, same as CONTENT_OFFSET_PX's own test-side literal
-      (lifecycleStrip.test.tsx). Applies identically to both stacked
-      fill layers (key-edge/key-fill) — they share this class. */
+      (lifecycleStrip.test.tsx). Applies to key-edge (the full-size,
+      unshrunk box); key-fill overrides it below. */
+  }
+
+  /* CODEX GATE P2 (dmfdeploy/dmfdeploy#512): key-fill used to share
+     .lifecycle-rail-chevron's own 8px radius unchanged here, on a box
+     shrunk by RING_INSET via `inset-[2px]` — two SAME-radius rounded
+     corners with centres offset by RING_INSET in both x and y separate by
+     RING_INSET·√2 at the 45° point (≈2.83px for RING_INSET=2), not
+     RING_INSET, reproduced against codex's own arithmetic on a real
+     render. Fixed the same way LifecycleStrip.tsx's shape()'d path was:
+     key-fill is inset-0 now (the SAME box as key-edge, see
+     LifecycleStrip.tsx's own `chevronInnerStyle`), and its OWN radius
+     here is BOX_RADIUS - RING_INSET (8 - 2 = 6), a second, more specific
+     class (`.lifecycle-rail-chevron-fill`, defined AFTER the shared rule
+     above so it wins at equal specificity) rather than a second
+     box-shrink. A plain rectangle's ring genuinely IS uniform at any
+     radius pairing that keeps this arithmetic — see LifecycleStrip.tsx's
+     own `chevronInnerStyle` for the `shape()`-mode fallback (`clip-path:
+     inset(...)`) using the identical BOX_RADIUS - RING_INSET value. */
+  .lifecycle-rail-chevron-fill {
+    border-radius: 6px !important;
   }
 
   .lifecycle-rail-content {

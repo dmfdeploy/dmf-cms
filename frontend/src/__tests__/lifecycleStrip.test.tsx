@@ -34,10 +34,16 @@ import { FLOW_STEPS, type FlowStepId, type FlowStepState } from '../lib/workload
  *     current="step"` went with it: it announces a step in a gated
  *     sequence, contradicting the IA doc's #493 amendment that a stage is
  *     a PEER VIEW. This file now pins the ABSENCE of both.
- *   - SELECTION: the achromatic bg-text/text-bg inversion — the rail's
- *     ONLY state now that position is gone. See LifecycleStrip.tsx's own
- *     "SELECTION — WHICH GUARANTEE LIVES WHERE" section for exactly what
- *     this file can and cannot prove about its contrast on its own.
+ *   - SELECTION: a swap to the shared opaque `--color-selected-face` on
+ *     both `key-fill` and `key-edge`, plus dark ink — the rail's ONLY
+ *     state now that position is gone. (CODEX GATE P3,
+ *     dmfdeploy/dmfdeploy#512: an earlier version of this bullet named
+ *     "the achromatic bg-text/text-bg inversion" here — that design was
+ *     retired by the VISUAL PARITY FIX ROUND further down this same file,
+ *     see that section's own account, and this bullet was left describing
+ *     it as if still current.) See LifecycleStrip.tsx's own "SELECTION —
+ *     REBUILT" section for exactly what this file can and cannot prove
+ *     about its contrast on its own.
  * This file is a rendering test, not a visual/storybook one — it asserts on
  * the actual DOM nodes and attributes present for each fact, not on how
  * the page looks. The chevron geometry itself (notch/radius, gap, contrast)
@@ -339,21 +345,22 @@ describe('the rail carries no position marker of any kind — selection is its o
 
 // VISUAL PARITY FIX ROUND (dmfdeploy/dmfdeploy#512, operator finding
 // against a live provision run): the achromatic bg-text/text-bg invert
-// this describe block used to pin is GONE. Selection is now the sidebar's
-// own cyan-tint treatment (Sidebar.tsx:127's `bg-accent/55 text-accent`) —
-// see LifecycleStrip.tsx's own "SELECTION — REBUILT" docstring and
-// lib/stagePalette.ts's docstring for the full alpha derivation. Ink still
-// lives on the chip element itself; the tint lives on a NEW third layer
-// (key-tint) stacked on top of the constant key-fill layer, not a class
-// swap on key-fill itself any more.
+// this describe block used to pin is GONE.
 //
-// MUTATION-VERIFIED: forcing `tinted` to always resolve `false` (i.e.
-// deleting the tint layer's render condition) makes the second assertion
-// below fail — `expected null not to be null` — naming the missing tint
-// element directly. Forcing `inkClass` to always resolve `RAIL_INK`
-// (deleting the ink swap) makes the first assertion fail —
-// `expected '...text-text' to contain 'text-accent'`. Both checked by hand
-// during this fix round, then restored.
+// CODEX GATE P3 (dmfdeploy/dmfdeploy#512): an earlier version of this
+// comment described an INTERIM design at this exact spot — the sidebar's
+// own cyan-tint treatment (`bg-accent/55 text-accent`) painted on a NEW
+// third `key-tint` layer stacked on top of `key-fill`, plus mutation-
+// testing claims about a `tinted` flag and a `key-tint` element. That
+// design was itself superseded before ever shipping (stagePalette.ts's
+// own docstring has the full three-pass account: achromatic invert ->
+// alpha tint -> shared opaque face) — no `tinted` variable or `key-tint`
+// render path exists anywhere in LifecycleStrip.tsx today, so the mutation
+// claims described code that no longer exists. See the comment block
+// immediately below, and the describe block it documents, for the actual
+// final design this file tests; `key-tint`'s ABSENCE is itself asserted
+// directly in the "no separate rectangular selection ring" tests further
+// down.
 // VISUAL PARITY FIX ROUND (#512, operator ruling off two rendered
 // comparison boards — see stagePalette.ts's own docstring for the full,
 // multi-pass account: achromatic invert -> alpha tint -> shared opaque
@@ -431,6 +438,61 @@ describe('selection swaps fill/edge to the shared opaque face and inks the label
     renderRail({ steps, activeChip: 'finalise' })
     expect(screen.queryByTestId('selection-ring')).toBeNull()
     expect(screen.queryByTestId('key-tint')).toBeNull()
+  })
+})
+
+// CODEX GATE, P1 RELEASE BLOCKER (dmfdeploy/dmfdeploy#512): `outline-current`
+// plus the two-tone `box-shadow` sandwich occupied the SAME 0-2px outward
+// band, and outline paints on top of an element's own box-shadow — so a
+// selected key's dark ink (`text-bg`) made outline-current fully occlude
+// the sandwich underneath it, leaving a selected+focused key's entire ring
+// a uniform dark colour, 1.04:1 against the real band ground (reproduced on
+// a real render — see LifecycleStrip.tsx's own comment at the button
+// className for the full pixel-sampled account; jsdom cannot verify the
+// contrast number itself, only the structural fix that produces it).
+//
+// THE FIX jsdom CAN verify: the ring is no longer ink-dependent AT ALL —
+// `outline-text` is a literal token (`--color-text`), never `currentColor`,
+// so selected and unselected keys carry the IDENTICAL outline class, and
+// the (now entirely redundant, since outline always covers it) box-shadow
+// sandwich is removed outright rather than left as dead decoration.
+//
+// MUTATION-VERIFIED: reinstating `focus-visible:outline-current` (the exact
+// pre-fix class) alongside or instead of `outline-text` makes the first
+// assertion below fail — `expected '...outline-current...' not to contain
+// 'outline-current'`. Reinstating the box-shadow class makes the second
+// assertion fail similarly. Checked by hand during this fix round, then
+// reverted.
+describe('the focus ring is a fixed token, never ink-dependent (codex gate P1 fix)', () => {
+  it.each(['design', 'provision'] as FlowStepId[])('%s: carries focus-visible:outline-text regardless of selection, never outline-current', (id) => {
+    const steps: Record<FlowStepId, FlowStepState> = {
+      design: 'complete',
+      plan: 'complete',
+      provision: 'complete',
+      configure: 'complete',
+      finalise: 'complete',
+    }
+    renderRail({ steps, activeChip: 'design' }) // design selected, provision not
+
+    const el = chip(LabelFor(id))
+    const tokens = el.className.split(' ')
+    expect(tokens, `${id} must carry the fixed outline-text focus class`).toContain('focus-visible:outline-text')
+    expect(tokens, `${id} must not carry the retired ink-dependent outline-current class`).not.toContain('focus-visible:outline-current')
+  })
+
+  it('carries no leftover box-shadow focus class — the sandwich is fully removed, not redundant dead code', () => {
+    const steps: Record<FlowStepId, FlowStepState> = {
+      design: 'complete',
+      plan: 'complete',
+      provision: 'complete',
+      configure: 'complete',
+      finalise: 'complete',
+    }
+    renderRail({ steps, activeChip: 'design' })
+
+    for (const id of FLOW_STEPS) {
+      expect(chip(LabelFor(id)).className, `${id} must carry no focus-visible box-shadow class`).not.toMatch(/focus-visible:shadow-/)
+    }
   })
 })
 
@@ -661,9 +723,13 @@ describe('content re-centring on a notched key (fix round, contentOffsetStyle)',
 
 // GATE FIX (codex round 3, P2): the tests above are genuinely discriminating
 // for `contentOffsetStyle` itself, and the "no transform in jsdom" test
-// above is a real safety net — but NEITHER observes the two call sites
-// (LifecycleStrip.tsx:611,622) actually threading SUPPORTS_SHAPE_CURVE
-// through rather than a hardcoded literal. A call site that changed to
+// above is a real safety net — but NEITHER observes the two `key-content`
+// call sites in LifecycleStrip.tsx actually threading SUPPORTS_SHAPE_CURVE
+// through rather than a hardcoded literal (CODEX GATE P3,
+// dmfdeploy/dmfdeploy#512: line numbers dropped from this citation — this
+// file has grown enough since round 3 that a pinned line number goes stale
+// on its own, same lesson as the Sidebar.tsx citations in
+// LifecycleStrip.tsx itself). A call site that changed to
 // `contentOffsetStyle(position, false)` would keep every test above green
 // (jsdom's own SUPPORTS_SHAPE_CURVE is false anyway) while silently
 // un-fixing the off-centre defect the instant a real browser supports
@@ -684,7 +750,7 @@ describe('the supported-browser call sites thread SUPPORTS_SHAPE_CURVE through t
     Reflect.deleteProperty(globalThis, 'CSS')
   })
 
-  it('renders translateX(6px) on middle and last keys, and no transform on first, when shape()/curve IS supported', async () => {
+  it('renders translateX(CONTENT_OFFSET_PX) on middle and last keys, and no transform on first, when shape()/curve IS supported', async () => {
     Object.defineProperty(globalThis, 'CSS', {
       configurable: true,
       value: { supports: () => true } as unknown as typeof CSS,
