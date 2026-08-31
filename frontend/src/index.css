@@ -77,12 +77,17 @@
      a cue that fails for roughly 1 in 12 males is not an identity channel,
      and removed hue from the rail entirely rather than keep paying its
      token/CVD/doc cost for a line that could not do the job either. Icon
-     shape (lib/stageIcons.ts) and the EBU label are the rail's sole
+     shape (lib/stageIcons.tsx) and the EBU label are the rail's sole
      identity carriers now — both independently sufficient already (Art.
-     11 — "everything except hue survives greyscale"). Neither abandoned
-     design's measured figures are reproduced here or anywhere else; this
-     comment describes only what ships. See git history for the full arc
-     if the reasoning is ever needed again.
+     11 — "everything except hue survives greyscale"). The dE00 figures
+     just above are KEPT deliberately, not description of anything still
+     live — they are the measurement that ended the hue line, and the
+     reason no hue token or CVD-mitigation claim survives here to
+     describe. No OTHER figure from either abandoned design (the
+     full-fill 4.5:1/3:1 contrast checks two sentences up included) is
+     reproduced beyond that summary — this comment states what ships,
+     plus the one number that decided hue isn't shipping. See git history
+     for the full arc if more detail is ever needed.
 
      --color-rail-fill: #616161, Y=0.1195 — clears 3:1 against --color-bg
      (3.20, the fill IS the key's edge, a clipped shape carries no border,
