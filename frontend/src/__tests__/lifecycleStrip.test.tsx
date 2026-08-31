@@ -614,3 +614,61 @@ describe('content re-centring on a notched key (fix round, contentOffsetStyle)',
     }
   })
 })
+
+// GATE FIX (codex round 3, P2): the tests above are genuinely discriminating
+// for `contentOffsetStyle` itself, and the "no transform in jsdom" test
+// above is a real safety net — but NEITHER observes the two call sites
+// (LifecycleStrip.tsx:611,622) actually threading SUPPORTS_SHAPE_CURVE
+// through rather than a hardcoded literal. A call site that changed to
+// `contentOffsetStyle(position, false)` would keep every test above green
+// (jsdom's own SUPPORTS_SHAPE_CURVE is false anyway) while silently
+// un-fixing the off-centre defect the instant a real browser supports
+// `shape()`. That gap can only be closed by making the "chevron IS
+// painted" branch reachable from a RENDER, which means forcing
+// SUPPORTS_SHAPE_CURVE — a module-level `const`, evaluated once at import
+// — to resolve `true`. `globalThis.CSS` is stubbed BEFORE the module is
+// (re-)imported, and `vi.resetModules()` plus a dynamic `import()` forces
+// a fresh evaluation of that module-level probe against the stub, rather
+// than reusing the file's already-evaluated top-of-file import (whose
+// SUPPORTS_SHAPE_CURVE was fixed at `false` the moment this file first
+// loaded and cannot be changed after the fact).
+describe('the supported-browser call sites thread SUPPORTS_SHAPE_CURVE through to the render, not just to the helper (codex gate, round 3)', () => {
+  afterEach(() => {
+    // Never leak the stub into a later test — every other test in this
+    // file relies on jsdom's real, CSS-global-less environment resolving
+    // SUPPORTS_SHAPE_CURVE to false.
+    Reflect.deleteProperty(globalThis, 'CSS')
+  })
+
+  it('renders translateX(6px) on middle and last keys, and no transform on first, when shape()/curve IS supported', async () => {
+    Object.defineProperty(globalThis, 'CSS', {
+      configurable: true,
+      value: { supports: () => true } as unknown as typeof CSS,
+    })
+    vi.resetModules()
+    const fresh = await import('../pages/MediaWorkloads/LifecycleStrip')
+    const FreshLifecycleStrip = fresh.default
+
+    const steps: Record<FlowStepId, FlowStepState> = {
+      design: 'complete',
+      plan: 'complete',
+      provision: 'complete',
+      configure: 'complete',
+      finalise: 'complete',
+    }
+    render(
+      <MemoryRouter>
+        <FreshLifecycleStrip steps={steps} activeChip={null} lockedReasons={LOCKED_REASONS} jobInFlight={false} onSelect={() => {}} />
+      </MemoryRouter>,
+    )
+
+    const content = (label: string) => screen.getByLabelText(label).querySelector('[data-testid="key-content"]') as HTMLElement
+
+    expect(content('Design').style.transform, 'Design has no notch and must stay untouched').toBe('')
+    for (const label of ['Plan', 'Provision', 'Configure', 'Finalise & Review']) {
+      expect(content(label).style.transform, `${label} must carry translateX(${fresh.CONTENT_OFFSET_PX}px) once the chevron is actually painted`).toBe(
+        `translateX(${fresh.CONTENT_OFFSET_PX}px)`,
+      )
+    }
+  })
+})
