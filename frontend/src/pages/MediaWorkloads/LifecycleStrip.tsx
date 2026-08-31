@@ -1,4 +1,5 @@
 import { useId } from 'react'
+import type { CSSProperties } from 'react'
 import {
   FLOW_STEPS,
   type FlowStepId,
@@ -64,18 +65,64 @@ import { RAIL_FILL, RAIL_INK } from '../../lib/stagePalette'
  *      the contradiction, not fixed it. SELECTION IS NOW THE RAIL'S ONLY
  *      STATE. The per-stage actionable/uncommitted question is the badge
  *      slot below, reserved and empty until dmfdeploy#495/ADR-0046 lands.
- *   C. ROUNDED CHEVRONS, now with genuine curves everywhere instead of a
- *      mix of arcs, flat chamfers, and untreated vertices (a follow-up fix
- *      round found that inconsistency was the actual "oddly sharp corners"
- *      complaint, not the radius). TWO deliberately different radii: the
- *      box terminal corners still match Sidebar.tsx's `rounded-lg` (8px,
- *      radius only, not its `bg-accent/20` tint — cyan is the action
- *      accent, never used here) and are unchanged by that follow-up round;
- *      the arrow (the point/notch tips and the four corners where a flat
- *      edge meets a diagonal one) gets its own, more generous curve. See
- *      `chevronClipPath` and the ROUNDING comment above it for the full
- *      derivation, including why the arrow itself needs two sizes, not
- *      one.
+ *   C. THE CHEVRON IS NOW DRAWN WITH `clip-path: shape()`, not
+ *      `polygon()` (fix round, operator direction 2026-08-31: "rethink how
+ *      this shape could be constructed"). The shipped polygon had grown to
+ *      56 hand-tuned vertices — unreadable as source, and a polyline
+ *      approximation of a curve rather than an exact one. `shape()` draws
+ *      real curves directly, at any element width (percentages and
+ *      `calc()` are first-class arguments to it — unlike `path()`,
+ *      absolute coordinates only, or SVG's `objectBoundingBox`, which
+ *      turns a uniform pixel radius into an ellipse on a non-square box,
+ *      both rejected for the same reason in an earlier round). The
+ *      construction itself is a GENERIC corner-rounding pass over a
+ *      vertex list (`roundedVertex`/`roundedShape` below) — one function,
+ *      driven entirely by data (`FIRST_VERTICES`/`MIDDLE_VERTICES`/
+ *      `LAST_VERTICES`), rather than three hand-derived paths. Each vertex
+ *      names its own rounding radius; the pass cuts a quadratic Bézier
+ *      corner at every one of them (`curve to … with …`, the control point
+ *      is the original sharp vertex) — no hand-written coordinate, no
+ *      per-corner sweep-direction reasoning to get wrong.
+ *
+ *      FIVE RADII, not two — the operator's final read on a rendered
+ *      variant board, correcting an earlier round's "8px box / 16px+6px
+ *      arrow" split that over-rounded the tip into a blob and under-
+ *      differentiated the two joints:
+ *        - BOX_RADIUS (6px) — the outer terminal corners (Design's left
+ *          end, Finalise & Review's right end). Deliberately NOT
+ *          Sidebar.tsx's 8px `rounded-lg` any more: standard practice
+ *          scales radius by element size bucket, and this 28px control
+ *          and that sidebar tile's 40px are different buckets.
+ *        - TIP_RADIUS (5px) — the protruding tip AND the concave notch
+ *          apex (the SAME radius, both ends of the arrow). Small on
+ *          purpose, on a 14px half-height: the operator's own reference
+ *          keeps its tips crisply pointed, and 7px+ measured as a blob
+ *          that lost the directional read.
+ *        - JOINT_TIP_RADIUS (6px) / JOINT_NOTCH_RADIUS (8px) — the two
+ *          corners where a flat top/bottom edge meets the arrow's diagonal
+ *          edge, DELIBERATELY UNEQUAL. The tip-side joint's interior angle
+ *          is obtuse (~120°); the notch-side joint's is acute (~77°) — at
+ *          an equal radius the acute one reads sharper, because perceived
+ *          softness tracks the included angle, not the radius alone (the
+ *          operator circled exactly that corner twice as still too sharp
+ *          before this was split). 6px and 8px read as equally soft.
+ *      See NOTCH_DEPTH/TIP_RADIUS/BOX_RADIUS/JOINT_TIP_RADIUS/
+ *      JOINT_NOTCH_RADIUS below for the exact values and the vertex lists
+ *      for where each one applies.
+ *
+ *      Firefox is the wrinkle: MDN's own Baseline table calls `shape()`
+ *      "newly available" since February 2026 across Chromium, Firefox and
+ *      Safari, but an empirical support probe run against a real Firefox
+ *      found its `curve` command specifically unsupported regardless of
+ *      what that table claims — SUPPORTS_SHAPE_CURVE below is a runtime
+ *      `CSS.supports` feature query, not an assumption from a compat
+ *      table, and it probes `curve` specifically (this file emits no
+ *      `arc` command) rather than stopping at "does shape() parse at
+ *      all." Operator ruling on the gap: "just using regular rectangular
+ *      in that case is fine" — where `curve` is unsupported, every key
+ *      falls back to a plain `border-radius` rectangle, no chevron,
+ *      rather than keeping the old 56-vertex polygon alive as a second
+ *      geometry only that fallback would use.
  *
  * WHAT SURVIVES UNCHANGED: equal columns, per-key icons unconditionally
  * (dmfdeploy#482), no padlock (IA doc #493 amendment), no indicators in the
@@ -128,11 +175,17 @@ import { RAIL_FILL, RAIL_INK } from '../../lib/stagePalette'
  *     established) and vs the selected fill clears 16.17:1; `--color-text`
  *     (outer stroke) vs page bg clears 16.17:1 — between the two, the ring
  *     is visible regardless of which of the two fill states it sits over.
+ *     Unaffected by the polygon-to-shape() change below: the ring lives on
+ *     the unclipped `<button>`, never the clipped fill `<span>`, in either
+ *     mechanism.
  *
  * EDGE CONTRAST WITHOUT A BORDER (#483 caution 2). A clipped shape cannot
  * carry a normal 1px border, so the key's edge IS its fill's contrast
  * against the page background — `--color-rail-fill` clears WCAG 3:1
- * non-text contrast against --color-bg (3.20, see index.css).
+ * non-text contrast against --color-bg (3.20, see index.css). The
+ * `border-radius` fallback (no `shape()` support) carries the same
+ * constraint the same way — its edge is still just the fill colour, radius
+ * is the only difference from the clipped case.
  */
 
 const STEP_LABEL: Record<FlowStepId, string> = {
@@ -143,275 +196,248 @@ const STEP_LABEL: Record<FlowStepId, string> = {
   finalise: 'Finalise & Review',
 }
 
-/**
- * The chevron notch depth. MEASURED against a real render of this exact
- * component in the dev harness (pages/Dev/LifecycleRailHarness.tsx) at the
- * 1920x1080 capture viewport, 100% zoom — NOT carried over from the
- * 141.4px/spread-1.000 figure #481 and #483 both flag as reported-not-
- * verified-in-the-tree with no recorded zoom. See the PR description for
- * the actual measurement run (viewport + zoom + the resulting "Finalise &
- * Review" usable-width check).
- *
- * Deliberately small — the operator's own 2026-08-21 ruling for this rail
- * was "no indicator dots or any fancy mechanics, just icons and slight
- * directive shapes" (#483's own quote), and #483's body underlines "slight"
- * explicitly: the reference image's chevrons are pronounced, but "a subtler
- * notch is likely better in a band that has to coexist with a message bus
- * above it."
- */
-const NOTCH_PX = 8
+/** The button's own fixed content height, and half of it — every
+ *  coordinate below is relative to the vertical centre (`50% ± Dpx`, see
+ *  `fmt`), so this is only used to work out each vertex's own position,
+ *  never emitted directly. */
+const H = 28
+const M = H / 2
 
 /**
- * The corner rounding radius, matching Sidebar.tsx:127's `rounded-lg`
- * (0.5rem = 8px) on the sidebar nav rail's own active tile — the operator's
- * concrete reference for "rounded chevrons". Only the RADIUS is reused;
- * that tile's `bg-accent/20` tint is deliberately not — cyan is the action
- * accent, and this rail never uses it.
+ * The arrow's horizontal inset — how far in from its own edge the
+ * protruding tip's transition joints sit, AND how far in from the left
+ * edge the receiving notch's own apex reaches. The SAME constant, both
+ * ends of the arrow (operator: "the arrow's horizontal inset, tip and
+ * tail alike") — this round's proportions read clearly as directional
+ * sequence on a key this wide without being aggressive, which matters
+ * because these stages are peer views, not a gated flow; an overstated
+ * arrow would misstate that model.
  */
-const RADIUS_PX = 8
+const NOTCH_DEPTH = 12
 
 /**
- * Replacement points for a true 90-degree corner (the flat terminal corners
- * — Design's left edge, Finalise & Review's right edge) rounded to
- * RADIUS_PX, computed from the standard circle-tangent construction (arc
- * centred at (R,R) from the vertex, quarter-circle from one tangent point
- * to the other). Exact values, not eyeballed — see the PR description for
- * the derivation script. `ARC_OFFSET` is the arc's own 45-degree midpoint
- * offset from each edge (R - R/sqrt(2)).
+ * The tip radius — the protruding point's own apex AND the concave
+ * notch's own apex, the SAME radius for both. Small deliberately: on a
+ * 14px half-height (M above), the operator's own reference image keeps
+ * its tips crisply pointed with restrained rounding, and a rendered
+ * variant board found 7px+ turns the tip into a blob and loses the
+ * directional read entirely.
  */
-const ARC_OFFSET = (RADIUS_PX - RADIUS_PX * Math.SQRT1_2).toFixed(3) // 2.343
+const TIP_RADIUS = 5
 
 /**
- * ROUNDING, FIX ROUND — TWO DELIBERATELY DIFFERENT RADII, per the operator's
- * final word on this (two earlier readings of a visual mockup over- and
- * under-shot it; see git history for the full back-and-forth, not repeated
- * here since neither earlier reading is the target any more). The BOX
- * corners (RADIUS_PX/ARC_OFFSET above — Design's left edge, Finalise &
- * Review's right edge) are UNCHANGED by this pass, still Sidebar.tsx:127's
- * rounded-lg. What changes is the ARROW: the chevron point's tip, the
- * receiving notch's tip, and the four corners where a flat top/bottom edge
- * meets a notch/point's diagonal edge (previously raw, untreated vertices —
- * the prior round's own "OUT OF SCOPE, DELIBERATELY" note, now addressed)
- * are treated as one unit — "part of the arrow, softened with it" — and get
- * a distinctly softer curve than the box.
- *
- * WHY TWO ARROW RADII, NOT ONE (found while building this, not guessed):
- * the tip corners (ARROW_TIP_RADIUS) and the four transition corners
- * (ARROW_TRANS_RADIUS) are NOT the same size, because a uniform enlarged
- * radius does not fit. Each diagonal edge (flat-edge corner to tip apex)
- * has to host BOTH that corner's own fillet and the tip's, and the tangent
- * distance a fillet consumes along its edge is `R / tan(interior-angle /
- * 2)` — small for an obtuse angle, large for an acute one. The receiving
- * notch's own diagonal edge is short (~14.35px — NOTCH_APEX_DEPTH below is
- * an EXISTING, unchanged dimension this round preserves rather than
- * redesigns, not something this pass gets to make deeper) and its
- * transition corner's interior angle (~77°, far more acute than the
- * point-side's ~120°) eats disproportionate edge length per radius pixel.
- * A single uniform radius applied to both the notch's tip and its
- * transition corner overflows that 14.35px budget once R passes roughly
- * 8.7px — indistinguishable from the box's own 8px, not "noticeably
- * softer" as asked for. Splitting the radius resolves it: the tip gets the
- * generous curve (it is, in the operator's own words, "the most looked-at
- * point"), the transition corners get a smaller but still real one — going
- * from zero rounding to any genuine curve is already the fix for "oddly
- * sharp corners" there. Verified by direct tangent-distance-vs-edge-length
- * computation for every corner at the chosen radii (positive margin, >3px,
- * on both the point's 16.12px edge and the notch's 14.35px one) — see the
- * PR description for the scratch script and its output, not eyeballed.
+ * The outer box terminal corner radius — Design's left end, Finalise &
+ * Review's right end. Deliberately NOT Sidebar.tsx:127's 8px `rounded-lg`
+ * any more (an earlier round's reference, which this round's variant
+ * board superseded): standard practice scales corner radius by element
+ * size bucket, and this rail's 28px key and that sidebar's 40px active
+ * tile are different buckets — 6px is the size-correct value here, not a
+ * copy of the tile's own.
  */
-const ARROW_TIP_RADIUS = 16
-const ARROW_TRANS_RADIUS = 6
+const BOX_RADIUS = 6
 
 /**
- * The receiving notch's own apex depth — how far its concave cut actually
- * reaches in from the left edge, in px. NOT a fresh design choice: this is
- * the EXISTING, shipped notch depth, reconstructed (not re-derived from
- * scratch) by intersecting the two diagonal edges of the prior round's own
- * chamfer construction and solving for where they'd meet at a single sharp
- * vertex — confirmed against the live-rendered `getComputedStyle().clipPath`
- * of a real 'middle' key, not just the source constants. It is asymmetric
- * with the point's own protrusion (which reaches fully to the opposite
- * edge, depth 0) — an existing asymmetry, not something this rounding pass
- * introduces or corrects. Preserved exactly so this round changes ONLY how
- * corners are rounded, not the silhouette's underlying proportions.
+ * TWO DELIBERATELY UNEQUAL JOINT RADII — the corners where a flat top/
+ * bottom edge meets the arrow's diagonal edge. Not the same size, because
+ * the two joints' interior angles are not the same: the tip-side joint
+ * (JOINT_TIP_RADIUS) is obtuse, ~120°; the notch-side joint
+ * (JOINT_NOTCH_RADIUS) is acute, ~77° — and at an EQUAL radius the acute
+ * corner reads visibly sharper than the obtuse one, because perceived
+ * softness depends on the included angle, not the radius alone. This is
+ * not a guess: the operator circled exactly the notch-side joints twice,
+ * on two different equal-radius attempts, as still too sharp. 6px and 8px
+ * read as equally soft — the fix was splitting the radius, not raising
+ * it everywhere (raising a shared radius enough to soften the acute
+ * corner would have over-rounded the obtuse one into the same "blob"
+ * territory TIP_RADIUS above was kept small to avoid).
  */
-const NOTCH_APEX_DEPTH = 3.165
-
-/**
- * Segments per rounded arc. Sagitta (max deviation from a true circle) for
- * N segments over sweep angle θ is `R * (1 - cos(θ / (2N)))` — worst case
- * here is the tip fillet's ~59.5° sweep at the larger ARROW_TIP_RADIUS
- * (16px): at N=8 that is 16 * (1 - cos(3.72°)) ≈ 0.03px, imperceptible even
- * magnified (the operator's own explicit "judge it magnified" bar). Kept
- * as one shared constant rather than tuned per-arc — every other arc here
- * is smaller-radius and/or narrower-sweep, so N=8 has strictly more margin
- * there, not less.
- */
-const ARC_SEGMENTS = 8
+const JOINT_TIP_RADIUS = 6
+const JOINT_NOTCH_RADIUS = 8
 
 /** A 2D point in one key's own local px frame: `u` is the distance INTO
- *  the shape from whichever edge the arrow-point in question is anchored
- *  to (0 at the edge, growing inward) — NOT an absolute x. `y` is measured
- *  from the top (0 to the button's fixed 28px height H, below). This one
- *  local frame is shared by both the point (anchored to the right edge,
- *  protruding fully out to it — apex at u=0) and the notch (anchored to
- *  the left edge, apex at u=NOTCH_APEX_DEPTH) — see `pointU`/`notchU`
- *  below for the only place that distinction is made. */
+ *  the shape from whichever edge the feature is anchored to (0 at the
+ *  edge, growing inward), `y` is measured from the top (0 to H). */
 interface LocalPoint {
   u: number
   y: number
 }
 
-const H = 28 // the button's own fixed height — see NOTCH_PX's docstring above for how this was measured.
-
-/**
- * Standard circle-tangent fillet construction: replaces a sharp vertex `v`
- * with an `segments`-segment arc of radius `r`, given the two OUTGOING unit
- * edge directions from it (`dirA`/`dirB`, each pointing from `v` toward one
- * of its two neighbours). Tangent points sit `r / tan(θ/2)` back from `v`
- * along each edge (θ = the interior angle between `dirA`/`dirB`, via their
- * dot product); the arc's own centre sits `r / sin(θ/2)` from `v` along the
- * bisector of `dirA`/`dirB`. Returns `segments + 1` points, ordered from
- * the tangent point on edge A to the tangent point on edge B — callers
- * splice this directly into a boundary point list, no separate "is this a
- * point's convex bulge or a notch's concave one" branch needed, because
- * both corners rounded this round are convex from the polygon's OWN
- * interior (verified directly, not assumed — see NOTCH_APEX_DEPTH's own
- * derivation: the notch's apex interior angle came out ~154.5°, obtuse but
- * still convex, not the reflex angle "concave" would imply). Pure
- * geometry, no dependency on props/state — every call site below is
- * evaluated once at module load, not per render.
- */
-function filletArc(v: LocalPoint, dirA: LocalPoint, dirB: LocalPoint, r: number, segments: number): LocalPoint[] {
-  const dot = Math.max(-1, Math.min(1, dirA.u * dirB.u + dirA.y * dirB.y))
-  const theta = Math.acos(dot)
-  const d = r / Math.tan(theta / 2)
-  const tA: LocalPoint = { u: v.u + d * dirA.u, y: v.y + d * dirA.y }
-  const tB: LocalPoint = { u: v.u + d * dirB.u, y: v.y + d * dirB.y }
-  const bisRaw = { u: dirA.u + dirB.u, y: dirA.y + dirB.y }
-  const bisLen = Math.hypot(bisRaw.u, bisRaw.y)
-  const bisector = { u: bisRaw.u / bisLen, y: bisRaw.y / bisLen }
-  const centreDist = r / Math.sin(theta / 2)
-  const centre: LocalPoint = { u: v.u + centreDist * bisector.u, y: v.y + centreDist * bisector.y }
-  const startAngle = Math.atan2(tA.y - centre.y, tA.u - centre.u)
-  const endAngle = Math.atan2(tB.y - centre.y, tB.u - centre.u)
-  let delta = endAngle - startAngle
-  while (delta > Math.PI) delta -= 2 * Math.PI
-  while (delta < -Math.PI) delta += 2 * Math.PI
-  const points: LocalPoint[] = []
-  for (let i = 0; i <= segments; i++) {
-    const a = startAngle + (delta * i) / segments
-    points.push({ u: centre.u + r * Math.cos(a), y: centre.y + r * Math.sin(a) })
-  }
-  return points
+/** Which edge a point's `u` is measured from: `'right'` emits
+ *  `calc(100% - Upx)` (point-side vertices, protruding out toward 100%),
+ *  `'left'` emits `Upx` directly (notch-side vertices, receding in from
+ *  0). This is the one place the shape-vs-mirror-image distinction is
+ *  made — every vertex below names which edge it belongs to. */
+type Anchor = 'left' | 'right'
+interface TaggedPoint extends LocalPoint {
+  anchor: Anchor
 }
+const at = (u: number, y: number, anchor: Anchor): TaggedPoint => ({ u, y, anchor })
 
-function normalize(p: LocalPoint): LocalPoint {
-  const m = Math.hypot(p.u, p.y)
-  return { u: p.u / m, y: p.y / m }
+/** One corner of the RAW (unrounded) polygon this rail's silhouette would
+ *  be without any rounding at all: a position plus the radius its own
+ *  corner gets cut to. `FIRST_VERTICES`/`MIDDLE_VERTICES`/`LAST_VERTICES`
+ *  below are the only design-specific data in this file — `roundedShape`
+ *  turns any such list into a real `shape()` path, unchanged by which
+ *  list it's given. */
+interface Vertex extends TaggedPoint {
+  r: number
 }
+const vertex = (u: number, y: number, anchor: Anchor, r: number): Vertex => ({ ...at(u, y, anchor), r })
 
-/**
- * Builds one arrow-bump's full set of rounded points (both transition
- * corners plus the tip), in the shared local (u, y) frame — `apexU` is the
- * only thing that differs between the point (0) and the notch
- * (NOTCH_APEX_DEPTH), so this one function produces both. `flatBack` is the
- * direction, in u, of "back along the flat edge, away from the transition
- * vertex" — always +1 in this frame (the flat edge always runs toward
- * larger u on both sides; see the point/notch call sites for why this does
- * not need to differ between them either).
- */
-function buildArrowBump(apexU: number) {
-  const flatTopEnd: LocalPoint = { u: NOTCH_PX, y: 0 }
-  const flatBotEnd: LocalPoint = { u: NOTCH_PX, y: H }
-  const apex: LocalPoint = { u: apexU, y: H / 2 }
-
-  const transTop = filletArc(
-    flatTopEnd,
-    { u: 1, y: 0 },
-    normalize({ u: apex.u - flatTopEnd.u, y: apex.y - flatTopEnd.y }),
-    ARROW_TRANS_RADIUS,
-    ARC_SEGMENTS,
-  )
-  const transBot = filletArc(
-    flatBotEnd,
-    { u: 1, y: 0 },
-    normalize({ u: apex.u - flatBotEnd.u, y: apex.y - flatBotEnd.y }),
-    ARROW_TRANS_RADIUS,
-    ARC_SEGMENTS,
-  )
-  const tip = filletArc(
-    apex,
-    normalize({ u: flatTopEnd.u - apex.u, y: flatTopEnd.y - apex.y }),
-    normalize({ u: flatBotEnd.u - apex.u, y: flatBotEnd.y - apex.y }),
-    ARROW_TIP_RADIUS,
-    ARC_SEGMENTS,
-  )
-  return { transTop, tip, transBot }
-}
-
-const POINT_BUMP = buildArrowBump(0) // protrudes fully to the edge — apex depth 0
-const NOTCH_BUMP = buildArrowBump(NOTCH_APEX_DEPTH)
-
-/** Formats a local point as a clip-path coordinate pair. `anchor` picks
- *  which edge `u` is measured from: `'right'` emits `calc(100% - Upx)`
- *  (the point, protruding out toward 100%), `'left'` emits `Upx` directly
- *  (the notch, receding in from 0). `y` is always emitted relative to the
- *  vertical centre (`50% ± Δpx`), matching the rest of this file's
- *  existing coordinates, including the box-terminal ones above. */
-function fmt(p: LocalPoint, anchor: 'left' | 'right'): string {
-  const x = anchor === 'right' ? `calc(100% - ${p.u.toFixed(3)}px)` : `${p.u.toFixed(3)}px`
-  const dy = p.y - H / 2
-  const y = Math.abs(dy) < 1e-6 ? '50%' : dy > 0 ? `calc(50% + ${dy.toFixed(3)}px)` : `calc(50% - ${(-dy).toFixed(3)}px)`
+/** Formats one point as a `shape()` coordinate pair — see `Anchor` above
+ *  for the `u` convention. `y` is always relative to the vertical centre
+ *  (`50% ± Dpx`). */
+function fmt(p: TaggedPoint): string {
+  const u = Number(p.u.toFixed(3))
+  const x = p.anchor === 'right' ? (u === 0 ? '100%' : `calc(100% - ${u}px)`) : u === 0 ? '0%' : `${u}px`
+  const dy = Number((p.y - M).toFixed(3))
+  const y = Math.abs(dy) < 1e-6 ? '50%' : dy > 0 ? `calc(50% + ${dy}px)` : `calc(50% - ${-dy}px)`
   return `${x} ${y}`
 }
 
-function bumpPath(bump: ReturnType<typeof buildArrowBump>, anchor: 'left' | 'right'): string {
-  return [...bump.transTop, ...bump.tip, ...bump.transBot].map((p) => fmt(p, anchor)).join(', ')
+/** The unit direction and length from `cur` toward `neighbour`, in `cur`'s
+ *  OWN local frame. Same anchor on both ends (e.g. the notch's own two
+ *  diagonal edges, or a box corner's straight vertical edge): computed
+ *  exactly via ordinary vector subtraction, both points already share a
+ *  comparable `u`. DIFFERENT anchors (only ever the long flat top/bottom
+ *  edge, connecting the notch-side cluster of vertices to the point/box-
+ *  side cluster): its direction from `cur` is always +u — "away from
+ *  cur's own anchor edge, toward the interior" is what +u MEANS, and the
+ *  flat edge always runs toward the interior from both ends by
+ *  construction — and its real length is runtime/content-driven, not
+ *  knowable here, but always far larger than twice the biggest radius
+ *  this file uses (the shortest EBU label alone forces a key over 100px
+ *  wide; every radius below is 8px or under), so the `d = min(r, len/2)`
+ *  clamp below never actually engages for it — represented as `Infinity`
+ *  rather than computed. */
+function edgeVector(cur: Vertex, neighbour: Vertex): { dir: LocalPoint; len: number } {
+  if (cur.anchor === neighbour.anchor) {
+    const du = neighbour.u - cur.u
+    const dy = neighbour.y - cur.y
+    const len = Math.hypot(du, dy)
+    return { dir: { u: du / len, y: dy / len }, len }
+  }
+  return { dir: { u: 1, y: 0 }, len: Infinity }
 }
 
-const POINT_PATH = bumpPath(POINT_BUMP, 'right')
-const NOTCH_PATH = bumpPath(NOTCH_BUMP, 'left')
+/** GENERIC CORNER ROUNDING: replaces the sharp vertex `cur` with a
+ *  quadratic Bézier cut, using `cur` itself as the curve's control point —
+ *  the standard "pull both edge endpoints back by `d`, curve through the
+ *  original corner" construction, `d` clamped to half of whichever
+ *  adjacent edge is shorter so a large radius on a short edge can never
+ *  overrun it. Pure function of `cur`'s own two neighbours in the vertex
+ *  list; nothing here is specific to any one of the three key shapes. */
+function roundedVertex(prev: Vertex, cur: Vertex, next: Vertex) {
+  const toPrev = edgeVector(cur, prev)
+  const toNext = edgeVector(cur, next)
+  const d = Math.min(cur.r, toPrev.len / 2, toNext.len / 2)
+  const entry = at(cur.u + d * toPrev.dir.u, cur.y + d * toPrev.dir.y, cur.anchor)
+  const exit = at(cur.u + d * toNext.dir.u, cur.y + d * toNext.dir.y, cur.anchor)
+  const control = at(cur.u, cur.y, cur.anchor)
+  return { entry, exit, control, d }
+}
+
+/** Turns a closed, ordered vertex list into a `shape()` path: walk the
+ *  list, cut every corner via `roundedVertex`, and connect corner N's
+ *  exit point to corner N+1's entry point with a straight `line to` (the
+ *  short leftover span of whatever edge the rounding didn't consume — see
+ *  `edgeVector`). `d <= 0.01` skips the curve for a degenerate corner
+ *  (this file's own radii never produce one, but the fallback keeps the
+ *  function correct for any vertex list, not just these three). */
+function roundedShape(vertices: Vertex[]): string {
+  const n = vertices.length
+  const corners = vertices.map((v, i) => roundedVertex(vertices[(i - 1 + n) % n], v, vertices[(i + 1) % n]))
+  const commands = [`from ${fmt(corners[0].entry)}`]
+  corners.forEach((corner, i) => {
+    commands.push(corner.d > 0.01 ? `curve to ${fmt(corner.exit)} with ${fmt(corner.control)}` : `line to ${fmt(corner.exit)}`)
+    if (i < n - 1) commands.push(`line to ${fmt(corners[i + 1].entry)}`)
+  })
+  commands.push('close')
+  return `shape(${commands.join(', ')})`
+}
 
 /**
- * The clip-path polygon for one rail key, by its position in the row.
- * `first`/`last` carry FLAT terminals (#483: "a lifecycle is a bounded
- * process; pointed terminals read as 'continues off-screen'") — Design's
- * left edge and Finalise & Review's right edge are plain vertical cuts
- * (rounded, RADIUS_PX, the box treatment, unchanged this round). Every
- * other edge either points OUT (the right side of every key but the last —
- * POINT_PATH, rounded per the ARROW_TIP_RADIUS/ARROW_TRANS_RADIUS
- * derivation above) or is notched IN (the left side of every key but the
- * first — NOTCH_PATH, same treatment) — adjacent keys' point/notch pairs
- * read as one interlocking ribbon, separated only by the `<ol>`'s own thin
- * (3px) gap.
+ * The three vertex lists — the ONLY place this file's actual silhouette
+ * is specified. Each is the RAW (unrounded) polygon's corners in walk
+ * order, `(u, y, anchor, radius)`; `roundedShape` does the rest. `M` is
+ * the vertical centre (both the tip and notch apexes sit there); every
+ * other vertex sits on the top (`0`) or bottom (`H`) edge.
+ *
+ * THE INTERLOCK: the receiving notch's own apex sits at `u = NOTCH_DEPTH`
+ * FROM THE LEFT EDGE (i.e. pushed INTO the key), congruent with the
+ * previous key's tip (which protrudes OUT to `u = 0` from the right
+ * edge) — the two nest. Putting the notch apex at `u = 0` instead would
+ * make it a second point facing the same way as the first (a symmetric
+ * hexagon, not a chevron) and the two keys could never interlock.
  */
-function chevronClipPath(position: 'first' | 'middle' | 'last'): string {
-  const r = `${RADIUS_PX}px`
-  const arc = `${ARC_OFFSET}px`
-  if (position === 'first') {
-    return `polygon(
-      0 ${r}, ${arc} ${arc}, ${r} 0,
-      ${POINT_PATH}
-    )`
-  }
-  if (position === 'last') {
-    return `polygon(
-      0 0,
-      calc(100% - ${r}) 0,
-      calc(100% - ${arc}) ${arc}, 100% ${r},
-      100% calc(100% - ${r}), calc(100% - ${arc}) calc(100% - ${arc}),
-      calc(100% - ${r}) 100%,
-      0 100%,
-      ${NOTCH_PATH}
-    )`
-  }
-  return `polygon(
-    0 0,
-    ${POINT_PATH},
-    0 100%,
-    ${NOTCH_PATH}
-  )`
+const FIRST_VERTICES: Vertex[] = [
+  vertex(0, 0, 'left', BOX_RADIUS),
+  vertex(NOTCH_DEPTH, 0, 'right', JOINT_TIP_RADIUS),
+  vertex(0, M, 'right', TIP_RADIUS),
+  vertex(NOTCH_DEPTH, H, 'right', JOINT_TIP_RADIUS),
+  vertex(0, H, 'left', BOX_RADIUS),
+]
+
+const MIDDLE_VERTICES: Vertex[] = [
+  vertex(0, 0, 'left', JOINT_NOTCH_RADIUS),
+  vertex(NOTCH_DEPTH, 0, 'right', JOINT_TIP_RADIUS),
+  vertex(0, M, 'right', TIP_RADIUS),
+  vertex(NOTCH_DEPTH, H, 'right', JOINT_TIP_RADIUS),
+  vertex(0, H, 'left', JOINT_NOTCH_RADIUS),
+  vertex(NOTCH_DEPTH, M, 'left', TIP_RADIUS),
+]
+
+const LAST_VERTICES: Vertex[] = [
+  vertex(0, 0, 'left', JOINT_NOTCH_RADIUS),
+  vertex(0, 0, 'right', BOX_RADIUS),
+  vertex(0, H, 'right', BOX_RADIUS),
+  vertex(0, H, 'left', JOINT_NOTCH_RADIUS),
+  vertex(NOTCH_DEPTH, M, 'left', TIP_RADIUS),
+]
+
+const FIRST_SHAPE = roundedShape(FIRST_VERTICES)
+const MIDDLE_SHAPE = roundedShape(MIDDLE_VERTICES)
+const LAST_SHAPE = roundedShape(LAST_VERTICES)
+
+/**
+ * FEATURE QUERY — probes the `curve` command specifically (the only
+ * `shape()` command this file emits), not just `shape()` itself: a
+ * browser can parse the function and still reject one of its commands, so
+ * "supports `shape()`" is not the same claim as "supports what this rail
+ * actually draws with it." The probe string mirrors real usage (a
+ * `curve` argument mixing `calc()`/`%`) rather than the shortest string
+ * that would pass.
+ *
+ * NOT taken from a compat table: MDN's own Baseline entry for `shape()`
+ * calls it "newly available" since February 2026 across Chromium, Firefox
+ * and Safari, but an empirical support probe run against a real Firefox
+ * found `curve` specifically unsupported there regardless of what that
+ * table claims — this is a runtime `CSS.supports` call, not an
+ * assumption. `CSS` is undefined in jsdom (this repo's test environment
+ * has no such global), which resolves this to `false` there too — the
+ * fallback rectangle below is exactly what the test suite exercises,
+ * which is fine per lifecycleStrip.test.tsx's own "jsdom computes no
+ * pixels" rule; the chevron geometry is a real-browser concern, same as
+ * before this round.
+ */
+const SUPPORTS_SHAPE_CURVE =
+  typeof CSS !== 'undefined' &&
+  typeof CSS.supports === 'function' &&
+  CSS.supports('clip-path', 'shape(from 0 0, curve to calc(100% - 5px) 50% with 5px 5px, close)')
+
+/**
+ * The chevron fill layer's style for one key's position. Native `shape()`
+ * where `curve` is supported; a plain rounded rectangle everywhere else —
+ * operator ruling 2026-08-31, on being shown the Firefox gap above: "just
+ * using regular rectangular in that case is fine." No `position`
+ * branching in the fallback (first/middle/last all render identically) —
+ * a browser that cannot draw the chevron gets one consistent plain shape,
+ * not a partial imitation of it. Uses BOX_RADIUS, the same radius the
+ * shape()'d silhouette uses for its own outer terminal corners.
+ */
+function chevronStyle(position: 'first' | 'middle' | 'last'): CSSProperties {
+  if (!SUPPORTS_SHAPE_CURVE) return { borderRadius: `${BOX_RADIUS}px` }
+  return { clipPath: position === 'first' ? FIRST_SHAPE : position === 'last' ? LAST_SHAPE : MIDDLE_SHAPE }
 }
 
 export default function LifecycleStrip({
@@ -530,7 +556,7 @@ export default function LifecycleStrip({
                   aria-pressed={isSelected}
                   onClick={() => onSelect(id)}
                 >
-                  <span aria-hidden="true" data-testid="key-fill" className={`absolute inset-0 ${fillClass}`} style={{ clipPath: chevronClipPath(position) }} />
+                  <span aria-hidden="true" data-testid="key-fill" className={`absolute inset-0 ${fillClass}`} style={chevronStyle(position)} />
                   <span className="relative z-10 flex items-center justify-center gap-1.5">{inner}</span>
                 </button>
               ) : (
@@ -539,7 +565,7 @@ export default function LifecycleStrip({
                   aria-label={STEP_LABEL[id]}
                   aria-describedby={locked ? descriptionId : undefined}
                 >
-                  <span aria-hidden="true" data-testid="key-fill" className={`absolute inset-0 ${fillClass}`} style={{ clipPath: chevronClipPath(position) }} />
+                  <span aria-hidden="true" data-testid="key-fill" className={`absolute inset-0 ${fillClass}`} style={chevronStyle(position)} />
                   <span className="relative z-10 flex items-center justify-center gap-1.5">
                     {inner}
                     {/* A job-in-flight chip can still be the SELECTED one —
