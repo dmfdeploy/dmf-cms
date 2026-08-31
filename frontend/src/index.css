@@ -62,76 +62,36 @@
   --color-stage-control: #F0523D;
   --color-stage-control-fg: #0F1720;
 
-  /* Lifecycle RAIL tokens (dmfdeploy#481/#482/#483, design record:
-     docs/design/DMF Console Lifecycle Rail Visual System.md §4). A SEPARATE
-     set from --color-stage-* above — those are the retired saturated Arc 4
-     tokens, kept unused for reversibility (stagePalette.ts's own docstring).
+  /* Lifecycle RAIL fill (dmfdeploy#481/#482/#483). A SEPARATE token from
+     --color-stage-* above — those are the retired saturated Arc 4 tokens,
+     kept unused for reversibility (stagePalette.ts's own docstring).
 
-     FIX ROUND (operator direction, redesign): hue came OFF the fill
-     entirely. Every key now shares ONE neutral fill (--color-rail-fill
-     below) — the five identity hues moved to a bottom-edge LINE, tally
-     style (the tally itself keeps the top edge, unchanged; two different
-     facts do not share an edge). This is not cosmetic churn — it dissolves
-     the structural conflict two prior fix rounds fought (constraint 2,
-     4.5:1 vs one ink, pushing light-zone hues bright; constraint 5, 3:1 vs
-     the achromatic selected fill, pushing them dark — the same axis,
-     pulled two directions at once, for any hue used as a FULL FILL). With
-     one shared neutral fill, selection fill-invert contrast is identical
-     and adequate on all five keys by construction, not by luck.
+     ONE shared neutral fill for all five keys — no per-stage hue anywhere
+     on the rail. Two prior fix rounds tried hue as a full fill, then as a
+     bottom-edge line, and measured both: a full-fill hue could not clear
+     4.5:1 against one ink AND 3:1 against the achromatic selected fill at
+     once for the light-zone stages (structural, not a tuning gap); a line
+     colour is small-area, the worst case for hue discrimination, and a
+     real dE2000 measurement found two stages (plan/provision) imperceptible
+     — dE00 0.85-1.17 — under the two common CVDs. The operator's ruling:
+     a cue that fails for roughly 1 in 12 males is not an identity channel,
+     and removed hue from the rail entirely rather than keep paying its
+     token/CVD/doc cost for a line that could not do the job either. Icon
+     shape (lib/stageIcons.ts) and the EBU label are the rail's sole
+     identity carriers now — both independently sufficient already (Art.
+     11 — "everything except hue survives greyscale"). Neither abandoned
+     design's measured figures are reproduced here or anywhere else; this
+     comment describes only what ships. See git history for the full arc
+     if the reasoning is ever needed again.
 
      --color-rail-fill: #616161, Y=0.1195 — clears 3:1 against --color-bg
-     (3.20, the fill IS the key's edge, #483) and 4.5:1 against a SINGLE ink,
-     --color-text (5.06) — no more per-swatch ink pairing, confirmed
-     unnecessary now that every key shares one fill. Selection (fill-invert
-     to --color-text/--color-bg, unchanged mechanism) measures 5.06:1
-     fill-vs-fill on every key — comfortably over WCAG 1.4.11's 3:1 floor
-     for a UI state change, uniform because the starting fill is now
-     literally the same token everywhere, not five separately-tuned ones.
-
-     THE FIVE LINE COLOURS ARE A DIFFERENT, HARDER PROBLEM — SMALL-AREA
-     COLOUR IS THE WORST CASE FOR HUE DISCRIMINATION, and this is a 3px
-     line, not a fill. Their only backdrop is the neutral fill (Y=0.1195),
-     so each needs Y >= 0.4586 to clear 3:1 against it — a narrow, bright
-     band that leaves little room to also spread hues for CVD separation.
-     Verified with an actual protanopia/deuteranopia/tritanopia simulation,
-     not eyeballed — see the PR description for the run.
-
-     PIPELINE, NAMED EXPLICITLY (the reason a bare figure isn't enough, and
-     recurred twice already this round without it): sRGB (D65 white point)
-     -> linear light -> CIE XYZ -> CIE L*a*b* -> CIEDE2000, kL=kC=kH=1 (no
-     severity weighting). CVD simulation applies the Machado/Oliveira/
-     Fernandes (2009) 100%-severity matrices in LINEAR RGB before the
-     XYZ/Lab conversion.
-
-     dE2000, recomputed for the LINE colours specifically (not the old
-     fill-hue figures, which no longer apply to anything — the fill is
-     neutral now):
-
-       unsimulated   configure/finalise    6.70
-       protanopia    plan/provision        0.85  <- imperceptible
-       deuteranopia  plan/provision        1.17  <- imperceptible
-       tritanopia    configure/finalise    6.74
-
-     THE HONEST READ: hue on a 3px line is REINFORCING ONLY, not an
-     independent identity channel — and for plan/provision specifically, it
-     stops reinforcing at all under the two common CVDs (protanopia/
-     deuteranopia, ~8% of males combined): dE2000 0.85-1.17 is below the
-     threshold generally cited as perceptible to the human eye (~1.0) at
-     any viewing distance, CVD or not. This is not a tuning gap — a wider
-     hue spread was tried and made the 3:1-vs-fill contrast fail on two
-     swatches instead (see the PR description); the Y>=0.4586 floor and a
-     5-hue CVD-safe spread do not both fit in the room a 3px line leaves.
-     Icon shape and the EBU label text remain the actual, independent,
-     CVD-proof identity carriers for every stage regardless (Art. 11 —
-     "everything except hue survives greyscale") — the line is accepted as
-     a reinforcing cue only, stated here plainly rather than claimed as
-     more than it is. */
+     (3.20, the fill IS the key's edge, a clipped shape carries no border,
+     #483) and 4.5:1 against the SINGLE shared ink, --color-text (5.06).
+     Selection (fill-invert to --color-text/--color-bg, unchanged mechanism)
+     measures 5.06:1 fill-vs-fill on every key — comfortably over WCAG
+     1.4.11's 3:1 floor for a UI state change, uniform because both fills
+     are single shared tokens now, not five separately-tuned ones. */
   --color-rail-fill: #616161;
-  --color-rail-design: #72CAB4;
-  --color-rail-plan: #A6BCDD;
-  --color-rail-provision: #C0B8E0;
-  --color-rail-configure: #D2B2DC;
-  --color-rail-finalise: #D9ABC5;
 
   /* Micro-label size (Arc 4 WP-2): one token for the duplicated arbitrary
      text-[10px] (LifecycleStrip) / text-[11px] (.metric-label) micro-copy

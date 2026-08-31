@@ -46,11 +46,30 @@ import { classifyWorkloadForHeaderSlot, buildHeaderSlotRail } from '../../store/
  * longer a rail entry at all (LifecycleStrip.tsx's own docstring), so there
  * is nothing left for a chip value to select. The specimens that used to
  * demonstrate the Operate-key tally divergence/convergence pair (formerly
- * #6 and #7) are removed with it — that render rule no longer exists to
- * demonstrate. Specimen #3 (still below) is repointed at what actually
- * happens on an off-flow workload now: no tally anywhere on the five-key
- * rail, because there is no longer a sixth key for the tally to compare
- * against.
+ * #6 and #7) were removed with it, before the tally itself was.
+ *
+ * FIX ROUND (orchestrator/codex gate, redesign): LifecycleStrip no longer
+ * accepts (or renders) a position marker of any kind — the position tally
+ * and `aria-current` were removed entirely (see that component's own
+ * docstring point B: the backend can never derive design/plan/finalise as
+ * a position, so a marker could only ever land on two of five keys, and
+ * `aria-current="step"` contradicted the IA doc's #493 "peer view"
+ * amendment). `rail.current`/`rail.offFlow` in the debug `<dl>` below are
+ * STILL genuinely computed by the real `buildHeaderSlotRail` pipeline —
+ * `store/headerSlot.ts` was deliberately left untouched (its own trust/
+ * derivation machinery has test coverage this fix round's scope doesn't
+ * extend to, and a future consumer may still want it) — but LifecycleStrip
+ * itself no longer reads either field. The `<dl>` rows exist for debugging
+ * the classifier's own output, not to demonstrate anything the rail still
+ * shows; every specimen note below has been corrected to say so, since a
+ * note claiming "the tally should render here" would now be describing
+ * behaviour that does not exist.
+ *
+ * SAME FIX ROUND: hue is also gone from the rail entirely — tried as a
+ * fill, then as a line, measured at each stage, and removed once the line
+ * measured imperceptible (dE2000 0.85-1.17) for one pair under the two
+ * common CVDs. Every key renders the same neutral fill/ink now; only icon
+ * and label carry identity. No specimen note below claims otherwise.
  */
 
 interface Specimen {
@@ -98,8 +117,8 @@ const SPECIMENS: Specimen[] = [
   {
     id: '1-provision',
     slug: 'harness-provision',
-    title: '1 · lifecycle=provision — 2 locked, tally on Provision while Design is selected',
-    note: 'hasBootstrappedMembers: false, so Provision carries only "deploy" — Configure and Finalise both lock (neither has a predecessor to act on yet). activeChip is pinned to Design, diverging from the backend position (Provision), so the tally bar should render on the Provision key.',
+    title: '1 · lifecycle=provision — 2 locked, Design selected (position was Provision; the rail no longer marks it)',
+    note: 'hasBootstrappedMembers: false, so Provision carries only "deploy" — Configure and Finalise both lock (neither has a predecessor to act on yet). activeChip is pinned to Design. The classifier still derives a distinct backend position (Provision, visible in the "current" debug row below) but the rail itself carries no marker for that fact any more — Design (inverted fill) is the only state any key shows here.',
     input: {
       lifecycle: 'provision',
       hasBootstrappedMembers: false,
@@ -117,8 +136,8 @@ const SPECIMENS: Specimen[] = [
   {
     id: '2-configure',
     slug: 'harness-configure',
-    title: '2 · lifecycle=configure — fully open/complete, selection converged with position',
-    note: 'Position and selection both sit on Configure (no hash override) — the tally should be absent (illumination alone already says "here"). Configure and Finalise both carry live actions (switch-source, tear-down) and render as the "open" key tone, not the inverted "current" one — the classifier\'s own documented rule ("bears an action" outranks "is the position").',
+    title: '2 · lifecycle=configure — fully open/complete, selection on Configure',
+    note: 'Position and selection happen to both sit on Configure here (no hash override), but that\'s incidental now — the rail has no position concept left to converge or diverge from selection. Configure and Finalise both carry live actions (switch-source, tear-down) and are unlocked, so both render as ordinary keys; only Configure additionally reads as selected (inverted fill), because it is activeChip.',
     input: {
       lifecycle: 'configure',
       hasBootstrappedMembers: false,
@@ -136,8 +155,8 @@ const SPECIMENS: Specimen[] = [
   {
     id: '3-operate-default',
     slug: 'harness-operate-default',
-    title: '3 · lifecycle=operate — WorkloadSetup\'s own real default selection (Finalise & Review), no tally anywhere',
-    note: 'offFlow is true, every flow step reads complete/open, no flow step is "current". activeChip mirrors WorkloadSetup.tsx\'s own defaultSelection ladder for an off-flow workload with no hash target ("if (offFlow) return \'finalise\'") — this is what an operator actually sees landing on the setup route for a running workload, not a synthetic case. dmfdeploy#414: Operate is no longer a rail entry, so there is no sixth key for the position tally to land on either — none of the five keys shows one, even though Finalise & Review (the selection) genuinely diverges from the workload\'s real position (Operate, off this rail entirely). That divergence is stated in prose instead, on WorkloadSetup\'s own offFlow banner, not on this rail.',
+    title: '3 · lifecycle=operate — WorkloadSetup\'s own real default selection (Finalise & Review)',
+    note: 'offFlow is true, every flow step reads complete/open, no flow step is "current". activeChip mirrors WorkloadSetup.tsx\'s own defaultSelection ladder for an off-flow workload with no hash target ("if (offFlow) return \'finalise\'") — this is what an operator actually sees landing on the setup route for a running workload, not a synthetic case. The rail carries no position marker on any key any more (fix round: the tally was removed rail-wide, not merely because Operate — dmfdeploy#414 — left no sixth key for it to land on) — Finalise & Review (the selection) genuinely diverges from the workload\'s real position (Operate, off this rail entirely), and that divergence is stated in prose only, on WorkloadSetup\'s own offFlow banner, never on this rail.',
     input: OPERATE_HEALTHY,
     instances: OPERATE_HEALTHY_INSTANCES,
     activeChip: 'finalise',
@@ -147,8 +166,8 @@ const SPECIMENS: Specimen[] = [
   {
     id: '4-operate-tearing-down',
     slug: 'harness-tearing-down',
-    title: '4 · lifecycle=operate + tearingDown — active job overrides position to Finalise & Review',
-    note: 'tearingDown: true wins the classifier\'s own active-stage precedence ladder (teardown beats the lifecycle field), so the position is Finalise & Review, NOT off-flow, even though the backend lifecycle value is still "operate" — busy() also suppresses every stageActions() list, so Finalise & Review resolves to the literal "current" key tone rather than "open". activeChip is pinned to finalise too (the operator started the teardown from that panel), so this is the one specimen where a key is simultaneously the position, the selection, AND busy — exercising the job-in-flight sr-only "Selected" node. The readout should show the amber in-progress state with no elapsed time (none exists in this data model — see LifecycleStrip.tsx\'s own RunningReadout docstring).',
+    title: '4 · lifecycle=operate + tearingDown — active job overrides the classifier\'s position to Finalise & Review',
+    note: 'tearingDown: true wins the classifier\'s own active-stage precedence ladder (teardown beats the lifecycle field), so the classifier\'s own position (rail.current, in the debug row below) resolves to Finalise & Review, NOT off-flow, even though the backend lifecycle value is still "operate" — busy() also suppresses every stageActions() list. activeChip is pinned to finalise too (the operator started the teardown from that panel), so this is the one specimen where a key is simultaneously the classifier\'s position, the selection, AND busy — the rail marks none of that separately from selection any more, but it still exercises the job-in-flight sr-only "Selected" node, since a busy key renders as a `<div>`, not a `<button>`, and needs that text node in place of `aria-pressed`.',
     input: {
       lifecycle: 'operate',
       tearingDown: true,
@@ -159,10 +178,12 @@ const SPECIMENS: Specimen[] = [
       purgeAuthorized: true,
       isPurgeableEntity: true,
     },
-    // Deliberately non-zero: while jobInFlight is true, RunningReadout
-    // renders the job-label branch regardless of the derived counts (or of
-    // trustworthy) — included so a DOM inspection can confirm the readout
-    // genuinely IGNORES them during a job, not merely that they're absent.
+    // Deliberately non-zero (stale note removed: this used to document a
+    // RunningReadout component that Shell Round 2 already deleted outright
+    // — see LifecycleStrip.tsx's own docstring, "row-end run-count readout
+    // ... is deleted outright too". Kept non-zero anyway so the debug
+    // running/total row below still shows a real derived count during a
+    // job, even though LifecycleStrip itself no longer renders one.
     instances: fixtureInstances(2, 2),
     activeChip: 'finalise',
     jobOwnerLabel: 'Finalise & Review',
@@ -171,8 +192,8 @@ const SPECIMENS: Specimen[] = [
   {
     id: '5-unknown',
     slug: 'harness-unknown',
-    title: '5 · lifecycle=unknown — 2 record, 3 locked, no tally anywhere',
-    note: 'The backend could not place this workload. Design/Plan render as "record" (readable, no claim of completion) — the only two steps that survive an undetermined position; Provision/Configure/Finalise all lock with a stated reason. current is null, so no flow key carries a tally — there is no position to mark. membersDataTrustworthy is left unset on this specimen\'s input (an unknown-lifecycle workload has no member-state read worth trusting) — this is NOT a "TRUST lookup miss": classifyWorkloadForHeaderSlot always runs `TRUST.set(classified, { trustworthy: input.membersDataTrustworthy ?? false, ... })`, so the omitted field is stored as an explicit `false`, same as any other optional WorkloadLifecycleInput field defaulting via `?? false`. instances here are deliberately non-zero (3 running of 5) anyway, so this specimen still doubles as a live proof that the REAL pipeline withholds the count on that stored false, not a hand-asserted one: it should read "Count unavailable" regardless of what the instances array actually says.',
+    title: '5 · lifecycle=unknown — 2 record, 3 locked',
+    note: 'The backend could not place this workload. Design/Plan render as "record" (readable, no claim of completion) — the only two steps that survive an undetermined position; Provision/Configure/Finalise all lock with a stated reason. current is null (see the debug row below) — the rail carries no position marker regardless, so this specimen looks the same on that front as any other. membersDataTrustworthy is left unset on this specimen\'s input (an unknown-lifecycle workload has no member-state read worth trusting) — this is NOT a "TRUST lookup miss": classifyWorkloadForHeaderSlot always runs `TRUST.set(classified, { trustworthy: input.membersDataTrustworthy ?? false, ... })`, so the omitted field is stored as an explicit `false`, same as any other optional WorkloadLifecycleInput field defaulting via `?? false`. instances here are deliberately non-zero (3 running of 5) anyway, so this specimen still doubles as a live proof that the REAL pipeline withholds the count on that stored false, not a hand-asserted one: it should read "Count unavailable" regardless of what the instances array actually says.',
     input: {
       lifecycle: 'unknown',
     },

@@ -8,31 +8,36 @@ import { FLOW_STEPS, type FlowStepId, type FlowStepState } from '../lib/workload
  * The rail's "never colour alone" contract (Constitution Art. 11, umbrella
  * #347 WO-D1 Acceptance Criterion 8).
  *
- * SHELL ROUND 2 REDESIGN (dmfdeploy#481/#482/#483, operator direction — hue
- * off the fill entirely) rewrote this file's fixtures and most of its
- * assertions again — see LifecycleStrip.tsx's own docstring for the full
- * account. Per-fact status, stated plainly for the CURRENT design:
+ * SHELL ROUND 2 REDESIGN (dmfdeploy#481/#482/#483, operator direction)
+ * rewrote this file's fixtures and most of its assertions across several
+ * fix rounds — see LifecycleStrip.tsx's own docstring for the full
+ * account, points A/B/C. Per-fact status, stated plainly for the CURRENT
+ * design:
  *   - IDENTITY (stage): an always-present icon PLUS the always-present EBU
- *     label — both pure shape/text, survive greyscale and total colour-
- *     blindness alike. A bottom-edge HUE LINE reinforces identity too, but
- *     is explicitly NOT an independent channel any more (measured dE2000
- *     on the line drops to imperceptible, 0.85-1.17, between plan/provision
- *     under the two common CVDs — see index.css's own token comment) — this
- *     file tests the line's PRESENCE/absence and stage mapping, not its
- *     discriminability, which jsdom cannot measure anyway.
+ *     label — the rail's ONLY identity carriers now. Hue was tried as a
+ *     fill, then as a bottom-edge line, measured at each stage, and
+ *     removed entirely once the line measured imperceptible (dE2000
+ *     0.85-1.17) for one pair under the two common CVDs — icon shape and
+ *     label text were always independently sufficient (Art. 11 —
+ *     "everything except hue survives greyscale").
  *   - LOCKED: visually IDENTICAL to an open key of the same stage — the
  *     Visual System doc §2 rejects any fill/edge distinction for stage
  *     STATE at all (identity and selection are the only two axes fill/edge
  *     may vary on). The only surviving non-colour cue is the
  *     `aria-describedby` reason text, which is words, not a glyph.
- *   - POSITION: passes cleanly — the tally bar is a real shape (a bar,
- *     present or absent) for sighted users, `aria-current="step"` for
- *     assistive tech; never colour. Unmoved by the redesign (top edge).
- *   - SELECTION: the achromatic bg-text/text-bg inversion — NOW THE ONLY
- *     selection cue again (the ring two prior fix rounds added is gone;
- *     see LifecycleStrip.tsx's own "SELECTION — WHICH GUARANTEE LIVES
- *     WHERE" section for exactly what this file can and cannot prove about
- *     that on its own).
+ *   - POSITION: REMOVED ENTIRELY (fix round). The backend-derived position
+ *     can only ever be `provision`, `configure`, `operate` (off this
+ *     five-key rail, dmfdeploy#414) or `unknown` — never design, plan or
+ *     finalise (ADR-0046: finalise is never inferred from absence) — so a
+ *     marker on this rail could only ever land on two of five keys, a
+ *     coarse aggregate that hid real per-member divergence. `aria-
+ *     current="step"` went with it: it announces a step in a gated
+ *     sequence, contradicting the IA doc's #493 amendment that a stage is
+ *     a PEER VIEW. This file now pins the ABSENCE of both.
+ *   - SELECTION: the achromatic bg-text/text-bg inversion — the rail's
+ *     ONLY state now that position is gone. See LifecycleStrip.tsx's own
+ *     "SELECTION — WHICH GUARANTEE LIVES WHERE" section for exactly what
+ *     this file can and cannot prove about its contrast on its own.
  * This file is a rendering test, not a visual/storybook one — it asserts on
  * the actual DOM nodes and attributes present for each fact, not on how
  * the page looks. The chevron geometry itself (notch/radius, gap, contrast)
@@ -52,7 +57,6 @@ const LOCKED_REASONS: Record<FlowStepId, string> = {
 function renderRail(overrides: {
   steps: Record<FlowStepId, FlowStepState>
   activeChip: FlowStepId | null
-  current: FlowStepId | null
   jobInFlight?: boolean
   onSelect?: (step: FlowStepId) => void
 }) {
@@ -61,7 +65,6 @@ function renderRail(overrides: {
       <LifecycleStrip
         steps={overrides.steps}
         activeChip={overrides.activeChip}
-        current={overrides.current}
         lockedReasons={LOCKED_REASONS}
         jobInFlight={overrides.jobInFlight ?? false}
         onSelect={overrides.onSelect ?? (() => {})}
@@ -77,25 +80,11 @@ function chip(label: string): HTMLElement {
 }
 
 /** The chip's clipped fill layer (SHELL ROUND 2) — carries the fill/edge
- *  colour classes and the position tally; the outer chip element itself
- *  stays transparent so the chevron notch/point actually shows the page
- *  behind it rather than a rectangular background masking the cutout. */
+ *  colour class; the outer chip element itself stays transparent so the
+ *  chevron notch/point actually shows the page behind it rather than a
+ *  rectangular background masking the cutout. */
 function fillLayer(chipEl: HTMLElement): HTMLElement {
   return chipEl.querySelector('[data-testid="key-fill"]') as HTMLElement
-}
-
-/** umbrella dmf-cms#391: the tally bar is a decorative, aria-hidden child —
- *  queried structurally (data-testid) rather than by text, since it carries
- *  none. */
-function hasTally(chipEl: HTMLElement): boolean {
-  return chipEl.querySelector('[data-testid="position-tally"]') !== null
-}
-
-/** The chip's identity hue line (redesign fix round — a bottom-edge line,
- *  not a fill any more). Present only when the chip is NOT selected — see
- *  LifecycleStrip.tsx's own HueLine docstring for why. */
-function hueLine(chipEl: HTMLElement): HTMLElement | null {
-  return chipEl.querySelector('[data-testid="hue-line"]')
 }
 
 function LabelFor(id: FlowStepId): string {
@@ -118,7 +107,7 @@ describe('every key renders its own identity icon plus its bare EBU label, regar
       configure: 'current',
       finalise: 'locked',
     }
-    renderRail({ steps, activeChip: 'configure', current: 'configure' })
+    renderRail({ steps, activeChip: 'configure' })
 
     for (const id of FLOW_STEPS) {
       const el = chip(LabelFor(id))
@@ -144,7 +133,7 @@ describe('every key renders its own identity icon plus its bare EBU label, regar
       configure: 'open',
       finalise: 'current',
     }
-    renderRail({ steps, activeChip: 'finalise', current: 'finalise' })
+    renderRail({ steps, activeChip: 'finalise' })
 
     for (const id of FLOW_STEPS) {
       expect(chip(LabelFor(id)).getAttribute('aria-label')).toBe(LabelFor(id))
@@ -169,7 +158,7 @@ describe('locked state is reachable, and its only surviving non-colour cue is th
       finalise: 'locked',
     }
     const onSelect = vi.fn()
-    renderRail({ steps, activeChip: 'design', current: null, onSelect })
+    renderRail({ steps, activeChip: 'design', onSelect })
 
     const provision = chip('Provision')
     expect(provision.tagName).toBe('BUTTON')
@@ -197,7 +186,7 @@ describe('locked state is reachable, and its only surviving non-colour cue is th
       configure: 'locked',
       finalise: 'locked',
     }
-    renderRail({ steps, activeChip: 'design', current: 'provision' })
+    renderRail({ steps, activeChip: 'design' })
 
     for (const id of ['design', 'plan', 'provision'] as FlowStepId[]) {
       expect(chip(LabelFor(id)).getAttribute('aria-describedby'), `${id} should carry no description`).toBeNull()
@@ -212,7 +201,7 @@ describe('locked state is reachable, and its only surviving non-colour cue is th
       configure: 'open',
       finalise: 'open',
     }
-    renderRail({ steps: lockedSteps, activeChip: 'design', current: null })
+    renderRail({ steps: lockedSteps, activeChip: 'design' })
     const lockedFill = fillLayer(chip('Provision')).className
 
     cleanup()
@@ -224,7 +213,7 @@ describe('locked state is reachable, and its only surviving non-colour cue is th
       configure: 'open',
       finalise: 'open',
     }
-    renderRail({ steps: openSteps, activeChip: 'design', current: null })
+    renderRail({ steps: openSteps, activeChip: 'design' })
     const openFill = fillLayer(chip('Provision')).className
 
     expect(lockedFill).toBe(openFill)
@@ -249,7 +238,6 @@ describe('a job in flight demotes every chip to inert, and the band states no st
     renderRail({
       steps,
       activeChip: 'configure',
-      current: 'configure',
       jobInFlight: true,
     })
 
@@ -269,8 +257,74 @@ describe('a job in flight demotes every chip to inert, and the band states no st
   })
 })
 
-describe('backend position and wizard selection are each their own signal', () => {
-  it('the selected chip inverts its fill and ink (bg-text/text-bg) and is aria-pressed, independent of position', () => {
+// FIX ROUND (orchestrator/codex gate): the position tally and
+// `aria-current="step"` are REMOVED, not restyled — verified against the
+// backend (`_derive_workload_lifecycle`, src/dmf_cms/media_workloads.py):
+// the derived position can only ever be provision/configure/operate/
+// unknown, never design/plan/finalise, and dmfdeploy#414 already took
+// Operate off this rail — so a marker here could only ever land on two of
+// five keys, and `aria-current="step"` announces a step in a gated
+// sequence, contradicting the IA doc's #493 amendment that a stage is a
+// PEER VIEW. Selection is the rail's only state now.
+//
+// MUTATION-VERIFIED: reinstating `aria-current={isPosition ? 'step' :
+// undefined}` on the button branch (the exact pre-removal line) makes the
+// second assertion below fail — `expected null, received "step"` — naming
+// the reinstated attribute directly. Checked by hand during this fix round
+// (see the PR description for the actual failure output), then reverted.
+describe('the rail carries no position marker of any kind — selection is its only state (fix round)', () => {
+  it('no key, in any state, carries a position-tally element or aria-current', () => {
+    const steps: Record<FlowStepId, FlowStepState> = {
+      design: 'complete',
+      plan: 'complete',
+      provision: 'current',
+      configure: 'open',
+      finalise: 'open',
+    }
+    renderRail({ steps, activeChip: 'design' })
+
+    for (const id of FLOW_STEPS) {
+      const el = chip(LabelFor(id))
+      expect(el.querySelector('[data-testid="position-tally"]'), `${id} must carry no tally element`).toBeNull()
+      expect(el.getAttribute('aria-current'), `${id} must carry no aria-current`).toBeNull()
+    }
+  })
+
+  it('holds for the inert (job-in-flight) branch too, not just the interactive button', () => {
+    const steps: Record<FlowStepId, FlowStepState> = {
+      design: 'complete',
+      plan: 'complete',
+      provision: 'current',
+      configure: 'open',
+      finalise: 'open',
+    }
+    renderRail({ steps, activeChip: 'design', jobInFlight: true })
+
+    for (const id of FLOW_STEPS) {
+      const el = chip(LabelFor(id))
+      expect(el.querySelector('[data-testid="position-tally"]')).toBeNull()
+      expect(el.getAttribute('aria-current')).toBeNull()
+    }
+  })
+
+  it('holds regardless of which state each key is in — locked, open, current, record, complete all carry no marker', () => {
+    const steps: Record<FlowStepId, FlowStepState> = {
+      design: 'record',
+      plan: 'locked',
+      provision: 'current',
+      configure: 'open',
+      finalise: 'complete',
+    }
+    renderRail({ steps, activeChip: null })
+
+    for (const id of FLOW_STEPS) {
+      expect(chip(LabelFor(id)).getAttribute('aria-current')).toBeNull()
+    }
+  })
+})
+
+describe('selection inverts fill and ink (bg-text/text-bg), and is aria-pressed', () => {
+  it('the selected chip inverts; an unselected sibling does not', () => {
     const steps: Record<FlowStepId, FlowStepState> = {
       design: 'complete',
       plan: 'complete',
@@ -278,9 +332,7 @@ describe('backend position and wizard selection are each their own signal', () =
       configure: 'locked',
       finalise: 'locked',
     }
-    // Selected step (Design) differs from the backend position (Provision)
-    // — both must be independently legible.
-    renderRail({ steps, activeChip: 'design', current: 'provision' })
+    renderRail({ steps, activeChip: 'design' })
 
     const design = chip('Design')
     expect(design.getAttribute('aria-pressed')).toBe('true')
@@ -296,159 +348,6 @@ describe('backend position and wizard selection are each their own signal', () =
     expect(provision.getAttribute('aria-pressed')).toBe('false')
     expect(provision.className).not.toContain('text-bg')
     expect(fillLayer(provision).className).not.toContain('bg-text')
-  })
-
-  it('the backend position gets its own tally bar, even on a chip that is not selected', () => {
-    const steps: Record<FlowStepId, FlowStepState> = {
-      design: 'complete',
-      plan: 'complete',
-      provision: 'current',
-      configure: 'locked',
-      finalise: 'locked',
-    }
-    renderRail({ steps, activeChip: 'design', current: 'provision' })
-
-    const provision = chip('Provision')
-    expect(hasTally(provision), 'Provision (position, not selected) should carry a tally bar').toBe(true)
-    expect(provision.getAttribute('aria-current')).toBe('step')
-
-    const design = chip('Design')
-    expect(hasTally(design), 'Design (neither position nor selected) should carry no tally bar').toBe(false)
-  })
-
-  it('withholds the tally bar when the selected chip IS the position — the fill alone already says so', () => {
-    const steps: Record<FlowStepId, FlowStepState> = {
-      design: 'complete',
-      plan: 'complete',
-      provision: 'current',
-      configure: 'locked',
-      finalise: 'locked',
-    }
-    // Selected AND position both land on Provision this time.
-    renderRail({ steps, activeChip: 'provision', current: 'provision' })
-
-    const provision = chip('Provision')
-    expect(fillLayer(provision).className).toContain('bg-text') // still visibly selected
-    expect(hasTally(provision), 'a converged selected+position key should carry no tally bar').toBe(false)
-    expect(provision.getAttribute('aria-current')).toBe('step')
-  })
-
-  it('the tally bar survives the busy non-interactive rendering (chip demoted from <button> to inert <div>)', () => {
-    const steps: Record<FlowStepId, FlowStepState> = {
-      design: 'complete',
-      plan: 'complete',
-      provision: 'current',
-      configure: 'open',
-      finalise: 'open',
-    }
-    renderRail({
-      steps,
-      activeChip: 'design',
-      current: 'provision',
-      jobInFlight: true,
-    })
-
-    const provision = chip('Provision')
-    expect(provision.tagName, 'demoted to inert — chip root itself must be a <div>').toBe('DIV')
-    expect(within(provision).queryByRole('button')).toBeNull()
-    expect(hasTally(provision)).toBe(true)
-    expect(provision.getAttribute('aria-current')).toBe('step')
-  })
-
-  it('an off-flow workload (current: null) carries no tally on any of the five keys — there is no sixth key for it to land on instead', () => {
-    const steps: Record<FlowStepId, FlowStepState> = {
-      design: 'complete',
-      plan: 'complete',
-      provision: 'complete',
-      configure: 'open',
-      finalise: 'open',
-    }
-    renderRail({ steps, activeChip: 'finalise', current: null })
-
-    for (const id of ['design', 'plan', 'provision', 'configure', 'finalise'] as FlowStepId[]) {
-      expect(hasTally(chip(LabelFor(id))), `${id} should carry no tally — current is null`).toBe(false)
-    }
-  })
-})
-
-// SHELL ROUND 2 REDESIGN (dmfdeploy#482, operator direction): stage
-// identity moved OFF the fill (now one shared neutral token, tested in the
-// SELECTION block below) onto a bottom-edge line, tally-style — see
-// LifecycleStrip.tsx's own HueLine docstring. This replaces the retired
-// "colour carries stage IDENTITY... via the fill" describe block outright.
-describe('the identity hue line — bottom edge, per-stage, hidden when selected (Visual System doc §4, redesign)', () => {
-  it('every non-selected chip carries its own stage hue as a bottom-edge line, never on the fill, never the action accent', () => {
-    const steps: Record<FlowStepId, FlowStepState> = {
-      design: 'open',
-      plan: 'open',
-      provision: 'open',
-      configure: 'open',
-      finalise: 'open',
-    }
-    renderRail({ steps, activeChip: 'design', current: null })
-
-    const expectedLine: Record<FlowStepId, string> = {
-      design: 'bg-rail-design',
-      plan: 'bg-rail-plan',
-      provision: 'bg-rail-provision',
-      configure: 'bg-rail-configure',
-      finalise: 'bg-rail-finalise',
-    }
-    for (const id of ['plan', 'provision', 'configure', 'finalise'] as FlowStepId[]) {
-      const el = chip(LabelFor(id))
-      const line = hueLine(el)
-      expect(line, `${id} should carry a hue line`).not.toBeNull()
-      expect(line?.className, `${id}'s line should carry its own stage hue`).toContain(expectedLine[id])
-      // Hue lives ONLY on the line, never on the fill layer — the fill is
-      // one shared neutral token for every stage now (see the SELECTION
-      // block below).
-      expect(fillLayer(el).className, `${id}'s fill must not carry a stage hue`).not.toMatch(/\bbg-rail-(design|plan|provision|configure|finalise)\b/)
-    }
-
-    // Cyan (the action accent) never appears on the rail AS A FILL/INK/LINE
-    // — it would make the promoted primary action ambiguous with "where
-    // you are".
-    for (const id of FLOW_STEPS) {
-      const el = chip(LabelFor(id))
-      expect(el.className).not.toMatch(/\b(bg|text)-accent\b/)
-      expect(fillLayer(el).className).not.toMatch(/\b(bg|text)-accent\b/)
-    }
-  })
-
-  it('each stage keeps its OWN line colour regardless of state — open, locked, current and record all line identically for the same stage', () => {
-    const steps: Record<FlowStepId, FlowStepState> = {
-      design: 'open',
-      plan: 'locked',
-      provision: 'current',
-      configure: 'record',
-      finalise: 'complete',
-    }
-    renderRail({ steps, activeChip: null, current: 'provision' })
-
-    expect(hueLine(chip('Design'))?.className).toContain('bg-rail-design')
-    expect(hueLine(chip('Plan'))?.className).toContain('bg-rail-plan')
-    expect(hueLine(chip('Provision'))?.className).toContain('bg-rail-provision')
-    expect(hueLine(chip('Configure'))?.className).toContain('bg-rail-configure')
-    expect(hueLine(chip('Finalise & Review'))?.className).toContain('bg-rail-finalise')
-  })
-
-  // dE2000 discriminability of these five line colours under CVD is NOT
-  // this file's concern — jsdom computes no pixels, and the honest read
-  // (reinforcing cue only, imperceptible for one pair under two common
-  // CVDs) is recorded with its full pipeline in index.css's own token
-  // comment, not asserted here.
-  it('is absent on a selected chip — the fill-invert is the dominant signal there, and no single line colour clears 3:1 against both possible backdrops (see index.css)', () => {
-    const steps: Record<FlowStepId, FlowStepState> = {
-      design: 'complete',
-      plan: 'complete',
-      provision: 'complete',
-      configure: 'complete',
-      finalise: 'complete',
-    }
-    renderRail({ steps, activeChip: 'provision', current: null })
-
-    expect(hueLine(chip('Provision')), 'the selected chip must carry no hue line').toBeNull()
-    expect(hueLine(chip('Design')), 'an unselected sibling must still carry its line').not.toBeNull()
   })
 })
 
@@ -486,7 +385,7 @@ describe('selection is a genuinely different fill token, not a ring (redesign fi
       finalise: 'complete',
     }
     const sibling = FLOW_STEPS.find((s) => s !== id) as FlowStepId
-    renderRail({ steps, activeChip: id, current: null })
+    renderRail({ steps, activeChip: id })
 
     const selectedFill = fillLayer(chip(LabelFor(id)))
     // THE DISCRIMINATING ASSERTION.
@@ -506,8 +405,47 @@ describe('selection is a genuinely different fill token, not a ring (redesign fi
       configure: 'complete',
       finalise: 'complete',
     }
-    renderRail({ steps, activeChip: 'finalise', current: null })
+    renderRail({ steps, activeChip: 'finalise' })
     expect(screen.queryByTestId('selection-ring')).toBeNull()
+  })
+})
+
+// FIX ROUND (orchestrator/codex gate, redesign, operator ruling): hue is
+// removed from the rail entirely, not just off the fill — the bottom-edge
+// LINE a prior fix round added was itself measured and removed once dE2000
+// showed it imperceptible (0.85-1.17) for one pair under the two common
+// CVDs. Icon shape and the EBU label are the rail's sole identity carriers
+// now. This describe block pins that ABSENCE, replacing the retired
+// hue-line describe block outright.
+//
+// MUTATION-VERIFIED: reinstating a `bg-rail-design`-style class on the fill
+// layer (the exact pre-removal per-stage token) makes the assertion below
+// fail — naming a stage-hue class where none should exist. Checked by hand
+// during this fix round, then reverted.
+describe('no key carries any per-stage hue, anywhere — identity rests on icon and label alone (redesign, operator ruling)', () => {
+  it('carries no bg-rail-<stage> class, no hue-line element, on any key in any state', () => {
+    const steps: Record<FlowStepId, FlowStepState> = {
+      design: 'open',
+      plan: 'locked',
+      provision: 'current',
+      configure: 'record',
+      finalise: 'complete',
+    }
+    renderRail({ steps, activeChip: null })
+
+    for (const id of FLOW_STEPS) {
+      const el = chip(LabelFor(id))
+      expect(el.querySelector('[data-testid="hue-line"]'), `${id} must carry no hue-line element`).toBeNull()
+      expect(fillLayer(el).className, `${id} must carry no per-stage hue class`).not.toMatch(/\bbg-rail-(design|plan|provision|configure|finalise)\b/)
+    }
+
+    // Cyan (the action accent) never appears on the rail either — it would
+    // make the promoted primary action ambiguous with "where you are".
+    for (const id of FLOW_STEPS) {
+      const el = chip(LabelFor(id))
+      expect(el.className).not.toMatch(/\b(bg|text)-accent\b/)
+      expect(fillLayer(el).className).not.toMatch(/\b(bg|text)-accent\b/)
+    }
   })
 })
 
@@ -523,7 +461,7 @@ describe('the badge slot is reserved but renders no count this round', () => {
       configure: 'open',
       finalise: 'open',
     }
-    renderRail({ steps, activeChip: 'provision', current: 'provision' })
+    renderRail({ steps, activeChip: 'provision' })
 
     for (const id of FLOW_STEPS) {
       const el = chip(LabelFor(id))
@@ -540,7 +478,7 @@ describe('the badge slot is reserved but renders no count this round', () => {
 // dmfdeploy#414: the rail is exactly five keys, nothing adjacent that could
 // read as a sixth. SHELL ROUND 2 adds no new sixth element either (no
 // readout, no separate status line) — this proves the row is STILL exactly
-// the five keys and nothing else, unchanged by any of the three issues.
+// the five keys and nothing else.
 describe('the rail is exactly five keys, nothing adjacent that could read as a sixth', () => {
   it('renders exactly five <li> in the orchestration <ol>, and no link, group, status or "Operate" text anywhere in the nav', () => {
     const steps: Record<FlowStepId, FlowStepState> = {
@@ -550,7 +488,7 @@ describe('the rail is exactly five keys, nothing adjacent that could read as a s
       configure: 'open',
       finalise: 'open',
     }
-    renderRail({ steps, activeChip: 'provision', current: 'provision' })
+    renderRail({ steps, activeChip: 'provision' })
 
     const list = screen.getByRole('list')
     expect(list.tagName).toBe('OL')
@@ -590,7 +528,7 @@ describe('a job-in-flight chip that is also the SELECTED one still carries that 
       configure: 'locked',
       finalise: 'locked',
     }
-    renderRail({ steps, activeChip: 'provision', current: 'provision', jobInFlight: true })
+    renderRail({ steps, activeChip: 'provision', jobInFlight: true })
 
     const provision = chip('Provision')
     expect(provision.tagName).toBe('DIV')
@@ -610,7 +548,7 @@ describe('a job-in-flight chip that is also the SELECTED one still carries that 
       configure: 'locked',
       finalise: 'locked',
     }
-    renderRail({ steps, activeChip: 'design', current: null, jobInFlight: false })
+    renderRail({ steps, activeChip: 'design', jobInFlight: false })
     const provision = chip('Provision')
     expect(provision.tagName).toBe('BUTTON')
     expect(provision.getAttribute('aria-pressed')).toBe('false')
