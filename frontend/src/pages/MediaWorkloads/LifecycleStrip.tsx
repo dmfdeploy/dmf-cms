@@ -5,7 +5,7 @@ import {
   type FlowStepState,
 } from '../../lib/workloadFlow'
 import { STAGE_ICON } from '../../lib/stageIcons'
-import { RAIL_FILL } from '../../lib/stagePalette'
+import { RAIL_FILL, RAIL_INK, RAIL_LINE } from '../../lib/stagePalette'
 
 /**
  * The wizard rail (umbrella #347 WO-D1, operator direction 2026-08-02).
@@ -22,105 +22,102 @@ import { RAIL_FILL } from '../../lib/stagePalette'
  * keys below — no Control group, no Operate link.
  *
  * PASS 1 — CROSSPOINT BUS REDESIGN (dmf-cms#391) and PASS 2 — COMPLETENESS
- * GRAMMAR / EQUAL COLUMNS / REACHABLE LOCKED KEYS (dmfdeploy#449 folding in
- * dmfdeploy#405) shipped equal-width keys, per-stage marks and reachable
- * locked keys. See git history for that account — SHELL ROUND 2 (below)
- * retires the per-stage completeness mark this pass introduced; the equal
- * columns and reachable-locked-key invariants survive unchanged.
+ * GRAMMAR / EQUAL COLUMNS / REACHABLE LOCKED KEYS (dmfdeploy#449) and SHELL
+ * ROUND 2 (dmfdeploy#481/#482/#483 — own band, icons, chevron form) shipped
+ * the foundations below. See git history for those accounts.
  *
- * SHELL ROUND 2 — OWN BAND, ICONS, CHEVRON FORM (dmfdeploy#481/#482/#483,
- * design record: docs/design/DMF Console Lifecycle Rail Visual System.md;
- * layout seam: docs/plans/DMF Console Shell Round Plan 2026-08-30.md; the
- * peer-view model this paints: docs/design/DMF Console Information
- * Architecture 2026-06-23.md's 2026-08-30 #493 amendment). Four things
- * changed at once — the design doc governs all three issues together and
- * says explicitly not to ship them independently:
+ * SHELL ROUND 2 REDESIGN (operator direction, following two fix rounds that
+ * fought the same structural conflict): HUE COMES OFF THE FILL ENTIRELY.
  *
- *   1. NO INDICATORS IN THE ROW (#481). The row-end "N of M running"
- *      readout (RunningReadout, formerly here) and the shared "A <stage>
- *      job is in progress." note are BOTH GONE, not relocated beside this
- *      component — dmfdeploy#499's acceptance criteria (quoted onto #481)
- *      require the band to carry zero status text, and the readout's one
- *      sanctioned destination is the message bus (dmfdeploy#480), which
- *      does not exist yet. `jobOwnerLabel` is therefore no longer a prop
- *      here — nothing in this file has a use for it once neither consumer
- *      of it remains. `jobInFlight` stays: it still gates interactivity
- *      (a busy row is genuinely un-actionable) and still drives the
- *      sr-only "Selected" node below — a SELECTION fact, not a status
- *      announcement, and #481/#499 never asked for that to move.
- *      WorkloadSetup.tsx's own Previous/Next/View-live copy already assumed
- *      nothing else states which job is running — see that file's own
- *      updated comment; the actual "a job is running, here's what and how
- *      long" signal now lives solely at the point of action
- *      (AutomationInProgressNotice, dmfdeploy#390), which is where
- *      Constitution Art. 2 says a job's own status belongs regardless.
- *   2. HORIZONTALLY CENTRED (#481). `justify-center` on the `<nav>`, now
- *      that there is no right-pinned sibling left to fight it — see point 1.
- *      Topbar.tsx's header-slot-row wrapper is otherwise unchanged; #481's
- *      acceptance criteria are about the key group's own centring inside
- *      this component's row, not about relocating the row out of Topbar's
- *      existing second-row band (which already renders as a bordered band
- *      below the top bar's first row today).
- *   3. PER-KEY IDENTITY ICONS, UNCONDITIONALLY (#482). Every key — locked,
- *      open, complete, record, current, busy, whatever — renders its own
- *      STAGE_ICON (lib/stageIcons.ts), `aria-hidden` beside the still-bare
- *      EBU label. No padlock: reserved for a future authorization-denied
- *      state that does not exist in the code yet (IA doc's #493 amendment;
- *      Visual System doc §2a). The old padlock-on-locked-key branch is
- *      gone with it, not merely hidden.
- *   4. DIRECTIONAL CHEVRON FORM (#483). Keys are nested, interlocking
- *      chevron/pill segments with a thin (3px) gap, not rounded rectangles
- *      — see `chevronClipPath` below for the geometry and NOTCH_PX's own
- *      comment for how its value was actually measured (not carried over
- *      from the unverified 141.4px figure #481/#483 both flag).
+ *   1. ONE NEUTRAL FILL for all five keys (RAIL_FILL/RAIL_INK below, single
+ *      tokens now, not per-stage). The prior per-stage-hue fill could not
+ *      simultaneously clear 4.5:1 against one ink AND 3:1 against the
+ *      achromatic selected fill for the light-zone stages — a corridor
+ *      analysis proved this was structural, not a tuning gap (see the PR
+ *      description for the derivation). With one shared fill, that conflict
+ *      cannot recur: there is nothing left to be "light-zone".
+ *   2. HUE IS NOW A BOTTOM-EDGE LINE (HueLine below), tally-style. The
+ *      position tally keeps the TOP edge, unchanged — two different facts
+ *      (position, identity) do not share an edge. Small-area colour is the
+ *      worst case for hue discrimination, and this line is genuinely small:
+ *      measured dE2000 for the five line colours drops to 0.85-1.17
+ *      (imperceptible) between plan/provision under the two common CVDs —
+ *      see index.css's own token comment for the full table and pipeline.
+ *      Hue is therefore a REINFORCING cue only, not an independent identity
+ *      channel — stated plainly, not claimed as more than it is. Icon shape
+ *      and the EBU label remain the actual CVD-proof, greyscale-proof
+ *      identity carriers (Art. 11).
+ *   3. SELECTION RETURNS TO A BARE FILL-INVERT, no ring. With one shared
+ *      fill, fill-vs-fill selection contrast measures 5.06:1 on every key —
+ *      uniform by construction, comfortably over WCAG 1.4.11's 3:1 floor —
+ *      so the ring two prior fix rounds added specifically to cover the
+ *      per-stage-hue defect is no longer needed, and the operator objected
+ *      to its boxy look regardless. See the SELECTION section below for
+ *      exactly which guarantee lives where (a jsdom-provable token-identity
+ *      fact vs. the render-measured contrast number).
+ *   4. ROUNDED CHEVRONS, matching Sidebar.tsx's `rounded-lg` (8px) — see
+ *      `chevronClipPath` below for the geometry.
  *
- * WHAT THIS PASS DELIBERATELY DROPS: PASS 2's completeness mark (StageMark
- * — filled/outline/no dot) and the locked key's dashed-border treatment.
- * The Visual System doc §2 REJECTS folding stage-STATE (locked vs open vs
- * complete) into fill/edge at all — fill/edge now varies on exactly two
- * axes, stage IDENTITY (the hue, permanent, RAIL_FILL below) and SELECTION
- * (the achromatic bg-text/text-bg inversion, unchanged) — "that is six
- * treatments that must all survive greyscale, and Art. 11 was only ever
- * verified for the dot the previous round shipped." Concretely: a locked
- * key now looks EXACTLY like an open one of the same stage. This is not an
- * oversight — the IA doc's #493 amendment says the "nothing to do here yet,
- * because X" fact a lock used to carry is "conveyed in words, on the stage
- * page itself... never as a lock glyph on the rail," and the rail's own
- * `aria-describedby` (below) already carries that same fact in words for a
- * key that is not yet selected. What replaces the mark's old "actionable
- * progress" job is the Badge slot — reserved geometry, rendered empty until
- * the ADR-0046 derivation (dmfdeploy#495) exists to fill it (Visual System
- * doc §5, §6) — never a repaint of the retired dot.
+ * WHAT SURVIVES UNCHANGED FROM PRIOR ROUNDS: equal columns, per-key icons
+ * unconditionally (dmfdeploy#482), no padlock (IA doc #493 amendment), no
+ * indicators in the row (dmfdeploy#481/#499), the badge slot (reserved,
+ * empty), locked keys reachable and visually identical to open ones of the
+ * same stage (Visual System doc §2's fill/edge-varies-on-identity-and-
+ * selection-only ruling — now trivially true, since there is only one
+ * fill), the position tally's own render rule, and the two-tone focus ring
+ * (still cleared by codex; re-verified against the new rounded, neutral
+ * geometry — see that section below).
  *
- * SELECTION AND POSITION ARE STILL TWO DIFFERENT FACTS, unchanged by this
- * round. `aria-pressed` marks SELECTED on the interactive `<button>`
- * variant; a job-in-flight key is not a button and carries a visually-
- * hidden "Selected" text node instead (WAI-ARIA 1.2 defines `aria-pressed`
- * only for `role="button"`). `aria-current="step"` marks the backend-
- * derived POSITION on the five keys, unconditionally on `isPosition`.
+ * SELECTION AND POSITION ARE STILL TWO DIFFERENT FACTS, unchanged. `aria-
+ * pressed` marks SELECTED on the interactive `<button>` variant; a job-in-
+ * flight key is not a button and carries a visually-hidden "Selected" text
+ * node instead (WAI-ARIA 1.2 defines `aria-pressed` only for
+ * `role="button"`). `aria-current="step"` marks the backend-derived
+ * POSITION on the five keys, unconditionally on `isPosition`.
  *
  * TALLY BAR RENDER RULE (unchanged, pinned by lifecycleStrip.test.tsx):
  * renders ONLY when position and selection DIVERGE — `isPosition &&
- * !isSelected`. It now lives INSIDE the clipped fill layer (see
- * `chevronClipPath`'s call site) rather than directly on the button, so it
- * is cut to the same chevron silhouette as the key itself instead of
- * overhanging into the inter-key gap as a rectangular strip would.
+ * !isSelected`. Lives inside the clipped fill layer, cut to the same
+ * chevron silhouette as the key.
+ *
+ * SELECTION — WHICH GUARANTEE LIVES WHERE. Two separate facts, deliberately
+ * not conflated:
+ *   - jsdom-provable (pinned in lifecycleStrip.test.tsx): a selected key's
+ *     fill layer carries a DIFFERENT token (`bg-text`) than an unselected
+ *     key's (`bg-rail-fill`) — structural, not a contrast claim.
+ *   - Render-measured, NOT jsdom-provable (recorded here, in the PR
+ *     description, and mutation-checked by hand during this fix round):
+ *     `bg-rail-fill` (#616161, Y=0.1195) vs `bg-text`/--color-text
+ *     (#E8E8EA, Y=0.8081) = 5.06:1 WCAG contrast — comfortably over the
+ *     1.4.11 3:1 floor for a UI state change, and IDENTICAL on every key
+ *     because both fills are now single shared tokens, not five
+ *     independently-tuned ones. jsdom computes no pixels; this number is
+ *     the actual guarantee, the test above only proves the mechanism that
+ *     produces it hasn't been silently removed.
  *
  * FOCUS RING LIVES ON THE BUTTON, NOT THE CLIPPED LAYER (#483 caution 1).
  * `clip-path` clips whatever it is applied to, focus outline included — so
  * the chevron shape is painted by an absolutely-positioned, `aria-hidden`
  * inner `<span>` (clipped), while the `<button>` itself stays an ordinary,
- * unclipped rectangle carrying `outline`-based `:focus-visible` styling.
- * `outline` (not `box-shadow`/`filter: drop-shadow()`) is deliberate:
- * `drop-shadow` follows a clipped silhouette well but is dropped entirely
- * under Windows forced-colors mode, and an `outline` is exactly the
- * mechanism browsers already special-case there.
+ * unclipped rectangle. Two layers, deliberately: `outline-current` (reuses
+ * RAIL_INK, always correct against the fill by construction, and survives
+ * Windows forced-colors mode — the OS recolours `outline`, `box-shadow` is
+ * simply dropped there) PLUS a `box-shadow` two-tone sandwich (`--color-bg`
+ * inner stroke, `--color-text` outer stroke) that closes the gap
+ * `outline-current` alone leaves against the page background specifically
+ * (dark ink / text-bg are themselves near-identical to that background).
+ * Re-verified this round against the new rounded silhouette and the now-
+ * single neutral fill — the contrast math is actually SIMPLER now (one
+ * fill state to check instead of five hues), and the geometry (2px total
+ * outward reach, 1px clear of the 3px inter-key gap) is unchanged by
+ * rounding the corners, which only affects the silhouette near the
+ * terminal/notch/point vertices, not the button's own rectangular
+ * bounding box the outline/shadow are drawn against.
  *
  * EDGE CONTRAST WITHOUT A BORDER (#483 caution 2). A clipped shape cannot
- * carry a normal 1px border, so each key's edge IS its fill's contrast
- * against the page background — RAIL_FILL's five hues are chosen to each
- * individually clear WCAG 3:1 non-text contrast against --color-bg (see
- * index.css's own token comment for the verification).
+ * carry a normal 1px border, so the key's edge IS its fill's contrast
+ * against the page background — `--color-rail-fill` clears WCAG 3:1
+ * non-text contrast against --color-bg (see index.css's own token comment).
  */
 
 const STEP_LABEL: Record<FlowStepId, string> = {
@@ -150,36 +147,108 @@ const STEP_LABEL: Record<FlowStepId, string> = {
 const NOTCH_PX = 8
 
 /**
+ * The corner rounding radius, matching Sidebar.tsx:127's `rounded-lg`
+ * (0.5rem = 8px) on the sidebar nav rail's own active tile — the operator's
+ * concrete reference for "rounded chevrons". Only the RADIUS is reused;
+ * that tile's `bg-accent/20` tint is deliberately not — cyan is the action
+ * accent, and this rail never uses it (unchanged ruling from Pass 1).
+ */
+const RADIUS_PX = 8
+
+/**
+ * Replacement points for a true 90-degree corner (the flat terminal corners
+ * — Design's left edge, Finalise & Review's right edge) rounded to
+ * RADIUS_PX, computed from the standard circle-tangent construction (arc
+ * centred at (R,R) from the vertex, quarter-circle from one tangent point
+ * to the other). Exact values, not eyeballed — see the PR description for
+ * the derivation script. `ARC_OFFSET` is the arc's own 45-degree midpoint
+ * offset from each edge (R - R/sqrt(2)).
+ */
+const ARC_OFFSET = (RADIUS_PX - RADIUS_PX * Math.SQRT1_2).toFixed(3) // 2.343
+
+/**
+ * Replacement points for the point/notch tip corners (interior angle
+ * ~120.5 degrees, from the fixed button height 28px and NOTCH_PX — both
+ * constants, so this angle does not depend on the button's variable
+ * width). Chamfered with a straight line between the two tangent points
+ * rather than a full arc: a chamfer needs no "which way does the arc
+ * bulge" sign-handling (the point's convex vs the notch's concave case are
+ * otherwise mirror images that bulge opposite ways), which matters because
+ * getting that sign wrong is a real, easy-to-miss failure mode, and a
+ * chamfer softens the tip visibly at RADIUS_PX without it. See the PR
+ * description for the full trig derivation (interior angle, tangent
+ * distance from the vertex along each edge).
+ *
+ * OUT OF SCOPE, DELIBERATELY (recorded so it isn't silently assumed done):
+ * the four corners where a flat top/bottom edge meets a notch/point's
+ * diagonal edge (e.g. the very start of the top edge on a 'middle' key)
+ * are NOT rounded this round — a third distinct corner angle, and the
+ * least visually prominent of the three (already an obtuse, gentle
+ * transition, not a sharp corner). Flagged for the next round rather than
+ * guessed at under time pressure.
+ */
+const CHAMFER_X = '2.268'
+const CHAMFER_Y = '3.969'
+
+/**
  * The clip-path polygon for one rail key, by its position in the row.
  * `first`/`last` carry FLAT terminals (#483: "a lifecycle is a bounded
  * process; pointed terminals read as 'continues off-screen'") — Design's
- * left edge and Finalise & Review's right edge are plain vertical cuts, no
- * point and no notch. Every other edge either points OUT (the right side of
- * every key but the last, a convex tip at 100% 50%) or is notched IN (the
- * left side of every key but the first, a concave cut to `NOTCH_PXpx 50%`)
- * — adjacent keys' point/notch pairs read as one interlocking ribbon,
- * separated only by the `<ol>`'s own thin (3px) gap (#483: "nested with a
- * thin gap," not true negative-margin interlocking, which is what eats
- * label width unpredictably per that issue's own caution 3).
+ * left edge and Finalise & Review's right edge are plain vertical cuts
+ * (now rounded, RADIUS_PX), no point and no notch. Every other edge either
+ * points OUT (the right side of every key but the last, a chamfered tip
+ * near 100% 50%) or is notched IN (the left side of every key but the
+ * first, a chamfered cut near NOTCH_PXpx 50%) — adjacent keys' point/notch
+ * pairs read as one interlocking ribbon, separated only by the `<ol>`'s own
+ * thin (3px) gap (#483: "nested with a thin gap," not true negative-margin
+ * interlocking, which is what eats label width unpredictably per that
+ * issue's own caution 3).
  */
 function chevronClipPath(position: 'first' | 'middle' | 'last'): string {
-  const notch = `${NOTCH_PX}px`
+  const n = `${NOTCH_PX}px`
+  const r = `${RADIUS_PX}px`
+  const arc = `${ARC_OFFSET}px`
+  const cx = `${CHAMFER_X}px`
+  const cy = `${CHAMFER_Y}px`
   if (position === 'first') {
-    return `polygon(0 0, calc(100% - ${notch}) 0, 100% 50%, calc(100% - ${notch}) 100%, 0 100%)`
+    return `polygon(
+      0 ${r}, ${arc} ${arc}, ${r} 0,
+      calc(100% - ${n}) 0,
+      calc(100% - ${cx}) calc(50% - ${cy}), calc(100% - ${cx}) calc(50% + ${cy}),
+      calc(100% - ${n}) 100%,
+      ${r} 100%, ${arc} calc(100% - ${arc}), 0 calc(100% - ${r})
+    )`
   }
   if (position === 'last') {
-    return `polygon(0 0, 100% 0, 100% 100%, 0 100%, ${notch} 50%)`
+    return `polygon(
+      0 0,
+      calc(100% - ${n}) 0,
+      calc(100% - ${arc}) ${arc}, 100% ${r},
+      100% calc(100% - ${r}), calc(100% - ${arc}) calc(100% - ${arc}),
+      calc(100% - ${n}) 100%,
+      0 100%,
+      ${cx} calc(50% + ${cy}), ${cx} calc(50% - ${cy})
+    )`
   }
-  return `polygon(0 0, calc(100% - ${notch}) 0, 100% 50%, calc(100% - ${notch}) 100%, 0 100%, ${notch} 50%)`
+  return `polygon(
+    0 0,
+    calc(100% - ${n}) 0,
+    calc(100% - ${cx}) calc(50% - ${cy}), calc(100% - ${cx}) calc(50% + ${cy}),
+    calc(100% - ${n}) 100%,
+    0 100%,
+    ${cx} calc(50% + ${cy}), ${cx} calc(50% - ${cy})
+  )`
 }
 
 /**
- * The position tally — a thin illuminated bar across a key's top edge, in
+ * The position tally — a thin illuminated bar across a key's TOP edge, in
  * `--color-text`, neutral. Never rendered by itself for a key that is also
  * selected (see the file docstring's "TALLY BAR RENDER RULE") — every call
  * site below already guards on that before mounting this. Lives inside the
- * clipped fill layer (see this file's own "FOCUS RING" docstring section)
- * so it is cut to the same chevron silhouette as the key around it.
+ * clipped fill layer so it is cut to the same chevron silhouette as the key
+ * around it. Unmoved by the redesign — see HueLine below for the identity
+ * hue, which now owns the BOTTOM edge instead (operator ruling: two
+ * different facts do not share an edge).
  */
 function PositionTally() {
   return (
@@ -187,6 +256,34 @@ function PositionTally() {
       aria-hidden="true"
       data-testid="position-tally"
       className="absolute inset-x-0 top-0 h-[3px] rounded-t-[2px] bg-text"
+    />
+  )
+}
+
+/**
+ * The stage's identity hue, now a BOTTOM-edge line, tally-style (redesign
+ * fix round — see the file docstring's point 2). Permanent per stage,
+ * unconditional on state (locked/open/complete/current/record all show the
+ * same stage's line identically — the same "identity and selection are the
+ * only two axes fill/edge may vary on" rule the fill itself already
+ * follows).
+ *
+ * HIDDEN WHEN SELECTED — matching the SAME contrast-driven logic that
+ * already hides the tally when selected, not a new exception. No single
+ * line colour clears 3:1 against BOTH the neutral unselected fill (Y=
+ * 0.1195) and the achromatic selected fill (Y=0.8081) at once — proved in
+ * the PR description the same way the original fill-hue conflict was
+ * proved, and for the identical underlying reason (one axis, pulled two
+ * directions). When selected, the bright fill-invert is already the
+ * dominant, unmissable signal; icon and label carry full identity
+ * regardless of whether the line is showing.
+ */
+function HueLine({ stage }: { stage: FlowStepId }) {
+  return (
+    <span
+      aria-hidden="true"
+      data-testid="hue-line"
+      className={`absolute inset-x-0 bottom-0 h-[3px] rounded-b-[2px] ${RAIL_LINE[stage]}`}
     />
   )
 }
@@ -230,7 +327,7 @@ export default function LifecycleStrip({
     // `overflow-x-auto` wrapper around this component.
     <nav aria-label="Media workload lifecycle" className="flex w-full flex-nowrap items-center justify-center">
       {/*
-        EQUAL COLUMNS (dmfdeploy#449, plan §3.3, unchanged by Shell Round 2).
+        EQUAL COLUMNS (dmfdeploy#449, plan §3.3, unchanged by this redesign).
         `w-max` is load-bearing, not decoration. Tailwind's `grid-cols-5` is
         `repeat(5, minmax(0, 1fr))` — a 0 minimum, not `auto` — so under the
         horizontal-scroll ancestor this row lives in (Topbar's
@@ -239,10 +336,7 @@ export default function LifecycleStrip({
         its max-content width makes the tracks resolve to the widest key and
         lets the ancestor scroll, which is what that ancestor is for. The
         gap is 3px (#483: "a 2-3px band-coloured gap cut into the shape so
-        keys nest without visually touching"), down from Pass 1's 8px —
-        the interlocking chevron notch/point pair reads as one ribbon at
-        this gap; the old wider gap would have read as a literal gap between
-        two disconnected shapes instead of one nested run.
+        keys nest without visually touching").
       */}
       <ol className="grid w-max grid-cols-5 items-center gap-[3px]">
         {FLOW_STEPS.map((id, index) => {
@@ -269,31 +363,13 @@ export default function LifecycleStrip({
           const Icon = STAGE_ICON[id]
           const position = index === 0 ? 'first' : index === FLOW_STEPS.length - 1 ? 'last' : 'middle'
 
-          // SHELL ROUND 2 (#482 constraints; Visual System doc §2 REJECTED):
-          // fill/edge varies on stage IDENTITY (permanent hue) and SELECTION
-          // (achromatic invert) only — never on stage STATE. A locked key's
-          // fill is byte-for-byte the same as an open key's fill for the
-          // same stage; see the file docstring's own "WHAT THIS PASS
-          // DELIBERATELY DROPS" section for why.
-          const fill = RAIL_FILL[id]
-          const fillClass = isSelected ? 'bg-text' : fill.bg
-          const inkClass = isSelected ? 'text-bg' : fill.fg
-          // SHELL ROUND 2 FIX ROUND (orchestrator/codex gate — selection
-          // invisibility, dmfdeploy#481). The achromatic fill-invert alone is
-          // invisible on provision/configure/finalise (2.82:1 / 2.04:1 /
-          // 1.49:1 fill-vs-fill, all under WCAG 1.4.11's 3:1 floor for a UI
-          // state change) — a corridor analysis proved no retuned palette can
-          // fix this: the identity-fill luminance range and the selected-fill
-          // luminance are structurally incompatible on one axis (see the PR
-          // description for the full derivation). Selection now gets its OWN
-          // ring, independent of the key's hue, layered ON TOP of the
-          // unchanged fill-invert (which stays because it still genuinely
-          // helps on design/plan). `outline-current` on this ring reuses
-          // `inkClass` — already guaranteed >=4.5:1 against whatever fill is
-          // currently showing, by the exact same derivation that picked
-          // `inkClass` in the first place — rather than inventing a second
-          // colour that would reopen the same class of defect one level out.
-          const selectedRingClass = isSelected ? 'outline outline-2 outline-current' : ''
+          // REDESIGN: ONE shared fill/ink for every key, every state — see
+          // the file docstring's point 1 for why a per-stage fill could
+          // not simultaneously satisfy every contrast constraint. Selection
+          // is still the sole thing that varies fill/edge (achromatic
+          // invert, unchanged mechanism).
+          const fillClass = isSelected ? 'bg-text' : RAIL_FILL
+          const inkClass = isSelected ? 'text-bg' : RAIL_INK
 
           const inner = (
             <>
@@ -328,52 +404,6 @@ export default function LifecycleStrip({
               {interactive ? (
                 <button
                   type="button"
-                  // FIX ROUND: two layers, deliberately, not one.
-                  //
-                  // `outline-current` (unchanged property from before)
-                  // reuses inkClass — already proven >=4.5:1 against
-                  // whatever fill is CURRENTLY showing — so it is always
-                  // correct against the fill, and it is what survives
-                  // Windows forced-colors mode (the OS recolours `outline`
-                  // to a guaranteed-visible system colour; `box-shadow` is
-                  // simply dropped there, per the CSS Forced Colors spec —
-                  // this is the exact reason #483 named for choosing
-                  // `outline` over `drop-shadow` in the first place).
-                  //
-                  // But `outline-current` alone leaves a REAL gap this fix
-                  // round found and measured, not merely a corner artifact:
-                  // for provision/configure/finalise (dark ink) and any
-                  // SELECTED key (ink = text-bg = --color-bg), the ring's
-                  // OUTWARD-facing 2px band sits over the page background
-                  // (--color-bg) — and dark ink / text-bg are themselves
-                  // near-identical to that same background (1.10:1 / 1.00:1
-                  // measured), so the ring is invisible there, uniformly
-                  // around the whole outward stroke, not just at the notch
-                  // corners. No single ink clears both "vs its own fill"
-                  // and "vs page bg" at once for those three stages — the
-                  // same structural shape as the selection-fill defect this
-                  // round started from (see the PR description for the
-                  // per-stage proof).
-                  //
-                  // The second layer — a two-tone sandwich, dark inner
-                  // stroke then light outer stroke — closes that gap
-                  // properly in ordinary rendering: `--color-bg` already
-                  // clears 3:1 against every one of the five identity fills
-                  // AND the selected fill (that is constraint 1, reused for
-                  // free), and `--color-text` clears 3:1 against `--color-bg`
-                  // itself (16.17:1) — between the two, at least one stroke
-                  // has real contrast against whatever this ring sits over,
-                  // regardless of state. `box-shadow` is a DIFFERENT CSS
-                  // property from `outline`, so the two compose without
-                  // clobbering each other — under forced-colors this layer
-                  // drops out and the outline above carries the guarantee
-                  // alone, exactly as intended.
-                  //
-                  // Total outward reach kept at 2px on both layers (offset-0
-                  // outline, 1px/2px shadow spreads) — inside the 3px
-                  // inter-key gap (measured on a real render) with a 1px
-                  // margin, so a focused key's ring never touches its
-                  // neighbour.
                   className={`relative flex w-full items-center justify-center gap-1.5 whitespace-nowrap px-3 py-1.5 focus-visible:outline-2 focus-visible:outline-offset-0 focus-visible:outline-current focus-visible:shadow-[0_0_0_1px_var(--color-bg),0_0_0_2px_var(--color-text)] ${inkClass}`}
                   // Explicit accessible name — the key's own label is all
                   // there is now (no trailing state word to exclude), but an
@@ -387,17 +417,9 @@ export default function LifecycleStrip({
                 >
                   <span aria-hidden="true" data-testid="key-fill" className={`absolute inset-0 ${fillClass}`} style={{ clipPath: chevronClipPath(position) }}>
                     {showTally && <PositionTally />}
+                    {!isSelected && <HueLine stage={id} />}
                   </span>
-                  {/* Selection ring: a SEPARATE element/property from the
-                      focus ring above (outline on THIS span, not the
-                      button), so both can render at once without one
-                      clobbering the other's `outline` — see the
-                      selectedRingClass comment for the contrast derivation.
-                      offset-0 on this span's own (small) box keeps its
-                      total reach within the tightest content margin across
-                      all five keys (Finalise & Review's, measured), clear
-                      of the chevron notch with room to spare. */}
-                  <span data-testid="selection-ring" className={`relative z-10 flex items-center justify-center gap-1.5 ${selectedRingClass}`}>{inner}</span>
+                  <span className="relative z-10 flex items-center justify-center gap-1.5">{inner}</span>
                 </button>
               ) : (
                 <div
@@ -408,8 +430,9 @@ export default function LifecycleStrip({
                 >
                   <span aria-hidden="true" data-testid="key-fill" className={`absolute inset-0 ${fillClass}`} style={{ clipPath: chevronClipPath(position) }}>
                     {showTally && <PositionTally />}
+                    {!isSelected && <HueLine stage={id} />}
                   </span>
-                  <span data-testid="selection-ring" className={`relative z-10 flex items-center justify-center gap-1.5 ${selectedRingClass}`}>
+                  <span className="relative z-10 flex items-center justify-center gap-1.5">
                     {inner}
                     {/* A job-in-flight chip can still be the SELECTED one — see
                         the file docstring's "SELECTION AND POSITION ARE STILL

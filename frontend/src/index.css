@@ -62,100 +62,76 @@
   --color-stage-control: #F0523D;
   --color-stage-control-fg: #0F1720;
 
-  /* Lifecycle RAIL identity hues (dmfdeploy#481/#482/#483, design record:
+  /* Lifecycle RAIL tokens (dmfdeploy#481/#482/#483, design record:
      docs/design/DMF Console Lifecycle Rail Visual System.md §4). A SEPARATE
      set from --color-stage-* above — those are the retired saturated Arc 4
      tokens, kept unused for reversibility (stagePalette.ts's own docstring).
-     These five are muted, low-chroma, and picked to a harder bar than "look
-     different": every value below reserves red/amber (the alarm LED's
-     warning/critical hues, §4 point 1) and also steers clear of this app's
-     other meaning-bearing hues (--color-ok green, --color-accent cyan) so a
-     stage hue never doubles as a status signal by accident.
 
-     Each hue clears WCAG 3:1 non-text contrast against --color-bg on its
-     own (the fill IS the key's edge — a clip-path shape can't carry a
-     normal border, #483) and pairs with ONE ink (its own -fg token, light
-     or dark, whichever the swatch actually reaches 4.5:1 with) rather than
-     assuming --color-text works everywhere: the five span a wide enough
-     luminance range for CVD separation that no single ink clears AA on
-     every swatch. Verified with an actual protanopia/deuteranopia/
-     tritanopia simulation, not eyeballed — see the PR description for the
-     run.
+     FIX ROUND (operator direction, redesign): hue came OFF the fill
+     entirely. Every key now shares ONE neutral fill (--color-rail-fill
+     below) — the five identity hues moved to a bottom-edge LINE, tally
+     style (the tally itself keeps the top edge, unchanged; two different
+     facts do not share an edge). This is not cosmetic churn — it dissolves
+     the structural conflict two prior fix rounds fought (constraint 2,
+     4.5:1 vs one ink, pushing light-zone hues bright; constraint 5, 3:1 vs
+     the achromatic selected fill, pushing them dark — the same axis,
+     pulled two directions at once, for any hue used as a FULL FILL). With
+     one shared neutral fill, selection fill-invert contrast is identical
+     and adequate on all five keys by construction, not by luck.
 
-     PIPELINE, NAMED EXPLICITLY (round-3 fix — see below for why a bare
-     figure isn't enough): sRGB (D65 white point) -> linear light -> CIE
-     XYZ -> CIE L*a*b* -> CIEDE2000, kL=kC=kH=1 (no severity weighting).
-     CVD simulation applies the Machado/Oliveira/Fernandes (2009)
-     100%-severity matrices in LINEAR RGB, before the XYZ/Lab conversion.
+     --color-rail-fill: #616161, Y=0.1195 — clears 3:1 against --color-bg
+     (3.20, the fill IS the key's edge, #483) and 4.5:1 against a SINGLE ink,
+     --color-text (5.06) — no more per-swatch ink pairing, confirmed
+     unnecessary now that every key shares one fill. Selection (fill-invert
+     to --color-text/--color-bg, unchanged mechanism) measures 5.06:1
+     fill-vs-fill on every key — comfortably over WCAG 1.4.11's 3:1 floor
+     for a UI state change, uniform because the starting fill is now
+     literally the same token everywhere, not five separately-tuned ones.
 
-     FIX ROUND (orchestrator/codex gate, round 2): this comment previously
-     claimed a "mitigating luminance delta of 0.025-0.059" for design/plan —
-     that figure could not be re-derived and was removed, replaced with a
-     dE2000 table that turned out to have its OWN bug (below).
+     THE FIVE LINE COLOURS ARE A DIFFERENT, HARDER PROBLEM — SMALL-AREA
+     COLOUR IS THE WORST CASE FOR HUE DISCRIMINATION, and this is a 3px
+     line, not a fill. Their only backdrop is the neutral fill (Y=0.1195),
+     so each needs Y >= 0.4586 to clear 3:1 against it — a narrow, bright
+     band that leaves little room to also spread hues for CVD separation.
+     Verified with an actual protanopia/deuteranopia/tritanopia simulation,
+     not eyeballed — see the PR description for the run.
 
-     FIX ROUND (orchestrator/codex gate, round 3): that dE2000 table did not
-     reproduce either. Root cause, found by tracing the actual pipeline
-     rather than re-deriving a fresh number: the analysis script's RGB->XYZ
-     step called the sRGB-to-linear conversion on raw 0-255 channel values
-     without normalizing to 0-1 first (a second helper in the same script,
-     used for the WCAG contrast figures elsewhere in this file, did
-     normalize correctly — the bug was confined to the Lab/dE2000 path).
-     Every X/Y/Z came out inflated by several orders of magnitude; CIEDE2000's
-     own cube-root Lab conversion compresses that enough that the output
-     still looked like a plausible L*a*b* triple, which is why a systematically
-     wrong number shipped looking finished. Recomputed with the bug fixed:
+     PIPELINE, NAMED EXPLICITLY (the reason a bare figure isn't enough, and
+     recurred twice already this round without it): sRGB (D65 white point)
+     -> linear light -> CIE XYZ -> CIE L*a*b* -> CIEDE2000, kL=kC=kH=1 (no
+     severity weighting). CVD simulation applies the Machado/Oliveira/
+     Fernandes (2009) 100%-severity matrices in LINEAR RGB before the
+     XYZ/Lab conversion.
 
-       unsimulated   provision/configure  11.36  (min pair)
-       protanopia    provision/configure   8.57  (min pair)
-       deuteranopia  provision/configure  10.58  (min pair)
-       tritanopia    design/plan           6.52  (min pair; configure/
-                                                    finalise close behind
-                                                    at 7.95)
+     dE2000, recomputed for the LINE colours specifically (not the old
+     fill-hue figures, which no longer apply to anything — the fill is
+     neutral now):
 
-     provision/configure is the tightest pair unsimulated AND under both
-     common CVDs (protanopia/deuteranopia, ~8% of males combined) — not
-     configure/finalise as the round-2 comment claimed. design/plan becomes
-     the tightest pair specifically under tritanopia (~1:100,000), the same
-     pair round 2's buggy figures wrongly called safest (54-85) — the
-     correct read is closer, 6.52, though still clearly separated by hue.
+       unsimulated   configure/finalise    6.70
+       protanopia    plan/provision        0.85  <- imperceptible
+       deuteranopia  plan/provision        1.17  <- imperceptible
+       tritanopia    configure/finalise    6.74
 
-     KNOWN, NAMED RESIDUAL DISAGREEMENT — recorded rather than papered over,
-     per the same standard this round applied to the numbers above: an
-     independent computation (different implementation, different reviewer)
-     reports 8.25 / 10.09 / 7.58 for the same three figures — all within
-     ~1 dE00 of this pipeline's 8.57 / 10.58 / 6.52. The unsimulated figure
-     (11.36) and the tritanopia configure/finalise figure (7.95 vs the other
-     computation's 7.98) match to within 0.03 — strong evidence the CIEDE2000
-     step itself agrees between the two implementations. The residual sits
-     entirely on CVD-SIMULATED pairs, consistent with the two pipelines
-     using slightly different published parameterizations of the
-     Machado/Oliveira/Fernandes matrices (more than one circulates for the
-     same paper) rather than a further formula bug — not chased further
-     without knowing the other pipeline's exact matrix values. Every
-     qualitative conclusion above (which pair is tightest, under which
-     condition) agrees between the two computations regardless.
-
-     design/plan's own WCAG relative-luminance gap is genuinely small —
-     about 0.004, essentially two near-identical greys — but their dE2000
-     separation stays real under the common CVDs (20-27, see above) because
-     their hue/chroma difference carries real perceptual weight a
-     luminance-only reading misses; it narrows specifically under
-     tritanopia, the rare case named above. Icon shape and label text
-     remain fully independent, CVD-proof identity carriers for every pair
-     regardless (Art. 11 — "everything except hue survives greyscale") —
-     hue is a reinforcing cue here, never the only one, which is what makes
-     provision/configure's tighter margin tolerable rather than a defect on
-     its own. */
-  --color-rail-design: #346A5C;
-  --color-rail-design-fg: #E8E8EA;
-  --color-rail-plan: #4A6196;
-  --color-rail-plan-fg: #E8E8EA;
-  --color-rail-provision: #9281BB;
-  --color-rail-provision-fg: #0F1720;
-  --color-rail-configure: #BE97C4;
-  --color-rail-configure-fg: #0F1720;
-  --color-rail-finalise: #D7B7C8;
-  --color-rail-finalise-fg: #0F1720;
+     THE HONEST READ: hue on a 3px line is REINFORCING ONLY, not an
+     independent identity channel — and for plan/provision specifically, it
+     stops reinforcing at all under the two common CVDs (protanopia/
+     deuteranopia, ~8% of males combined): dE2000 0.85-1.17 is below the
+     threshold generally cited as perceptible to the human eye (~1.0) at
+     any viewing distance, CVD or not. This is not a tuning gap — a wider
+     hue spread was tried and made the 3:1-vs-fill contrast fail on two
+     swatches instead (see the PR description); the Y>=0.4586 floor and a
+     5-hue CVD-safe spread do not both fit in the room a 3px line leaves.
+     Icon shape and the EBU label text remain the actual, independent,
+     CVD-proof identity carriers for every stage regardless (Art. 11 —
+     "everything except hue survives greyscale") — the line is accepted as
+     a reinforcing cue only, stated here plainly rather than claimed as
+     more than it is. */
+  --color-rail-fill: #616161;
+  --color-rail-design: #72CAB4;
+  --color-rail-plan: #A6BCDD;
+  --color-rail-provision: #C0B8E0;
+  --color-rail-configure: #D2B2DC;
+  --color-rail-finalise: #D9ABC5;
 
   /* Micro-label size (Arc 4 WP-2): one token for the duplicated arbitrary
      text-[10px] (LifecycleStrip) / text-[11px] (.metric-label) micro-copy
