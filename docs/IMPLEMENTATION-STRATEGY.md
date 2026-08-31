@@ -416,8 +416,7 @@ If continuing from context loss, prioritize in this order:
 7. **Publish + mirror + deploy** (post-ADR-0025 flow):
    ```bash
    # Publish to GHCR (canonical public source)
-   security find-generic-password -s "ghcr.io" -a "<github-username>" -w \
-     | GHCR_USER="<github-username>" scripts/publish-to-ghcr.sh
+   gh auth token | GHCR_USER="<github-username>" scripts/publish-to-ghcr.sh
 
    # Mirror GHCR → cluster Zot, then Helm-deploy
    cd $DMFDEPLOY_UMBRELLA/dmf-env

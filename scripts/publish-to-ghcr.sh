@@ -11,13 +11,18 @@
 #
 # Usage:
 #
-#   # From macOS Keychain:
-#   security find-generic-password -s "ghcr.io" -a "<github-username>" -w \
-#     | GHCR_USER="<github-username>" \
-#       ~/repos/dmfdeploy/dmf-cms/scripts/publish-to-ghcr.sh
+#   # From the gh CLI (token never typed, never in argv):
+#   gh auth token | GHCR_USER="<github-username>" \
+#     ~/repos/dmfdeploy/dmf-cms/scripts/publish-to-ghcr.sh
 #
 #   # Interactive:
 #   ~/repos/dmfdeploy/dmf-cms/scripts/publish-to-ghcr.sh
+#
+# The piped credential must be a token carrying write:packages
+# ('gh auth refresh -s write:packages' if 'gh auth status' does not list it).
+# An account password is not a substitute: GHCR rejects one with exactly the
+# same 'denied: denied' as a bad token, so the failure looks like a scope
+# problem and is not.
 #
 # Env knobs:
 #   GHCR_USER         GitHub username (default: prompt)
