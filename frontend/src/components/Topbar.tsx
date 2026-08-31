@@ -214,6 +214,14 @@ export default function Topbar() {
   const showSlotRow = workloadSlug !== '' && slotContent !== null && slotContent.slug === workloadSlug
 
   return (
+    // FIX ROUND (orchestrator/codex gate, dmfdeploy#481): the header-slot
+    // row is now a SIBLING of <header>, not nested inside it — see the
+    // block below for why. React needs one root; a Fragment costs nothing
+    // Shell.tsx's own flex-col layout doesn't already provide (it stacks
+    // direct children exactly the same way regardless of whether they
+    // arrive as two children of one wrapper or two top-level elements from
+    // this component).
+    <>
     <header className="bg-bg z-20 shrink-0 flex flex-col">
       <div className="h-14 border-b border-border flex items-center justify-between px-4">
         {/* Brand */}
@@ -355,16 +363,35 @@ export default function Topbar() {
         </div>
       </div>
 
-      {/* Header slot, row 2 (Arc 4 WP-2): workload-detail routes only, a
-          single non-wrapping row that scrolls horizontally at narrow
-          widths rather than wrapping to a third line. dmfdeploy#414 renamed
-          both registrants — WorkloadSetup.tsx (formerly WorkloadDetail.tsx)
-          and WorkloadHome.tsx (formerly Operate.tsx) — register a rail
-          MODEL here (store/headerSlot.ts) — this file is the only place
-          that turns it into pixels, via the same LifecycleStrip component
-          the page used to render inline. Reshaping
-          that component's own layout to fit a single row is WP-3's job, not
-          this one's.
+    </header>
+
+      {/* Header slot (Arc 4 WP-2), workload-detail routes only, a single
+          non-wrapping row that scrolls horizontally at narrow widths rather
+          than wrapping to a third line. dmfdeploy#414 renamed both
+          registrants — WorkloadSetup.tsx (formerly WorkloadDetail.tsx) and
+          WorkloadHome.tsx (formerly Operate.tsx) — register a rail MODEL
+          here (store/headerSlot.ts) — this file is the only place that
+          turns it into pixels, via the same LifecycleStrip component the
+          page used to render inline. Reshaping that component's own layout
+          to fit a single row is WP-3's job, not this one's.
+
+          FIX ROUND (orchestrator/codex gate, dmfdeploy#481): moved from
+          <header>'s own row 2 to a SIBLING of <header>, not merely a
+          cosmetic reshuffle. `<header>` here is a direct child of a plain
+          `<div>` (Shell.tsx) — no article/aside/main/nav/section ancestor —
+          so it maps to the implicit ARIA `banner` landmark (confirmed on
+          the live tree, not assumed: `Shell.tsx`'s root renders `<Topbar />`
+          directly, `Topbar.tsx` itself renders nothing but `<header>` as
+          this component's first root, and `banner` is exactly HTML's role
+          mapping for a `<header>` in that ancestry). `banner` is for
+          site-oriented content repeated across pages (logo, nav, search) —
+          this row is route-specific (`showSlotRow` gates it to
+          workload-detail routes only) and does not belong inside it. Before
+          this fix a screen-reader user found a per-workload lifecycle rail
+          announced inside "banner"; see railBannerLandmark.test.tsx for the
+          regression pin (mutation-verified: reverting this row to a child
+          of <header> makes that test fail on the banner-containment
+          assertion specifically, not an incidental symptom).
 
           FIX ROUND (P3 round 3, P3-6): the promoted primary action is NOT a
           second thing this file turns into pixels — this paragraph used to
@@ -401,11 +428,20 @@ export default function Topbar() {
           (Shell.tsx). This row, by contrast, always has the rail's real
           width — a stable containing block regardless of what the tiny
           mount span's own box collapses to. See ProvisionStage.tsx's
-          matching `right-4` anchor. */}
+          matching `right-4` anchor. The move out of <header> above changes
+          NONE of this reasoning — Shell.tsx's overflow-hidden ancestor is
+          unchanged either way; only the intermediate <header> wrapper,
+          which never itself carried overflow-hidden, is no longer between
+          this row and that ancestor. */}
       {showSlotRow && slotContent && (
         <div
           data-testid="header-slot-row"
-          className="relative flex flex-nowrap items-center gap-3 border-b border-border px-4 py-2"
+          // z-20 matches what <header> carried before (this row inherited
+          // that stacking context as its descendant) — kept explicit here
+          // now that it's a sibling, so the promoted-action popover (which
+          // opens position:absolute within this row) still paints above
+          // the scrollable main/sidebar row below it, not underneath.
+          className="relative z-20 flex flex-nowrap shrink-0 items-center gap-3 border-b border-border bg-bg px-4 py-2"
         >
           <div className="min-w-0 flex-1 overflow-x-auto">
             <LifecycleStrip {...slotContent.rail} />
@@ -426,6 +462,6 @@ export default function Topbar() {
           <span ref={setActionSlotNode} className="flex shrink-0 items-center gap-2 empty:hidden" />
         </div>
       )}
-    </header>
+    </>
   )
 }

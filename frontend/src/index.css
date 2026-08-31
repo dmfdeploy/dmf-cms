@@ -79,12 +79,28 @@
      assuming --color-text works everywhere: the five span a wide enough
      luminance range for CVD separation that no single ink clears AA on
      every swatch. Verified with an actual protanopia/deuteranopia/
-     tritanopia simulation (Machado/Oliveira/Fernandes 2009 matrices), not
-     eyeballed — see the PR description for the run. design/plan sit closest
-     together under the (very rare, ~1:100,000) tritanopia case; icon shape
-     and label text both remain fully independent, CVD-proof identity
-     carriers regardless (Art. 11 — "everything except hue survives
-     greyscale"), so hue is a reinforcing cue here, never the only one. */
+     tritanopia simulation (CIEDE2000 dE, Machado/Oliveira/Fernandes 2009
+     matrices), not eyeballed — see the PR description for the run.
+
+     FIX ROUND (orchestrator/codex gate): this comment previously claimed a
+     "mitigating luminance delta of 0.025-0.059" for design/plan under all
+     three CVD sims — that figure could not be re-derived by either
+     reviewer and has been removed; do not reintroduce a number that has not
+     just been recomputed against the shipped hex values above. The real
+     dE2000-min pairs, recomputed directly from these hex values (see the PR
+     description for the script): provision/configure under protanopia
+     (dE00 10.75) and deuteranopia (dE00 13.28) — the common CVDs, ~8% of
+     males combined — and configure/finalise under tritanopia (dE00 13.09)
+     and unsimulated source (dE00 23.69). design/plan's own WCAG relative-
+     luminance gap is genuinely small — about 0.004, essentially two
+     near-identical greys — but their dE2000 separation is large regardless
+     (54-85 across all three CVD sims) because their hue/chroma difference
+     carries real perceptual weight a luminance-only reading misses. Icon
+     shape and label text remain fully independent, CVD-proof identity
+     carriers for every pair regardless (Art. 11 — "everything except hue
+     survives greyscale") — hue is a reinforcing cue here, never the only
+     one, which is what makes provision/configure's tighter dE2000 margin
+     tolerable rather than a defect on its own. */
   --color-rail-design: #346A5C;
   --color-rail-design-fg: #E8E8EA;
   --color-rail-plan: #4A6196;

@@ -86,6 +86,15 @@ function hasTally(chipEl: HTMLElement): boolean {
   return chipEl.querySelector('[data-testid="position-tally"]') !== null
 }
 
+/** The chip's selection-ring layer (fix round: the selection-invisibility
+ *  defect the orchestrator/codex gate caught — see LifecycleStrip.tsx's own
+ *  selectedRingClass comment for the full corridor-analysis proof). A
+ *  SEPARATE element/property from both the fill layer and the focus ring,
+ *  carrying `outline-current` only while `isSelected`. */
+function selectionRing(chipEl: HTMLElement): HTMLElement {
+  return chipEl.querySelector('[data-testid="selection-ring"]') as HTMLElement
+}
+
 function LabelFor(id: FlowStepId): string {
   return { design: 'Design', plan: 'Plan', provision: 'Provision', configure: 'Configure', finalise: 'Finalise & Review' }[id]
 }
@@ -390,13 +399,13 @@ describe('colour carries stage IDENTITY, permanently, independent of selection (
       expect(fillLayer(el).className, `${id} should carry no inverted fill`).not.toContain('bg-text')
     }
 
-    // Cyan (the action accent) never appears on the rail AS A FILL/INK — it
-    // would make the promoted primary action ambiguous with "where you
-    // are". `focus-visible:outline-accent` is a deliberate, unrelated
-    // exception (this file's own fillLayer() helper docstring / the
-    // component's "FOCUS RING" section): the keyboard focus ring uses the
-    // same accent token every other interactive control in this console
-    // does, which is not the fill/selection channel this check is about.
+    // Cyan (the action accent) never appears on the rail AS A FILL/INK —
+    // it would make the promoted primary action ambiguous with "where you
+    // are". This check is unaffected by the ring mechanisms (focus-visible
+    // outline/box-shadow, both ink-adaptive via outline-current, and the
+    // selection ring, also outline-current) — none of those channels ever
+    // reach for an accent-coloured class either, so there is no exception
+    // to carve out here any more.
     for (const id of FLOW_STEPS) {
       expect(chip(LabelFor(id)).className).not.toMatch(/\b(bg|text)-accent\b/)
       expect(fillLayer(chip(LabelFor(id))).className).not.toMatch(/\b(bg|text)-accent\b/)
@@ -418,6 +427,77 @@ describe('colour carries stage IDENTITY, permanently, independent of selection (
     expect(fillLayer(chip('Provision')).className).toContain('bg-rail-provision')
     expect(fillLayer(chip('Configure')).className).toContain('bg-rail-configure')
     expect(fillLayer(chip('Finalise & Review')).className).toContain('bg-rail-finalise')
+  })
+})
+
+// FIX ROUND (orchestrator/codex gate, dmfdeploy#481): the achromatic
+// fill-invert ALONE is invisible as a selection cue on provision/configure/
+// finalise — measured fill-vs-fill at 2.82:1 / 2.04:1 / 1.49:1, all under
+// WCAG 1.4.11's 3:1 floor for a UI state change. A corridor analysis proved
+// no palette retune fixes this (the identity-fill luminance range and the
+// achromatic selected-fill luminance are structurally incompatible on one
+// axis — see LifecycleStrip.tsx's own selectedRingClass comment). Selection
+// now carries a SEPARATE ring, independent of the key's hue.
+//
+// MUTATION-VERIFIED: reverting `selectedRingClass` to the empty string
+// unconditionally (deleting the ring) makes the first assertion below fail
+// — `expected '' to match /\boutline\b/` — naming the missing outline
+// class directly, not an incidental symptom. Checked by hand during this
+// fix round (see the PR description for the actual failure output), then
+// restored.
+describe('selection carries an independent ring, not just the achromatic fill-invert (fix round)', () => {
+  it.each(['Design', 'Plan', 'Provision', 'Configure', 'Finalise & Review'])(
+    '%s: a selected key renders a real outline-current ring; an unselected sibling renders none',
+    (label) => {
+      const steps: Record<FlowStepId, FlowStepState> = {
+        design: 'complete',
+        plan: 'complete',
+        provision: 'complete',
+        configure: 'complete',
+        finalise: 'complete',
+      }
+      const id = FLOW_STEPS.find((s) => LabelFor(s) === label) as FlowStepId
+      const sibling = FLOW_STEPS.find((s) => s !== id) as FlowStepId
+      renderRail({ steps, activeChip: id, current: null })
+
+      const selected = selectionRing(chip(label))
+      // THE DISCRIMINATING ASSERTION — this is what breaks if the ring is
+      // removed, not a colour computation that could stay green against a
+      // stale class list.
+      expect(selected.className, `${label} (selected) must carry a ring outline`).toMatch(/\boutline\b/)
+      expect(
+        selected.className,
+        `${label}'s ring colour must be outline-current — it reuses inkClass, already proven >=4.5:1 against whatever fill it sits on, rather than a fixed colour (see the corridor analysis for why no fixed colour works here)`,
+      ).toContain('outline-current')
+
+      // The ring is CONDITIONAL on selection, not merely always-on — an
+      // unselected sibling of the SAME render carries none of it.
+      const unselected = selectionRing(chip(LabelFor(sibling)))
+      expect(unselected.className, `${LabelFor(sibling)} (not selected) must carry no ring`).not.toMatch(/\boutline\b/)
+    },
+  )
+
+  // The three stages the original defect actually lived on — pinned by
+  // name, not just swept up in the parametrised case above, since these are
+  // the ones a future regression would most plausibly reintroduce (e.g. by
+  // reverting to a fixed ring colour that happens to work for design/plan
+  // and silently fails again for the other three).
+  it('Provision, Configure and Finalise & Review — the three previously-invisible stages — each carry the ring when selected', () => {
+    const steps: Record<FlowStepId, FlowStepState> = {
+      design: 'complete',
+      plan: 'complete',
+      provision: 'complete',
+      configure: 'complete',
+      finalise: 'complete',
+    }
+    for (const id of ['provision', 'configure', 'finalise'] as FlowStepId[]) {
+      cleanup()
+      renderRail({ steps, activeChip: id, current: null })
+      expect(
+        selectionRing(chip(LabelFor(id))).className,
+        `${id} was the stage this defect actually shipped on (1.49-2.82:1 fill-vs-fill) — its ring must be present`,
+      ).toMatch(/\boutline\b/)
+    }
   })
 })
 
