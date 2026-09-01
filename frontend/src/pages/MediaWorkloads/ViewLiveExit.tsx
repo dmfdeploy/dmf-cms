@@ -30,16 +30,19 @@ import { workloadHomePath } from '../../lib/routes'
  * it — the same reasoning WorkloadSetup.tsx already gives for sharing
  * JobStatusLine/OperationStatusLine themselves with Provision.
  *
- * DELIBERATELY NOT PROMOTED INTO THE HEADER ACTION SLOT
- * (store/headerActionSlot.ts) Provision's own control portals into. That
- * mount point exists only once the rail has registered — i.e. only once the
- * workload has resolved (Topbar.tsx's `showSlotRow`) — so anything reachable
- * exclusively through it would be absent for exactly the loading-safe/
- * materialising states this control must cover. Rendering it directly in
- * the page body instead means the promoted Provision control (when
- * eligible) and this exit occupy different DOM regions by construction —
- * neither can overwrite the other's pixels, and this one needs no header
- * row to exist first.
+ * RETIRED PARAGRAPH (umbrella #518): this used to explain why this control
+ * was deliberately NOT promoted into a header action slot
+ * (components/PromotedAction.tsx, store/headerActionSlot.ts) that
+ * Provision's own Deploy control portalled into on eligibility — that mount
+ * point only existed once the rail had registered (i.e. once the workload
+ * had resolved), so anything reachable exclusively through it would have
+ * been absent for exactly the loading-safe/materialising states this
+ * control must cover. Both files are deleted now (operator ruling:
+ * "redeploy matches creation" — Provision's Deploy renders inline
+ * unconditionally, the same as this exit always has), so there is no
+ * portal left to have deliberately opted out of. This control still renders
+ * directly in the page body, same as before — that was never the part that
+ * changed.
  *
  * JOB-LOCK AWARE (dmfdeploy#414: "must obey the existing job-navigation
  * lock… going inert and naming the reason rather than rendering a disabled

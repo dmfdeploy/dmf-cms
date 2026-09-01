@@ -218,10 +218,47 @@ export default function Sidebar() {
     // transition was the point). Nothing in this permanently-fixed w-16
     // rail needs clipping any more — the one thing that DID get clipped by
     // it was each tooltip's own escape past the rail's edge, which is the
-    // rail's only visible label for the icon-only nav. w-16 + shrink-0
-    // alone still holds the fixed-width layout; overflow was never load-
-    // bearing for that.
-    <aside className="flex w-16 shrink-0 flex-col border-r border-border bg-sidebar">
+    // rail's only visible label for the icon-only nav. `w-16` alone still
+    // holds the fixed-width layout (umbrella #515, gate P1: `shrink-0` used
+    // to sit alongside it here too, dropped once this element left flow
+    // entirely — see that fix round's own comment below); overflow was
+    // never load-bearing for the width either.
+    //
+    // FIX ROUND (umbrella #515, gate P1): `<aside>` is now the element
+    // positioned OUT of flow, not Topbar's header-slot row (Shell.tsx's own
+    // comment has the full account of why that inversion was necessary —
+    // the row's real height varies by width/wrap in a way a fixed offset
+    // elsewhere can't track, but this element's position must NOT depend on
+    // the row at all). `fixed left-0 top-14 bottom-0`: anchored to the
+    // header's own `h-14` bottom edge and the viewport's own bottom,
+    // independent of whether the row exists or how tall it is — this is
+    // what actually makes "the sidebar does not move" true unconditionally,
+    // rather than true only once some other element's height is measured
+    // correctly. `shrink-0` is dropped: it only ever mattered for a flex
+    // item, and a `fixed` element isn't part of any flex layout — same
+    // "no longer load-bearing" retirement this file already did once for
+    // `overflow-hidden` above, not an oversight.
+    //
+    // `z-30` still beats the row's own `z-20` (Topbar.tsx) with the SAME
+    // numeric values the gate-P1 fix round's first attempt already used —
+    // NOT "the same way it always has": before ANY #515 work, this element
+    // carried no z-index at all (`position: static`, `z-index: auto`),
+    // which loses to any explicit value, and the row's `z-20` painted OVER
+    // it the instant they ever shared a vertical band — that backwards
+    // stacking WAS the #515 bug. What changed between the fix round's two
+    // attempts is only WHICH element left flow (Topbar.tsx's own comment):
+    // this element was `relative z-30` while the row was `fixed z-20`; now
+    // this element is `fixed z-30` while the row is `relative z-20` — the
+    // z-index VALUES never moved, only which of the two carries `fixed`.
+    // Either way, both sides are explicitly positioned (never one of them
+    // left at `auto`), so 30 beats 20 wherever the two genuinely overlap,
+    // which is the row's own full-page-width span crossing this element's
+    // 64px column. The tooltip's own `z-30` below is scoped to ITS OWN
+    // stacking context once a descendant compares under a real ancestor
+    // z-index — it never compares against this element's siblings, so the
+    // two `z-30`s don't collide. Verified live, not inferred from the
+    // values alone — see the WO report's `elementFromPoint` proof.
+    <aside className="fixed left-0 top-14 bottom-0 z-30 flex w-16 flex-col border-r border-border bg-sidebar">
       <nav className="flex flex-1 flex-col gap-1 py-4 px-2">
         {rails.map((item) => renderItem(item, location.pathname))}
         {secondaries.length > 0 && <div className="border-t border-border my-2 mx-2" />}

@@ -17,8 +17,10 @@
  *    @ts-expect-error. (The primary-action descriptor this point used to
  *    also cover — a disabled action's reason required to typecheck — was
  *    deleted in the WP-3 spec B gate's fix round: it had no producer, the
- *    promoted action that shipped is a portal instead. See headerSlot.ts's
- *    own docstring.)
+ *    promoted action that shipped at the time was a portal instead — since
+ *    ALSO retired, umbrella #518: Deploy renders inline unconditionally
+ *    now, nothing portals anywhere. See headerSlot.ts's own docstring for
+ *    the full chain.)
  * 5. classifyWorkloadForHeaderSlot takes the workload's raw
  *    WorkloadLifecycleInput, not a FlowState (fix round 4). Classification
  *    is a two-phase call — classifyWorkloadForHeaderSlot
@@ -173,8 +175,19 @@ describe('the header slot module surface enforces its guarantees, not just claim
     expect(exported).toEqual([
       'buildHeaderSlotRail',
       'classifyWorkloadForHeaderSlot',
+      // umbrella #515: a pure route-parsing helper and a read-only boolean
+      // selector, added so "is the slot row showing" is computed in exactly
+      // one exported place — Topbar.tsx is the only caller of
+      // useShowHeaderSlotRow today (a gate-P1 fix round removed Shell.tsx's
+      // own use of it entirely, see headerSlot.ts's own docstring), but
+      // keeping the rule here rather than re-inlining it costs nothing even
+      // with a single caller. Neither export lets a caller register or
+      // mutate a rail model, so this test's own guarantee (above) is
+      // untouched by adding them.
+      'deriveWorkloadSlugFromPath',
       'useHeaderSlotContent',
       'useRegisterHeaderSlot',
+      'useShowHeaderSlotRow',
     ])
   })
 })

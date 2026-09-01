@@ -26,17 +26,15 @@ import { Input, Select, Textarea } from './FormField'
  * the SAME hierarchy (danger banner > title > description > field > helper):
  * nothing here changed relative WEIGHT, only absolute scale and breathing
  * room. `min-w-64` -> `min-w-80` so the wider type has room to sit
- * comfortably rather than wrapping tighter than before; ProvisionStage.tsx's
- * own promoted-popover wrapper already fixes width at `w-80` for its case,
- * so this makes the inline (non-promoted) rendering match it rather than
- * introducing a second width. `clear-for-deployment` (ClearForDeployment.tsx)
- * is a separate component that duplicates this same shell rather than
- * rendering THIS one, but reads as the identical affordance to an operator
- * — scaled identically there, in its own file, for the same reason.
+ * comfortably rather than wrapping tighter than before. `clear-for-deployment`
+ * (ClearForDeployment.tsx) is a separate component that duplicates this same
+ * shell rather than rendering THIS one, but reads as the identical
+ * affordance to an operator — scaled identically there, in its own file,
+ * for the same reason.
  *
- * FIX ROUND (0.28.0 walk finding): `min-w-80` is a MINIMUM — every non-
- * promoted call site (FinaliseStage.tsx's Teardown/Delete permanently
- * armed panels, ConfigureStage.tsx's Switch source, Catalog/index.tsx,
+ * FIX ROUND (0.28.0 walk finding): `min-w-80` is a MINIMUM — every call
+ * site (FinaliseStage.tsx's Teardown/Delete permanently armed panels,
+ * ConfigureStage.tsx's Switch source, Catalog/index.tsx,
  * Activity/JobsLane.tsx) mounts this as a bare block inside a wide stage
  * row with nothing else constraining it, so it stretched to fill that row
  * — measured live at 1988px, its description rendered as one 1954px
@@ -47,14 +45,19 @@ import { Input, Select, Textarea } from './FormField'
  * at this component's own 14px body text, that leaves ~352px of content
  * width after padding — roughly 45-50 characters per line, the low end of
  * the 45-75ch comfortable-measure range, appropriate for a compact confirm
- * popover rather than a full reading column. Checked against
- * ProvisionStage.tsx's promoted-portal wrapper (fixed `w-80` = 320px) by
- * reading the CSS box model, not by guessing: a max-width on a block child
- * only caps how far it's ALLOWED to grow, it cannot make the child wider
- * than its own containing block regardless of the value — 320px already
- * satisfies both `min-w-80` (320px) and `max-w-sm` (384px), so the
- * promoted case renders exactly as it did before this change, at exactly
- * 320px, with no fight between the two wrappers' constraints.
+ * popover rather than a full reading column.
+ *
+ * RETIRED CROSS-CHECK (umbrella #518): this component used to ALSO render
+ * inside a promoted-action popover (ProvisionStage.tsx's own wrapper, fixed
+ * at `w-80` = 320px) as well as inline — at the time this sizing was
+ * chosen, 320px was checked against `min-w-80`/`max-w-sm` to confirm the
+ * promoted case rendered unchanged. That portal is deleted (Deploy renders
+ * inline unconditionally now, see ProvisionStage.tsx's own docstring). Every
+ * call site (ProvisionStage.tsx, ConfigureStage.tsx, FinaliseStage.tsx,
+ * CreateWorkload.tsx, Catalog/index.tsx, Activity/JobsLane.tsx — verified
+ * against the real caller list, not assumed) mounts this inline, in its own
+ * page or panel body, none through a portal — so there is no second width
+ * anywhere to keep in agreement with.
  */
 export interface ReasonConfirmExtraField {
   label: string

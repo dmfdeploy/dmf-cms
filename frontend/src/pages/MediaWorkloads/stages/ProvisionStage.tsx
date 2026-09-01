@@ -1,4 +1,4 @@
-import { useEffect, useLayoutEffect, useRef, useState } from 'react'
+import { useEffect, useLayoutEffect, useState } from 'react'
 import { useQueryClient } from '@tanstack/react-query'
 import {
   isOperation,
@@ -9,8 +9,6 @@ import {
 } from '../../../api/hooks'
 import { useActivityStore } from '../../../store/activity'
 import ReasonConfirm from '../../../components/ReasonConfirm'
-import PromotedAction from '../../../components/PromotedAction'
-import { useHeaderActionSlotNode } from '../../../store/headerActionSlot'
 import { isValidWorkloadSlug } from '../../../lib/workloadSlug'
 import type { CatalogEntry, ClearForDeploymentResult, MediaWorkload } from '../../../api/types'
 import type { StageActionId, StageState } from '../../../lib/workloadLifecycle'
@@ -61,14 +59,16 @@ export default function ProvisionStage({
   /**
    * umbrella #432 §D1: reports whether THIS stage currently offers at
    * least one top-level primary control of its own (`eligibleDeployEntries`
-   * below, non-empty — the SAME runtime action model `computedPromotedKey`
-   * already derives, not a second copy of its condition) — so the parent
-   * (WorkloadSetup) can hold FlowStep's own Next neutral exactly while
-   * Provision has its own cyan control on screen, and let it go primary the
-   * moment Provision has nothing offered (every entry deployed/blocked).
-   * Optional so every OTHER direct render of this component (promotedAction
-   * test harnesses that predate §D1) is unaffected — a caller that never
-   * needs the signal simply never reads it.
+   * below, non-empty) — so the parent (WorkloadSetup) can hold FlowStep's
+   * own Next neutral exactly while Provision has its own cyan control on
+   * screen, and let it go primary the moment Provision has nothing offered
+   * (every entry deployed/blocked). RETIRED (umbrella #518): this prop used
+   * to ALSO gate a promoted-action portal mount (`computedPromotedKey`,
+   * deleted along with the portal itself — see this file's docstring above
+   * `eligibleDeployEntries`) — the condition this prop reports is unchanged
+   * by that retirement, only what it used to additionally drive. Optional
+   * so any OTHER direct render of this component is unaffected — a caller
+   * that never needs the signal simply never reads it.
    */
   onPromotedActionChange?: (hasPromotedAction: boolean) => void
 }) {
@@ -132,49 +132,48 @@ export default function ProvisionStage({
 
   const allowed = actions.includes('deploy')
 
-  // WP-3 spec B: the runtime action model for PROMOTION, not just for
-  // rendering. "One btn-primary in source" proves nothing — this stage maps
-  // one ProvisionEntry per eligible catalog entry, so two eligible entries
-  // means two live Deploy buttons at once. Mirrors, field for field, the
-  // EXACT condition that gates a single entry's own inline button below
-  // (allowed && !inFlight && lifecycle !== 'active') — computed once here
-  // over every entry, not re-derived per entry, so the two can never
-  // disagree. `arming` (per-entry, local UI state) is deliberately NOT part
-  // of this: promotion answers "which entries currently OFFER a deploy",
-  // armed or not, so the promoted entry's identity stays stable across its
-  // own arm → confirm → pending → outcome lifecycle instead of reassigning
-  // mid-interaction.
+  // "One btn-primary in source" proves nothing — this stage maps one
+  // ProvisionEntry per eligible catalog entry, so two eligible entries means
+  // two live Deploy buttons at once, each mirroring the EXACT condition that
+  // gates its own inline button below (allowed && !inFlight && lifecycle
+  // !== 'active') — computed once here over every entry, not re-derived per
+  // entry, so the two can never disagree.
   //
-  // Deploy is the only TOP-LEVEL OFFERED primary action anywhere in this
-  // flow — the FIRST control a stage offers, before anything is armed:
-  // Configure's "Switch source" and Finalise's "Teardown" are btn-secondary,
-  // "Delete permanently" is btn-danger, a deliberately lower weight than the
-  // cyan primary accent the rail-treatment ruling reserves for "the thing to
-  // click" (LifecycleStrip.tsx's own docstring). Clear-for-deployment below
-  // is btn-secondary for the same reason and is never a promotion candidate
-  // either. (NOT "Deploy is the only btn-primary in this flow" — that claim
-  // is false: ReasonConfirm's own Confirm button is btn-primary for every
-  // non-danger variant, so once ANY of these is armed, its Confirm button
-  // is primary-styled too. That is a uniform property of ReasonConfirm
-  // itself, not something Deploy is unique in.) "The current step's primary
-  // action" is therefore simply ABSENT, at top level, on Configure/Finalise
-  // — their actions stay in the body unconditionally, which is the rule
-  // applied vacuously, not an oversight.
+  // Deploy is styled as the only TOP-LEVEL btn-primary offer anywhere in
+  // this flow — Configure's "Switch source" and Finalise's "Teardown" are
+  // btn-secondary, "Delete permanently" is btn-danger, a deliberately lower
+  // weight than the cyan primary accent the rail-treatment ruling reserves
+  // for "the thing to click" (LifecycleStrip.tsx's own docstring).
+  // Clear-for-deployment below is btn-secondary for the same reason. (NOT
+  // "Deploy is the only btn-primary in this flow" — that claim is false:
+  // ReasonConfirm's own Confirm button is btn-primary for every non-danger
+  // variant, so once ANY of these is armed, its Confirm button is
+  // primary-styled too. That is a uniform property of ReasonConfirm itself,
+  // not something Deploy is unique in.)
+  //
+  // RETIRED (umbrella #518, operator ruling: "redeploy matches creation"):
+  // this used to also drive PROMOTION — relocating Deploy's own button +
+  // ReasonConfirm into Topbar's header row when exactly one entry qualified
+  // (components/PromotedAction.tsx, store/headerActionSlot.ts, both
+  // deleted). Deploy renders in the stage body unconditionally now, the same
+  // way CreateWorkload.tsx's first-deploy "▶ Provision now" always has —
+  // eligibleDeployEntries below exists ONLY to answer "does Provision
+  // currently offer at least one top-level control of its own" for
+  // WorkloadSetup's nextIsPrimary (umbrella #432 §D1, WorkloadSetup.tsx:762
+  // — that plumbing is UNCHANGED by this retirement, see its own comment for
+  // why removing it would be its own regression), not to pick which entry to
+  // promote.
   const eligibleDeployEntries = allowed && !busy
     ? entries.filter((e) => e.lifecycle !== 'active' && !activeTrack(track[e.key]))
     : []
-  const computedPromotedKey = eligibleDeployEntries.length === 1 ? eligibleDeployEntries[0].key : null
 
   // umbrella #432 §D1: whether THIS stage shows a top-level primary control
-  // right now — deliberately `.length > 0`, not `computedPromotedKey !==
-  // null`. computedPromotedKey answers a narrower question (does exactly
-  // one entry qualify for the HEADER portal); with two-or-more eligible
-  // entries neither is promoted to the header, but both still render their
-  // own inline `btn-primary` Deploy offer (this file's own docstring above:
-  // "two eligible entries means two live Deploy buttons at once") — the
-  // condition FlowStep's Next needs is "is there at least one cyan control
-  // on this screen already", which `computedPromotedKey === null` alone
-  // would wrongly answer "no" for that two-entry case.
+  // right now. `.length > 0`, not `=== 1`: with two-or-more eligible
+  // entries, both still render their own inline `btn-primary` Deploy offer
+  // (this file's own docstring above: "two eligible entries means two live
+  // Deploy buttons at once") — the condition FlowStep's Next needs is "is
+  // there at least one cyan control on this screen already", true either
+  // way.
   //
   // useLayoutEffect, not useEffect — same reasoning store/headerSlot.ts's
   // useRegisterHeaderSlot already documents for an identical "a sibling
@@ -189,53 +188,6 @@ export default function ProvisionStage({
   useLayoutEffect(() => {
     onPromotedActionChange?.(hasPromotedAction)
   }, [hasPromotedAction, onPromotedActionChange])
-
-  // FIX ROUND P1b, extended P3 round 3 (P2-3, two independent reviewers,
-  // same lines): LATCH the promoted identity through its own arm -> confirm
-  // -> pending -> SETTLE lifecycle, not just through pending. `busy`
-  // intentionally goes true the instant Confirm fires (onJobStart,
-  // synchronously, in the same event) — that's what correctly withdraws
-  // every OTHER entry's offer — but it also zeroed `eligibleDeployEntries`
-  // for the very same render, which dropped the promoted entry back to
-  // inline mid-flight: the operator saw "Launching…" jump out of the header
-  // and into the page body the instant they clicked Confirm. Written
-  // directly during render, not an effect — an effect lands one render
-  // after `busy` flips true, which is exactly the gap that let the panel
-  // flash into the body before latching.
-  //
-  // P1b only covered the PENDING half of that lifecycle: the fallback was
-  // keyed to `deployMutation.isPending` alone. On REJECTION, isPending flips
-  // false in THIS stage's own render before the PARENT (WorkloadSetup) has
-  // re-derived its `actions` prop to include 'deploy' again — that only
-  // happens once this component's own passive onBusyChange effect below
-  // fires and the parent re-renders, one commit later. In the render
-  // between those two things, `allowed` (from the still-stale `actions`
-  // prop) is false, `busy` (from THIS component's own already-settled
-  // state) is now also false, and the P1b-only latch condition
-  // (isPending) is false too — so `promotedEntryKey` computed to null for
-  // exactly that one committed render, and the still-armed, now-erroring
-  // ReasonConfirm panel fell back to the page body before snapping back a
-  // tick later once the parent caught up. A flicker on the exact failure
-  // path spec B calls the signature case.
-  //
-  // `lastEligibleKeyRef` remembers the last entry that was cleanly eligible
-  // (nothing busy) — i.e. the identity as of the moment BEFORE arming.
-  // `promotedEntryKey` falls back to that latch while the deploy mutation
-  // CURRENTLY TRACKED is this SAME entry's own AND has not yet reached a
-  // resting state the operator has dismissed — pending OR a settled error
-  // still on screen. A different entry's or clear-for-deployment's write
-  // firing must still correctly withdraw promotion (busy for an unrelated
-  // reason is not "this entry's own unsettled attempt"), which is why this
-  // still checks `deployMutation.variables?.key === latchedKey` before
-  // trusting `isPending`/`isError` at all.
-  const lastEligibleKeyRef = useRef<string | null>(null)
-  if (computedPromotedKey !== null) lastEligibleKeyRef.current = computedPromotedKey
-  const latchedKey = lastEligibleKeyRef.current
-  const latchedEntryOwnAttemptUnsettled =
-    latchedKey !== null &&
-    deployMutation.variables?.key === latchedKey &&
-    (deployMutation.isPending || deployMutation.isError)
-  const promotedEntryKey = computedPromotedKey ?? (latchedEntryOwnAttemptUnsettled ? latchedKey : null)
 
   // GATE-S1 P1: clear-for-deployment is a PROVISION-time action and now flows
   // through the rail like every other write. It used to render on Finalise
@@ -334,16 +286,15 @@ export default function ProvisionStage({
               // clear, a sibling's clear — withdraws every other write,
               // not just the one that owns its own job track.
               allowed={allowed && !busy}
-              promoted={entry.key === promotedEntryKey}
               track={track[entry.key] ?? EMPTY_TRACK}
               isDeploying={deployMutation.isPending && deployMutation.variables?.key === entry.key}
               deployError={deployMutation.variables?.key === entry.key ? deployMutation.error : null}
               onDeploy={(reason, ws) => handleDeploy(entry, reason, ws)}
               // FIX ROUND (P2-3): explicit Cancel out of a FAILED attempt
-              // must not leave `latchedEntryOwnAttemptUnsettled` true
-              // forever — deployMutation.isError otherwise persists until
-              // some entry's NEXT mutate() call overwrites it, which could
-              // be a long time (or never) if the operator just walks away.
+              // must actually clear the error, not just visually dismiss it
+              // — deployMutation.isError otherwise persists until some
+              // entry's NEXT mutate() call overwrites it, which could be a
+              // long time (or never) if the operator just walks away.
               // Scoped to `deployMutation.variables?.key === entry.key` so
               // cancelling THIS entry's panel can never reset a DIFFERENT
               // entry's still-pending mutation out from under it — reset()
@@ -405,7 +356,6 @@ function ProvisionEntry({
   entry,
   workloadSlug,
   allowed,
-  promoted,
   track,
   isDeploying,
   deployError,
@@ -419,21 +369,13 @@ function ProvisionEntry({
   entry: CatalogEntry
   workloadSlug: string
   allowed: boolean
-  /**
-   * True when this is the stage's ONE eligible deploy entry (WP-3 spec B —
-   * see ProvisionStage's eligibleDeployEntries) — its button and arming
-   * panel render in the header's promoted-action slot instead of here.
-   * Nothing else about this entry changes: same state, same mutation, same
-   * ReasonConfirm, just a different mount point (PromotedAction).
-   */
-  promoted: boolean
   track: EntryTrack
   isDeploying: boolean
   deployError: unknown
   onDeploy: (reason: string, workloadSlug: string) => Promise<void>
-  /** FIX ROUND (P2-3): called on Cancel, so an explicitly-dismissed error
-   *  doesn't keep the promotion latch (see ProvisionStage's
-   *  latchedEntryOwnAttemptUnsettled) unsettled indefinitely. */
+  /** Called on Cancel, so an explicitly-dismissed error doesn't leave
+   *  `deployMutation`'s error state stuck until some OTHER entry's next
+   *  mutate() call happens to overwrite it. */
   onDismissError: () => void
   onOpLaunched: (jobId: number) => void
   onOpError: () => void
@@ -447,16 +389,6 @@ function ProvisionEntry({
   const workloadInvalid = workload.trim() !== '' && !isValidWorkloadSlug(workload.trim())
   const inFlight = track.jobId !== null || track.opId !== null
   const offered = allowed && !inFlight && entry.lifecycle !== 'active'
-  // `promoted` alone only says this entry is ELIGIBLE for promotion — it is
-  // computed from the stage's own runtime action model, not from whether a
-  // header row exists to receive it (a bare stage render in a test, or any
-  // route without Topbar's header slot mounted, is eligible too). Called
-  // unconditionally (Rules of Hooks) and combined below — gating the
-  // "moved" copy on the mount point ACTUALLY being there avoids claiming a
-  // move that PromotedAction's own fallback didn't make: it renders inline
-  // right where this text would otherwise contradict it.
-  const actionSlotNode = useHeaderActionSlotNode()
-  const promotable = promoted && actionSlotNode !== null
 
   return (
     <div className="border-t border-white/5 pt-3 first:border-t-0 first:pt-0">
@@ -468,15 +400,16 @@ function ProvisionEntry({
         {/* Never a disabled button: the deploy affordance is either offered
             (allowed, not already active, nothing in flight) or absent —
             "already deployed" and "not offered right now" both render as
-            prose below instead. Routed through PromotedAction: identical
-            button, identical click handler — only WHERE it mounts differs
-            (WP-3 spec B). */}
+            prose below instead.
+            RETIRED (umbrella #518, operator ruling: "redeploy matches
+            creation"): this used to portal into Topbar's header row when
+            promoted (components/PromotedAction.tsx, now deleted). Always
+            inline now — the same button, the same click handler, just one
+            mount point instead of two. */}
         {offered && !arming && (
-          <PromotedAction promote={promoted}>
-            <button className="btn btn-primary btn-sm shrink-0" onClick={() => setArming(true)}>
-              ▶ Deploy
-            </button>
-          </PromotedAction>
+          <button className="btn btn-primary btn-sm shrink-0" onClick={() => setArming(true)}>
+            ▶ Deploy
+          </button>
         )}
       </div>
 
@@ -489,77 +422,55 @@ function ProvisionEntry({
           state above.
         </p>
       )}
-      {/* The button itself just portalled away (above) — say where it went,
-          rather than leaving what looks like a silently withdrawn action.
-          Gated on `promotable`, not `promoted`: a route/test with no header
-          slot mounted falls back to rendering the button right here (see
-          PromotedAction), and this copy must not contradict that. */}
-      {offered && promotable && !arming && (
-        <p className="mt-1 text-xs text-muted">Deploy is available from the header above.</p>
-      )}
 
       {arming && (
-        <PromotedAction promote={promoted}>
-          {/* FIX ROUND P1a: right-4, anchored to header-slot-row (Topbar.tsx
-              is `relative` there now, not on this control's own mount span,
-              whose box collapses to ~0 width the instant its only child is
-              this out-of-flow panel). max-w keeps it inside the viewport on
-              narrow widths instead of overflowing past it in the other
-              direction. */}
-          <div
-            className={
-              promotable
-                ? 'absolute right-4 top-full z-20 mt-2 w-80 max-w-[calc(100vw-2rem)]'
-                : 'mt-2'
-            }
-          >
-            <ReasonConfirm
-              title={`Deploy ${entry.display_name}?`}
-              description="Provisions this media function via its AWX job template. The action is operator-gated and recorded in the audit trail with your reason."
-              confirmLabel="Confirm deploy"
-              pendingLabel="Launching…"
-              pending={isDeploying}
-              error={deployError}
-              onConfirm={(reason) => {
-                // umbrella #386 / WP-3 spec B2: close ONLY on success.
-                // Closing unconditionally (the old shape) unmounted this
-                // panel — the only element rendering `error` above — the
-                // instant Confirm was clicked, so a failed deploy vanished
-                // with no trace. Staying armed on rejection keeps
-                // ReasonConfirm's own error paragraph on screen for as long
-                // as the operator is looking at it, well past the topbar's
-                // 6s transient echo.
-                //
-                // THE WHOLE LOOP MOVES WITH THE ACTION (WP-3 spec B):
-                // arming, this pending/error display, and — because staying
-                // mounted is all "persistent" means here — the failure too,
-                // whether this panel is inline or promoted into the header.
-                void (async () => {
-                  try {
-                    await onDeploy(reason, workload.trim())
-                    setArming(false)
-                  } catch {
-                    // Stay armed — deployError (threaded from the stage's
-                    // mutation state) renders the failure right here.
-                  }
-                })()
-              }}
-              onCancel={() => {
-                setArming(false)
-                onDismissError()
-              }}
-              extraField={{
-                label: 'Workload (optional)',
-                placeholder: 'e.g. studio-a',
-                helperText: 'Groups this deploy under a named workload in Media Workloads',
-                value: workload,
-                onChange: setWorkload,
-                invalid: workloadInvalid,
-                invalidHint: 'Lowercase letters, numbers, and hyphens only (not at the ends), max 40 characters',
-              }}
-            />
-          </div>
-        </PromotedAction>
+        <div className="mt-2">
+          <ReasonConfirm
+            title={`Deploy ${entry.display_name}?`}
+            description="Provisions this media function via its AWX job template. The action is operator-gated and recorded in the audit trail with your reason."
+            confirmLabel="Confirm deploy"
+            pendingLabel="Launching…"
+            pending={isDeploying}
+            error={deployError}
+            onConfirm={(reason) => {
+              // umbrella #386 / WP-3 spec B2: close ONLY on success.
+              // Closing unconditionally (the old shape) unmounted this
+              // panel — the only element rendering `error` above — the
+              // instant Confirm was clicked, so a failed deploy vanished
+              // with no trace. Staying armed on rejection keeps
+              // ReasonConfirm's own error paragraph on screen for as long
+              // as the operator is looking at it, well past the topbar's
+              // 6s transient echo.
+              //
+              // THE WHOLE LOOP STAYS PUT NOW (umbrella #518 retired the
+              // header-promoted variant of this panel): arming, this
+              // pending/error display, and the failure too are all
+              // rendered right here, always.
+              void (async () => {
+                try {
+                  await onDeploy(reason, workload.trim())
+                  setArming(false)
+                } catch {
+                  // Stay armed — deployError (threaded from the stage's
+                  // mutation state) renders the failure right here.
+                }
+              })()
+            }}
+            onCancel={() => {
+              setArming(false)
+              onDismissError()
+            }}
+            extraField={{
+              label: 'Workload (optional)',
+              placeholder: 'e.g. studio-a',
+              helperText: 'Groups this deploy under a named workload in Media Workloads',
+              value: workload,
+              onChange: setWorkload,
+              invalid: workloadInvalid,
+              invalidHint: 'Lowercase letters, numbers, and hyphens only (not at the ends), max 40 characters',
+            }}
+          />
+        </div>
       )}
 
       {track.opId != null && (
