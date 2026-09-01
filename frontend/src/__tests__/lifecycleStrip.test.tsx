@@ -441,6 +441,81 @@ describe('selection swaps fill/edge to the shared opaque face and inks the label
   })
 })
 
+// LKIRC GATE FINDING (dmf-cms#131, dmfdeploy/dmfdeploy#512), REPRODUCED AND
+// FIXED. `RAIL_HOVER_INK` (`hover:text-text`) fires on the element it's
+// applied to regardless of ancestry, unlike `RAIL_EDGE_HOVER`
+// (`group-hover:bg-selected-face`), which only fires under a `.group:hover`
+// ancestor. The interactive `<button>` branch carries `group`; the
+// non-interactive `<div>` (job-in-flight) branch never did, by design — an
+// inert key has no other reason to carry `group`. Before this fix,
+// `inkClass`/`edgeClass` were composed the same way on both branches, so an
+// unselected job-in-flight key's INK carried a working hover class while its
+// EDGE's matching hover class could structurally never fire — a half-hover
+// advertising an interaction the row deliberately disables. Fixed by
+// composing both classes from the same `interactive` flag the two branches
+// already need for their own button-vs-div structure.
+//
+// MUTATION-VERIFIED: reverting `inkClass` to unconditionally include
+// RAIL_HOVER_INK for unselected keys (dropping the `interactive` check)
+// makes the first describe block's second assertion fail — `expected
+// '...text-resting-ink hover:text-text...' not to contain 'hover:text-text'`
+// — naming the reintroduced carrier directly. Checked by hand during this
+// fix round, then restored.
+describe('the job-in-flight (non-interactive) branch never carries a hover carrier the interactive branch does not also structurally support (lkirc gate finding)', () => {
+  it('an unselected, job-in-flight chip renders the inert <div> and carries neither hover class', () => {
+    const steps: Record<FlowStepId, FlowStepState> = {
+      design: 'complete',
+      plan: 'complete',
+      provision: 'current',
+      configure: 'locked',
+      finalise: 'locked',
+    }
+    renderRail({ steps, activeChip: 'design', jobInFlight: true })
+
+    const provision = chip('Provision')
+    expect(provision.tagName, 'a job-in-flight key must render the inert <div> branch, not <button>').toBe('DIV')
+    expect(provision.className, 'must not carry the hover ink class the interactive branch uses').not.toContain('hover:text-text')
+    expect(edgeLayer(provision).className, 'must not carry the hover edge class the interactive branch uses').not.toContain('group-hover:bg-selected-face')
+    // Still the correct RESTING tokens — this is a hover-carrier gap being
+    // closed, not a resting-state regression.
+    expect(provision.className).toContain('text-resting-ink')
+    expect(edgeLayer(provision).className).toContain('bg-rail-fill')
+  })
+
+  it('the SAME chip, rendered interactive, DOES carry both hover carriers — the gap is specific to jobInFlight, not a blanket removal', () => {
+    const steps: Record<FlowStepId, FlowStepState> = {
+      design: 'complete',
+      plan: 'complete',
+      provision: 'current',
+      configure: 'locked',
+      finalise: 'locked',
+    }
+    renderRail({ steps, activeChip: 'design', jobInFlight: false })
+
+    const provision = chip('Provision')
+    expect(provision.tagName, 'a non-job-in-flight key must render the interactive <button> branch').toBe('BUTTON')
+    expect(provision.className).toContain('hover:text-text')
+    expect(edgeLayer(provision).className).toContain('group-hover:bg-selected-face')
+  })
+
+  it('a SELECTED job-in-flight chip carries neither hover class either — hover has no matching concept once selected, on either branch', () => {
+    const steps: Record<FlowStepId, FlowStepState> = {
+      design: 'complete',
+      plan: 'complete',
+      provision: 'current',
+      configure: 'locked',
+      finalise: 'locked',
+    }
+    renderRail({ steps, activeChip: 'provision', jobInFlight: true })
+
+    const provision = chip('Provision')
+    expect(provision.className).not.toContain('hover:text-text')
+    expect(edgeLayer(provision).className).not.toContain('group-hover:bg-selected-face')
+    expect(provision.className).toContain('text-bg')
+    expect(edgeLayer(provision).className).toContain('bg-selected-face')
+  })
+})
+
 // CODEX GATE, P1 RELEASE BLOCKER (dmfdeploy/dmfdeploy#512): `outline-current`
 // plus the two-tone `box-shadow` sandwich occupied the SAME 0-2px outward
 // band, and outline paints on top of an element's own box-shadow — so a

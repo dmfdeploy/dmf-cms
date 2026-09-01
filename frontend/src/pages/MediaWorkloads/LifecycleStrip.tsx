@@ -915,7 +915,30 @@ export default function LifecycleStrip({
           // case only, same as Sidebar.tsx's own `hover:` — a selected
           // key's ink (RAIL_SELECTED_INK, dark-on-bright) has no matching
           // hover concept.
-          const inkClass = isSelected ? RAIL_SELECTED_INK : `${RAIL_INK} ${RAIL_HOVER_INK}`
+          //
+          // ALSO GATED ON `interactive` — LKIRC GATE FINDING, dmf-cms#131
+          // (dmfdeploy/dmfdeploy#512), REPRODUCED AND FIXED. `RAIL_HOVER_INK`
+          // is a plain `hover:text-text`, which fires on the element it's
+          // applied to regardless of ancestry — unlike `RAIL_EDGE_HOVER`
+          // (`group-hover:bg-selected-face` below), which only fires under a
+          // `.group:hover` ancestor. The interactive `<button>` variant below
+          // carries `group`; the non-interactive `<div>` (job-in-flight
+          // branch) does not, by design — a job-in-flight key is inert, and
+          // giving an inert element a `group` class it has no OTHER use for
+          // just to keep two hover carriers symmetric would be exactly
+          // backwards. Composing `inkClass`/`edgeClass` from the SAME
+          // `interactive` flag both branches already need for their own
+          // structure means the ink carrier can no longer fire alone: an
+          // unselected job-in-flight key previously brightened its LABEL on
+          // hover (plain `hover:`, no ancestor required) while its EDGE
+          // stayed inert (`group-hover:` with no `group` ancestor to match)
+          // — a half-hover advertising an interaction the row deliberately
+          // disables. Confirmed this is the ONLY `hover:`/`group-hover:`
+          // pairing in this file (or Sidebar.tsx, whose own `group`/
+          // `group-hover:` tooltip pairing always carries `group`
+          // unconditionally) where the `group` ancestor is ever conditionally
+          // absent — not a pattern repeated elsewhere.
+          const inkClass = isSelected ? RAIL_SELECTED_INK : interactive ? `${RAIL_INK} ${RAIL_HOVER_INK}` : RAIL_INK
           // The EDGE, point (4)'s own FINAL ruling (a first pass kept
           // RAIL_EDGE #616161 visible at rest; superseded — see
           // stagePalette.ts). No ring at rest OR selected, a hover-only
@@ -932,9 +955,15 @@ export default function LifecycleStrip({
           // the "FOCUS RING" section below — it uses ink/neutral tokens,
           // not `--color-accent`), so hover and focus differ in position
           // (inside the shape vs outside it) as well as colour either way.
-          // Selected stays RAIL_SELECTED_FACE
-          // unconditionally, unaffected by hover.
-          const edgeClass = isSelected ? RAIL_SELECTED_FACE : `${RAIL_FILL} ${RAIL_EDGE_HOVER}`
+          // Selected stays RAIL_SELECTED_FACE unconditionally, unaffected by
+          // hover. ALSO gated on `interactive` now (see `inkClass`'s own
+          // comment above) — `group-hover:` could never actually fire on the
+          // non-interactive `<div>` branch regardless (no `group` ancestor
+          // exists there), so this was not itself a live bug, but composing
+          // it from the same flag as `inkClass` makes that a structural fact
+          // rather than a coincidence of the div branch never having a
+          // `group` class for an unrelated reason.
+          const edgeClass = isSelected ? RAIL_SELECTED_FACE : interactive ? `${RAIL_FILL} ${RAIL_EDGE_HOVER}` : RAIL_FILL
 
           const inner = (
             <>
