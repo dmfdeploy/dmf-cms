@@ -85,6 +85,44 @@ HEALTHZ_URL="${DMF_CMS_HEALTHZ_URL:-https://console.dmf.example.com/healthz}"
 GHCR_IMAGE="${DMF_CMS_GHCR_IMAGE:-ghcr.io/dmfdeploy/dmf-cms}"
 IMAGE_ARCH="${DMF_CMS_IMAGE_ARCH:-arm64}"
 
+# --- Placeholder guard -------------------------------------------------------
+# The defaults above are PLACEHOLDERS, not a usable environment. Left unset, the
+# script used to run to completion against dmf.example.com and report "✗ DRIFT",
+# which is indistinguishable from a genuinely failed deploy — a real session was
+# spent chasing a rollout that had in fact succeeded.
+#
+# The trap is sharpened by the hosts not following the obvious pattern: a live
+# env's registry and console carry NO `dmf.` prefix even though its cluster
+# domain does, so the natural guess is wrong in a way that also reports DRIFT.
+#
+# Fail closed instead: refuse to produce a verdict we cannot stand behind.
+_placeholders=()
+case "$REGISTRY"     in *dmf.example.com*) _placeholders+=("DMF_CMS_REGISTRY=$REGISTRY") ;; esac
+case "$CONTROL_NODE" in *dmf.example.com*) _placeholders+=("DMF_CMS_CONTROL_NODE=$CONTROL_NODE") ;; esac
+case "$HEALTHZ_URL"  in *dmf.example.com*) _placeholders+=("DMF_CMS_HEALTHZ_URL=$HEALTHZ_URL") ;; esac
+
+if (( ${#_placeholders[@]} > 0 )); then
+  {
+    echo "REFUSING TO VERIFY: still using placeholder values, which cannot describe a real env."
+    echo
+    for _p in "${_placeholders[@]}"; do echo "  $_p"; done
+    echo
+    echo "Set them for the env you are verifying. Note the hosts do NOT take a 'dmf.'"
+    echo "prefix even though the cluster domain does — guessing one produces a false DRIFT:"
+    echo
+    echo "  DMF_CMS_REGISTRY='registry.<env-domain>' \\"
+    echo "  DMF_CMS_CONTROL_NODE='root@<control-node-ip>' \\"
+    echo "  DMF_CMS_SSH_KEY=\"\$HOME/.dmfdeploy/<env-key>.pem\" \\"
+    echo "  DMF_CMS_HEALTHZ_URL='https://console.<env-domain>/healthz' \\"
+    echo "    scripts/verify-cluster.sh"
+    echo
+    echo "The current env id is in the umbrella's generated STATUS.local.md"
+    echo "(run bin/generate-status.sh)."
+  } >&2
+  exit 2
+fi
+# -----------------------------------------------------------------------------
+
 # When DMF_CMS_SSH_KEY is set, pin that identity on every ssh call instead of
 # trusting whatever the agent offers first. Empty array + `set -u` is a
 # bash-3.2 trap (macOS ships 3.2, GPLv2-only): the bare form
