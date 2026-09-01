@@ -140,7 +140,11 @@ git tag -a "v$NEW" -m "Release v$NEW"
 #                                                        # pre-rebase commit and has diverged
 #     git push origin "v$NEW"
 #     git merge-base --is-ancestor "v$NEW^{commit}" origin/main   # prove it landed
-#     git checkout main && git reset --hard origin/main           # realign afterwards
+#     # realign local main afterwards — but LOOK FIRST, this script runs on any
+#     # clean branch and cannot know what else your local main carries:
+#     git checkout main && git log --oneline origin/main..main
+#     # expect only the pre-rebase bump; if so `git reset --hard origin/main`
+#     # is safe, and if anything else is listed, rebase it instead of resetting
 
 # 6. Build (local only — no push; publish happens via scripts/publish-to-ghcr.sh)
 echo ""
@@ -179,8 +183,18 @@ see STATUS.md in the umbrella repo.
        git push origin v$NEW
        git merge-base --is-ancestor v$NEW^{commit} origin/main   # prove it landed
 
-     Only then realign local main, which is still carrying the stale commit:
-       git checkout main && git reset --hard origin/main
+     Only then realign local main, which is still carrying the stale commit.
+     LOOK BEFORE YOU RESET — this script runs on any clean branch and cannot
+     know what else is on your local main:
+       git checkout main
+       git log --oneline origin/main..main
+       # Expect exactly one commit: the pre-rebase "chore(release): v$NEW".
+       # If that is all it is, discarding it is safe — origin/main already has
+       # its rebased twin:
+       #   git reset --hard origin/main
+       # If ANYTHING else is listed, do not reset: rebase or cherry-pick that
+       # work onto origin/main instead. A --ff-only merge is no help here —
+       # the histories have genuinely diverged, so it always refuses.
 
   2. Publish image to GHCR (canonical public source):
        cd $CMS_HINT
