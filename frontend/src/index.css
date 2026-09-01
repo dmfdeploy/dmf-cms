@@ -351,15 +351,47 @@
      render. Fixed the same way LifecycleStrip.tsx's shape()'d path was:
      key-fill is inset-0 now (the SAME box as key-edge, see
      LifecycleStrip.tsx's own `chevronInnerStyle`), and its OWN radius
-     here is BOX_RADIUS - RING_INSET (8 - 2 = 6), a second, more specific
-     class (`.lifecycle-rail-chevron-fill`, defined AFTER the shared rule
-     above so it wins at equal specificity) rather than a second
-     box-shrink. A plain rectangle's ring genuinely IS uniform at any
-     radius pairing that keeps this arithmetic — see LifecycleStrip.tsx's
+     here is BOX_RADIUS - RING_INSET (8 - 2 = 6) — see LifecycleStrip.tsx's
      own `chevronInnerStyle` for the `shape()`-mode fallback (`clip-path:
-     inset(...)`) using the identical BOX_RADIUS - RING_INSET value. */
+     inset(...)`) using the identical BOX_RADIUS - RING_INSET value.
+
+     LKIRC GATE ROUND 2 (dmfdeploy/dmfdeploy#512), REPRODUCED AND WORSE
+     THAN REPORTED. The fix above only restored the RADIUS (border-radius:
+     6px), not the INSET — `.lifecycle-rail-chevron`'s own `clip-path: none
+     !important` (needed so key-EDGE drops its shape() notch for a plain
+     rectangle below 390px) ALSO nukes key-fill's clip-path, since both
+     layers share that class, and key-fill's own more-specific rule below
+     only ever re-added `border-radius`, never `clip-path`. Net effect,
+     confirmed on a real hovered render at 380px (pixel-sampled, not
+     inferred): key-edge and key-fill ended up as the exact SAME box
+     (`inset: 0px` on both, confirmed via computed style) with only their
+     RADIUS differing (8 vs 6) — not the two DIFFERENT reasons this looks
+     wrong:
+       1. NO RING AT ALL. With zero inset between them, opaque key-fill
+          (painted after key-edge in DOM order) covers 100% of key-edge's
+          area on every straight edge — a hover/hover-hover-target sampled
+          zero edge-coloured (`--color-selected-face`) pixels anywhere,
+          corner or straight edge. The hover ring this file's own "HOVER
+          TARGET BUG" account (stagePalette.ts) went to real lengths to
+          make reachable is entirely invisible below 390px.
+       2. THE FILL PROTRUDES AT THE CORNERS. Two DIFFERENT radii (6 vs 8)
+          on the exact SAME box, not two CONCENTRIC boxes at different
+          insets — a smaller radius removes LESS corner material, so
+          key-fill's own corner boundary sits outside key-edge's, and
+          since key-fill paints on top, the rendered silhouette's corners
+          are governed by key-fill's radius (6, squarer) protruding past
+          where the intended BOX_RADIUS (8) boundary should be — visible
+          the instant the two colours differ, i.e. exactly on hover.
+     FIXED by giving key-fill back its own clip-path here too, the
+     IDENTICAL value `chevronInnerStyle`'s TS-side fallback already
+     computes for this exact case (`inset(RING_INSET round
+     BOX_RADIUS-RING_INSET)`) — border-radius is dropped rather than kept
+     alongside it: once clip-path is present it fully determines the
+     shape, and a border-radius declaration that no longer does anything
+     is exactly the kind of load-bearing-looking dead code this round
+     keeps finding elsewhere. */
   .lifecycle-rail-chevron-fill {
-    border-radius: 6px !important;
+    clip-path: inset(2px round 6px) !important;
   }
 
   .lifecycle-rail-content {

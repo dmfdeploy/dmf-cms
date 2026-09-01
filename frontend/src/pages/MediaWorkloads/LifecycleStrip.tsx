@@ -385,8 +385,16 @@ const TIP_RADIUS = 7
  * independently re-derive a rail-specific radius any more: the rail key IS
  * now the sidebar tile's bucket (both 40px, per H above), so the same
  * radius is the size-correct value, not a coincidence to round away.
+ *
+ * Exported (LKIRC GATE ROUND 2, dmfdeploy/dmfdeploy#512) so
+ * index.css's own `@media (width < 390px)` block — which hardcodes this
+ * value AND `BOX_RADIUS - RING_INSET` as literal CSS, "kept in sync by
+ * hand" per its own comment — can be checked by a test against the SOURCE
+ * OF TRUTH rather than trusting the hand-sync silently, the same
+ * lesson-application as CONTENT_OFFSET_PX's own export below. See
+ * `narrowWidthCssSync.test.ts`.
  */
-const BOX_RADIUS = 8
+export const BOX_RADIUS = 8
 
 /**
  * TWO DELIBERATELY UNEQUAL JOINT RADII — the corners where a flat top/
@@ -588,8 +596,14 @@ const LAST_SHAPE = roundedShape(LAST_VERTICES)
  * here). The result is a SEPARATE `shape()` string for `key-fill`, applied
  * to the SAME full-size box `key-edge` uses (`inset-0`, not `inset-[Npx]`)
  * — the box no longer does any of the insetting, the geometry does.
+ *
+ * Exported (LKIRC GATE ROUND 2, dmfdeploy/dmfdeploy#512) for the same
+ * reason as `BOX_RADIUS` above — index.css's narrow-width fallback hand-
+ * copies this value too (`clip-path: inset(2px round ...)`), and that
+ * hand-copy is exactly the kind of drift that let this same round's
+ * fallback bug through undetected. See `narrowWidthCssSync.test.ts`.
  */
-const RING_INSET = 2
+export const RING_INSET = 2
 
 /** The real-pixel (x-right, y-down) unit direction from `a` to `b`. Unlike
  *  `edgeVector` above (which measures relative to `cur`'s OWN anchor, the
