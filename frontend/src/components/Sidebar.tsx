@@ -259,7 +259,28 @@ export default function Sidebar() {
     // two `z-30`s don't collide. Verified live, not inferred from the
     // values alone — see the WO report's `elementFromPoint` proof.
     <aside className="fixed left-0 top-14 bottom-0 z-30 flex w-16 flex-col border-r border-border bg-sidebar">
-      <nav className="flex flex-1 flex-col gap-1 py-4 px-2">
+      {/* umbrella #486: this landmark had no accessible name — a screen
+          reader user got "navigation" here AND for Topbar.tsx's own
+          `<nav aria-label="Breadcrumb">`, with nothing to tell the two
+          apart. "Console navigation", not "Primary" (the conventional
+          pairing with "Breadcrumb", and the first name tried): the
+          Glossary and the IA doc both use the phrase "the console's
+          primary navigation" already, but for a DIFFERENT landmark — the
+          lifecycle rail (LifecycleStrip.tsx's own `<nav aria-label="Media
+          workload lifecycle">`), not this one (umbrella #414, Glossary
+          entry on the lifecycle stage names). Naming THIS nav "Primary"
+          would collide with vocabulary the product has already spoken for
+          elsewhere, not reuse it correctly. "Console" instead — genuine
+          product self-reference, not invented: shown to the operator
+          verbatim on the loading/redirect screens (App.tsx) and in
+          AdminPanels.tsx's own copy ("...underpin DMF Console"), and it's
+          the one term here that names the WHOLE APP's nav without
+          contesting a name already claimed by a more specific surface.
+          Checked there is no name coming from elsewhere first: neither
+          this `<nav>` nor the `<aside>` around it carried aria-label or
+          aria-labelledby before this change, and there is no visually-
+          hidden heading anywhere in this file. */}
+      <nav aria-label="Console navigation" className="flex flex-1 flex-col gap-1 py-4 px-2">
         {rails.map((item) => renderItem(item, location.pathname))}
         {secondaries.length > 0 && <div className="border-t border-border my-2 mx-2" />}
         {secondaries.map((item) => renderItem(item, location.pathname))}
