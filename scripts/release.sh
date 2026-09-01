@@ -124,6 +124,20 @@ echo ""
 echo "[3/4] Tagging v$NEW..."
 git tag -a "v$NEW" -m "Release v$NEW"
 
+# NOTE — protected main. This tag points at the commit just created on the
+# CURRENT branch. If main is protected (it is: the 'main-protection' ruleset)
+# the bump cannot be pushed straight to main, and because this repo is
+# REBASE-MERGE ONLY, merging the PR rewrites the commit to a new SHA. The tag
+# would then reference a commit that never lands on main.
+#
+# When releasing through a PR: delete this local tag, merge the PR, then
+# re-create the tag on the MERGED commit and push it:
+#     git tag -d "v$NEW"
+#     # ... open + merge the release PR ...
+#     git checkout main && git pull
+#     git tag -a "v$NEW" -m "Release v$NEW" && git push origin "v$NEW"
+#     git merge-base --is-ancestor "v$NEW^{commit}" origin/main   # prove it landed
+
 # 6. Build (local only — no push; publish happens via scripts/publish-to-ghcr.sh)
 echo ""
 echo "[4/4] Building image locally..."
@@ -140,9 +154,18 @@ Next steps (per the ADR-0025 GHCR-canonical / Zot-mirror flow).
 NOTE: substitute <env-name> with the current Hetzner test env id —
 see STATUS.md in the umbrella repo.
 
-  1. Push commit and tag:
-       git push origin HEAD
-       git push origin v$NEW
+  1. Land the bump. main is PROTECTED, so it goes via a PR — and because this
+     repo is rebase-merge only, the tag must be created AFTER the merge or it
+     points at a commit that never reaches main:
+       git tag -d v$NEW                       # drop the pre-merge tag
+       git checkout -b release/$NEW && git push -u origin release/$NEW
+       gh pr create --title "chore(release): v$NEW" --body "..."
+       # the PR body needs a qualified backlog ref, e.g.
+       #   Refs dmfdeploy/dmfdeploy#<N>
+       # ...merge it, then tag the merged commit:
+       git checkout main && git pull
+       git tag -a v$NEW -m "Release v$NEW" && git push origin v$NEW
+       git merge-base --is-ancestor v$NEW^{commit} origin/main   # prove it landed
 
   2. Publish image to GHCR (canonical public source):
        cd $CMS_HINT

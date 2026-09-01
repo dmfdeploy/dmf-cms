@@ -2,6 +2,14 @@ name: guard
 on:
   pull_request:
     branches: [main]
+    # `edited` and `labeled` are here deliberately. The issue-link gate below
+    # reads github.event.pull_request.body and .labels from the EVENT PAYLOAD,
+    # and its own failure message tells you to edit the body or add the
+    # 'no-issue' label. With only the default types (opened/synchronize/
+    # reopened) neither of those fires a new run, and re-running the failed job
+    # replays the ORIGINAL payload — so every remedy the error advertises
+    # silently fails and the only way out is a new commit or close/reopen.
+    types: [opened, synchronize, reopened, edited, labeled, unlabeled]
   push:
     branches: [main]
 permissions:
