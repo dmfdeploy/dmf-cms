@@ -34,10 +34,15 @@ cd "$REPO_ROOT"
 
 usage() {
     cat <<EOF
-Usage: $0 (patch|minor|major|X.Y.Z) [--no-deploy-hint]
+Usage: $0 (patch|minor|major|X.Y.Z) [--tag] [--no-deploy-hint]
 
   patch | minor | major   Bump the corresponding component
   X.Y.Z                   Set explicit version
+  --tag                   Also create the v<NEW> tag now, before the bump is
+                          merged. OFF by default: main is protected here, so the
+                          bump lands via a PR, and this repo is rebase-merge
+                          only — a tag cut now points at a commit the merge
+                          replaces. Only useful on an unprotected branch.
   --no-deploy-hint        Suppress the next-step instructions at the end
 
 Cannot run with uncommitted changes.
@@ -56,8 +61,10 @@ BUMP="$1"
 shift
 
 SHOW_DEPLOY_HINT=1
+CREATE_TAG=0
 for arg in "$@"; do
     case "$arg" in
+        --tag)             CREATE_TAG=1 ;;
         --no-deploy-hint)  SHOW_DEPLOY_HINT=0 ;;
         -h|--help)         usage ;;
         *)                 echo "Unknown arg: $arg" >&2; usage ;;
@@ -121,17 +128,31 @@ git commit -s -m "chore(release): v$NEW"
 
 # 5. Tag
 echo ""
-echo "[3/4] Tagging v$NEW..."
-git tag -a "v$NEW" -m "Release v$NEW"
+if [[ $CREATE_TAG -eq 1 ]]; then
+    echo "[3/4] Tagging v$NEW (--tag)..."
+    git tag -a "v$NEW" -m "Release v$NEW"
+else
+    echo "[3/4] Tagging deferred — the tag is created AFTER the bump merges."
+    echo "      main is protected, so the bump lands via a PR, and this repo is"
+    echo "      rebase-merge only: a tag cut now would point at a commit the"
+    echo "      merge replaces, leaving an orphan tag that is not on main."
+    echo "      Pass --tag to tag anyway (unprotected branches only)."
+    echo ""
+    echo "      The next step will warn that HEAD is not tagged v$NEW. That is"
+    echo "      expected here and not a problem: the tag does not exist yet, and"
+    echo "      build-image.sh uses it for that warning only — the image labels"
+    echo "      carry VERSION and the git SHA, never the tag."
+fi
 
-# NOTE — protected main. This tag points at the commit just created on the
-# CURRENT branch. If main is protected (it is: the 'main-protection' ruleset)
-# the bump cannot be pushed straight to main, and because this repo is
-# REBASE-MERGE ONLY, merging the PR rewrites the commit to a new SHA. The tag
-# would then reference a commit that never lands on main.
+# NOTE — this block applies to the --tag path only; tagging is off by default
+# precisely because of what follows. A tag created here points at the commit
+# just made on the CURRENT branch. main is protected ('main-protection'), so
+# the bump cannot be pushed straight to main, and this repo is REBASE-MERGE
+# ONLY — merging the PR rewrites the commit to a new SHA, so the tag would
+# reference a commit that never lands on main.
 #
-# When releasing through a PR: delete this local tag, merge the PR, then
-# re-create the tag on the MERGED commit and push it:
+# If you passed --tag and are releasing through a PR, delete that local tag,
+# merge, then re-create it on the MERGED commit:
 #     git tag -d "v$NEW"
 #     # ... open + merge the release PR ...
 #     git fetch origin
@@ -165,7 +186,8 @@ see STATUS.md in the umbrella repo.
   1. Land the bump. main is PROTECTED, so it goes via a PR — and because this
      repo is rebase-merge only, the tag must be created AFTER the merge or it
      points at a commit that never reaches main:
-       git tag -d v$NEW                       # drop the pre-merge tag
+       git tag -d v$NEW                       # ONLY if you passed --tag;
+                                              # by default no tag exists yet
        git checkout -b release/$NEW && git push -u origin release/$NEW
        gh pr create --title "chore(release): v$NEW" --body "..."
        # the PR body needs a qualified backlog ref, e.g.
