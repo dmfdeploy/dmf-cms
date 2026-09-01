@@ -291,3 +291,23 @@ describe('the icon-only rail\'s tooltip is not structurally clipped (operator re
     }
   })
 })
+
+// umbrella #486: the sidebar's own <nav> had no accessible name, so a
+// screen-reader user landed on "navigation" for both this landmark and
+// Topbar.tsx's `<nav aria-label="Breadcrumb">` with nothing to tell them
+// apart. Renders the full App (both landmarks mounted at once) specifically
+// so a name-scoped query has something to discriminate FROM — a query
+// against Sidebar alone couldn't fail this way, since there'd be only one
+// <nav> in the tree either way.
+describe('sidebar nav landmark has an accessible name (umbrella #486)', () => {
+  it('names the sidebar nav distinctly from the breadcrumb nav', async () => {
+    renderAt('/')
+    const sidebarNav = await screen.findByRole('navigation', { name: 'Console navigation' })
+    const breadcrumbNav = screen.getByRole('navigation', { name: 'Breadcrumb' })
+    expect(sidebarNav).not.toBe(breadcrumbNav)
+    // Not just "a landmark happens to be named this" — it's genuinely the
+    // sidebar (contains the rail links), not some other element that
+    // happened to pick up the same name.
+    expect(within(sidebarNav).getByRole('link', { name: 'Workspace' })).toBeTruthy()
+  })
+})
