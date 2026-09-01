@@ -1,4 +1,5 @@
 import { useLayoutEffect } from 'react'
+import { useLocation } from 'react-router-dom'
 import { create } from 'zustand'
 import {
   classifyWorkloadFlow,
@@ -158,14 +159,17 @@ import type { WorkloadLifecycleInput } from '../lib/workloadLifecycle'
  * a decoy for the next reader, not a fallback — so it is deleted rather
  * than left beside the mechanism that actually ships. The portal does NOT
  * carry the descriptor's type-level guarantee (a disabled control's reason
- * required to typecheck): PromotedAction takes arbitrary ReactNode, by
- * design, since it only relocates pixels the stage already built. The
- * "never a dead control, a disabled action's reason is always visible text"
- * property still holds for the promoted Deploy control — Provision offers
- * it or doesn't (ProvisionStage.tsx's own no-dead-controls comment), and
- * ReasonConfirm's error/pending states are always plain visible text — but
- * that is now a PRODUCER-side property, verified in ProvisionStage's own
- * tests, not something this module's types enforce for whatever portals in.
+ * required to typecheck): PromotedAction took arbitrary ReactNode, by
+ * design, since it only relocated pixels the stage already built.
+ *
+ * RETIRED IN TURN (umbrella #518, operator ruling: "redeploy matches
+ * creation"). The portal this paragraph describes is itself gone —
+ * components/PromotedAction.tsx and store/headerActionSlot.ts are deleted,
+ * and ProvisionStage.tsx's Deploy control renders inline unconditionally
+ * now. This module (headerSlot.ts) is unaffected — it only ever carried the
+ * RAIL model, never the action — so the account above stays accurate as
+ * history for why the descriptor-vs-portal choice was made; it just no
+ * longer describes anything still shipping.
  */
 
 // Module-private brands — deliberately not exported. TypeScript is
@@ -439,7 +443,54 @@ export function useRegisterHeaderSlot(content: HeaderSlotContent | null) {
   }, [content, setHeaderSlot, clearHeaderSlot])
 }
 
-/** Topbar-only reader. Nothing else needs the raw content. */
+/**
+ * Topbar-only reader (the rail content itself). A gate P1 fix round
+ * (umbrella #515) briefly made Shell.tsx a second reader too, to reserve
+ * <main>'s own clearance against a `position: fixed` header-slot row — that
+ * approach broke at narrow widths (the row's real height varies by wrap,
+ * a fixed offset elsewhere couldn't track it) and was replaced by making
+ * `<Sidebar/>` the fixed element instead (Shell.tsx's own comment). Shell no
+ * longer reads header-slot state of any kind.
+ */
 export function useHeaderSlotContent(): HeaderSlotContent | null {
   return useHeaderSlotStore((s) => s.content)
+}
+
+/**
+ * The workload slug parsed from a pathname alone when the route is a
+ * workload-detail route (…/:slug or …/:slug/setup, "new" excluded) —
+ * otherwise ''. Exported so useShowHeaderSlotRow below and Topbar.tsx's own
+ * useBreadcrumbTrail (which additionally needs the facility/workload data
+ * fetches breadcrumb LABELS require, which this function deliberately does
+ * not do) share this one rule rather than each keeping an independent copy
+ * of the same route-shape test — see useShowHeaderSlotRow's own comment for
+ * why that specific drift is a repeat of a mistake this file already made
+ * once.
+ */
+export function deriveWorkloadSlugFromPath(pathname: string): string {
+  const segments = pathname.split('/').filter(Boolean)
+  return segments[0] === 'media-workloads' && segments[1] && segments[1] !== 'new' ? segments[1] : ''
+}
+
+/**
+ * Whether Topbar's header-slot row is currently showing — used by Topbar
+ * itself to decide whether to render the row at all. umbrella #515, gate
+ * P1: a prior version of this fix round ALSO made Shell.tsx a reader (the
+ * row was `position: fixed` then, so <main> needed this boolean to know
+ * whether to reserve clearance) — that positioning approach was replaced
+ * (Shell.tsx's own comment has the full account: the row is back in normal
+ * flow, `<Sidebar/>` is the fixed element instead), and Shell no longer
+ * needs this value or any other header-slot state. Left exported and
+ * separate from `showSlotRow`'s inline use in Topbar anyway, matching
+ * `deriveWorkloadSlugFromPath` immediately above: a single caller today
+ * doesn't make re-inlining the rule worth the risk of a second copy
+ * drifting apart from this one later, the same failure shape this file's
+ * own history already has one entry for (see the FIX ROUND note on the
+ * deleted `primaryAction` descriptor, above).
+ */
+export function useShowHeaderSlotRow(): boolean {
+  const { pathname } = useLocation()
+  const workloadSlug = deriveWorkloadSlugFromPath(pathname)
+  const slotContent = useHeaderSlotContent()
+  return workloadSlug !== '' && slotContent !== null && slotContent.slug === workloadSlug
 }

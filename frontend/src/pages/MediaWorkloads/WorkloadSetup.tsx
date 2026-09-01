@@ -43,8 +43,10 @@ import ViewLiveExit from './ViewLiveExit'
  *
  * THE EXIT (dmfdeploy#414 point 3). Every branch below renders a
  * plainly-labelled "View live" control back to the workload's home — see
- * ViewLiveExit's own docstring for why it renders beside PageHeading rather
- * than through the header action slot Provision's promoted control uses.
+ * ViewLiveExit's own docstring for why it renders beside PageHeading (a
+ * retired paragraph there covers the header-action-slot portal this used to
+ * be contrasted against — umbrella #518 deleted it; Provision's Deploy
+ * renders inline unconditionally now, same as this exit always has).
  *
  * EVERYTHING BELOW THIS POINT ABOUT THE WIZARD ITSELF IS UNCHANGED BY
  * dmfdeploy#414: one step mounted at a time, the rail as selector, a job
@@ -439,11 +441,17 @@ function WorkloadWizard({
   const [tearingDown, setTearingDown] = useState(false)
   // umbrella #432 §D1: fed by ProvisionStage's own onPromotedActionChange —
   // see FlowStep.tsx's own docstring for the rule this drives (`nextPrimary`
-  // below) and ProvisionStage.tsx's comment for why this is `.length > 0`,
-  // not the header-portal-only `computedPromotedKey`. Stale while any OTHER
-  // step is mounted (ProvisionStage's effect only runs while IT is mounted),
-  // which is why `nextIsPrimary` below only reads it inside the
-  // `activeStep === 'provision'` branch — never on its own.
+  // below) and ProvisionStage.tsx's comment for why this is `.length > 0`.
+  // NAME IS HISTORICAL (umbrella #518): "promoted" refers to the deleted
+  // header-slot portal this used to also gate — Deploy renders inline
+  // unconditionally now, and this boolean's only remaining job is "does
+  // Provision have a top-level control on screen", unchanged by that
+  // retirement (see ProvisionStage.tsx's own docstring). Left unrenamed
+  // deliberately — this plumbing is explicitly out of scope for that fix
+  // round. Stale while any OTHER step is mounted (ProvisionStage's effect
+  // only runs while IT is mounted), which is why `nextIsPrimary` below
+  // only reads it inside the `activeStep === 'provision'` branch — never
+  // on its own.
   const [provisionHasPromotedAction, setProvisionHasPromotedAction] = useState(false)
   const [lastSwitchResult, setLastSwitchResult] = useState<SwitchSourceResult | null>(null)
   // The wizard's own presentation state — never derived from FlowStepState.
@@ -564,8 +572,10 @@ function WorkloadWizard({
   //
   // `settledStepsRef` latches the last STEPS classification computed while
   // neither read was in flight — the same "freeze the last good value
-  // during render" idiom ProvisionStage.tsx's lastEligibleKeyRef already
-  // uses for an analogous problem. `displaySteps` is what this component
+  // during render" idiom umbrella #518's now-deleted promoted-action latch
+  // (ProvisionStage.tsx's former `lastEligibleKeyRef`) used for an
+  // analogous problem before that machinery was retired. `displaySteps` is
+  // what this component
   // uses for its OWN panel (openability + the state handed to FlowStep)
   // whenever the read is unsettled; deliberately NOT what feeds the rail
   // below (buildHeaderSlotRail still reads live `flow.steps`) — the rail is
@@ -883,8 +893,9 @@ function WorkloadWizard({
           surface, not page chrome. The workload's display name lives in the
           topbar breadcrumb now (Shell). dmfdeploy#414: the setup exit
           shares this same row, at its far end — see ViewLiveExit's own
-          docstring for why it lives here rather than in the header action
-          slot Provision's promoted control uses. */}
+          docstring for why it renders here in the page body (a retired
+          paragraph there covers the header-action-slot portal this used to
+          be contrasted against, deleted by umbrella #518). */}
       <div className="flex flex-wrap items-center justify-between gap-3">
         <span
           className="badge text-sm"

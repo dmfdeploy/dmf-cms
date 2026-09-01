@@ -2,8 +2,7 @@ import { useEffect, useRef, useState, type FocusEvent } from 'react'
 import { Link, useLocation } from 'react-router-dom'
 import { useAuthStore } from '../store/auth'
 import { useTopbarMessageStore } from '../store/topbarMessage'
-import { useHeaderSlotContent } from '../store/headerSlot'
-import { useSetHeaderActionSlotNode } from '../store/headerActionSlot'
+import { useHeaderSlotContent, useShowHeaderSlotRow, deriveWorkloadSlugFromPath } from '../store/headerSlot'
 import { useSetViewAs, useClearViewAs, useFacilityDetail, useMediaWorkloadsGrouped } from '../api/hooks'
 import NotificationBell from './NotificationBell'
 import LifecycleStrip from '../pages/MediaWorkloads/LifecycleStrip'
@@ -33,15 +32,11 @@ interface Crumb {
 interface BreadcrumbTrail {
   crumbs: Crumb[]
   /**
-   * The workload slug parsed from the URL when the current route is a
-   * workload-detail route (…/:slug or …/:slug/setup, "new" excluded) —
-   * otherwise ''. dmfdeploy#414: the old `…/:slug/operate` shape is gone
-   * (that route is now a compatibility redirect to the bare slug, handled
-   * entirely in App.tsx — it never reaches this breadcrumb as its own
-   * shape). This is the same route-shape test the header slot (Arc 4 WP-2)
-   * gates its second row on, exposed here rather than recomputed a second
-   * time, so there is exactly one place that decides "is this a
-   * workload-detail route".
+   * The workload slug parsed from the URL — store/headerSlot.ts's
+   * `deriveWorkloadSlugFromPath`, not a second copy of that rule.
+   * dmfdeploy#414: the old `…/:slug/operate` shape is gone (that route is
+   * now a compatibility redirect to the bare slug, handled entirely in
+   * App.tsx — it never reaches this breadcrumb as its own shape).
    */
   workloadSlug: string
 }
@@ -59,8 +54,7 @@ interface BreadcrumbTrail {
 function useBreadcrumbTrail(pathname: string): BreadcrumbTrail {
   const segments = pathname.split('/').filter(Boolean)
   const facilitySite = segments[0] === 'facilities' && segments[1] ? segments[1] : ''
-  const workloadSlug =
-    segments[0] === 'media-workloads' && segments[1] && segments[1] !== 'new' ? segments[1] : ''
+  const workloadSlug = deriveWorkloadSlugFromPath(pathname)
 
   const facility = useFacilityDetail(facilitySite)
   const grouped = useMediaWorkloadsGrouped({ enabled: workloadSlug !== '' })
@@ -135,10 +129,9 @@ export default function Topbar() {
   const setViewAs = useSetViewAs()
   const clearViewAs = useClearViewAs()
   const { pathname } = useLocation()
-  const { crumbs, workloadSlug } = useBreadcrumbTrail(pathname)
+  const { crumbs } = useBreadcrumbTrail(pathname)
   const transientMessage = useTopbarMessageStore((s) => s.message)
   const slotContent = useHeaderSlotContent()
-  const setActionSlotNode = useSetHeaderActionSlotNode()
 
   // Dismiss the personal menu on an outside click or Escape (umbrella #432
   // §B) — same pattern as NotificationBell's dropdown for the mousedown
@@ -191,6 +184,26 @@ export default function Topbar() {
     }
   }
 
+  // Header slot (Arc 4 WP-2): present only on workload-detail routes and
+  // only once something is actually registered into it. The condition
+  // itself (`workloadSlug` route-derived agreeing with `slotContent.slug`
+  // registration-derived, so a stale registration from a route the operator
+  // has since left can never leak onto this one) lives in
+  // useShowHeaderSlotRow (store/headerSlot.ts, umbrella #515) rather than
+  // inlined here — this file's history already has one example of two
+  // independent copies of the same route-shape test drifting apart (see
+  // headerSlot.ts's own FIX ROUND note), and keeping the rule in one
+  // exported place costs nothing even with a single caller.
+  //
+  // Called ABOVE the `!user` early return, deliberately: this component's
+  // own auth store starts null and populates after mount (umbrella #432 §B
+  // fixed a real production bug that shared exactly this shape — a hook
+  // called only on SOME renders of the same mounted instance is a Rules-of-
+  // Hooks violation the moment `user` flips from null to populated, not a
+  // style preference). Every hook this component calls lives before the
+  // early return for that reason; this one is no exception.
+  const showSlotRow = useShowHeaderSlotRow()
+
   if (!user) return null
 
   const role = user.role || 'viewer'
@@ -203,15 +216,6 @@ export default function Topbar() {
   // is also on screen, and named when it stands alone, so a screen reader
   // never hits "dmfdeploy" twice.
   const isHome = pathname === '/'
-
-  // Header slot (Arc 4 WP-2): a second row beneath the breadcrumb row,
-  // present only on workload-detail routes and only once something is
-  // actually registered into it — WP-2 registers nothing, so this row
-  // never renders yet. `workloadSlug` (route-derived) and
-  // `slotContent.slug` (registration-derived) must both agree, so a stale
-  // registration from a route the operator has since left can never leak
-  // onto this one.
-  const showSlotRow = workloadSlug !== '' && slotContent !== null && slotContent.slug === workloadSlug
 
   return (
     // FIX ROUND (orchestrator/codex gate, dmfdeploy#481): the header-slot
@@ -393,89 +397,61 @@ export default function Topbar() {
           of <header> makes that test fail on the banner-containment
           assertion specifically, not an incidental symptom).
 
-          FIX ROUND (P3 round 3, P3-6): the promoted primary action is NOT a
-          second thing this file turns into pixels — this paragraph used to
-          say WP-3 "registers a primary-action DESCRIPTOR here" alongside the
-          rail model, describing an architecture that was deleted in the
-          fix-round P2-1 gate (see store/headerSlot.ts's own docstring on
-          why). What actually ships is a portal: the mount span just below
-          publishes a DOM node (store/headerActionSlot.ts), and the owning
-          stage (ProvisionStage.tsx) builds and keeps its own button/
-          ReasonConfirm pixels, then relocates them into that node itself.
-          Topbar never receives a descriptor to render for the action, only
-          a place for someone else's already-built pixels to land.
-
-          WP-3 spec B: the scrolling moved from THIS row down onto the rail
-          alone (min-w-0 flex-1 overflow-x-auto on the wrapper below), and
-          the actions area is a plain shrink-0 sibling with no overflow
-          ancestor of its own. A promoted action's ReasonConfirm popover
-          (components/PromotedAction.tsx) opens absolutely-positioned below
-          its button — CSS forces overflow-y to auto wherever overflow-x is
-          auto, so if the popover's own ancestor still had overflow-x-auto
-          here, an operator scrolled to the end of a long rail would see the
-          popover's lower half silently clipped by that same scroll
-          container. A long rail scrolling internally, with the action
-          always pinned and unclipped at the row's end, is also the more
-          honest reading of "primary action" regardless.
-
-          FIX ROUND P1a: `relative` lives on THIS row now, not on the mount
-          span below. The mount span's own in-flow width collapses to ~0 the
-          instant its only child is the armed panel (`position: absolute`
-          takes an element OUT of flow, so it contributes nothing to its
-          parent's box) — positioning the panel relative to that collapsed
-          span put its whole 20rem width past the header's right edge,
-          clipped invisible by this file's own overflow-hidden ancestor
-          (Shell.tsx). This row, by contrast, always has the rail's real
-          width — a stable containing block regardless of what the tiny
-          mount span's own box collapses to. See ProvisionStage.tsx's
-          matching `right-4` anchor. The move out of <header> above changes
-          NONE of this reasoning — Shell.tsx's overflow-hidden ancestor is
-          unchanged either way; only the intermediate <header> wrapper,
-          which never itself carried overflow-hidden, is no longer between
-          this row and that ancestor. */}
+          RETIRED (umbrella #518, operator ruling: "redeploy matches
+          creation" — Deploy no longer promotes into this row at all). This
+          paragraph and the two after it used to justify a promoted-action
+          mount point that lived here — a portal (components/PromotedAction.tsx,
+          store/headerActionSlot.ts) that ProvisionStage.tsx's own entry
+          control relocated its pixels into. Provision's Deploy control now
+          always renders inline in the stage body, the same way it always
+          has on first deploy (CreateWorkload.tsx) — see ProvisionStage.tsx's
+          own comment for why. Both files above are deleted, not left
+          unused; this row now hosts only the rail. */}
       {showSlotRow && slotContent && (
         <div
           data-testid="header-slot-row"
-          // z-20 matches what <header> carried before (this row inherited
-          // that stacking context as its descendant) — kept explicit here
-          // now that it's a sibling, so the promoted-action popover (which
-          // opens position:absolute within this row) still paints above
-          // the scrollable main/sidebar row below it, not underneath.
+          // FIX ROUND (umbrella #515, gate P1): this row is back in NORMAL
+          // FLOW — `relative z-20 flex flex-nowrap shrink-0`, no `fixed`, no
+          // `inset-x-0`/`top-14`. A first attempt made this row `position:
+          // fixed` (offsetting `<main>` by a matching constant in
+          // Shell.tsx) to stop it displacing `<Sidebar/>`; that broke below
+          // ~390px, where LifecycleStrip wraps to a 5-key column and this
+          // row's real height stops matching the constant Shell.tsx assumed
+          // — see Shell.tsx's own comment for the measured failure and why
+          // the fix inverts which element leaves the flow instead.
+          // `<Sidebar/>` is the fixed element now (Sidebar.tsx's own
+          // comment), so this row can be a plain flow child again: at ANY
+          // width, its real rendered height (one line or five stacked keys)
+          // is exactly what it reserves for whatever comes after it in
+          // Topbar's own Fragment — nothing to keep in sync elsewhere.
+          //
+          // `relative` (for `z-20` to take effect at all) + `shrink-0`
+          // (this row must not be compressed if the flex-col column ever
+          // runs short, matching `<header>`'s own `shrink-0`) — this is the
+          // row's original, pre-#515 shape, restored rather than reinvented.
+          // LifecycleStrip's own `justify-center-safe` still centres
+          // against the PAGE, not the content column: this row is a
+          // top-level sibling of `<header>` in Topbar's own Fragment, never
+          // nested inside anything `<Sidebar/>`-offset, so it spans the
+          // full viewport width the same way `<header>` itself always has —
+          // page-width centring falls out of where this row sits in the
+          // tree, not from any position/inset property on the row itself.
+          // `z-20` unchanged in value, matching `<header>`'s own — see
+          // Sidebar.tsx's own comment for why its `z-30` still beats this
+          // row's `z-20` wherever the two genuinely overlap (the row's full
+          // width crossing the sidebar's 64px column).
           //
           // VISUAL PARITY FIX ROUND (dmfdeploy/dmfdeploy#512, operator
-          // finding against a live provision run): this row used to be
-          // `bg-bg border-b border-border` — a background one shade off
-          // Sidebar.tsx's own `bg-sidebar` (#0a0a0b vs #101012) PLUS a
-          // full-width divider running directly across the sidebar
-          // column's own top edge, immediately above where Sidebar.tsx's
-          // `border-r` begins. Together those read as a separate strip
-          // dropped on top of the shell rather than something belonging to
-          // the nav column beneath it. `bg-sidebar` here matches
-          // Sidebar.tsx's token exactly, and the border is dropped
-          // entirely — nothing now marks a seam between this row and the
-          // sidebar/main content below it. This is a background-token and
-          // border change only; Shell.tsx's layout (this row still spans
-          // the full width, above BOTH the sidebar column and main) is
-          // unchanged.
+          // finding against a live provision run): `bg-sidebar` (not
+          // `bg-bg`) matches Sidebar.tsx's own token exactly, so the two
+          // read as one surface where they visually meet — unaffected by
+          // the positioning change above, still true, still why this token
+          // and not another.
           className="relative z-20 flex flex-nowrap shrink-0 items-center gap-3 bg-sidebar px-4 py-2"
         >
           <div className="min-w-0 flex-1 overflow-x-auto">
             <LifecycleStrip {...slotContent.rail} />
           </div>
-          {/* Promoted primary action mount point (Arc 4 WP-3 spec B): a
-              stage's own entry control (button + ReasonConfirm, with its
-              arming/pending/error state untouched) portals in here when the
-              CURRENT step has exactly one eligible primary action at
-              runtime — see store/headerActionSlot.ts and
-              components/PromotedAction.tsx. Topbar owns only the mount
-              point, never the decision of what (if anything) fills it, or
-              the eligibility count that decision is based on — that stays
-              with the stage that actually knows its own runtime action
-              model, matching the "Topbar must never derive state" rule this
-              slot's own doc comment already states for the rail. NOT
-              `relative` (fix round P1a, above) — the panel it portals in
-              anchors to the ROW, not to this span's own collapsing box. */}
-          <span ref={setActionSlotNode} className="flex shrink-0 items-center gap-2 empty:hidden" />
         </div>
       )}
     </>
