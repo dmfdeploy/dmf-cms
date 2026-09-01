@@ -600,10 +600,49 @@ describe('the honest undetermined flow (backend lifecycle=unknown)', () => {
     // both report no current step, and the page must not blur them.
     expect(screen.queryByText(/This workload is operating/)).toBeNull()
 
-    // The three runtime steps are locked in the rail: no control at all
-    // (not even a way to select them), and each states its reason.
+    // dmfdeploy#405 FIX ROUND: the three runtime steps are locked, but a
+    // locked key is now a real, reachable <button> (LifecycleStrip.tsx's
+    // P1/P2) sharing the OPEN key's own accessible name — a bare
+    // `queryByRole('button', { name: label })).toBeNull()` no longer proves
+    // "locked" (it would also match the permitting case's own button). The
+    // LOAD-BEARING discriminator is the key's own stated LOCKED description
+    // (P3), plus navigating in and confirming FlowStep's locked branch
+    // renders the reason (P5) — that reason text is a single ternary branch
+    // in FlowStep.tsx, so finding it already proves the stage's real
+    // children never mounted, by construction. The control-name checks below
+    // (scoped to the section AND page-wide) are added defense-in-depth, not
+    // an independent proof of their own: this fixture's default catalog/
+    // topology (a single matching catalog entry, `{}` topology for every
+    // instance) mean a stage COULD fail to render its control for a reason
+    // that has nothing to do with the lock gate at all (Configure's own
+    // no-topology bail-out, in particular) — so their absence here is
+    // consistent with the lock holding, not separate proof that it does.
+    const LOCKED_REASON_TEXT: Record<string, RegExp> = {
+      Provision: /the workload can be read again/,
+      Configure: /there is no source to select/,
+      'Finalise & Review': /nothing to tear down/,
+    }
+    const STAGE_CONTROL_NAME: Record<string, RegExp> = {
+      Provision: /Deploy/,
+      Configure: /Switch source/,
+      'Finalise & Review': /Teardown|Delete permanently/,
+    }
     for (const label of ['Provision', 'Configure', 'Finalise & Review']) {
-      expect(within(strip).queryByRole('button', { name: label }), `${label} bears a control`).toBeNull()
+      const reasonText = LOCKED_REASON_TEXT[label]
+      const chipEl = within(strip).getByRole('button', { name: label })
+      expect(within(chipEl).getByText(reasonText), `${label} chip states its own lock`).toBeTruthy()
+
+      const section = await selectStep(label)
+      expect(section.getAttribute('data-step-state'), `${label} section state`).toBe('locked')
+      expect(within(section).getByText(reasonText), `${label} section prose`).toBeTruthy()
+      expect(
+        within(section).queryByRole('button', { name: STAGE_CONTROL_NAME[label] }),
+        `${label} control mounted inside its own locked section`,
+      ).toBeNull()
+      expect(
+        screen.queryByRole('button', { name: STAGE_CONTROL_NAME[label] }),
+        `${label} control leaked somewhere else on the page`,
+      ).toBeNull()
     }
   })
 
@@ -628,36 +667,62 @@ describe('the honest undetermined flow (backend lifecycle=unknown)', () => {
   })
 })
 
-describe('locked steps are always prose in the rail, never a control', () => {
-  it('lifecycle=provision: Configure and Finalise explain themselves with no rail control', async () => {
+describe('a locked step is reachable and explains itself, but a stage control never mounts', () => {
+  it('lifecycle=provision: Configure and Finalise explain themselves, offering no stage action', async () => {
     mkFetch({ workload: workload({ lifecycle: 'provision' }) })
     renderDetail()
     const strip = await findRail()
-
-    // Arc B/S1 asserted this on 'not-applicable' stage cards, which rendered
-    // their own explanatory prose. The wizard gates one level up: a locked
-    // step has no rail control at all, and the rail itself states why —
-    // behind a tap/keyboard-operable toggle now (Arc 4 WP-3), not a
-    // permanent caption (does not fit the rail's single-line row).
-    expect(within(strip).queryByRole('button', { name: 'Configure' })).toBeNull()
-    fireEvent.click(within(strip).getByRole('button', { name: 'Why Configure is locked' }))
-    // FIX ROUND P2-2: the reason popover portals to document.body now (it
-    // has to escape the rail's own overflow-x-auto ancestor, which was
-    // silently clipping it — see LifecycleStrip.tsx's own comment), so it
-    // is no longer a DOM descendant of `strip` — screen, not within(strip).
-    expect(screen.getByText(/there is no source to select/)).toBeTruthy()
-    expect(within(strip).queryByRole('button', { name: 'Finalise & Review' })).toBeNull()
-    fireEvent.click(within(strip).getByRole('button', { name: 'Why Finalise & Review is locked' }))
-    expect(screen.getByText(/nothing to tear down/)).toBeTruthy()
 
     // Provision is the one authorised action at this lifecycle, and it is
     // the workload's position — auto-selected, no navigation required. Its
     // state reads `open`, not `current`: it bears the deploy action, and
     // affordance outranks position in workloadFlow.ts's own ladder (the
     // same rule Configure/'switch-source' pins in workloadFlow.test.ts).
+    // Checked FIRST, before the locked-step navigation below moves the
+    // wizard's single mounted panel away from it — this page mounts exactly
+    // one step at a time, so `stageSection('Provision')` would find nothing
+    // once Configure or Finalise is selected.
     const provisionSection = stageSection('Provision')
     expect(provisionSection.getAttribute('data-step-state')).toBe('open')
     expect(await within(provisionSection).findByRole('button', { name: '▶ Deploy' })).toBeTruthy()
+
+    // Arc B/S1 asserted this on 'not-applicable' stage cards, which rendered
+    // their own explanatory prose. The wizard gates one level up: a locked
+    // step never mounts a stage control OF ITS OWN KIND — the KEY itself is
+    // now a control (see below), but its stage body never is.
+    //
+    // dmfdeploy#405 FIX ROUND: the discriminator used to be a bare
+    // `queryByRole('button', { name: label })).toBeNull()` plus a click on
+    // the separate "Why <label> is locked" disclosure toggle — both gone.
+    // #405 made the key ITSELF the disclosure: every rail key, locked
+    // included, is now a reachable <button> sharing the OPEN key's own
+    // accessible name (LifecycleStrip.tsx P1/P2), so a bare button-absence
+    // check no longer proves anything, and the standalone toggle it used to
+    // click no longer exists. The LOAD-BEARING discriminator is the key's
+    // own stated LOCKED description (P3), plus navigating in (the whole
+    // point of #405) and confirming FlowStep's locked branch renders the
+    // reason (P5) — a single ternary branch, so finding it already proves
+    // the stage's real children never mounted. The control-name checks below
+    // (scoped to the section AND page-wide) are added defense-in-depth, not
+    // independent proof on their own: this fixture's topology defaults to
+    // `{}` for every instance, so Configure's own no-topology bail-out could
+    // independently explain "Switch source" being absent regardless of which
+    // one is actually doing the withholding.
+    const configureChip = within(strip).getByRole('button', { name: 'Configure' })
+    expect(within(configureChip).getByText(/there is no source to select/)).toBeTruthy()
+    const configureSection = await selectStep('Configure')
+    expect(configureSection.getAttribute('data-step-state')).toBe('locked')
+    expect(within(configureSection).getByText(/there is no source to select/)).toBeTruthy()
+    expect(within(configureSection).queryByRole('button', { name: 'Switch source' })).toBeNull()
+    expect(screen.queryByRole('button', { name: 'Switch source' })).toBeNull()
+
+    const finaliseChip = within(strip).getByRole('button', { name: 'Finalise & Review' })
+    expect(within(finaliseChip).getByText(/nothing to tear down/)).toBeTruthy()
+    const finaliseSection = await selectStep('Finalise & Review')
+    expect(finaliseSection.getAttribute('data-step-state')).toBe('locked')
+    expect(within(finaliseSection).getByText(/nothing to tear down/)).toBeTruthy()
+    expect(within(finaliseSection).queryByRole('button', { name: /Teardown|Delete permanently/ })).toBeNull()
+    expect(screen.queryByRole('button', { name: /Teardown|Delete permanently/ })).toBeNull()
   })
 
   it('renders the desired-state clear control on Provision, under the rail, and never on Finalise', async () => {
@@ -1371,13 +1436,24 @@ describe('an unknown slug', () => {
 // ---- a crafted #configure hash can never reach a locked Configure ------
 
 describe('a #configure deep link when Configure is locked (GATE-D1 P2.6)', () => {
-  it('leaves the initial-ladder selection unchanged, announces the lock reason, and mounts no Configure control', async () => {
+  it('dmfdeploy#405: honours the hash, selects and focuses Configure, and mounts its own locked reason — no separate banner', async () => {
     // lifecycle=provision with no bootstrapped members: Configure is
     // locked (nothing has been deployed yet, so there is no source to
     // select) — WorkloadHome.tsx's "request configuration change" link is
     // the one real caller of this hash (now aimed at /setup#configure,
-    // dmfdeploy#414), and this proves a stale/crafted one aimed at a
-    // locked step cannot reach it.
+    // dmfdeploy#414).
+    //
+    // dmfdeploy#405 FIX ROUND: this test used to prove a stale/crafted hash
+    // aimed at a locked step COULD NOT reach it — the wizard fell back to
+    // the backend position (Provision) and announced the refusal via a
+    // separate banner (role="status"). #405 inverted that on purpose
+    // (WorkloadSetup.tsx's `defaultSelection`: "the hash target is
+    // honoured whatever its lock state"), and de1b94d deleted the banner
+    // outright — see that commit's own comment: "the operator lands ON
+    // Configure and FlowStep mounts that same locked reason as the panel's
+    // own body. Keeping the banner would have printed the reason twice on
+    // one screen." This test now pins the REPLACEMENT guarantee: the
+    // operator gets the reason, AT the step they asked for.
     mkFetch({ workload: workload({ lifecycle: 'provision' }) })
     const queryClient = new QueryClient({ defaultOptions: { queries: { retry: false } } })
     render(
@@ -1392,27 +1468,43 @@ describe('a #configure deep link when Configure is locked (GATE-D1 P2.6)', () =>
     )
     await screen.findByRole('navigation', { name: 'Media workload lifecycle' })
 
-    // Selection falls through to the SAME ladder as with no hash at all:
-    // Configure is not openable, so `current` ('provision', non-null) wins
-    // — the mounted panel is Provision, never Configure.
-    expect(screen.getByRole('heading', { name: 'Provision', level: 2 })).toBeTruthy()
-    expect(screen.queryByRole('heading', { name: 'Configure', level: 2 })).toBeNull()
+    // The hash wins the initial-selection ladder OUTRIGHT, whatever its
+    // lock state — the mounted panel is Configure itself, never a fallback
+    // to the backend position.
+    const configureHeading = await screen.findByRole('heading', { name: 'Configure', level: 2 })
+    expect(configureHeading).toBeTruthy()
+    expect(screen.queryByRole('heading', { name: 'Provision', level: 2 })).toBeNull()
 
-    // The lock reason is announced (role=status, aria-live=polite) rather
-    // than silently doing nothing.
-    const announcement = screen.getByRole('status')
-    expect(announcement.textContent).toContain('Configure')
-    expect(announcement.textContent).toContain('there is no source to select')
+    // Genuinely FOCUSED, not merely mounted — the same hash-focus contract
+    // the OPEN-hash sibling test above pins; the effect that drives it
+    // (WorkloadSetup.tsx's hashFocusedRef effect) checks only `activeStep
+    // === requestedStep`, never lock state.
+    const panel = configureHeading.closest('[data-step-state]') as HTMLElement
+    expect(document.activeElement).toBe(panel)
+    expect(panel.getAttribute('data-step-state')).toBe('locked')
+
+    // The lock reason renders AS Configure's own body (FlowStep.tsx's
+    // locked branch, P5) — not a separate role=status announcement. The
+    // requested-lock banner itself is gone outright (P8); this is not a
+    // claim that NO role="status" node can ever exist on this page —
+    // LifecycleStrip's own job-in-flight note and ViewLiveExit both render
+    // one conditionally — only that neither fires in this no-job fixture,
+    // so any role="status" found here would have to be the deleted banner
+    // resurrected.
+    expect(screen.queryByRole('status')).toBeNull()
+    expect(within(panel).getByText(/there is no source to select/)).toBeTruthy()
 
     // No Configure content is reachable anywhere on the page — not folded,
-    // not hidden, simply never mounted.
+    // not hidden, simply never mounted (P5: FlowStep never renders children
+    // while locked).
     expect(screen.queryByRole('button', { name: 'Switch source' })).toBeNull()
     expect(screen.queryByText(/Switch active source/)).toBeNull()
 
-    // The rail itself offers no way in either: Configure is a static,
-    // non-interactive item with its own stated reason.
+    // The rail's own Configure key: present, reachable (#405), and its
+    // stated description matches the same reason the panel gives.
     const rail = screen.getByRole('navigation', { name: 'Media workload lifecycle' })
-    expect(within(rail).queryByRole('button', { name: 'Configure' })).toBeNull()
+    const configureChip = within(rail).getByRole('button', { name: 'Configure' })
+    expect(within(configureChip).getByText(/there is no source to select/)).toBeTruthy()
   })
 })
 

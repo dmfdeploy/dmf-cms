@@ -154,16 +154,6 @@ function rail(): HTMLElement {
   return screen.getByRole('navigation', { name: 'Media workload lifecycle' })
 }
 
-/** The banner under test: role="status" aria-live="polite", "<Step> isn't
- *  open yet: <reason>". Queried by its role, not just text, so a future
- *  regression that drops the aria-live wiring is also caught — the ONLY
- *  role="status" element either fixture below can ever render (ViewLiveExit
- *  and LifecycleStrip's own role="status" notes are both gated on
- *  jobInFlight, which neither test ever sets). */
-function lockBanner(): HTMLElement | null {
-  return screen.queryByRole('status')
-}
-
 afterEach(() => {
   cleanup()
   vi.restoreAllMocks()
@@ -172,8 +162,18 @@ afterEach(() => {
 
 // ---------------------------------------------------------------------------
 
-describe('the "isn\'t open yet" banner (dmfdeploy#416)', () => {
-  it('DISCRIMINATOR: stays absent while a background poll is in flight and the latched classification says the requested step is open', async () => {
+// dmfdeploy#405 FIX ROUND: this file's own name and the "isn't open yet"
+// phrase inside this describe title are now history, not current fact — the
+// banner itself is gone (P8, de1b94d; see the second test's own comment for
+// the full account). A title that states a falsehood is worse than a broken
+// blame trail, so the title says what is actually under test: dmfdeploy#416's
+// root cause (the LATCHED-vs-LIVE distinction) still lives here, and both
+// tests are repurposed to pin the REPLACEMENT guarantee — the operator gets
+// the reason, AT the step they asked for, and a background poll of unchanged
+// data never disturbs an already-mounted, already-open panel — rather than
+// deleted.
+describe('dmfdeploy#416: the requested-lock reason reaches the operator (the "isn\'t open yet" banner it used to ride is gone)', () => {
+  it('DISCRIMINATOR: the mounted Finalise & Review panel never switches to its LOCKED branch while a background poll is in flight and the latched classification says it is still open', async () => {
     let releaseGrouped: () => void = () => {}
     const eligible = purgeEligibleWorkload()
     const h = mkFetch({
@@ -197,11 +197,37 @@ describe('the "isn\'t open yet" banner (dmfdeploy#416)', () => {
     await waitFor(() => expect(queryClient.getQueryState(['user'])?.fetchStatus).toBe('idle'))
     await waitFor(() => expect(queryClient.getQueryState(['media-workloads-grouped'])?.fetchStatus).toBe('idle'))
 
-    // Sanity, at the settled baseline: finalise is genuinely open (the rail
-    // — itself deliberately live, GATE-378b's own test — shows its
-    // button), and the hash-requested step being open draws no banner.
-    expect(within(rail()).getByRole('button', { name: 'Finalise & Review' })).toBeTruthy()
-    expect(lockBanner()).toBeNull()
+    // FIX ROUND: re-derive the panel by role+name EVERY time, never cache a
+    // node reference and re-read only its attribute. A captured reference
+    // stays live even if a regression bounces the wizard's selection to a
+    // DIFFERENT step — React reconciles the SAME DOM position to render
+    // whatever is now selected there, so a cached `panel.getAttribute(...)`
+    // would keep reading truthfully about a node that no longer represents
+    // Finalise at all, and every assertion below would pass while the
+    // operator was silently evicted from the step they asked for — exactly
+    // the property this test exists to protect. `getByRole('heading', {
+    // name: 'Finalise & Review' })` THROWS if that heading is not the one
+    // currently mounted, which is what actually proves identity; the rail
+    // check that used to sit beside this (`getByRole('button', { name:
+    // 'Finalise & Review' })`) proved nothing on its own either — #405 gives
+    // a LOCKED key that identical button role and name, so its mere
+    // presence no longer means open. Both replaced with the finding function
+    // below plus an explicit rail-description check.
+    function finalisePanel(): HTMLElement {
+      const heading = screen.getByRole('heading', { name: 'Finalise & Review', level: 2 })
+      return heading.closest('[data-step-state]') as HTMLElement
+    }
+    function railFinaliseNotLocked(): void {
+      const chipEl = within(rail()).getByRole('button', { name: 'Finalise & Review' })
+      expect(within(chipEl).queryByText(/nothing to tear down/)).toBeNull()
+    }
+
+    // Sanity, at the settled baseline: the hash-requested step is the one
+    // mounted, in its OPEN branch (not locked), and the rail's own chip
+    // agrees (its description does not name the lock reason).
+    expect(finalisePanel().getAttribute('data-step-state')).toBe('open')
+    expect(within(finalisePanel()).queryByText(/nothing to tear down/)).toBeNull()
+    railFinaliseNotLocked()
 
     // Drive the identical react-query state transition production's real
     // useMediaWorkloadsGrouped 15000ms refetchInterval triggers on a timer —
@@ -210,39 +236,67 @@ describe('the "isn\'t open yet" banner (dmfdeploy#416)', () => {
     void queryClient.refetchQueries({ queryKey: ['media-workloads-grouped'] })
     await waitFor(() => expect(h.calls.grouped).toBeGreaterThan(callsBefore))
 
-    // Mid-poll: groupedRead.isFetching is true, so membersDataTrustworthy
-    // (and therefore stageActions('finalise')'s delete-permanently branch)
-    // fails closed and the LIVE classification of `finalise` drops to
-    // `locked` — while the LATCHED (displaySteps) classification says it is
-    // still open, because nothing about the workload itself changed.
-    // THE DISCRIMINATING ASSERTION — must fail against current `main`,
-    // where requestedIsLocked reads the live `steps` value directly.
-    expect(lockBanner()).toBeNull()
+    // Mid-poll: groupedRead.isFetching is true, so the LIVE classification
+    // of `finalise` drops to `locked` — while the LATCHED (displaySteps)
+    // classification, which is what FlowStep's own `state` prop actually
+    // reads, still says open (umbrella #392). THE DISCRIMINATING ASSERTION:
+    // the mounted panel must still BE Finalise & Review's own heading (not a
+    // bounce to Provision, the backend position — `getByRole` above throws
+    // if it is not), its data-step-state must stay 'open', and FlowStep must
+    // never switch to its LOCKED branch and print lock prose over an
+    // already-mounted step the operator is reviewing, for the duration of a
+    // poll that has told them nothing new. (FinaliseStage's OWN internal
+    // purge-control gating is a SEPARATE, deliberate fact — see
+    // workloadSetup.test.tsx's own #378b identity-refetch test for why that
+    // one legitimately DOES react to the live, unsettled read — this
+    // assertion is scoped to the WRAPPER's branch, not the stage's own
+    // action visibility.)
+    expect(finalisePanel().getAttribute('data-step-state')).toBe('open')
+    expect(within(finalisePanel()).queryByText(/nothing to tear down/)).toBeNull()
 
     releaseGrouped()
     await waitFor(() =>
       expect(queryClient.getQueryState(['media-workloads-grouped'])?.fetchStatus).toBe('idle'),
     )
-    expect(lockBanner()).toBeNull()
-    expect(within(rail()).getByRole('button', { name: 'Finalise & Review' })).toBeTruthy()
+    expect(finalisePanel().getAttribute('data-step-state')).toBe('open')
+    railFinaliseNotLocked()
   })
 
-  it('still renders for a genuinely locked step once the read has settled', async () => {
-    // No unsettled read involved at all: lifecycle=provision, nothing
-    // running, so `configure` is genuinely, durably locked — the positive
-    // control proving the fix cannot be satisfied by suppressing the banner
-    // outright.
+  // dmfdeploy#405 FIX ROUND: this used to be the positive control proving
+  // the #392/#416 fix above could not be satisfied by suppressing the
+  // banner outright — a genuinely, durably locked step (no unsettled read
+  // involved at all) still had to show SOMETHING. de1b94d then deleted the
+  // banner itself: WorkloadSetup.tsx's own comment says why — "the operator
+  // lands ON Configure and FlowStep mounts that same locked reason as the
+  // panel's own body. Keeping the banner would have printed the reason
+  // twice on one screen, one of them in an amber alert about a thing that
+  // just succeeded." This test now pins THAT replacement guarantee instead
+  // of the deleted banner: the reason still gets to the operator, at the
+  // step they asked for, exactly once.
+  it('still mounts the reason prose for a genuinely locked step once the read has settled — no separate banner', async () => {
     mkFetch({ workload: workload({ lifecycle: 'provision' }) })
     renderDetail('#configure')
     await findRail()
 
-    await waitFor(() => expect(lockBanner()).not.toBeNull())
-    expect(lockBanner()!.textContent).toBe(
-      "Configure isn't open yet: Nothing is running for this workload yet, so there is no source to select. This step opens once Provision has deployed it.",
-    )
-    // The requested step was never selected — defaultSelection's
-    // isStepOpenable guard already keeps a locked step off the wizard's own
-    // selection, unaffected by this fix.
-    expect(screen.queryByRole('heading', { name: 'Configure', level: 2 })).toBeNull()
+    // dmfdeploy#405: the hash target is honoured whatever its lock state
+    // (WorkloadSetup.tsx's `defaultSelection`) — the wizard selects AND
+    // focuses Configure itself, never falling back to the backend position.
+    const configureHeading = await screen.findByRole('heading', { name: 'Configure', level: 2 })
+    const panel = configureHeading.closest('[data-step-state]') as HTMLElement
+    expect(panel.getAttribute('data-step-state')).toBe('locked')
+    expect(document.activeElement).toBe(panel)
+
+    // The exact reason the banner used to carry now renders as Configure's
+    // own body (FlowStep.tsx's locked branch, P5) — same text, one home
+    // instead of two.
+    expect(within(panel).getByText(
+      'Nothing is running for this workload yet, so there is no source to select. This step opens once Provision has deployed it.',
+    )).toBeTruthy()
+    // Defense-in-depth, not independent proof: this file's mkFetch returns
+    // an empty catalog and an empty body for any topology read, so
+    // ConfigureStage would decline to render "Switch source" on its own
+    // account regardless of lock state — the reason-prose assertion above
+    // is what actually discriminates locked from open here.
+    expect(screen.queryByRole('button', { name: 'Switch source' })).toBeNull()
   })
 })
