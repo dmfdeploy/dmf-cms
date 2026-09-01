@@ -1,5 +1,6 @@
 import type { ReactNode } from 'react'
 import { useEffect, useState } from 'react'
+import { Disc3 } from 'lucide-react'
 
 /**
  * The loud, friendly layer next to an in-flight AWX automation job —
@@ -191,9 +192,30 @@ export default function AutomationInProgressNotice({
 
   return (
     <div>
-      <div className="flex items-baseline gap-2">
+      {/* FIX ROUND (dmfdeploy/dmfdeploy#514, operator: "disc-3 not centered
+          vertically to the text it belongs to"): `items-baseline` ->
+          `items-center`. Tailwind's preflight sets `svg { display: block }`,
+          so the disc icon's own box has no text baseline to align to — it
+          was aligning to its BOTTOM edge instead, which is what read as
+          misplaced. `items-center` aligns every child by its own box's
+          vertical MIDPOINT instead, which is a property the icon actually
+          has. Checked against all three children (icon, `text-lg` label,
+          `text-sm` clock) on a real render before landing on this, not just
+          the icon — see the WO report for the measured before/after boxes. */}
+      <div className="flex items-center gap-2">
+        {/* dmfdeploy/dmfdeploy#514 (mark): lucide's Disc3, not the old ◐
+            glyph — same `throbber-spin` class (the reduced-motion kill in
+            index.css and a test that greps the shipped stylesheet both key
+            off that class name, so reusing it as-is needs neither to
+            change), same aria-hidden, same 1.5s linear rotation, default
+            lucide stroke weight (strokes-vs-filled is
+            dmfdeploy/dmfdeploy#507's question, not this one). Sized h-6 w-6
+            (24px) to match what ◐ actually occupied at this notice's
+            rendered size (measured live via pages/Dev/ThrobberHarness.tsx:
+            ~28x26px bounding box at the ambient 16px font-size, closest
+            square match) — not assumed at 1em. */}
         <span aria-hidden="true" className="throbber-spin inline-block shrink-0 text-accent">
-          ◐
+          <Disc3 className="h-6 w-6" />
         </span>
         <p className="text-lg font-medium text-text">{action}</p>
         {elapsedSeconds !== null && (
