@@ -134,9 +134,13 @@ git tag -a "v$NEW" -m "Release v$NEW"
 # re-create the tag on the MERGED commit and push it:
 #     git tag -d "v$NEW"
 #     # ... open + merge the release PR ...
-#     git checkout main && git pull
-#     git tag -a "v$NEW" -m "Release v$NEW" && git push origin "v$NEW"
+#     git fetch origin
+#     git tag -a "v$NEW" -m "Release v$NEW" origin/main   # tag origin/main, NOT local main:
+#                                                        # local main still holds the
+#                                                        # pre-rebase commit and has diverged
+#     git push origin "v$NEW"
 #     git merge-base --is-ancestor "v$NEW^{commit}" origin/main   # prove it landed
+#     git checkout main && git reset --hard origin/main           # realign afterwards
 
 # 6. Build (local only — no push; publish happens via scripts/publish-to-ghcr.sh)
 echo ""
@@ -162,10 +166,21 @@ see STATUS.md in the umbrella repo.
        gh pr create --title "chore(release): v$NEW" --body "..."
        # the PR body needs a qualified backlog ref, e.g.
        #   Refs dmfdeploy/dmfdeploy#<N>
-       # ...merge it, then tag the merged commit:
-       git checkout main && git pull
-       git tag -a v$NEW -m "Release v$NEW" && git push origin v$NEW
+
+     ...then, after the merge, tag origin/main DIRECTLY. Do not
+     `git checkout main && git pull` first: this script committed the bump on
+     whatever branch you were on (usually main), so local main still holds the
+     PRE-rebase commit while origin/main holds its rewritten twin. Those
+     histories have diverged — pull either refuses, or under a merge policy
+     builds a merge commit that is not in origin/main, and tagging that
+     recreates the exact bug this ordering exists to avoid.
+       git fetch origin
+       git tag -a v$NEW -m "Release v$NEW" origin/main
+       git push origin v$NEW
        git merge-base --is-ancestor v$NEW^{commit} origin/main   # prove it landed
+
+     Only then realign local main, which is still carrying the stale commit:
+       git checkout main && git reset --hard origin/main
 
   2. Publish image to GHCR (canonical public source):
        cd $CMS_HINT
