@@ -1,0 +1,48 @@
+name: issue-link
+# Split out of guard.yml deliberately. This gate reads the PR body and labels
+# from the EVENT PAYLOAD, and its failure message tells you to edit the body or
+# add the 'no-issue' label — neither of which fires a run under the default
+# pull_request types, while re-running the job replays the original payload. So
+# it needs `edited`/`labeled`/`unlabeled` for its own advertised remedies to work.
+#
+# It lives here rather than widening guard.yml's triggers because guard.yml also
+# runs gitleaks and trivy: adding those types there would re-run a full secret
+# scan and a vulnerability scan on every body edit and every label change. This
+# job needs no checkout — it is a grep over the payload — so triggering it often
+# costs approximately nothing.
+on:
+  pull_request:
+    branches: [main]
+    types: [opened, synchronize, reopened, edited, labeled, unlabeled]
+permissions:
+  contents: read
+concurrency:
+  group: issue-link-${{ github.ref }}
+  cancel-in-progress: true
+jobs:
+  issue-link:
+    # Working-model gate (umbrella issue dmfdeploy/dmfdeploy#32): every PR must
+    # reference its tracking issue in the canonical backlog FULLY QUALIFIED —
+    # bare #N resolves to this repo's own issues and silently misses. Trivial
+    # changes: add the no-issue label.
+    if: github.event_name == 'pull_request'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    steps:
+      - name: PR references a canonical-backlog issue (qualified)
+        env:
+          PR_BODY: ${{ github.event.pull_request.body }}
+          PR_LABELS: ${{ join(github.event.pull_request.labels.*.name, ' ') }}
+        run: |
+          set -eu
+          case " ${PR_LABELS} " in *" no-issue "*)
+            echo "OK: no-issue label set"; exit 0 ;;
+          esac
+          if printf '%s' "${PR_BODY}" | grep -qiE '(close[sd]?|fix(e[sd])?|resolve[sd]?|refs?)[[:space:]:]+(dmfdeploy/dmfdeploy#[0-9]+|https://github\.com/dmfdeploy/dmfdeploy/issues/[0-9]+)'; then
+            echo "OK: qualified issue reference found"
+            exit 0
+          fi
+          echo "FAIL: PR body must reference its tracking issue FULLY QUALIFIED, e.g. 'Refs dmfdeploy/dmfdeploy#32'." >&2
+          echo "Bare #N points at THIS repo, not the canonical backlog — see umbrella docs/WORKING-MODEL.md." >&2
+          echo "Trivial change? Add the 'no-issue' label." >&2
+          exit 1
