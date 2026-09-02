@@ -416,7 +416,60 @@
      for attention — so the next reader should read this size difference as
      the rule, not fix it into a mismatch. */
   .btn {
-    @apply px-3 py-2 rounded-lg font-medium transition-colors;
+    @apply px-3 py-2 rounded-lg font-medium transition-colors border border-transparent;
+  }
+
+  /* umbrella #444: disabled buttons were pixel-identical to enabled ones —
+     no `:disabled` rule existed anywhere in this file, so a dead Confirm
+     (ReasonConfirm.tsx gates it on `!reason.trim()`) rendered at full
+     saturation and still brightened on `:hover`. An outsider usability
+     session sat on this exact control saying "I cannot switch the source"
+     with no idea why, because nothing about it looked inert.
+
+     This lives on `.btn` itself, not per-variant, so `.btn-primary`,
+     `.btn-secondary` and `.btn-danger` all inherit ONE treatment rather than
+     three drifting ones. (`.btn-danger-outline` doesn't exist to inherit
+     it — umbrella #432 §D2 deleted that class outright; recreating it here
+     would contradict that reversal, see the `.btn-danger` comment below.)
+
+     Reduced opacity alone was rejected: this palette's fills/text already
+     sit near-black (panel Y=0.0071, border Y=0.0197), so blending toward an
+     equally-dark backdrop via `opacity` collapses contrast fast — measured,
+     0.7 alpha alone drops the label from 5.4:1 to 3.36:1 (fails 4.5:1) and
+     the boundary from 3.64:1 to 2.41:1 (fails 3:1). Opacity is not used
+     here at all; instead every variant's fill/text/border is replaced
+     outright with flat, non-brand neutrals — the affordance being removed
+     is the variant's own colour, not its brightness. That is legible on a
+     touch device with no cursor and no hover, which reduced opacity on its
+     own would not have been.
+
+     `--color-border` (fill) + `--color-muted` (text) clears 5.4:1 - text
+     that was already illegible would fail loudly, not quietly. `border` on
+     `.btn` above reserves 1px of transparent border on EVERY variant
+     (including primary/danger, which previously had none) so this doesn't
+     shift layout the instant a button becomes disabled — only the colour
+     changes. `--color-field-border` is the existing boundary token (§D3
+     below; already measured at 3.64:1 against `--color-panel` and against
+     ReasonConfirm's amber/10 and red/10 tinted panels) so primary/danger
+     gain a real edge they never had, satisfying non-text (boundary)
+     contrast, not just the label.
+
+     The explicit `:disabled:hover` pair is not redundant: `.btn-primary
+     :hover` / `.btn-danger:hover` / `.btn-secondary:hover` each tie
+     `.btn:disabled` at specificity (0,2,0), so without also overriding the
+     hover combination a mouse left resting on a disabled button would still
+     show the variant's OWN hover brighten underneath — the literal defect
+     reported. `:disabled:hover` sits at (0,3,0) and wins outright,
+     independent of source order. This is deliberately NOT touching
+     umbrella #523 (`.btn-secondary`'s hover going darker instead of
+     lighter) — disabled buttons never reach any variant's `:hover` rule
+     now, so the two cannot be confused with one another. */
+  .btn:disabled,
+  .btn:disabled:hover {
+    background-color: var(--color-border);
+    color: var(--color-muted);
+    border-color: var(--color-field-border);
+    cursor: not-allowed;
   }
 
   .btn-primary {
