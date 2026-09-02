@@ -419,6 +419,39 @@
     @apply px-3 py-2 rounded-lg font-medium transition-colors border border-transparent;
   }
 
+  /* GATE FINDING (umbrella #444 review round 1): the `border border-
+     transparent` above is a deliberate, measured geometry change, not an
+     accident of the disabled-state reservation below. Before this round
+     `.btn-secondary` alone carried a real border; `.btn-primary` and
+     `.btn-danger` had none. Auto-sized elements grow by their border width
+     regardless of box-sizing (border-box only governs how an EXPLICIT
+     width is apportioned), so every primary/danger button is now 2px wider
+     and 2px taller at rest than before this PR — measured directly
+     (offsetWidth/offsetHeight, dpr 1, 100% zoom) against origin/main at
+     1440/900/390px: btn-primary 80.02x40 -> 82.02x42, btn-danger-sm
+     137.41x28 -> 139.41x30, identical delta at every width tested since
+     these dimensions don't participate in any responsive rule.
+     btn-secondary: unchanged (75.81x42 / 61.59x30 both branches). Checked
+     against every place a `.btn` shares a tight row: ReasonConfirm's own
+     Confirm/Cancel pair (flex gap-2 inside min-w-80 max-w-sm) — no wrap at
+     any width, height delta invisible there because flex's default
+     cross-axis stretch already equalises it against the taller bordered
+     secondary sibling. ProvisionStage's inline "▶ Deploy" promoted button
+     (flex items-center justify-between gap-3, shrink-0) — row height is
+     identical branch vs main at 1440/900/390 (40/56/104px), driven by the
+     text column wrapping, not the button; the button never becomes the
+     row's tallest/widest element. The one scenario this round's gate named
+     by shape — a stacked rail sharing a row with a promoted action
+     (umbrella #509) — can no longer recur structurally: umbrella #518
+     retired that shared mount point outright, so today's rail
+     (LifecycleStrip.tsx, Topbar.tsx's header-slot row) renders zero `.btn`
+     elements of any kind — confirmed by grep, not assumed — and Deploy's
+     button lives inline in ProvisionStage's own stage body instead, a
+     separate row from the rail chips. Net: primary/danger buttons gain 1px
+     of resting border on every side, deliberately, everywhere they render
+     — nothing observed wraps, overflows, or changes line count because of
+     it. */
+
   /* umbrella #444: disabled buttons were pixel-identical to enabled ones —
      no `:disabled` rule existed anywhere in this file, so a dead Confirm
      (ReasonConfirm.tsx gates it on `!reason.trim()`) rendered at full
