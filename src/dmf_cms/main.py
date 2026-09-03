@@ -174,12 +174,12 @@ logger = logging.getLogger(__name__)
 # itself — nothing routes on the name differently today, this just keeps
 # the door open at near-zero cost. It stays printf-style like every other
 # call here, not structured JSON: 15+ existing tests already parse this
-# exact "awx write: action=... actor=..." shape via caplog (see e.g.
-# test_finalise_purge_endpoint.py's own regex), and restyling the one
-# record this issue is about into JSON while leaving every other log call
-# in this file printf-style would be a needless format split for no
-# reader; a real move to structured logging is a whole-codebase decision,
-# not this fix's to make. Being a CHILD of "dmf_cms" (see
+# exact "awx write: fmt=2 action=... actor='...' ..." shape via caplog
+# (see e.g. test_finalise_purge_endpoint.py's own regex), and restyling
+# the one record this issue is about into JSON while leaving every other
+# log call in this file printf-style would be a needless format split for
+# no reader; a real move to structured logging is a whole-codebase
+# decision, not this fix's to make. Being a CHILD of "dmf_cms" (see
 # _configure_logging below) means it inherits that logger's handler and
 # level for free — no separate setup needed here.
 audit_logger = logging.getLogger("dmf_cms.audit")
@@ -1006,13 +1006,16 @@ def _audit_awx_write(
     # module STATUS NOTE for the full reasoning.
     #
     # The leading `fmt=2` token is a POSITIONAL DISPATCH MARKER, not a
-    # data field — it tells the reader which of its two grammars applies
-    # to THIS line, so it never has to infer the grammar from any field's
-    # own content (the root cause of both defects codex found). Every
-    # line already in Loki from before this marker existed simply lacks
-    # it, which is the reader's whole signal for "parse this the old
-    # way" — see audit_events.py's parse_awx_write_line for the dispatch
-    # itself.
+    # data field — it tells the reader this line uses the one grammar it
+    # accepts, so it never has to infer the grammar from any field's own
+    # content (the root cause of the defects codex found). There is no
+    # second grammar to dispatch to: a line without a valid `fmt=2`
+    # marker is dropped, not parsed by a weaker fallback — an operator
+    # decision (2026-09-03) once a forged pre-marker line and a
+    # legitimate one were proven byte-identical, making retained
+    # pre-marker lines fundamentally unauthenticatable. See
+    # audit_events.py's module STATUS NOTE and parse_awx_write_line for
+    # the dispatch itself.
     audit_logger.info(
         "awx write: fmt=2 action=%s actor=%r role=%s real_role=%s request_id=%s target=%r reason=%r outcome=%s workload=%r capacity=%r",
         action,
