@@ -141,9 +141,12 @@ def test_forgery_resistance_a_malformed_reason_cannot_forge_outcome_or_workload(
     assert fields["outcome"] == ""
     assert fields["workload"] == ""
     assert fields["linked_request_id"] == ""
-    # The fail-safe empty outcome must render as a non-claim, never a
-    # forged success or in-flight state.
-    assert audit_events.resolve_outcome_state("deploy", fields["outcome"]) == "failed"
+    # codex R496-C P1-2: a fail-safe empty outcome renders as UNKNOWN, not
+    # a forged success/in-flight claim — and, just as importantly, not a
+    # forged FAILURE either. "Not proven in flight" is not "the action
+    # failed"; that would be this lane claiming knowledge it lost, the
+    # same defect this round exists to remove with the sign flipped.
+    assert audit_events.resolve_outcome_state("deploy", fields["outcome"]) == "unknown"
 
 
 def test_forgery_resistance_cannot_attribute_the_row_to_a_different_actor():
@@ -388,6 +391,43 @@ def test_gate_excluded_classes_pass_for_nobody():
 # ----------------------------------------------------------------------
 # outcome / disclosure mapping
 # ----------------------------------------------------------------------
+
+def test_a_blank_outcome_is_unknown_not_failed_for_every_watched_action():
+    # codex R496-C P1-2: the property this test is named for. A blank
+    # outcome means the record's outcome field was lost (unrecoverable),
+    # not that the action failed — rendering it as a definite failure
+    # would be this lane claiming knowledge it does not have, the same
+    # defect the whole round exists to remove, opposite sign. Covers
+    # every action resolve_outcome_state actually branches on, including
+    # switch-source (which has its own separate "== active" check that
+    # must not see a blank outcome fall through to its else-failed arm).
+    for action in ("deploy", "teardown", "rollback", "finalise-purge", "switch-source"):
+        assert audit_events.resolve_outcome_state(action, "") == "unknown"
+
+
+def test_a_blank_outcome_is_unknown_even_though_blank_is_never_a_real_refusal_token():
+    # Distinguishes the new THIRD case from the unenumerated-refusal rule
+    # (F3) it must never be folded into: a REAL, non-blank, never-seen
+    # token still correctly renders failed (re-confirming F3 is
+    # untouched), while blank specifically renders unknown — proving
+    # "unknown" is not just another way of writing "unenumerated".
+    assert audit_events.resolve_outcome_state("deploy", "some-token-nobody-catalogued") == "failed"
+    assert audit_events.resolve_outcome_state("deploy", "") == "unknown"
+
+
+def test_build_outcome_unknown_state_never_asserts_a_definite_verdict():
+    result = audit_events.build_outcome("deploy", "")
+    assert result["state"] == "unknown"
+    # The headline is the one line most likely to be read alone — it must
+    # not claim a verdict either way. The meaning is free to name "failed"
+    # as one of several honest POSSIBILITIES (that's the accurate
+    # statement); the bug this guards against is ASSERTING it as fact.
+    assert result["headline"] == "Outcome unknown"
+    assert result["meaning"] == (
+        "This action's outcome could not be read from the record — "
+        "it may have succeeded, failed, or still be in progress."
+    )
+
 
 def test_watched_action_acceptance_outcome_is_in_flight():
     for action, outcome in (("deploy", "dispatched"), ("teardown", "launched"), ("rollback", "auto-triggered")):

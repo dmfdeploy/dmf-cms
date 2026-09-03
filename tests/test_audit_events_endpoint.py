@@ -101,10 +101,20 @@ UNRECOGNISED_ACTION = _line(
     target="wl-a", reason="should never appear", outcome="dispatched",
 )
 UNPARSEABLE = "2026-09-03 12:00:00,000 INFO dmf_cms.audit: awx write: action=deploy actor=alice request_id=rid-broken"
+# codex R496-C P1-2: a realistic truncated-line fixture — classification
+# fields (action/actor/role/request_id/target) are all intact and precede
+# the break, but the line cuts off mid-reason with nothing after it. This
+# is the row AC 5b (as revised) says must still RENDER, gated normally,
+# with an unknown outcome — never dropped, and never a forged verdict.
+DEPLOY_CORRUPTED_OUTCOME = (
+    "2026-09-03 12:00:00,000 INFO dmf_cms.audit: awx write: action=deploy actor=erin role=operator "
+    "real_role= request_id=rid-deploy-corrupted target=wl-c reason='truncated mid-line"
+)
 
 FIXTURE_LINES = [
     DEPLOY, DEPLOY_REFUSED, TEARDOWN, SWITCH_SOURCE, AUTO_ROLLBACK, AUTO_ROLLBACK_ORPHAN,
     FINALISE_PURGE, LAUNCH, VERIFY_DRAIN, OPERATOR_ROLLBACK, UNRECOGNISED_ACTION, UNPARSEABLE,
+    DEPLOY_CORRUPTED_OUTCOME,
 ]
 
 _VALID_RETENTION_CONFIG = """
@@ -147,6 +157,7 @@ def test_operator_not_in_media_engineers_sees_deploy_teardown_rollback_not_switc
     payload = client.get("/api/audit/events").json()
     assert _event_ids(payload) == {
         "rid-deploy-1", "rid-deploy-2", "rid-teardown-1", "rid-autorb-1", "rid-autorb-2",
+        "rid-deploy-corrupted",
     }
 
 
@@ -161,6 +172,7 @@ def test_operator_in_media_engineers_sees_every_covered_row():
     payload = client.get("/api/audit/events").json()
     assert _event_ids(payload) == {
         "rid-deploy-1", "rid-deploy-2", "rid-teardown-1", "rid-autorb-1", "rid-autorb-2", "rid-switch-1",
+        "rid-deploy-corrupted",
     }
 
 
@@ -234,6 +246,25 @@ def test_a_watched_action_in_flight_never_carries_headline_meaning_next_step():
     payload = client.get("/api/audit/events").json()
     row = next(e for e in payload["events"] if e["request_id"] == "rid-deploy-1")
     assert row["outcome"] == {"state": "in_flight", "detail": "dispatched"}
+
+
+def test_a_row_with_an_unrecoverable_outcome_renders_unknown_end_to_end():
+    # codex R496-C P1-2, through the full pipeline: DEPLOY_CORRUPTED_OUTCOME
+    # is a realistic truncated Loki line — classification fields intact,
+    # everything from reason onward lost. The row still renders (gated
+    # normally, real actor/action/target), and its outcome is an honest
+    # "unknown" — never a forged "failed", never "in flight".
+    client = _client(OPERATOR_ONLY)
+    payload = client.get("/api/audit/events").json()
+    row = next(e for e in payload["events"] if e["request_id"] == "rid-deploy-corrupted")
+    assert row["actor"] == "erin"
+    assert row["target"] == "wl-c"
+    assert row["outcome"]["state"] == "unknown"
+    assert row["outcome"]["detail"] == ""
+    # The headline is what's most likely to be read alone — it must not
+    # assert a verdict either way (the meaning is free to name "failed" as
+    # one of several honest possibilities; that's accurate, not the bug).
+    assert row["outcome"]["headline"] == "Outcome unknown"
 
 
 # ----------------------------------------------------------------------
