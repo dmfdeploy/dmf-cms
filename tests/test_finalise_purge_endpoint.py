@@ -100,7 +100,7 @@ def _parse_audit_line(line: str) -> dict[str, str]:
     ``"22" in line`` check flaky. Parse fields and assert on the parsed
     values instead.
 
-    dmfdeploy/dmfdeploy#140 (the writer fix, 2026-09-03): actor/target/
+    dmfdeploy/dmf-cms#140 (the writer fix, 2026-09-03): actor/target/
     workload/capacity are quoted (%r) at emission and every real line
     now carries a leading `fmt=2 ` marker; the `fmt=\\d+ ` token is
     skipped rather than captured — this test parser only needs the

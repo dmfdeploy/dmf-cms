@@ -986,7 +986,7 @@ def _audit_awx_write(
     """
     real = session_user(request.session)
     real_role = real.role if (real is not None and request.session.get("view_as")) else ""
-    # dmfdeploy/dmfdeploy#140 (operator ruling 2026-09-03, revised same
+    # dmfdeploy/dmf-cms#140 (operator ruling 2026-09-03, revised same
     # day after codex found two live data-loss defects in the first
     # version of this fix): target/actor/reason/workload/capacity are
     # quoted with %r, the SAME repr treatment reason has always had — not
@@ -2519,7 +2519,7 @@ async def _maybe_auto_trigger_rollback(app: FastAPI, operation_id: str, key: str
     # own extra_vars, so a hostile l3_request_id/l3_run_id there is not
     # ruled out by anything dmf-cms enforces. Quoted (%r) for the same
     # reason target is quoted in _audit_awx_write's own emission
-    # (dmfdeploy/dmfdeploy#140, the writer fix) rather than merely
+    # (dmfdeploy/dmf-cms#140, the writer fix) rather than merely
     # control-character-sanitized — this is the SAME "awx write:" shape on
     # the SAME reader, so it needs the SAME boundary guarantee, including
     # the leading `fmt=2` dispatch marker (a fixed literal here — actor is
