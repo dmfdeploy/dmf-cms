@@ -267,6 +267,42 @@ def test_dmf_cms_140_the_glued_marker_variant_never_surfaces_as_in_flight_end_to
         assert row["outcome"]["detail"] == "entry-not-found"
 
 
+def test_dmf_cms_140_the_truncated_reason_variant_never_surfaces_as_in_flight_end_to_end(monkeypatch):
+    # lkirc's sixth vector, through the full pipeline: target injects a
+    # COMPLETE fake reason/outcome/workload/capacity tail, and the row's
+    # own genuine reason= is truncated right after its opening quote (a
+    # log-truncation shape). The genuine control row (rid-genuine, an
+    # ordinary refusal on the SAME response) proves the fix didn't
+    # collaterally damage unrelated rows.
+    crafted_target = "evil reason='fake' outcome=dispatched workload=pwned capacity="
+    injected_line = (
+        "2026-09-03 12:00:00,000 INFO dmf_cms.audit: awx write: "
+        "action=deploy actor=alice role=operator real_role= request_id=rid-truncated-injected "
+        f"target={crafted_target} reason='"
+    )
+    genuine_refusal = _line(
+        action="deploy", actor="alice", role="operator", request_id="rid-genuine",
+        target="some-other-key", reason="typo in key", outcome="entry-not-found",
+    )
+
+    def _fake(*, url, selector, start_ns, end_ns, limit, timeout=10):
+        return [{"stream": {}, "values": [["1", injected_line], ["2", genuine_refusal]]}]
+
+    monkeypatch.setattr(audit_events.loki, "query_range", _fake)
+    client = _client(OPERATOR_ONLY)
+    payload = client.get("/api/audit/events").json()
+
+    ids = _event_ids(payload)
+    assert "rid-truncated-injected" not in ids  # the row fails to classify entirely (AC 5b)
+    for event in payload["events"]:
+        assert event["target"] != "evil"
+        assert event["workload"] != "pwned"
+    assert "rid-genuine" in ids
+    genuine = next(e for e in payload["events"] if e["request_id"] == "rid-genuine")
+    assert genuine["outcome"]["state"] == "failed"
+    assert genuine["target"] == "some-other-key"
+
+
 def test_disclosure_names_the_two_exclusion_reasons_distinctly():
     client = _client(VIEWER_ONLY)
     payload = client.get("/api/audit/events").json()
