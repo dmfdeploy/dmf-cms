@@ -477,14 +477,30 @@ _ACCEPTANCE_OUTCOMES: dict[str, frozenset[str]] = {
 
 
 def resolve_outcome_state(action: str, outcome: str) -> str:
-    """'in_flight' | 'succeeded' | 'failed', per plan §4.4's table.
+    """'in_flight' | 'succeeded' | 'failed' | 'unknown', per plan §4.4's table.
+
+    'unknown' is a THIRD case, never a member of "an unenumerated token is
+    terminal" — that rule stays exactly as it was (F3, re-confirmed
+    codex R496-B/C) for any REAL, non-blank token. A blank outcome is
+    different in kind: it means the record's outcome field could not be
+    recovered at all — codex R496-C P1-2's finding — reachable without an
+    adversary via a truncated/corrupted Loki line (the NEW-2 fail-closed
+    parser boundary is precisely the path that produces it). "Not proven
+    in flight" is NOT "the action failed"; rendering a lost outcome as a
+    definite failure would be this lane claiming knowledge it does not
+    have, the same defect this whole round exists to remove, just with
+    the opposite sign. So this check runs FIRST, before either the
+    switch-source or the acceptance-allowlist branch, and neither of
+    those ever sees a blank outcome.
 
     switch-source is the one class with a real verdict — "active" is its
     only success value (same allowlist principle: enumerate the known-good
     shape, not the unbounded space of failure codes). Every other watched
     action is acceptance-only, and ONLY a recognised acceptance token means
-    "in flight" — everything else, known refusal or not, is terminal.
+    "in flight" — everything else REAL, known refusal or not, is terminal.
     """
+    if not outcome:
+        return "unknown"
     if action == "switch-source":
         return "succeeded" if outcome == "active" else "failed"
     acceptance = _ACCEPTANCE_OUTCOMES.get(action)
@@ -528,6 +544,15 @@ _UNRECOGNISED_FAILURE_COPY = {
     "next_step": "Contact a system engineer with the request id below.",
 }
 
+# codex R496-C P1-2: an honest THIRD answer, never collapsed into the
+# failure copy above — "we could not read this record's outcome" is not
+# "this record's action failed".
+_UNKNOWN_OUTCOME_COPY = {
+    "headline": "Outcome unknown",
+    "meaning": "This action's outcome could not be read from the record — it may have succeeded, failed, or still be in progress.",
+    "next_step": "If this persists, contact a system engineer with the request id below.",
+}
+
 
 def _describe_failure(outcome: str) -> dict[str, str]:
     if outcome in _OUTCOME_COPY:
@@ -542,6 +567,14 @@ def _describe_failure(outcome: str) -> dict[str, str]:
 
 def build_outcome(action: str, outcome: str) -> dict[str, object]:
     state = resolve_outcome_state(action, outcome)
+    if state == "unknown":
+        return {
+            "state": "unknown",
+            "headline": _UNKNOWN_OUTCOME_COPY["headline"],
+            "meaning": _UNKNOWN_OUTCOME_COPY["meaning"],
+            "next_step": _UNKNOWN_OUTCOME_COPY["next_step"],
+            "detail": outcome,  # always "" for this state; carried for shape uniformity
+        }
     if state != "failed":
         return {"state": state, "detail": outcome}
     copy = _describe_failure(outcome)
