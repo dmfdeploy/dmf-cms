@@ -986,23 +986,37 @@ def _audit_awx_write(
     """
     real = session_user(request.session)
     real_role = real.role if (real is not None and request.session.get("view_as")) else ""
-    # dmfdeploy/dmfdeploy#140 (operator ruling 2026-09-03): target, workload
-    # and capacity are now quoted with %r, the SAME repr treatment reason
-    # has always had — not merely control-character-escaped (_sanitize_
-    # audit_field, staying on one physical stdout line) but genuinely
-    # unambiguous to re-split by field, closing the whole class of forgery
-    # this line's reader spent six review rounds chasing reactively. Do NOT
-    # ALSO route these three through _sanitize_audit_field first: repr()
-    # already escapes every control character it contains (that's what
-    # makes it safe to log at all), and pre-escaping before repr'ing would
-    # double-escape a literal newline into text that reads as an escape
-    # sequence rather than what was actually sent — reason has never been
-    # sanitized for exactly this reason. workload/capacity default to ""
-    # (never the literal text "None") when omitted, same as before.
+    # dmfdeploy/dmfdeploy#140 (operator ruling 2026-09-03, revised same
+    # day after codex found two live data-loss defects in the first
+    # version of this fix): target/actor/reason/workload/capacity are
+    # quoted with %r, the SAME repr treatment reason has always had — not
+    # merely control-character-escaped (_sanitize_audit_field, staying on
+    # one physical stdout line) but genuinely unambiguous to re-split by
+    # field. Do NOT ALSO route these through _sanitize_audit_field first:
+    # repr() already escapes every control character it contains (that's
+    # what makes it safe to log at all), and pre-escaping before repr'ing
+    # would double-escape a literal newline into text that reads as an
+    # escape sequence rather than what was actually sent — reason has
+    # never been sanitized for exactly this reason. workload/capacity
+    # default to "" (never the literal text "None") when omitted, same as
+    # before. actor is quoted as of THIS revision (it was left plain in
+    # the first version): user.subject is an IdP claim that
+    # user_from_claims never validates, and this field is parsed BEFORE
+    # target in the reader's classification scan — see audit_events.py's
+    # module STATUS NOTE for the full reasoning.
+    #
+    # The leading `fmt=2` token is a POSITIONAL DISPATCH MARKER, not a
+    # data field — it tells the reader which of its two grammars applies
+    # to THIS line, so it never has to infer the grammar from any field's
+    # own content (the root cause of both defects codex found). Every
+    # line already in Loki from before this marker existed simply lacks
+    # it, which is the reader's whole signal for "parse this the old
+    # way" — see audit_events.py's parse_awx_write_line for the dispatch
+    # itself.
     audit_logger.info(
-        "awx write: action=%s actor=%s role=%s real_role=%s request_id=%s target=%r reason=%r outcome=%s workload=%r capacity=%r",
+        "awx write: fmt=2 action=%s actor=%r role=%s real_role=%s request_id=%s target=%r reason=%r outcome=%s workload=%r capacity=%r",
         action,
-        _sanitize_audit_field(user.subject),
+        user.subject,
         user.role,
         real_role,
         request_id,
@@ -2501,10 +2515,15 @@ async def _maybe_auto_trigger_rollback(app: FastAPI, operation_id: str, key: str
     # launched directly through AWX (not through this console) controls its
     # own extra_vars, so a hostile l3_request_id/l3_run_id there is not
     # ruled out by anything dmf-cms enforces. Quoted (%r) for the same
-    # reason target is now quoted in _audit_awx_write's own emission
+    # reason target is quoted in _audit_awx_write's own emission
     # (dmfdeploy/dmfdeploy#140, the writer fix) rather than merely
     # control-character-sanitized — this is the SAME "awx write:" shape on
-    # the SAME reader, so it needs the SAME boundary guarantee.
+    # the SAME reader, so it needs the SAME boundary guarantee, including
+    # the leading `fmt=2` dispatch marker (a fixed literal here — actor is
+    # ALSO a fixed literal, quoted as `'system:auto-rollback'` purely so
+    # this line satisfies the fmt=2 grammar's contract, not because it is
+    # externally influenced; workload/capacity are always blank on this
+    # path, quoted-empty for the same reason).
     if not created:
         # codex R2-8: reattached to an already-in-progress rollback (manual
         # or a racing auto-trigger) — the fresh_request_id we minted above
@@ -2512,8 +2531,8 @@ async def _maybe_auto_trigger_rollback(app: FastAPI, operation_id: str, key: str
         # EXISTING op's own request_id, not that discarded one.
         ops_store.update(operation_id, auto_rollback="already-in-progress")
         logger.info(
-            "awx write: action=rollback actor=system:auto-rollback role=system real_role= "
-            "request_id=%s target=%r reason=%r outcome=already-in-progress workload= capacity= linked_request_id=%s",
+            "awx write: fmt=2 action=rollback actor='system:auto-rollback' role=system real_role= "
+            "request_id=%s target=%r reason=%r outcome=already-in-progress workload='' capacity='' linked_request_id=%s",
             rollback_op.request_id, run_id, reason, deploy_op.request_id,
         )
         return
@@ -2521,8 +2540,8 @@ async def _maybe_auto_trigger_rollback(app: FastAPI, operation_id: str, key: str
     ops_store.update(operation_id, auto_rollback="triggered")
 
     logger.info(
-        "awx write: action=rollback actor=system:auto-rollback role=system real_role= "
-        "request_id=%s target=%r reason=%r outcome=auto-triggered workload= capacity= linked_request_id=%s",
+        "awx write: fmt=2 action=rollback actor='system:auto-rollback' role=system real_role= "
+        "request_id=%s target=%r reason=%r outcome=auto-triggered workload='' capacity='' linked_request_id=%s",
         fresh_request_id, run_id, reason, deploy_op.request_id,
     )
 

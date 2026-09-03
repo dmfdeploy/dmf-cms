@@ -2483,7 +2483,7 @@ def test_auto_trigger_dispatch_audit_line_sanitizes_run_id(monkeypatch, caplog):
     with caplog.at_level(logging.INFO, logger="dmf_cms.main"):
         asyncio.run(main._maybe_auto_trigger_rollback(app, deploy_op.operation_id, "key1"))
 
-    lines = [r.getMessage() for r in caplog.records if r.getMessage().startswith("awx write: action=rollback")]
+    lines = [r.getMessage() for r in caplog.records if r.getMessage().startswith("awx write: fmt=2 action=rollback")]
     assert len(lines) == 1
     line = lines[0]
     assert "\n" not in line
@@ -2516,7 +2516,7 @@ def test_auto_trigger_reattach_audit_line_sanitizes_run_id(monkeypatch, caplog):
     with caplog.at_level(logging.INFO, logger="dmf_cms.main"):
         asyncio.run(main._maybe_auto_trigger_rollback(app, deploy_op.operation_id, "key1"))
 
-    lines = [r.getMessage() for r in caplog.records if r.getMessage().startswith("awx write: action=rollback")]
+    lines = [r.getMessage() for r in caplog.records if r.getMessage().startswith("awx write: fmt=2 action=rollback")]
     assert len(lines) == 1
     line = lines[0]
     assert "\n" not in line

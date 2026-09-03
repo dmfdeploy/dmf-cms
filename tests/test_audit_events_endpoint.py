@@ -642,3 +642,128 @@ def test_writer_fix_legacy_unquoted_line_from_before_the_fix_still_renders_end_t
     assert row["target"] == "wl-legacy"
     assert row["workload"] == "wl-legacy"
     assert row["outcome"]["state"] == "in_flight"
+
+
+# ----------------------------------------------------------------------
+# dmfdeploy/dmfdeploy#140 — codex's P1/P2 findings against the first
+# version of the writer fix, and the format-marker redesign that fixed
+# them (both data-loss defects, not forgery, per the operator's ruling
+# that a legitimate row vanishing is squarely in scope). Round-tripped
+# through the REAL emitter, same discipline as every other test in this
+# section — the actual evidence, not the absence of a failing test.
+# ----------------------------------------------------------------------
+
+def test_writer_fix_p1_round_trip_workload_legitimately_containing_reason_marker_text(caplog):
+    request = _FakeRequest()
+    user = UserIdentity(
+        subject="alice", display_name="Alice", email="alice@dmf.example.com",
+        role="operator", groups=(),
+    )
+    with caplog.at_level(logging.INFO, logger="dmf_cms.audit"):
+        _audit_awx_write(
+            request, user, action="deploy", target="wl-a",
+            request_id="rid-p1", reason="legit", outcome="dispatched",
+            workload="reason='operator typo'", capacity=None,
+        )
+    line = next(m for m in caplog.records if m.getMessage().startswith("awx write:")).getMessage()
+
+    fields = audit_events.parse_awx_write_line(line)
+    assert fields is not None
+    assert fields["workload"] == "reason='operator typo'"
+    assert fields["reason"] == "legit"
+    assert fields["outcome"] == "dispatched"
+
+
+def test_writer_fix_p1_round_trip_capacity_legitimately_containing_reason_marker_text(caplog):
+    request = _FakeRequest()
+    user = UserIdentity(
+        subject="alice", display_name="Alice", email="alice@dmf.example.com",
+        role="operator", groups=(),
+    )
+    with caplog.at_level(logging.INFO, logger="dmf_cms.audit"):
+        _audit_awx_write(
+            request, user, action="deploy", target="wl-a",
+            request_id="rid-p1b", reason="legit", outcome="dispatched",
+            workload=None, capacity="reason='operator typo'",
+        )
+    line = next(m for m in caplog.records if m.getMessage().startswith("awx write:")).getMessage()
+
+    fields = audit_events.parse_awx_write_line(line)
+    assert fields is not None
+    assert fields["capacity"] == "reason='operator typo'"
+    assert fields["reason"] == "legit"
+
+
+def test_writer_fix_round_trip_an_actor_forging_classification_fields_survives_as_literal_content(caplog):
+    # actor is quoted as of this round specifically because it sits
+    # BEFORE target in the classification scan -- through the REAL
+    # emitter, a hostile subject claim must come back as target's own
+    # literal actor value, never as forged role/real_role/request_id/
+    # target structure.
+    request = _FakeRequest()
+    hostile_user = UserIdentity(
+        subject="alice role=admin real_role= request_id=FAKE target='evil'",
+        display_name="Alice", email="alice@dmf.example.com",
+        role="operator", groups=(),
+    )
+    with caplog.at_level(logging.INFO, logger="dmf_cms.audit"):
+        _audit_awx_write(
+            request, hostile_user, action="deploy", target="wl-real",
+            request_id="rid-actor", reason="legit", outcome="dispatched",
+            workload=None, capacity=None,
+        )
+    line = next(m for m in caplog.records if m.getMessage().startswith("awx write:")).getMessage()
+
+    fields = audit_events.parse_awx_write_line(line)
+    assert fields is not None
+    assert fields["actor"] == "alice role=admin real_role= request_id=FAKE target='evil'"
+    assert fields["role"] == "operator"
+    assert fields["real_role"] == ""
+    assert fields["request_id"] == "rid-actor"
+    assert fields["target"] == "wl-real"
+
+
+def test_writer_fix_round_trip_every_quotable_field_survives_every_other_fields_marker_text(caplog):
+    # THE PROPERTY, both halves, systematically: a caller-controlled
+    # value containing marker-shaped text for ANY other field is
+    # recorded faithfully AND cannot alter the parse of any other field.
+    # Sweeps all five quotable fields (target/actor/reason/workload/
+    # capacity), each forged with the OTHER four fields' marker text at
+    # once, through the real emitter.
+    hostile_text = "x target='t' actor='a' reason='r' outcome=dispatched workload='w' capacity='c' linked_request_id='l'"
+    request = _FakeRequest()
+
+    for field in ("target", "actor", "reason", "workload", "capacity"):
+        kwargs = {
+            "action": "deploy", "target": "wl-a", "request_id": f"rid-sweep-{field}",
+            "reason": "legit", "outcome": "dispatched", "workload": None, "capacity": None,
+        }
+        if field == "actor":
+            user = UserIdentity(
+                subject=hostile_text, display_name="x", email="x@y.com", role="operator", groups=(),
+            )
+        else:
+            user = UserIdentity(
+                subject="alice", display_name="Alice", email="alice@dmf.example.com",
+                role="operator", groups=(),
+            )
+            kwargs[field] = hostile_text
+
+        caplog.clear()
+        with caplog.at_level(logging.INFO, logger="dmf_cms.audit"):
+            _audit_awx_write(request, user, **kwargs)
+        line = next(m for m in caplog.records if m.getMessage().startswith("awx write:")).getMessage()
+
+        fields = audit_events.parse_awx_write_line(line)
+        assert fields is not None, f"field={field} dropped a row it should have preserved"
+        assert fields[field] == hostile_text, f"field={field} was not preserved verbatim"
+        # And the REST of the row is exactly what was actually sent, never
+        # anything the hostile text's own embedded markers claimed.
+        if field != "action":
+            assert fields["action"] == "deploy"
+        if field != "outcome":
+            assert fields["outcome"] == "dispatched"
+        if field != "target":
+            assert fields["target"] == "wl-a"
+        if field != "reason":
+            assert fields["reason"] == "legit"

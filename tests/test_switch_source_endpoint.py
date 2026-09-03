@@ -394,7 +394,7 @@ def test_happy_path_reaches_active_with_c5_audit(monkeypatch, caplog):
     assert len(lines) == 1
     line = lines[0]
     assert "action=switch-source" in line
-    assert "actor=operator" in line
+    assert "actor='operator'" in line
     assert "role=engineer" in line
     assert f"request_id={body['request_id']}" in line
     assert "target='mxl-videotest-view'" in line
