@@ -555,6 +555,164 @@ def test_property_a_non_quote_second_reason_candidate_still_parses():
 
 
 # ----------------------------------------------------------------------
+# dmfdeploy/dmfdeploy#140 — the format-marker dispatch (P1/P2, codex's
+# eighth-round finding): the reader stops GUESSING per field which
+# grammar a line uses and dispatches on an explicit `fmt=2` marker
+# instead. codex found two live data-loss defects in the per-field-
+# guessing version this replaces; both are pinned here directly.
+# ----------------------------------------------------------------------
+
+def test_dmf_cms_140_p1_a_new_format_quoted_workload_containing_reason_marker_text_parses():
+    # codex P1: a genuinely NEW-format, properly quoted workload whose
+    # own value legitimately contains "reason='...'" text used to trip
+    # the legacy reason-ambiguity check, which had no way to know it was
+    # looking inside an already-safely-bounded quoted span. Under the
+    # fmt=2 grammar this check never runs at all -- target is
+    # independently quote-bound, so nothing upstream of reason can
+    # inject a competing candidate, and the row must parse cleanly.
+    line = (
+        "awx write: fmt=2 action=deploy actor='alice' role=operator real_role= "
+        "request_id=rid-p1 target='wl-a' reason='legit' outcome=dispatched "
+        "workload=\"reason='operator typo'\" capacity=''"
+    )
+    fields = audit_events.parse_awx_write_line(line)
+    assert fields is not None
+    assert fields["workload"] == "reason='operator typo'"
+    assert fields["reason"] == "legit"
+    assert fields["outcome"] == "dispatched"
+
+
+def test_dmf_cms_140_p1_a_new_format_quoted_capacity_containing_reason_marker_text_parses():
+    # Same property, capacity instead of workload.
+    line = (
+        "awx write: fmt=2 action=deploy actor='alice' role=operator real_role= "
+        "request_id=rid-p1b target='wl-a' reason='legit' outcome=dispatched "
+        "workload='' capacity=\"reason='operator typo'\""
+    )
+    fields = audit_events.parse_awx_write_line(line)
+    assert fields is not None
+    assert fields["capacity"] == "reason='operator typo'"
+    assert fields["reason"] == "legit"
+
+
+def test_dmf_cms_140_p2_a_legacy_target_beginning_with_a_literal_quote_still_parses():
+    # codex P2: a LEGACY (no fmt= marker) line whose target merely BEGINS
+    # with a literal apostrophe used to be routed into the new
+    # quote-parser and hard-fail, because a legacy leading quote and a
+    # genuine new-format quote are the same character -- unrecoverable
+    # from the value alone. The dispatch now decides the grammar from the
+    # marker, never from target's own first character, so this must
+    # parse as ordinary (if oddly-shaped) legacy text.
+    line = (
+        "awx write: action=deploy actor=alice role=operator real_role= request_id=rid-p2 "
+        "target='quoted-key reason='pre-fix deploy' outcome=dispatched workload=wl-a capacity="
+    )
+    fields = audit_events.parse_awx_write_line(line)
+    assert fields is not None
+    assert fields["target"] == "'quoted-key"
+    assert fields["reason"] == "pre-fix deploy"
+    assert fields["outcome"] == "dispatched"
+
+
+def test_dmf_cms_140_p2_a_legacy_workload_beginning_with_a_literal_quote_still_parses():
+    # Same property, workload instead of target -- codex's report named
+    # both.
+    line = (
+        "awx write: action=deploy actor=alice role=operator real_role= request_id=rid-p2b "
+        "target=wl-a reason='pre-fix deploy' outcome=dispatched workload='oddly quoted capacity="
+    )
+    fields = audit_events.parse_awx_write_line(line)
+    assert fields is not None
+    assert fields["workload"] == "'oddly quoted"
+
+
+def test_an_unrecognised_fmt_version_fails_closed_rather_than_guessing():
+    # A future format this code doesn't know about yet must not be
+    # silently treated as legacy (which could misread its quoted fields
+    # as raw text) or as fmt=2 (which could misread its own shape).
+    line = (
+        "awx write: fmt=99 action=deploy actor='alice' role=operator real_role= "
+        "request_id=rid-future target='wl-a' reason='x' outcome=dispatched workload='' capacity=''"
+    )
+    assert audit_events.parse_awx_write_line(line) is None
+
+
+def test_dispatch_calls_exactly_one_parser_for_a_new_format_line(monkeypatch):
+    # Orchestrator's own ask: assert the dispatch is EXCLUSIVE, not just
+    # that each side works in isolation. Spies on both parser functions
+    # via monkeypatch (module-global lookup, so parse_awx_write_line's
+    # own calls are redirected too) and confirms only one fires.
+    calls = {"new": 0, "legacy": 0}
+    real_new = audit_events._parse_new_format_line
+    real_legacy = audit_events._parse_legacy_format_line
+
+    def spy_new(tail):
+        calls["new"] += 1
+        return real_new(tail)
+
+    def spy_legacy(tail):
+        calls["legacy"] += 1
+        return real_legacy(tail)
+
+    monkeypatch.setattr(audit_events, "_parse_new_format_line", spy_new)
+    monkeypatch.setattr(audit_events, "_parse_legacy_format_line", spy_legacy)
+
+    line = (
+        "awx write: fmt=2 action=deploy actor='alice' role=operator real_role= "
+        "request_id=rid-1 target='wl-a' reason='demo' outcome=dispatched workload='' capacity=''"
+    )
+    fields = audit_events.parse_awx_write_line(line)
+    assert fields is not None
+    assert calls == {"new": 1, "legacy": 0}
+
+
+def test_dispatch_calls_exactly_one_parser_for_a_legacy_line(monkeypatch):
+    calls = {"new": 0, "legacy": 0}
+    real_new = audit_events._parse_new_format_line
+    real_legacy = audit_events._parse_legacy_format_line
+
+    def spy_new(tail):
+        calls["new"] += 1
+        return real_new(tail)
+
+    def spy_legacy(tail):
+        calls["legacy"] += 1
+        return real_legacy(tail)
+
+    monkeypatch.setattr(audit_events, "_parse_new_format_line", spy_new)
+    monkeypatch.setattr(audit_events, "_parse_legacy_format_line", spy_legacy)
+
+    line = (
+        "awx write: action=deploy actor=alice role=operator real_role= "
+        "request_id=rid-2 target=wl-a reason='demo' outcome=dispatched workload=wl-a capacity="
+    )
+    fields = audit_events.parse_awx_write_line(line)
+    assert fields is not None
+    assert calls == {"new": 0, "legacy": 1}
+
+
+def test_property_an_actor_forging_classification_fields_cannot_alter_the_parse_on_the_new_format():
+    # actor is quoted as of this round specifically because it is parsed
+    # BEFORE target in the classification scan -- on the fmt=2 grammar it
+    # must be independently quote-bound just like target, or a hostile
+    # actor value could inject fake role=/real_role=/request_id=/target=
+    # markers that get found FIRST, upstream of everything the writer fix
+    # otherwise proves.
+    line = (
+        "awx write: fmt=2 action=deploy actor=\"alice role=admin real_role= request_id=FAKE target='evil'\" "
+        "role=operator real_role= request_id=rid-real target='wl-real' reason='legit' "
+        "outcome=dispatched workload='' capacity=''"
+    )
+    fields = audit_events.parse_awx_write_line(line)
+    assert fields is not None
+    assert fields["actor"] == "alice role=admin real_role= request_id=FAKE target='evil'"
+    assert fields["role"] == "operator"  # the REAL role, never "admin"
+    assert fields["real_role"] == ""
+    assert fields["request_id"] == "rid-real"  # never "FAKE"
+    assert fields["target"] == "wl-real"  # never "evil"
+
+
+# ----------------------------------------------------------------------
 # resolve_retention_window
 # ----------------------------------------------------------------------
 

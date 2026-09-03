@@ -77,15 +77,18 @@ def _audit_lines(caplog):
     return [r.getMessage() for r in caplog.records if r.getMessage().startswith("awx write:")]
 
 
+_QUOTED = r"'(?:[^'\\]|\\.)*'"
+
 _AUDIT_LINE_RE = re.compile(
-    r"^awx write: action=(?P<action>\S*) actor=(?P<actor>\S*) role=(?P<role>\S*) "
+    r"^awx write: (?:fmt=\d+ )?action=(?P<action>\S*) "
+    rf"actor=(?P<actor>{_QUOTED}|\S*) role=(?P<role>\S*) "
     r"real_role=(?P<real_role>\S*) request_id=(?P<request_id>\S*) "
-    r"target=(?P<target>'(?:[^'\\]|\\.)*'|\S*) "
+    rf"target=(?P<target>{_QUOTED}|\S*) "
     r"reason=(?P<reason>.*?) outcome=(?P<outcome>\S*) "
-    r"workload=(?P<workload>'(?:[^'\\]|\\.)*'|\S*) capacity=(?P<capacity>'(?:[^'\\]|\\.)*'|.*)$"
+    rf"workload=(?P<workload>{_QUOTED}|\S*) capacity=(?P<capacity>{_QUOTED}|.*)$"
 )
 
-_QUOTED_FIELDS = ("target", "workload", "capacity")
+_QUOTED_FIELDS = ("actor", "target", "workload", "capacity")
 
 
 def _parse_audit_line(line: str) -> dict[str, str]:
@@ -97,12 +100,16 @@ def _parse_audit_line(line: str) -> dict[str, str]:
     ``"22" in line`` check flaky. Parse fields and assert on the parsed
     values instead.
 
-    dmfdeploy/dmfdeploy#140 (the writer fix, 2026-09-03): target/workload/
-    capacity are now quoted (%r) at emission, so this local test parser
-    matches either shape and un-quotes the three fields that can be —
-    keeping this file's own assertions checking the same SEMANTIC value
-    regardless of the field's wire representation, the way
-    audit_events.parse_awx_write_line itself does for the real reader.
+    dmfdeploy/dmfdeploy#140 (the writer fix, 2026-09-03, revised same day
+    to quote actor too and to dispatch on an explicit `fmt=` marker): the
+    optional `fmt=\\d+ ` token is skipped rather than captured — this test
+    parser only needs the FIELDS, not which grammar produced them.
+    actor/target/workload/capacity are now quoted (%r) at emission, so
+    this local test parser matches either shape and un-quotes the four
+    fields that can be — keeping this file's own assertions checking the
+    same SEMANTIC value regardless of the field's wire representation,
+    the way audit_events.parse_awx_write_line itself does for the real
+    reader.
     """
     match = _AUDIT_LINE_RE.match(line)
     assert match is not None, f"unparseable audit line: {line!r}"
