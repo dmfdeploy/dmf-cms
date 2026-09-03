@@ -1356,6 +1356,18 @@ def list_audit_events(
             "role": fields.get("role", ""),
             "reason": fields.get("reason", ""),
             "at": _iso(ts_ns_str),
+            # lkirc (dmfdeploy/dmfdeploy#140): a single request_id can
+            # legitimately carry MULTIPLE rows — e.g. an L3 preflight's
+            # own capacity-skipped/capacity-override line (main.py:488,
+            # :580) shares its request_id with that same request's later
+            # dispatched line (main.py:4868). request_id alone is not a
+            # per-ROW identity. `at_ns` is Loki's own raw nanosecond
+            # timestamp string for THIS log line, unrounded — `_iso`
+            # above is for display and loses precision below
+            # microseconds (Python's own datetime ceiling); this is the
+            # real, source-of-truth per-log identity the frontend keys
+            # rows on, never used for display itself.
+            "at_ns": ts_ns_str,
             "outcome": build_outcome(action, fields.get("outcome", "")),
         })
 
