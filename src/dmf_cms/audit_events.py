@@ -137,28 +137,45 @@ def parse_awx_write_line(line: str) -> dict[str, str] | None:
         except (ValueError, SyntaxError):
             pass
 
-    if reason_value is not None:
-        values["reason"] = reason_value
-        pos = reason_end
-    else:
+    if reason_value is None:
         # AC 5b: a malformed `reason` is an ENRICHMENT failure, not a
         # CLASSIFICATION failure — action/actor/request_id/target already
-        # parsed cleanly above, so the row is still fully usable for
-        # membership/gating (codex R496-A F5: dropping it here discarded an
-        # otherwise-classifiable record over one damaged field). In genuine
-        # data this never fires — `reason=%r` is a Python repr, always
-        # well-formed — so this path only exists for a truncated/corrupted
-        # line, where reason's exact text can no longer be trusted anyway.
-        # Best-effort recovery: retain the row with a blank reason and
-        # resume parsing at the next bare `outcome=` marker, accepting the
-        # same "a stray `outcome=` could truncate early" residual risk
-        # reason's quote-aware scan exists to avoid — but only here, on an
-        # input that is already broken, never on the well-formed path.
-        fallback = tail.find("outcome=", reason_start)
-        if fallback == -1:
-            return None  # nothing recoverable after this point
+        # parsed cleanly above (strictly BEFORE reason_start, from a source
+        # region reason's own content can never influence), so the row is
+        # still fully usable for membership/gating (codex R496-A F5:
+        # dropping it here discarded an otherwise-classifiable record over
+        # one damaged field).
+        #
+        # codex R496-A NEW-2 — SECURITY: an earlier version of this branch
+        # then searched FORWARD from reason_start for the next `outcome=`
+        # marker to "resume" parsing. `reason` is the mandatory C5 field
+        # taken VERBATIM from the operator's own request body
+        # (_require_reason) — so once its boundary is lost, ANY text after
+        # reason_start must be treated as attacker-influenced, not
+        # log-corruption noise. A forward scan let marker-shaped text
+        # *inside* a deliberately malformed reason be picked up as the
+        # row's real outcome/workload/capacity — forging an audit record's
+        # own outcome (e.g. making a refused deploy read as "dispatched")
+        # using nothing but the reason text an operator is free to type.
+        # There is no way to recover a trustworthy boundary once reason's
+        # own end is unknown, so nothing after it is parsed at all: every
+        # field below defaults to a value that fails CLOSED, never one an
+        # attacker chose. An empty outcome is not in any action's
+        # acceptance allowlist (resolve_outcome_state), so it always
+        # renders as failed/unknown — never a forged success or in-flight
+        # claim. In genuine data this whole branch never fires —
+        # `reason=%r` is a Python repr, always well-formed — so it only
+        # matters for an already-corrupted or adversarial line, where nothing
+        # past this point was ever going to be trustworthy anyway.
         values["reason"] = ""
-        pos = fallback
+        values["outcome"] = ""
+        values["workload"] = ""
+        values["capacity"] = ""
+        values[_TRAILING_FIELD] = ""
+        return values
+
+    values["reason"] = reason_value
+    pos = reason_end
 
     after_positions: list[int] = []
     for name in _FIELDS_AFTER_REASON:
@@ -430,8 +447,26 @@ _AWX_ERROR_PREFIX = "awx-error:"
 # DIFFERENT run's job was found, so this run's rollback did not dispatch —
 # main.py:5315, a 409) and must render failed, not in flight — this was
 # the concrete case that proved the old denylist wrong.
+#
+# "capacity-skipped"/"capacity-override" (deploy only, codex R496-A NEW-1
+# — the allowlist's own first pass still missed these two) — both are
+# L3-preflight outcomes where the run PROCEEDS regardless: `l3.enabled is
+# False` skips the tier and continues (main.py:485-490, docstring: "Skips
+# with an audited capacity-skipped outcome"), and an operator override
+# continues into dispatch by definition (main.py:553-588, docstring: "the
+# run proceeds anyway"). Both are followed by a real dispatch further down
+# the same request, so treating them as terminal was the exact inverse
+# defect the allowlist inversion (F3) was fixing — a SUCCESSFUL deploy
+# preflight rendering as a failed action. Verified against the two
+# call sites directly, not assumed from the token names. See
+# tests/test_audit_events_outcome_completeness.py for the mechanical
+# guard that is meant to catch the NEXT one of these before it ships,
+# instead of trusting this list to stay complete by inspection.
 _ACCEPTANCE_OUTCOMES: dict[str, frozenset[str]] = {
-    "deploy": frozenset({"dispatched", "launched", "reattached", "already-active"}),
+    "deploy": frozenset({
+        "dispatched", "launched", "reattached", "already-active",
+        "capacity-skipped", "capacity-override",
+    }),
     "teardown": frozenset({"dispatched", "launched", "reattached", "already-active"}),
     "rollback": frozenset({
         "dispatched", "launched", "reattached", "already-active",
