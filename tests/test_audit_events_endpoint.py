@@ -331,3 +331,43 @@ def test_window_unknown_when_config_endpoint_unavailable(monkeypatch):
     payload = client.get("/api/audit/events").json()
     assert payload["window"]["known"] is False
     assert payload["reason"] == ""  # query_range still succeeded independently
+
+
+# ----------------------------------------------------------------------
+# F6 — a bound that binds must be disclosed.
+# ----------------------------------------------------------------------
+
+def test_not_capped_when_window_is_known_and_results_are_well_under_the_limit():
+    client = _client(OPERATOR_ONLY)
+    payload = client.get("/api/audit/events").json()
+    assert payload["window"]["known"] is True
+    assert payload["capped"] is False
+
+
+def test_capped_when_the_window_could_not_be_derived(monkeypatch):
+    # No derived retention window means the query actually ran against the
+    # technical ceiling, not a real bound — the response must say so rather
+    # than reading as an ordinary, complete history.
+    monkeypatch.setattr(
+        audit_events.loki, "raw_runtime_config",
+        lambda **kwargs: "compactor:\n  retention_enabled: false\nlimits_config:\n  retention_period: 168h\n",
+    )
+    client = _client(OPERATOR_ONLY)
+    payload = client.get("/api/audit/events").json()
+    assert payload["window"]["known"] is False
+    assert payload["capped"] is True
+
+
+def test_capped_when_the_result_count_hits_the_technical_limit(monkeypatch):
+    # A saturated result count means Loki's own limit may have truncated
+    # real rows before this function ever saw them.
+    padded = FIXTURE_LINES + [DEPLOY] * (audit_events._MAX_RESULT_LINES - len(FIXTURE_LINES))
+
+    def _saturated(*, url, selector, start_ns, end_ns, limit, timeout=10):
+        return [{"stream": {}, "values": [[str(i), line] for i, line in enumerate(padded)]}]
+
+    monkeypatch.setattr(audit_events.loki, "query_range", _saturated)
+    client = _client(OPERATOR_ONLY)
+    payload = client.get("/api/audit/events").json()
+    assert len(padded) == audit_events._MAX_RESULT_LINES
+    assert payload["capped"] is True

@@ -83,11 +83,29 @@ def test_missing_field_returns_none():
     assert audit_events.parse_awx_write_line(line) is None
 
 
-def test_unterminated_reason_quote_returns_none():
+def test_unterminated_reason_quote_retains_the_row_with_a_blank_reason():
+    # codex R496-A F5: a malformed `reason` is an ENRICHMENT failure, not a
+    # CLASSIFICATION failure (AC 5b) — action/actor/request_id/target all
+    # parsed cleanly here, so dropping the whole row over one damaged field
+    # would discard an otherwise-usable record. Retained with reason="",
+    # never None.
     line = (
         "awx write: action=deploy actor=alice role=operator real_role= "
         "request_id=rid-1 target=wl-a reason='never closes outcome=dispatched workload= capacity="
     )
+    fields = audit_events.parse_awx_write_line(line)
+    assert fields is not None
+    assert fields["action"] == "deploy"
+    assert fields["request_id"] == "rid-1"
+    assert fields["reason"] == ""
+    assert fields["outcome"] == "dispatched"
+
+
+def test_reason_and_everything_before_it_missing_still_fails_to_parse():
+    # Contrast case: when even the fallback has nothing to resume from (no
+    # `outcome=` anywhere after the broken reason), there is genuinely
+    # nothing left to classify from, and the row is dropped.
+    line = "awx write: action=deploy actor=alice role=operator real_role= request_id=rid-1 target=wl-a reason='never closes"
     assert audit_events.parse_awx_write_line(line) is None
 
 
@@ -165,6 +183,66 @@ limits_config:
 """
     window = audit_events.resolve_retention_window(config, _LABELS)
     assert window.seconds == 480 * 3600
+
+
+def test_retention_equal_priority_tie_takes_the_shorter_period():
+    # codex R496-A F2a: Loki resolves an equal-priority tie by taking the
+    # SHORTER period, not whichever rule this code happened to encounter
+    # first in the list. Rule order below is deliberately the OPPOSITE of
+    # the expected answer (720h listed first) so a "first encountered"
+    # bug would report the wrong, longer window.
+    config = """
+compactor:
+  retention_enabled: true
+limits_config:
+  retention_period: 168h
+  retention_stream:
+    - selector: '{job="dmf-cms/dmf-cms"}'
+      period: 720h
+      priority: 3
+    - selector: '{job=~"dmf-cms.*"}'
+      period: 240h
+      priority: 3
+"""
+    window = audit_events.resolve_retention_window(config, _LABELS)
+    assert window.seconds == 240 * 3600
+
+
+def test_retention_selector_missing_label_treated_as_empty_string():
+    # codex R496-A F2b: Prometheus/Loki matcher semantics treat an absent
+    # label as present-with-value-"" — so a negative matcher on a label the
+    # query never carries legitimately MATCHES. _LABELS has no "container"
+    # key at all; the old (buggy) behaviour treated a missing label as an
+    # automatic non-match, silently falling through to the (longer) global.
+    config = """
+compactor:
+  retention_enabled: true
+limits_config:
+  retention_period: 168h
+  retention_stream:
+    - selector: '{job="dmf-cms/dmf-cms", container!="foo"}'
+      period: 24h
+      priority: 1
+"""
+    window = audit_events.resolve_retention_window(config, _LABELS)
+    assert window.seconds == 24 * 3600
+
+
+def test_retention_selector_positive_missing_label_match_does_not_match():
+    # Same semantics, opposite polarity: a POSITIVE matcher on an absent
+    # label only matches an explicit empty string, never silently.
+    config = """
+compactor:
+  retention_enabled: true
+limits_config:
+  retention_period: 168h
+  retention_stream:
+    - selector: '{job="dmf-cms/dmf-cms", container="foo"}'
+      period: 24h
+      priority: 1
+"""
+    window = audit_events.resolve_retention_window(config, _LABELS)
+    assert window.seconds == 168 * 3600  # the stream rule never matched; falls to global
 
 
 def test_retention_unavailable_on_unparseable_yaml():
@@ -260,6 +338,41 @@ def test_watched_action_acceptance_outcome_is_in_flight():
     for action, outcome in (("deploy", "dispatched"), ("teardown", "launched"), ("rollback", "auto-triggered")):
         result = audit_events.build_outcome(action, outcome)
         assert result == {"state": "in_flight", "detail": outcome}
+
+
+def test_reattach_shaped_acceptance_outcomes_are_also_in_flight():
+    # "reattached" (get_or_create found an existing op, no new dispatch) and
+    # "already-active" (the sync flow's own idempotency guard found an
+    # in-flight AWX job) are both genuine in-flight realities reached via a
+    # different code path than a fresh dispatch — main.py:4769, :4874 (and
+    # the teardown/rollback siblings).
+    for action in ("deploy", "teardown"):
+        for outcome in ("reattached", "already-active"):
+            assert audit_events.build_outcome(action, outcome)["state"] == "in_flight"
+    assert audit_events.build_outcome("rollback", "already-in-progress")["state"] == "in_flight"
+
+
+def test_already_active_other_run_is_a_refusal_not_an_acceptance():
+    # codex R496-A F3's concrete proof case: rollback's identity-mismatch
+    # branch (main.py:5315) never dispatches THIS run's rollback — a
+    # DIFFERENT run's job was found active, and the request is refused
+    # (409). Textually similar to "already-active" but semantically its
+    # opposite; must render failed.
+    result = audit_events.build_outcome("rollback", "already-active-other-run")
+    assert result["state"] == "failed"
+
+
+def test_an_unenumerated_refusal_token_is_terminal_not_in_flight():
+    # codex R496-A F3: the fix must be allowlist-shaped, not "add the
+    # missing tokens to a denylist" — main.py emits far more refusal
+    # tokens than any denylist could enumerate (confirmation-mismatch,
+    # conflict-active-job, entry-not-found, invalid-run-id, ... the list
+    # keeps growing). A token this test has never seen before must STILL
+    # render failed for a watched action, proving the acceptance set is
+    # closed rather than the refusal set.
+    for action in ("deploy", "teardown", "rollback", "finalise-purge"):
+        result = audit_events.build_outcome(action, "some-refusal-token-invented-for-this-test")
+        assert result["state"] == "failed"
 
 
 def test_switch_source_active_is_a_real_succeeded_verdict():

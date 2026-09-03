@@ -97,10 +97,13 @@ def _scan_repr_string_end(text: str, start: int) -> int | None:
 
 
 def parse_awx_write_line(line: str) -> dict[str, str] | None:
-    """Parse one ``awx write:`` line's fields, or None if it doesn't parse.
-
-    A malformed row is dropped, never partially admitted (plan §7 AC 5b:
-    "a row whose fields fail to parse well enough to classify" is excluded).
+    """Parse one ``awx write:`` line's fields, or None if it doesn't parse
+    well enough to CLASSIFY the row — action/actor/request_id/target must
+    all be cleanly extractable, or the row is dropped, never partially
+    admitted (plan §7 AC 5b). A malformed ``reason`` alone does NOT drop
+    the row (that's an enrichment failure, not a classification failure —
+    see the fallback inline below); the row is retained with a blank
+    reason instead.
     """
     idx = line.find("awx write:")
     if idx == -1:
@@ -125,15 +128,37 @@ def parse_awx_write_line(line: str) -> dict[str, str] | None:
 
     reason_start = positions[-1] + len("reason=")
     reason_end = _scan_repr_string_end(tail, reason_start)
-    if reason_end is None:
-        return None
-    try:
-        values["reason"] = ast.literal_eval(tail[reason_start:reason_end])
-    except (ValueError, SyntaxError):
-        return None
-    if not isinstance(values["reason"], str):
-        return None
-    pos = reason_end
+    reason_value: str | None = None
+    if reason_end is not None:
+        try:
+            candidate = ast.literal_eval(tail[reason_start:reason_end])
+            if isinstance(candidate, str):
+                reason_value = candidate
+        except (ValueError, SyntaxError):
+            pass
+
+    if reason_value is not None:
+        values["reason"] = reason_value
+        pos = reason_end
+    else:
+        # AC 5b: a malformed `reason` is an ENRICHMENT failure, not a
+        # CLASSIFICATION failure — action/actor/request_id/target already
+        # parsed cleanly above, so the row is still fully usable for
+        # membership/gating (codex R496-A F5: dropping it here discarded an
+        # otherwise-classifiable record over one damaged field). In genuine
+        # data this never fires — `reason=%r` is a Python repr, always
+        # well-formed — so this path only exists for a truncated/corrupted
+        # line, where reason's exact text can no longer be trusted anyway.
+        # Best-effort recovery: retain the row with a blank reason and
+        # resume parsing at the next bare `outcome=` marker, accepting the
+        # same "a stray `outcome=` could truncate early" residual risk
+        # reason's quote-aware scan exists to avoid — but only here, on an
+        # input that is already broken, never on the well-formed path.
+        fallback = tail.find("outcome=", reason_start)
+        if fallback == -1:
+            return None  # nothing recoverable after this point
+        values["reason"] = ""
+        pos = fallback
 
     after_positions: list[int] = []
     for name in _FIELDS_AFTER_REASON:
@@ -212,9 +237,14 @@ def _selector_matches(selector: str, labels: dict[str, str]) -> bool:
         return False  # an empty/unparseable selector is never a silent wildcard
     for label, op, raw_value in matchers:
         value = raw_value.replace('\\"', '"').replace("\\\\", "\\")
-        actual = labels.get(label)
-        if actual is None:
-            return False
+        # Prometheus/Loki label-matcher semantics: a label absent from the
+        # series is equivalent to that label being present with the value
+        # "" — NOT "this matcher can't apply". A negative matcher like
+        # {container!="foo"} legitimately matches a query that carries no
+        # container label at all (codex R496-A F2b: the earlier `actual is
+        # None -> no match` version missed exactly this, silently falling
+        # through to a global that may be longer — an over-claim).
+        actual = labels.get(label, "")
         try:
             if op == "=" and actual != value:
                 return False
@@ -250,8 +280,13 @@ def resolve_retention_window(config_yaml: str, labels: dict[str, str]) -> Retent
     if not isinstance(limits, dict):
         return RetentionWindow(known=False, seconds=None, reason="unparseable")
 
-    best_priority: int | None = None
-    best_period: str | None = None
+    # Collect every matching, parseable rule as (priority, seconds) — codex
+    # R496-A F2a: Loki resolves an equal-priority tie by taking the
+    # SHORTER period, not "whichever rule was encountered first" (an
+    # over-claim risk the same direction #530 exists to prevent). So this
+    # can't be a running "best so far" comparison; it needs every matching
+    # rule in the top priority tier before it can pick the shortest.
+    matches: list[tuple[int, int]] = []
     for rule in limits.get("retention_stream") or []:
         if not isinstance(rule, dict):
             continue
@@ -259,14 +294,23 @@ def resolve_retention_window(config_yaml: str, labels: dict[str, str]) -> Retent
         period = rule.get("period")
         if not isinstance(selector, str) or not isinstance(period, str):
             continue
+        if not _selector_matches(selector, labels):
+            continue
+        seconds = _parse_duration_seconds(period)
+        if seconds is None or seconds <= 0:
+            continue  # an unparseable per-stream period never silently wins
         try:
             priority = int(rule.get("priority", 1))
         except (TypeError, ValueError):
             priority = 1
-        if _selector_matches(selector, labels) and (best_priority is None or priority > best_priority):
-            best_priority, best_period = priority, period
+        matches.append((priority, seconds))
 
-    period_text = best_period if best_period is not None else limits.get("retention_period")
+    if matches:
+        top_priority = max(priority for priority, _ in matches)
+        seconds = min(secs for priority, secs in matches if priority == top_priority)
+        return RetentionWindow(known=True, seconds=seconds, reason="")
+
+    period_text = limits.get("retention_period")
     if not isinstance(period_text, str) or not period_text.strip():
         return RetentionWindow(known=False, seconds=None, reason="unparseable")
 
@@ -355,30 +399,63 @@ def user_passes_gate(cls: str, *, role: str, groups: tuple[str, ...]) -> bool:
 # (plan §4.5): raw system-error strings never render at default.
 # ----------------------------------------------------------------------
 
-_WATCHED_RAW_ACTIONS = frozenset({"deploy", "teardown", "rollback", "finalise-purge"})
-_REFUSAL_TOKENS = frozenset({"capacity-denied", "facility-busy", "template-not-found", "awx-not-configured"})
 _AWX_ERROR_PREFIX = "awx-error:"
 
-
-def _is_refusal(outcome: str) -> bool:
-    return outcome in _REFUSAL_TOKENS or outcome.startswith(_AWX_ERROR_PREFIX)
+# ALLOWLIST, not a denylist (codex R496-A F3) — an earlier version of this
+# function named the refusal tokens it knew about and treated everything
+# else as acceptance. main.py emits FAR more refusal tokens than that list
+# named (already-active-other-run, ambiguous-lifecycle-jt, capacity-
+# override, confirmation-mismatch, conflict-active-job, entry-not-found,
+# invalid-run-id, jt-not-registered, no-job-template, not-purgeable, ... —
+# the actual count keeps growing every time a new precondition is added),
+# so a denylist silently rendered every one of those as "in flight": the
+# lane claiming a thing was still running when it had already, terminally,
+# refused. The acceptance vocabulary is the opposite shape — small, stable,
+# and fully enumerable from main.py's own `_audit_awx_write(...,
+# outcome=...)` call sites, because it names successful DISPATCH/REATTACH
+# paths, not every way a precondition can fail. A refusal token added next
+# month is terminal automatically; an acceptance token added next month
+# needs a one-line addition here, which is the safer failure direction.
+#
+# "dispatched"/"launched" — the job started (async task-spawn / sync
+# launch). "reattached" — get_or_create found an existing op and returned
+# it without spawning a new task; the earlier request's dispatch is still
+# genuinely running. "already-active" — the sync flow's own idempotency
+# guard found an in-flight AWX job and reattached _track_sync_reattach to
+# it (same in-flight reality, different code path). "auto-triggered"/
+# "already-in-progress" — auto-rollback-specific acceptance shapes (the
+# rollback either freshly dispatched or an existing one already covers it;
+# either way something is genuinely in flight). "already-active-other-run"
+# is DELIBERATELY excluded: it is rollback's identity-mismatch REFUSAL (a
+# DIFFERENT run's job was found, so this run's rollback did not dispatch —
+# main.py:5315, a 409) and must render failed, not in flight — this was
+# the concrete case that proved the old denylist wrong.
+_ACCEPTANCE_OUTCOMES: dict[str, frozenset[str]] = {
+    "deploy": frozenset({"dispatched", "launched", "reattached", "already-active"}),
+    "teardown": frozenset({"dispatched", "launched", "reattached", "already-active"}),
+    "rollback": frozenset({
+        "dispatched", "launched", "reattached", "already-active",
+        "auto-triggered", "already-in-progress",
+    }),
+    "finalise-purge": frozenset({"dispatched", "reattached"}),
+}
 
 
 def resolve_outcome_state(action: str, outcome: str) -> str:
     """'in_flight' | 'succeeded' | 'failed', per plan §4.4's table.
 
-    A refusal token wins regardless of action — a watched action that never
-    dispatched (facility-busy, awx-not-configured, ...) is a terminal
-    failure, not "in flight". switch-source is otherwise the only class
-    with a real verdict; every other covered class is acceptance-only.
+    switch-source is the one class with a real verdict — "active" is its
+    only success value (same allowlist principle: enumerate the known-good
+    shape, not the unbounded space of failure codes). Every other watched
+    action is acceptance-only, and ONLY a recognised acceptance token means
+    "in flight" — everything else, known refusal or not, is terminal.
     """
-    if _is_refusal(outcome):
-        return "failed"
     if action == "switch-source":
         return "succeeded" if outcome == "active" else "failed"
-    if action in _WATCHED_RAW_ACTIONS:
-        return "in_flight"
-    return "failed"  # not reached for a covered class; fail safe, not a crash
+    acceptance = _ACCEPTANCE_OUTCOMES.get(action)
+    if acceptance is not None:
+        return "in_flight" if outcome in acceptance else "failed"
+    return "failed"  # not a recognised watched action; fail safe, not a crash
 
 
 _OUTCOME_COPY = {
@@ -479,6 +556,7 @@ def list_audit_events(
         return {
             "reason": "loki-unconfigured",
             "window": {"known": False, "seconds": None, "reason": "unavailable"},
+            "capped": False,
             "excluded": list(EXCLUDED_DISCLOSURE),
             "events": [],
         }
@@ -501,13 +579,16 @@ def list_audit_events(
         return {
             "reason": "loki-unreachable",
             "window": window_payload,
+            "capped": False,
             "excluded": list(EXCLUDED_DISCLOSURE),
             "events": [],
         }
 
     rows: list[tuple[str, dict[str, str]]] = []
+    total_lines = 0
     for stream in raw_results:
         for entry in stream.get("values", []):
+            total_lines += 1
             if not isinstance(entry, (list, tuple)) or len(entry) != 2:
                 continue
             ts_ns_str, line = entry
@@ -517,6 +598,20 @@ def list_audit_events(
             rows.append((ts_ns_str, fields))
 
     rows.sort(key=lambda row: row[0], reverse=True)  # newest first, merged across streams
+
+    # codex R496-A F6: a bound that binds must be disclosed, not just
+    # applied silently. Two ways this read can be less than exhaustive
+    # without LOOKING like it: (1) the window derivation failed, so the
+    # query actually ran against the technical ceiling
+    # (_QUERY_RANGE_CEILING_SECONDS) instead of a real retention window —
+    # there could be real history further back the ceiling never reached;
+    # (2) the raw result count hit _MAX_RESULT_LINES, meaning Loki's own
+    # limit may have truncated real rows before this function ever saw
+    # them. Either way, a response that renders as an ordinary, complete
+    # 200 would be exactly the untrue "coverage" claim #530 exists to
+    # remove — so both fold into one explicit signal the caller must
+    # disclose, distinct from a genuinely exhaustive empty/non-empty read.
+    capped = (not window.known) or (total_lines >= _MAX_RESULT_LINES)
 
     # Structured join map (request_id -> workload), built from PARSED
     # fields only — never a raw-text search. This is what makes the join
@@ -562,6 +657,7 @@ def list_audit_events(
     return {
         "reason": "",
         "window": window_payload,
+        "capped": capped,
         "excluded": list(EXCLUDED_DISCLOSURE),
         "events": events,
     }

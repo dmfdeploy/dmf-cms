@@ -4523,6 +4523,7 @@ def create_app(settings: Settings | None = None, contract: AppContract | None = 
             payload = {
                 "reason": "loki-unreachable",
                 "window": {"known": False, "seconds": None, "reason": "unavailable"},
+                "capped": False,
                 "excluded": list(audit_events.EXCLUDED_DISCLOSURE),
                 "events": [],
             }

@@ -87,6 +87,23 @@ prometheus:
 promsd:
   url: "http://dmf-promsd.monitoring.svc.cluster.local:8000"
 
+# Loki read seam (umbrella dmfdeploy/dmfdeploy#496) — the Activity History
+# lane's audit-event source. Defaults to the direct backend service
+# (bypassing loki-gateway), matching the one coordinate that is both
+# committed AND live-cluster-verified elsewhere in this stack: dmf-infra's
+# dmf-born-inventory role records `loki.monitoring.svc.cluster.local:3100`
+# from a live `kubectl get svc -A` (dmf-infra
+# k3s-lab-bootstrap/roles/common/dmf-born-inventory/defaults/main.yml), and
+# dmf-promsd's own health probe already targets the same host:port. The
+# nginx loki-gateway (used by Grafana's datasource and Promtail's push
+# client) is schemeless in every committed reference — no port is written
+# down for it anywhere in this stack — so it is not used as the default
+# here. Single-binary deployment mode means the direct service serves
+# query_range and /config without the gateway's involvement. Unconfigured
+# (blank) means the lane is dark — see settings.py LokiSettings.
+loki:
+  url: "http://loki.monitoring.svc.cluster.local:3100"
+
 # L3 console capacity preflight + run-tracking substrate (umbrella
 # dmfdeploy/dmfdeploy#202 WP1/WP2). enabled is THE kill switch (fail-open
 # when false); with it true but prometheus.url unset the handler fails
