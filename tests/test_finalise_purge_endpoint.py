@@ -100,16 +100,21 @@ def _parse_audit_line(line: str) -> dict[str, str]:
     ``"22" in line`` check flaky. Parse fields and assert on the parsed
     values instead.
 
-    dmfdeploy/dmfdeploy#140 (the writer fix, 2026-09-03, revised same day
-    to quote actor too and to dispatch on an explicit `fmt=` marker): the
-    optional `fmt=\\d+ ` token is skipped rather than captured — this test
-    parser only needs the FIELDS, not which grammar produced them.
-    actor/target/workload/capacity are now quoted (%r) at emission, so
-    this local test parser matches either shape and un-quotes the four
-    fields that can be — keeping this file's own assertions checking the
-    same SEMANTIC value regardless of the field's wire representation,
-    the way audit_events.parse_awx_write_line itself does for the real
-    reader.
+    dmfdeploy/dmfdeploy#140 (the writer fix, 2026-09-03): actor/target/
+    workload/capacity are quoted (%r) at emission and every real line
+    now carries a leading `fmt=2 ` marker; the `fmt=\\d+ ` token is
+    skipped rather than captured — this test parser only needs the
+    FIELDS, not the marker itself. This LOCAL parser stays deliberately
+    more permissive than the real one: it un-quotes the four fields when
+    they happen to be quoted, which is convenience for reading back
+    whatever this file's own fixtures produced, not a claim about what
+    the real reader accepts. `audit_events.parse_awx_write_line` is
+    strict, not permissive — it requires a well-formed `fmt=2` marker
+    and drops any line without one outright (operator decision,
+    2026-09-03; see that module's STATUS NOTE), which this helper makes
+    no attempt to model. The point of un-quoting here is only to keep
+    this file's own assertions checking the same SEMANTIC value
+    regardless of the field's wire representation.
     """
     match = _AUDIT_LINE_RE.match(line)
     assert match is not None, f"unparseable audit line: {line!r}"
