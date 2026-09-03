@@ -19,6 +19,7 @@ import type {
   FacilityDetailResponse,
   ChangesCommitsResponse,
   ChangesPullsResponse,
+  AuditEventsResponse,
   AdminGroupsResponse,
   CatalogListResponse,
   CatalogActionResult,
@@ -295,6 +296,19 @@ export function useChangesPulls() {
   return useQuery({
     queryKey: ['changes', 'pulls'],
     queryFn: () => apiCall<ChangesPullsResponse>('/api/changes/pulls'),
+    refetchInterval: 30_000,
+    staleTime: 10_000,
+  })
+}
+
+// dmfdeploy/dmfdeploy#496: the durable, facility-wide Activity History lane.
+// Same fail-soft polling shape as the Changes hooks above — the row-level
+// authorization gate lives server-side (a viewer gets back their own
+// permitted subset, not an empty list because they were refused).
+export function useAuditEvents() {
+  return useQuery({
+    queryKey: ['audit', 'events'],
+    queryFn: () => apiCall<AuditEventsResponse>('/api/audit/events'),
     refetchInterval: 30_000,
     staleTime: 10_000,
   })

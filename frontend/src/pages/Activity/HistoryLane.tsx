@@ -1,8 +1,68 @@
-import { useChangesJobs, useChangesCommits, useChangesPulls } from '@/api/hooks'
-import { GitCommit, GitPullRequest, MousePointerClick, Zap, ExternalLink } from 'lucide-react'
+import { useChangesJobs, useChangesCommits, useChangesPulls, useAuditEvents } from '@/api/hooks'
+import { GitCommit, GitPullRequest, History, MousePointerClick, Zap, ExternalLink } from 'lucide-react'
 import { useActivityStore, type ConsoleActionType } from '../../store/activity'
 import { describeJob, jobOutcome } from '../../lib/labels'
 import { classifyChanges, changesEmptyCopy, classifyForgejo, forgejoEmptyCopy } from '../../lib/changesState'
+import {
+  classifyAuditEvents,
+  auditEventsEmptyCopy,
+  auditWindowCopy,
+  auditOutcomeLabel,
+  groupExclusions,
+} from '../../lib/auditEventsState'
+import type { AuditEvent, AuditEventOutcome } from '../../api/types'
+
+// Per-class title, honest about acceptance-vs-verdict (plan §4.4/AC 2): a
+// watched action never claims completion, so its title says "dispatched",
+// never a past-tense verb implying it finished. switch-source is the one
+// class with a real terminal outcome, so it's the only one allowed a
+// succeeded/failed past-tense title.
+function eventTitle(event: AuditEvent): string {
+  const label = event.workload ?? event.target
+  const failed = event.outcome.state === 'failed'
+  switch (event.class) {
+    case 'deploy':
+      return failed ? `Deploy failed for ${label}` : `Deploy dispatched for ${label}`
+    case 'teardown':
+      return failed ? `Teardown failed for ${label}` : `Teardown dispatched for ${label}`
+    case 'auto-rollback':
+      return failed
+        ? `Automatic rollback failed${event.workload ? ` for ${event.workload}` : ''}`
+        : `Automatic rollback dispatched${event.workload ? ` for ${event.workload}` : ''}`
+    case 'switch-source':
+      return event.outcome.state === 'succeeded'
+        ? `Switched source on ${event.target}`
+        : `Switch source failed on ${event.target}`
+  }
+}
+
+function AuditEventOutcomeBlock({ outcome }: { outcome: AuditEventOutcome }) {
+  const badgeClass =
+    outcome.state === 'succeeded'
+      ? 'bg-green-500/20 text-green-400'
+      : outcome.state === 'failed'
+        ? 'bg-red-500/20 text-red-400'
+        : 'bg-blue-500/20 text-blue-400'
+  return (
+    <div className="mt-2">
+      <span className={`inline-block px-2 py-1 rounded text-xs font-semibold ${badgeClass}`}>
+        {auditOutcomeLabel(outcome)}
+      </span>
+      {outcome.state === 'failed' && outcome.headline && (
+        <div className="mt-1 text-xs text-muted">
+          <p>{outcome.headline}</p>
+          {outcome.next_step && <p className="mt-0.5">{outcome.next_step}</p>}
+        </div>
+      )}
+      {/* Raw token, demoted to expert detail — same convention as the Jobs
+          panel below keeping the raw AWX template name as a muted line
+          under the humanised title (see lib/labels.ts's describeJob
+          comment). Never the ONLY thing shown for a failure — the plain-
+          language block above renders first. */}
+      <p className="text-xs text-muted/70 mt-1 font-mono">{outcome.detail}</p>
+    </div>
+  )
+}
 
 // Human title per console-originated action (#185 WP-E: AWX writes join the
 // clear record in this lane).
@@ -33,7 +93,24 @@ export default function HistoryLane() {
   const jobs = useChangesJobs()
   const commits = useChangesCommits()
   const pulls = useChangesPulls()
+  const auditState = classifyAuditEvents(useAuditEvents())
+  const exclusions = groupExclusions(auditState.excluded)
   const consoleActions = useActivityStore((s) => s.records)
+  // dmfdeploy/dmfdeploy#496: deploy/teardown/switch-source/auto-rollback
+  // are now the facility panel's job — server-side, every browser agrees.
+  // Rendering them from this client-only store too would be exactly the
+  // "two answers that can disagree" defect this round exists to remove, so
+  // this panel narrows to the three classes that have NO server answer
+  // this round: clear-for-deployment never emits this stream's line at
+  // all (a different record entirely — plan §4.3), and finalise-purge/
+  // launch are the facility panel's own disclosed exclusions. The write
+  // call sites (ProvisionStage/FinaliseStage/ConfigureStage/Catalog/
+  // JobsLane) are untouched — this is a display-only filter, so it also
+  // quietly drops any deploy/teardown/switch-source rows already sitting
+  // in a returning user's localStorage from before this change.
+  const localOnlyActions = consoleActions.filter(
+    (rec) => rec.action === 'clear-for-deployment' || rec.action === 'finalise-purge' || rec.action === 'launch',
+  )
   // Same classifier as the Workspace RecentChanges widget — one endpoint,
   // one set of designed states (Art. 1).
   const jobsState = classifyChanges(jobs)
@@ -58,27 +135,103 @@ export default function HistoryLane() {
 
   return (
     <div>
-      {/* Console-originated actions (this browser). Provenance is explicit
-          (Art. 1): the backend has no queryable audit record yet, so this
-          list never claims facility-wide completeness. */}
+      {/* Facility activity (dmfdeploy/dmfdeploy#496) — server-side, over
+          Loki, gated per record class. The durable answer to "what
+          happened" the rest of this page is built around: every operator
+          sees the same rows regardless of browser. */}
+      <div className="panel mb-6">
+        <div className="px-6 py-4 border-b border-panel">
+          <h2 className="text-lg font-semibold flex items-center gap-2">
+            <History className="w-5 h-5 text-accent" />
+            Facility activity
+          </h2>
+          <p className="text-xs text-muted mt-1">
+            Deploys, teardowns, source switches, and automatic rollbacks —
+            recorded server-side and visible to every operator, regardless
+            of browser. {auditWindowCopy(auditState.window)}
+          </p>
+          {(exclusions.access.length > 0 || exclusions.scope.length > 0) && (
+            <p className="text-xs text-muted mt-1">
+              {exclusions.access.length > 0 && (
+                <>Kept off this record, access-scoped: {exclusions.access.join(', ')}. </>
+              )}
+              {exclusions.scope.length > 0 && (
+                <>Not shown here yet — out of scope this round, not a security decision: {exclusions.scope.join(', ')}.</>
+              )}
+            </p>
+          )}
+        </div>
+        <div className="divide-y divide-panel">
+          {auditState.phase === 'loading' ? (
+            <div className="px-6 py-8 text-center text-muted text-sm">Loading facility activity...</div>
+          ) : (
+            <>
+              {auditState.phase !== 'ok' && (
+                <div className="px-6 py-2 text-xs text-amber-300 bg-amber-500/10">
+                  {auditEventsEmptyCopy(auditState.phase)}
+                </div>
+              )}
+              {auditState.events.length === 0 ? (
+                auditState.phase === 'ok' && (
+                  <div className="px-6 py-8 text-center text-muted text-sm">
+                    {auditEventsEmptyCopy(auditState.phase)}
+                  </div>
+                )
+              ) : (
+                auditState.events.map((event) => (
+                  <div key={event.request_id} className="px-6 py-4 hover:bg-panel/30 transition">
+                    <div className="flex items-start justify-between gap-4">
+                      <div className="flex-1 min-w-0">
+                        <h3 className="font-semibold text-sm">{eventTitle(event)}</h3>
+                        <p className="text-xs text-muted mt-1">
+                          {event.actor} ({event.role}) · “{event.reason}”
+                        </p>
+                        <AuditEventOutcomeBlock outcome={event.outcome} />
+                      </div>
+                      <div className="text-right text-xs text-muted shrink-0">
+                        {event.at && new Date(event.at).toLocaleString()}
+                      </div>
+                    </div>
+                  </div>
+                ))
+              )}
+            </>
+          )}
+        </div>
+      </div>
+
+      {/* This browser's own actions — explicitly NOT a facility record
+          (umbrella#496 condition 4). Narrowed to exactly the three classes
+          the facility panel above does not carry: clear-for-deployment
+          never emits the "awx write:" line this lane reads at all (a
+          different record entirely — plan §4.3), and finalise-purge/
+          launch are the SAME two exclusions disclosed above, same
+          reasons. Nothing here is confirmed anywhere else — not to
+          another operator, not even to this same browser after
+          localStorage is cleared. */}
       <div className="panel mb-6">
         <div className="px-6 py-4 border-b border-panel">
           <h2 className="text-lg font-semibold flex items-center gap-2">
             <MousePointerClick className="w-5 h-5 text-accent" />
-            Console actions
+            This browser&apos;s own actions
           </h2>
           <p className="text-xs text-muted mt-1">
-            Actions taken from this console in this browser — correlated by
-            request id. Other operators&apos; sessions are not shown here.
+            Not a facility record — recorded locally, in this browser only,
+            and only for what the facility activity above doesn&apos;t
+            carry: clearing a workload for deployment (a separate record
+            entirely), permanently deleting a workload, and launching a
+            workflow directly (the same two exclusions disclosed above, for
+            the same reasons). No other operator, and no other browser of
+            your own, sees these.
           </p>
         </div>
         <div className="divide-y divide-panel">
-          {consoleActions.length === 0 ? (
+          {localOnlyActions.length === 0 ? (
             <div className="px-6 py-8 text-center text-muted text-sm">
-              No console actions recorded in this browser yet
+              None of these actions have been recorded in this browser yet
             </div>
           ) : (
-            consoleActions.map((rec) => (
+            localOnlyActions.map((rec) => (
               <div key={rec.request_id} className="px-6 py-4 hover:bg-panel/30 transition">
                 <div className="flex items-start justify-between gap-4">
                   <div className="flex-1 min-w-0">

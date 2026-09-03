@@ -1,0 +1,135 @@
+import type { AuditEventOutcome, AuditEventsExcludedClass, AuditEventsResponse, AuditEventsWindow } from '../api/types'
+import { settleQuery } from './queryState'
+import { formatSecondsCeiling } from './duration'
+
+// Single source of truth for the Activity History lane's degraded states
+// (dmfdeploy/dmfdeploy#496), same shape as lib/changesState.ts's
+// ChangesPhase deliberately — the Jobs/Console-actions panels on this same
+// page already teach an operator what "unreachable" vs "unconfigured" vs a
+// genuine empty list look like; this lane must not invent a different
+// vocabulary for the same idea.
+//
+// The backend (/api/audit/events) is fail-soft: it always answers 200 with
+// a `reason` token, so a Loki outage is designed content, not a react-query
+// error (Arts. 1+8). `error` covers a genuine transport/auth failure of the
+// console's OWN API — the case react-query still surfaces as isError.
+export type AuditEventsPhase =
+  | 'loading'
+  | 'ok' // Loki answered; `events` is authoritative (may be legitimately empty)
+  | 'unreachable' // Loki itself could not be read
+  | 'unconfigured' // no Loki wired into this env
+  | 'error' // the console's own API call failed
+
+export interface AuditEventsState {
+  phase: AuditEventsPhase
+  events: AuditEventsResponse['events']
+  window: AuditEventsWindow
+  excluded: AuditEventsExcludedClass[]
+}
+
+export interface AuditEventsQueryLike {
+  isLoading: boolean
+  isError: boolean
+  data?: AuditEventsResponse
+}
+
+const EMPTY_WINDOW: AuditEventsWindow = { known: false, seconds: null, reason: 'unavailable' }
+
+export function classifyAuditEvents(q: AuditEventsQueryLike): AuditEventsState {
+  const settled = settleQuery(q)
+  const events = settled.data?.events ?? []
+  const window = settled.data?.window ?? EMPTY_WINDOW
+  const excluded = settled.data?.excluded ?? []
+
+  let phase: AuditEventsPhase
+  if (settled.loading) phase = 'loading'
+  else if (settled.failed) phase = 'error'
+  else {
+    switch (settled.data?.reason) {
+      case 'loki-unreachable':
+        phase = 'unreachable'
+        break
+      case 'loki-unconfigured':
+        phase = 'unconfigured'
+        break
+      default:
+        phase = 'ok'
+    }
+  }
+
+  return { phase, events, window, excluded }
+}
+
+// Never claims completeness beyond what the phase actually confirms (Art.
+// 1) — "unreachable" and "a real empty history" must read as different
+// sentences, not the same "no facility actions" line with different icons.
+export function auditEventsEmptyCopy(phase: AuditEventsPhase): string {
+  switch (phase) {
+    case 'unreachable':
+      return 'Facility history is unreachable right now — recent actions cannot be read. Retrying automatically.'
+    case 'unconfigured':
+      return 'Facility history is not configured in this environment.'
+    case 'error':
+      return 'Facility history could not be loaded. Retrying automatically.'
+    default:
+      return 'No facility actions recorded in this window.'
+  }
+}
+
+// Ceiling, never coverage (plan condition 3 / #530): "searches up to X ago"
+// is a bound on how far back a search can reach, not a promise that X of
+// history is present. A young environment, a filled volume, or a retention
+// change that isn't retroactive can all mean less is actually there.
+export function auditWindowCopy(window: AuditEventsWindow): string {
+  if (!window.known || window.seconds == null) {
+    return 'Search window unknown — retention could not be confirmed.'
+  }
+  return `Searches up to ${formatSecondsCeiling(window.seconds)} ago.`
+}
+
+// Plain-word badge for an event's outcome (Art. 8) — the SAME word a row's
+// detail line is built from, one computation per row, same discipline as
+// lib/labels.ts's jobOutcome()/describeJob() pair.
+export function auditOutcomeLabel(outcome: AuditEventOutcome): string {
+  switch (outcome.state) {
+    case 'in_flight':
+      return 'In progress'
+    case 'succeeded':
+      return 'Succeeded'
+    case 'failed':
+      return 'Failed'
+  }
+}
+
+// ----------------------------------------------------------------------
+// Exclusion disclosure — the two reasons are NEVER flattened into one list
+// (plan §4.3/AC 5): a reader must be able to tell a boundary (access) from
+// a choice about detail (scope-of-round) apart from each other.
+// ----------------------------------------------------------------------
+
+const EXCLUDED_CLASS_LABELS: Record<string, string> = {
+  'finalise-purge': 'permanently deleting a workload',
+  launch: 'launching a workflow directly',
+  'verify-drain': 'verifying a facility has drained',
+  rollback: 'an operator-initiated rollback',
+}
+
+export function excludedClassLabel(cls: string): string {
+  return EXCLUDED_CLASS_LABELS[cls] ?? cls
+}
+
+export interface GroupedExclusions {
+  access: string[] // human labels, access-scoped exclusions
+  scope: string[] // human labels, scope-of-round exclusions
+}
+
+export function groupExclusions(excluded: AuditEventsExcludedClass[]): GroupedExclusions {
+  const access: string[] = []
+  const scope: string[] = []
+  for (const item of excluded) {
+    const label = excludedClassLabel(item.class)
+    if (item.reason === 'access') access.push(label)
+    else scope.push(label)
+  }
+  return { access, scope }
+}
