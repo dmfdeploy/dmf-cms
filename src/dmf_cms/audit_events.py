@@ -74,6 +74,43 @@ _FIELDS_BEFORE_REASON = ("action", "actor", "role", "real_role", "request_id", "
 _FIELDS_AFTER_REASON = ("outcome", "workload", "capacity")
 _TRAILING_FIELD = "linked_request_id"
 
+# dmf-cms#140 (lkirc, BLOCKING) — every field except `reason` is %s-
+# formatted in the emitter: control-character escaped only
+# (_sanitize_audit_field), never `=`/space escaped. `target` is the
+# reported case (a caller-supplied catalog key/run id/receiver instance —
+# an UNKNOWN key reaches the audit line on the entry-not-found refusal
+# path with no prior validation); `workload` shares the exact exposure
+# (`body.get("workload")`, main.py:384, unvalidated). Either can carry
+# literal marker text (` reason='x' outcome=dispatched workload=pwned
+# capacity=`) that shifts where every FOLLOWING field is found — forging
+# a refused deploy into an in-flight one for an attacker-chosen target,
+# using perfectly well-formed input, no corrupted/truncated line needed.
+#
+# THE PROPERTY: no caller-influenced field's value may alter the parse of
+# any other field. Over this unescaped, space-delimited format the only
+# structural guarantee available is: every marker name occurs AT MOST
+# ONCE per line. Two or more occurrences means its true boundary cannot
+# be told apart from an injected one — the row fails to CLASSIFY at all
+# (AC 5b: default-deny, drop it), covering lines already stored in Loki
+# in the current unquoted format, not just future emitter output (this
+# module never assumes stored data is trustworthy). A MISSING marker (0
+# occurrences) is unaffected by this check — that is the existing
+# truncated-line handling below, untouched.
+_ALL_MARKER_NAMES = (*_FIELDS_BEFORE_REASON, "reason", *_FIELDS_AFTER_REASON, _TRAILING_FIELD)
+
+
+def _marker_pattern(name: str) -> re.Pattern[str]:
+    # Left word-boundary only: "request_id=" must never match inside
+    # "linked_request_id=" (plan §4.2's own documented substring trap) —
+    # a marker only counts if the character before it is not part of a
+    # longer identifier. No right-boundary check needed: every name here
+    # is immediately followed by "=", which is not an identifier
+    # character, so "=" itself terminates the match unambiguously.
+    return re.compile(r"(?<![A-Za-z0-9_])" + re.escape(name) + "=")
+
+
+_MARKER_PATTERNS = {name: _marker_pattern(name) for name in _ALL_MARKER_NAMES}
+
 
 def _scan_repr_string_end(text: str, start: int) -> int | None:
     """Return the index just past the closing quote of a Python repr'd str
@@ -174,6 +211,39 @@ def parse_awx_write_line(line: str) -> dict[str, str] | None:
         values[_TRAILING_FIELD] = ""
         return values
 
+    # dmf-cms#140 (lkirc, BLOCKING) — this is the ONLY branch that needs
+    # it, and here is why: reason just quote-scanned SUCCESSFULLY, which
+    # is exactly the shape a forged, attacker-crafted reason needs to
+    # hijack the boundary of every field after it (a genuinely
+    # truncated/corrupted reason fails the scan instead, hits the branch
+    # above, and is already safe — round 2's fallback never trusts
+    # anything past a broken reason at all). `target` and `workload` are
+    # %s-formatted — control-character escaped only, no `=`/space
+    # escaping — so a caller-influenced value can embed literal marker
+    # text (` reason='x' outcome=dispatched workload=pwned capacity=`)
+    # that this sequential search would otherwise pick up as genuine,
+    # forging e.g. a refused deploy into an in-flight one while the row
+    # still carries the real actor/action/target prefix.
+    #
+    # THE PROPERTY: no caller-influenced field's value may alter the
+    # parse of any other field. The only structural guarantee available
+    # over this unescaped, space-delimited format: every marker name
+    # occurs AT MOST ONCE, checked OUTSIDE reason's own now-known value
+    # span (inside that span is inert — properly quoted, self-delimiting
+    # free text; an honest reason mentioning "outcome=" or "target=" in
+    # prose must not be rejected for it, and reason's own boundary is
+    # never in question here — it's already been found by real quote-
+    # matching, not marker search). A duplicate found anywhere outside
+    # that span means SOME marker's true boundary cannot be told apart
+    # from an injected one, and the row fails to CLASSIFY at all (AC 5b:
+    # default-deny, drop it) — including for lines already stored in
+    # Loki in the current unquoted format, not just future emitter
+    # output.
+    outside_reason = tail[:reason_start] + tail[reason_end:]
+    for name in _ALL_MARKER_NAMES:
+        if len(_MARKER_PATTERNS[name].findall(outside_reason)) > 1:
+            return None
+
     values["reason"] = reason_value
     pos = reason_end
 
@@ -197,6 +267,40 @@ def parse_awx_write_line(line: str) -> dict[str, str] | None:
     values[_TRAILING_FIELD] = (
         tail[trailing_pos + len(f"{_TRAILING_FIELD}="):].strip() if trailing_pos != -1 else ""
     )
+
+    # dmf-cms#140 follow-up (orchestrator's own sweep, live): `capacity` is
+    # the one field the "at most once" check above cannot cover for
+    # `linked_request_id` specifically, and the reason is structural, not
+    # an oversight — `linked_request_id` is OPTIONAL (0 or 1 occurrences
+    # is legitimate, unlike every other marker, which is always exactly
+    # 1), so an attacker injecting exactly ONE fake occurrence into
+    # capacity's own value (which is otherwise unbounded — nothing
+    # legitimately follows capacity on a non-auto-rollback line) produces
+    # a marker count of 1, identical to a genuine one; counting alone
+    # cannot tell them apart. `capacity` is server-computed today
+    # (_capacity_audit_summary, never caller input) so this is not
+    # currently reachable through THIS field — but treating "not caller-
+    # controlled today" as a reason to leave it open is exactly the
+    # reasoning this round exists to stop trusting (see this morning's
+    # retention-selector hazard for the same shape). Close it
+    # structurally instead: `linked_request_id` is only ever genuine on
+    # the auto-rollback dispatch's own emission, whose action/actor are
+    # both request_id-independent, injection-proof values (a hardcoded
+    # literal and role-derived text respectively — never caller %s
+    # input, and both are locked in from a source region no later
+    # field's content can reach, per the classification-marker ordering
+    # above). So a non-blank `linked_request_id` on any OTHER (action,
+    # actor) pair is definitive proof of a corrupted boundary somewhere
+    # upstream of it, even though nothing rendered from it would be
+    # trusted downstream either way (only the auto-rollback join
+    # consults this field at all) — reject the whole row, consistent
+    # with every other ambiguity this function treats as a
+    # classification failure.
+    if values[_TRAILING_FIELD] and not (
+        values["action"] == "rollback" and values["actor"] == _AUTO_ROLLBACK_ACTOR
+    ):
+        return None
+
     return values
 
 

@@ -190,6 +190,49 @@ def test_excluded_rows_never_appear_even_for_the_most_privileged_user():
         assert excluded_id not in ids
 
 
+def test_dmf_cms_140_a_forged_refusal_never_surfaces_as_in_flight_end_to_end(monkeypatch):
+    # dmf-cms#140, through the full pipeline: an unknown catalog key
+    # (target) crafted to embed a fake reason/outcome/workload, on a real
+    # entry-not-found refusal. The genuine control row (rid-genuine, a
+    # real refusal with an ordinary target) is included in the SAME
+    # response to prove the injection didn't collaterally damage
+    # unrelated rows, not just that the crafted one failed to forge.
+    crafted_target = "evil-target reason='fake' outcome=dispatched workload=pwned capacity="
+    injected_line = (
+        "2026-09-03 12:00:00,000 INFO dmf_cms.audit: awx write: "
+        "action=deploy actor=alice role=operator real_role= request_id=rid-injected "
+        f"target={crafted_target} reason='legit deploy attempt' "
+        "outcome=entry-not-found workload= capacity="
+    )
+    genuine_refusal = _line(
+        action="deploy", actor="alice", role="operator", request_id="rid-genuine",
+        target="some-other-key", reason="typo in key", outcome="entry-not-found",
+    )
+
+    def _fake(*, url, selector, start_ns, end_ns, limit, timeout=10):
+        return [{"stream": {}, "values": [["1", injected_line], ["2", genuine_refusal]]}]
+
+    monkeypatch.setattr(audit_events.loki, "query_range", _fake)
+    client = _client(OPERATOR_ONLY)
+    payload = client.get("/api/audit/events").json()
+
+    ids = _event_ids(payload)
+    # The property: no event anywhere in the response carries the
+    # attacker's forged outcome/workload/target — whether the injected
+    # row was dropped entirely (most likely) or somehow still rendered.
+    for event in payload["events"]:
+        assert event["target"] != "evil-target"
+        assert not (event["target"] == "wl-a" and event["outcome"]["state"] == "in_flight")
+        assert event["workload"] != "pwned"
+    # And the genuine, unrelated refusal in the same response is
+    # unaffected — this isn't just "the bad row vanished", the good one
+    # must read exactly as a clean refusal always has.
+    assert "rid-genuine" in ids
+    genuine = next(e for e in payload["events"] if e["request_id"] == "rid-genuine")
+    assert genuine["outcome"]["state"] == "failed"
+    assert genuine["target"] == "some-other-key"
+
+
 def test_disclosure_names_the_two_exclusion_reasons_distinctly():
     client = _client(VIEWER_ONLY)
     payload = client.get("/api/audit/events").json()
