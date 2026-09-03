@@ -68,14 +68,24 @@ seventh — a forged line and a legitimate one being byte-for-byte
 identical — remains structurally unclosable for a legacy-format line,
 exactly as it always was, because nothing about re-reading old bytes can
 retroactively add a quote nobody wrote. That gap is BOUNDED, not
-permanent: dmf-cms's own Loki stream carries no per-stream retention
-override (dmfdeploy/dmfdeploy#530's three ``retention_stream`` selectors
-are all security streams, none matching ``job="dmf-cms/dmf-cms"``), so it
-falls to the 720h/30-day default-stream floor — a legacy-format line is
-gone, unconditionally, within 30 days of this fix shipping. Do not
-"simplify" this back to a single code path before that window has fully
-elapsed; the dual handling is what lets old data keep working at all
-during it.
+permanent — but stating the bound is EXACTLY the mistake
+dmfdeploy/dmfdeploy#530 exists to prevent, so state it #530's way, not as
+a number: THE WINDOW IS THE DEPLOYED RETENTION, WHATEVER THE PROFILE
+SETS, never a role default cited as if it were deployed reality. dmf-cms's
+own Loki stream carries no per-stream retention override
+(dmfdeploy/dmfdeploy#530's three ``retention_stream`` selectors are all
+security streams, none matching ``job="dmf-cms/dmf-cms"``), so it falls to
+whatever the deploying profile's ``loki_retention`` is. dmf-infra's OWN
+role default is 720h/30 days — but a deploying profile overrides that
+default, and the sandbox profile this ships to does: dmf-env's
+``bin/init-wizard.sh`` sets ``loki_retention: 168h`` (7 days) for the
+sandbox — that citation is the committed GENERATOR, not a live reading of
+a rendered inventory, which is the only thing that would fully settle it.
+So on the environment this actually ships to, a legacy-format line is
+gone, unconditionally, within 7 days of this fix shipping — not 30. Do
+not "simplify" this back to a single code path before that window has
+fully elapsed on whatever environment is actually running this; the dual
+handling is what lets old data keep working at all during it.
 
 The five forgery vectors closed on the legacy path, for the historical
 record: a caller-controlled field's raw text hijacking a later field's
@@ -165,11 +175,15 @@ _MAX_RESULT_LINES = 5000
 # hazard): the search for `request_id=` never runs anywhere near the end
 # of the line where `linked_request_id=` lives.
 #
-# LEGACY FORMAT, still live in Loki until it ages out of retention
-# (dmfdeploy/dmfdeploy#530: 720h/30 days is dmf-cms's own stream's
-# default-stream floor — none of the three security-stream overrides
-# match its job label): target/workload/capacity were `%s` (unquoted,
-# only control-character-escaped) before this fix shipped. The parser
+# LEGACY FORMAT, still live in Loki until it ages out of retention —
+# whatever the DEPLOYED profile's retention actually is
+# (dmfdeploy/dmfdeploy#530: none of the three security-stream overrides
+# match dmf-cms's own job label, so it's whatever `loki_retention` the
+# deploying profile sets, never dmf-infra's role default cited as if it
+# were reality — see the module STATUS NOTE above for the sandbox's own
+# figure, sourced to the committed generator, not a role default):
+# target/workload/capacity were `%s` (unquoted, only control-character-
+# escaped) before this fix shipped. The parser
 # below tries the new, quote-scanned reading for each of these three
 # fields FIRST — its boundary is PROVABLE, not guessed, so it is trusted
 # regardless of what marker-shaped text it contains — and falls back to
@@ -412,9 +426,11 @@ def _parse_quotable_field(
     Returns ``(marker_pos, value_start, None, None)`` when the marker is
     present but its value does NOT start with a quote at all — a legacy,
     pre-writer-fix emission, still live in Loki until it ages out of
-    retention (dmfdeploy/dmfdeploy#530: 720h/30 days is dmf-cms's own
-    stream's default-stream floor). The caller falls back to the exact
-    pre-fix positional/ambiguity-checked handling for this field — see
+    retention — whatever the DEPLOYED profile's retention actually is
+    (dmfdeploy/dmfdeploy#530: never dmf-infra's role default cited as if
+    it were deployed reality; see the module STATUS NOTE at the top of
+    this file). The caller falls back to the exact pre-fix positional/
+    ambiguity-checked handling for this field — see
     parse_awx_write_line's own inline comments at each of its three call
     sites (target, workload, capacity) for what that fallback does.
     """

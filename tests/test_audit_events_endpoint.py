@@ -617,10 +617,13 @@ def test_writer_fix_round_trip_blank_workload_and_capacity_never_render_as_the_w
 
 def test_writer_fix_legacy_unquoted_line_from_before_the_fix_still_renders_end_to_end(monkeypatch):
     # dmfdeploy/dmfdeploy#530: dmf-cms's own stream has no per-stream
-    # retention override, so it falls to the 720h/30-day default-stream
-    # floor -- old-format lines emitted before this fix shipped stay in
-    # Loki, and readable, for up to that long. A genuine, non-adversarial
-    # legacy line must render exactly as it always did, through the full
+    # retention override, so it falls to whatever the DEPLOYED profile's
+    # loki_retention is -- never dmf-infra's role default (720h/30 days)
+    # cited as if it were deployed reality; the sandbox profile this
+    # ships to overrides it to 168h/7 days (dmf-env's init-wizard.sh). Old-
+    # format lines emitted before this fix shipped stay in Loki, and
+    # readable, for up to that long. A genuine, non-adversarial legacy
+    # line must render exactly as it always did, through the full
     # endpoint, not just the bare parser.
     legacy_line = (
         "2026-08-15 09:00:00,000 INFO dmf_cms.audit: awx write: "
