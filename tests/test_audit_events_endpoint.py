@@ -43,10 +43,13 @@ def _line(
     *, action, actor, role, request_id, target, reason, outcome,
     workload="", capacity="", linked_request_id=None,
 ) -> str:
+    # dmfdeploy/dmfdeploy#140: the fmt=2 grammar -- target/actor/reason/
+    # workload/capacity are quoted (%r), exactly as the real emitter
+    # writes them; action/role/real_role/request_id/outcome stay plain.
     line = (
-        f"awx write: action={action} actor={actor} role={role} real_role= "
-        f"request_id={request_id} target={target} reason={reason!r} "
-        f"outcome={outcome} workload={workload} capacity={capacity}"
+        f"awx write: fmt=2 action={action} actor={actor!r} role={role} real_role= "
+        f"request_id={request_id} target={target!r} reason={reason!r} "
+        f"outcome={outcome} workload={workload!r} capacity={capacity!r}"
     )
     if linked_request_id is not None:
         line += f" linked_request_id={linked_request_id}"
@@ -104,20 +107,25 @@ UNRECOGNISED_ACTION = _line(
     target="wl-a", reason="should never appear", outcome="dispatched",
 )
 UNPARSEABLE = "2026-09-03 12:00:00,000 INFO dmf_cms.audit: awx write: action=deploy actor=alice request_id=rid-broken"
-# codex R496-C P1-2: a realistic truncated-line fixture — classification
-# fields (action/actor/role/request_id/target) are all intact and precede
-# the break, but the line cuts off mid-reason with nothing after it. This
-# is the row AC 5b (as revised) says must still RENDER, gated normally,
-# with an unknown outcome — never dropped, and never a forged verdict.
-DEPLOY_CORRUPTED_OUTCOME = (
-    "2026-09-03 12:00:00,000 INFO dmf_cms.audit: awx write: action=deploy actor=erin role=operator "
-    "real_role= request_id=rid-deploy-corrupted target=wl-c reason='truncated mid-line"
+# dmfdeploy/dmfdeploy#140: legacy is dropped, not parsed by a fallback
+# grammar (operator decision) — so a truncated/malformed line, WITH or
+# WITHOUT a truncated fmt=2 marker, is unparseable for the same reason
+# UNPARSEABLE above already is, and needs no dedicated fixture. What DOES
+# still need coverage on the new format: codex R496-C P1-2's property
+# that a genuinely blank `outcome` value (the row otherwise complete and
+# well-formed) renders as an honest "unknown", never a forged verdict —
+# reachable on this grammar as an outcome that's simply empty, not as a
+# truncation (any truncation of a REQUIRED field now drops the whole row
+# — there is no partial-render fallback left to test).
+DEPLOY_BLANK_OUTCOME = _line(
+    action="deploy", actor="erin", role="operator", request_id="rid-deploy-corrupted",
+    target="wl-c", reason="outcome field lost upstream", outcome="",
 )
 
 FIXTURE_LINES = [
     DEPLOY, DEPLOY_REFUSED, TEARDOWN, SWITCH_SOURCE, AUTO_ROLLBACK, AUTO_ROLLBACK_ORPHAN,
     FINALISE_PURGE, LAUNCH, VERIFY_DRAIN, OPERATOR_ROLLBACK, UNRECOGNISED_ACTION, UNPARSEABLE,
-    DEPLOY_CORRUPTED_OUTCOME,
+    DEPLOY_BLANK_OUTCOME,
 ]
 
 _VALID_RETENTION_CONFIG = """
@@ -193,119 +201,6 @@ def test_excluded_rows_never_appear_even_for_the_most_privileged_user():
         assert excluded_id not in ids
 
 
-def test_dmf_cms_140_a_forged_refusal_never_surfaces_as_in_flight_end_to_end(monkeypatch):
-    # dmf-cms#140, through the full pipeline: an unknown catalog key
-    # (target) crafted to embed a fake reason/outcome/workload, on a real
-    # entry-not-found refusal. The genuine control row (rid-genuine, a
-    # real refusal with an ordinary target) is included in the SAME
-    # response to prove the injection didn't collaterally damage
-    # unrelated rows, not just that the crafted one failed to forge.
-    crafted_target = "evil-target reason='fake' outcome=dispatched workload=pwned capacity="
-    injected_line = (
-        "2026-09-03 12:00:00,000 INFO dmf_cms.audit: awx write: "
-        "action=deploy actor=alice role=operator real_role= request_id=rid-injected "
-        f"target={crafted_target} reason='legit deploy attempt' "
-        "outcome=entry-not-found workload= capacity="
-    )
-    genuine_refusal = _line(
-        action="deploy", actor="alice", role="operator", request_id="rid-genuine",
-        target="some-other-key", reason="typo in key", outcome="entry-not-found",
-    )
-
-    def _fake(*, url, selector, start_ns, end_ns, limit, timeout=10):
-        return [{"stream": {}, "values": [["1", injected_line], ["2", genuine_refusal]]}]
-
-    monkeypatch.setattr(audit_events.loki, "query_range", _fake)
-    client = _client(OPERATOR_ONLY)
-    payload = client.get("/api/audit/events").json()
-
-    ids = _event_ids(payload)
-    # The property: no event anywhere in the response carries the
-    # attacker's forged outcome/workload/target — whether the injected
-    # row was dropped entirely (most likely) or somehow still rendered.
-    for event in payload["events"]:
-        assert event["target"] != "evil-target"
-        assert not (event["target"] == "wl-a" and event["outcome"]["state"] == "in_flight")
-        assert event["workload"] != "pwned"
-    # And the genuine, unrelated refusal in the same response is
-    # unaffected — this isn't just "the bad row vanished", the good one
-    # must read exactly as a clean refusal always has.
-    assert "rid-genuine" in ids
-    genuine = next(e for e in payload["events"] if e["request_id"] == "rid-genuine")
-    assert genuine["outcome"]["state"] == "failed"
-    assert genuine["target"] == "some-other-key"
-
-
-def test_dmf_cms_140_the_glued_marker_variant_never_surfaces_as_in_flight_end_to_end(monkeypatch):
-    # codex's fifth vector, the exact reported payload, through the full
-    # pipeline: no separator before the injected markers, which is what
-    # exposed the earlier detect/extract mismatch. This one resolves
-    # non-None (the shared boundary-aware search treats every glued
-    # marker as inert text and preserves the whole crafted string as
-    # target's own value) — the property still holds: the rendered
-    # outcome is the real one, never the forged "dispatched".
-    crafted_target = "evil-targetxreason='fake'xoutcome=dispatchedworkload=pwnedcapacity="
-    injected_line = (
-        "2026-09-03 12:00:00,000 INFO dmf_cms.audit: awx write: "
-        "action=deploy actor=alice role=operator real_role= request_id=rid-glued-injected "
-        f"target={crafted_target} reason='legit deploy attempt' "
-        "outcome=entry-not-found workload= capacity="
-    )
-
-    def _fake(*, url, selector, start_ns, end_ns, limit, timeout=10):
-        return [{"stream": {}, "values": [["1", injected_line]]}]
-
-    monkeypatch.setattr(audit_events.loki, "query_range", _fake)
-    client = _client(OPERATOR_ONLY)
-    payload = client.get("/api/audit/events").json()
-
-    for event in payload["events"]:
-        assert event["outcome"]["state"] != "in_flight" or event["outcome"]["detail"] != "dispatched"
-        assert event["workload"] != "pwned"
-    if payload["events"]:
-        # This payload resolves non-None -- confirm it resolved to the
-        # REAL verdict, not merely "didn't show the forged one".
-        row = payload["events"][0]
-        assert row["outcome"]["state"] == "failed"
-        assert row["outcome"]["detail"] == "entry-not-found"
-
-
-def test_dmf_cms_140_the_truncated_reason_variant_never_surfaces_as_in_flight_end_to_end(monkeypatch):
-    # lkirc's sixth vector, through the full pipeline: target injects a
-    # COMPLETE fake reason/outcome/workload/capacity tail, and the row's
-    # own genuine reason= is truncated right after its opening quote (a
-    # log-truncation shape). The genuine control row (rid-genuine, an
-    # ordinary refusal on the SAME response) proves the fix didn't
-    # collaterally damage unrelated rows.
-    crafted_target = "evil reason='fake' outcome=dispatched workload=pwned capacity="
-    injected_line = (
-        "2026-09-03 12:00:00,000 INFO dmf_cms.audit: awx write: "
-        "action=deploy actor=alice role=operator real_role= request_id=rid-truncated-injected "
-        f"target={crafted_target} reason='"
-    )
-    genuine_refusal = _line(
-        action="deploy", actor="alice", role="operator", request_id="rid-genuine",
-        target="some-other-key", reason="typo in key", outcome="entry-not-found",
-    )
-
-    def _fake(*, url, selector, start_ns, end_ns, limit, timeout=10):
-        return [{"stream": {}, "values": [["1", injected_line], ["2", genuine_refusal]]}]
-
-    monkeypatch.setattr(audit_events.loki, "query_range", _fake)
-    client = _client(OPERATOR_ONLY)
-    payload = client.get("/api/audit/events").json()
-
-    ids = _event_ids(payload)
-    assert "rid-truncated-injected" not in ids  # the row fails to classify entirely (AC 5b)
-    for event in payload["events"]:
-        assert event["target"] != "evil"
-        assert event["workload"] != "pwned"
-    assert "rid-genuine" in ids
-    genuine = next(e for e in payload["events"] if e["request_id"] == "rid-genuine")
-    assert genuine["outcome"]["state"] == "failed"
-    assert genuine["target"] == "some-other-key"
-
-
 def test_disclosure_names_the_two_exclusion_reasons_distinctly():
     client = _client(VIEWER_ONLY)
     payload = client.get("/api/audit/events").json()
@@ -365,11 +260,11 @@ def test_a_watched_action_in_flight_never_carries_headline_meaning_next_step():
 
 
 def test_a_row_with_an_unrecoverable_outcome_renders_unknown_end_to_end():
-    # codex R496-C P1-2, through the full pipeline: DEPLOY_CORRUPTED_OUTCOME
-    # is a realistic truncated Loki line — classification fields intact,
-    # everything from reason onward lost. The row still renders (gated
-    # normally, real actor/action/target), and its outcome is an honest
-    # "unknown" — never a forged "failed", never "in flight".
+    # codex R496-C P1-2, through the full pipeline: DEPLOY_BLANK_OUTCOME is
+    # a fully well-formed fmt=2 line whose `outcome` value happens to be
+    # blank. The row still renders (gated normally, real actor/action/
+    # target), and its outcome is an honest "unknown" — never a forged
+    # "failed", never "in flight".
     client = _client(OPERATOR_ONLY)
     payload = client.get("/api/audit/events").json()
     row = next(e for e in payload["events"] if e["request_id"] == "rid-deploy-corrupted")
@@ -615,16 +510,15 @@ def test_writer_fix_round_trip_blank_workload_and_capacity_never_render_as_the_w
     assert fields["capacity"] == ""
 
 
-def test_writer_fix_legacy_unquoted_line_from_before_the_fix_still_renders_end_to_end(monkeypatch):
-    # dmfdeploy/dmfdeploy#530: dmf-cms's own stream has no per-stream
-    # retention override, so it falls to whatever the DEPLOYED profile's
-    # loki_retention is -- never dmf-infra's role default (720h/30 days)
-    # cited as if it were deployed reality; the sandbox profile this
-    # ships to overrides it to 168h/7 days (dmf-env's init-wizard.sh). Old-
-    # format lines emitted before this fix shipped stay in Loki, and
-    # readable, for up to that long. A genuine, non-adversarial legacy
-    # line must render exactly as it always did, through the full
-    # endpoint, not just the bare parser.
+def test_a_legacy_unquoted_line_from_before_the_writer_fix_is_not_rendered_end_to_end(monkeypatch):
+    # Operator decision (2026-09-03, following lkirc's fifth review,
+    # dmfdeploy/dmfdeploy#140): the writer fix protects future records but
+    # cannot make retained ones trustworthy — a forged legacy line and a
+    # legitimate one were PROVEN byte-identical, so no reader-side check
+    # could ever authenticate one. Legacy lines are dropped, not parsed by
+    # a fallback grammar. A genuine, non-adversarial pre-fix line (no
+    # fmt=2 marker) must not appear in the response at all, through the
+    # full endpoint, not just the bare parser.
     legacy_line = (
         "2026-08-15 09:00:00,000 INFO dmf_cms.audit: awx write: "
         "action=deploy actor=alice role=operator real_role= request_id=rid-legacy "
@@ -638,10 +532,9 @@ def test_writer_fix_legacy_unquoted_line_from_before_the_fix_still_renders_end_t
     client = _client(OPERATOR_ONLY)
     payload = client.get("/api/audit/events").json()
 
-    row = next(e for e in payload["events"] if e["request_id"] == "rid-legacy")
-    assert row["target"] == "wl-legacy"
-    assert row["workload"] == "wl-legacy"
-    assert row["outcome"]["state"] == "in_flight"
+    assert "rid-legacy" not in _event_ids(payload)
+    assert payload["events"] == []
+    assert payload["reason"] == ""  # a genuine empty read, not an outage
 
 
 # ----------------------------------------------------------------------

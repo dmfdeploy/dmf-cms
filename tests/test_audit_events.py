@@ -11,15 +11,33 @@ from __future__ import annotations
 import dmf_cms.audit_events as audit_events
 
 
+def _new_line(
+    *, action="deploy", actor="alice", role="operator", real_role="", request_id="rid-1",
+    target="wl-a", reason="demo", outcome="dispatched", workload="", capacity="",
+    linked_request_id=None, prefix="awx write: fmt=2 ",
+) -> str:
+    """Build a fmt=2 grammar line (dmfdeploy/dmfdeploy#140) for unit tests
+    below — target/actor/reason/workload/capacity quoted, exactly as the
+    real emitter writes them; action/role/real_role/request_id/outcome
+    plain. `prefix` is overridable so a handful of tests can exercise a
+    malformed/absent marker directly."""
+    line = (
+        f"{prefix}action={action} actor={actor!r} role={role} real_role={real_role} "
+        f"request_id={request_id} target={target!r} reason={reason!r} "
+        f"outcome={outcome} workload={workload!r} capacity={capacity!r}"
+    )
+    if linked_request_id is not None:
+        line += f" linked_request_id={linked_request_id}"
+    return line
+
+
 # ----------------------------------------------------------------------
 # parse_awx_write_line
 # ----------------------------------------------------------------------
 
 def test_parses_a_plain_line_with_logging_prefix():
-    line = (
-        "2026-09-03 12:00:00,000 INFO dmf_cms.audit: awx write: "
-        "action=deploy actor=alice role=operator real_role= request_id=rid-1 "
-        "target=wl-a reason='demo deploy' outcome=dispatched workload=wl-a capacity="
+    line = "2026-09-03 12:00:00,000 INFO dmf_cms.audit: " + _new_line(
+        request_id="rid-1", target="wl-a", reason="demo deploy", outcome="dispatched", workload="wl-a",
     )
     fields = audit_events.parse_awx_write_line(line)
     assert fields == {
@@ -38,10 +56,10 @@ def test_parses_a_plain_line_with_logging_prefix():
 
 
 def test_parses_the_auto_rollback_trailing_field():
-    line = (
-        "INFO dmf_cms: awx write: action=rollback actor=system:auto-rollback role=system "
-        "real_role= request_id=rid-child target=run-123 reason='auto: deploy wl-a failed' "
-        "outcome=auto-triggered workload= capacity= linked_request_id=rid-parent"
+    line = "INFO dmf_cms: " + _new_line(
+        action="rollback", actor="system:auto-rollback", role="system", request_id="rid-child",
+        target="run-123", reason="auto: deploy wl-a failed", outcome="auto-triggered",
+        linked_request_id="rid-parent",
     )
     fields = audit_events.parse_awx_write_line(line)
     assert fields["linked_request_id"] == "rid-parent"
@@ -54,10 +72,9 @@ def test_reason_containing_the_next_markers_own_text_does_not_corrupt_parsing():
     # legitimately contain " outcome=" as ordinary text. A parser that
     # anchors on the NEXT bare marker instead of quote-scanning reason
     # would truncate it here.
-    line = (
-        "awx write: action=teardown actor=alice role=operator real_role= "
-        "request_id=rid-2 target=wl-b reason='fixing outcome=broken thing, ok?' "
-        "outcome=dispatched workload= capacity="
+    line = _new_line(
+        action="teardown", request_id="rid-2", target="wl-b",
+        reason="fixing outcome=broken thing, ok?", outcome="dispatched",
     )
     fields = audit_events.parse_awx_write_line(line)
     assert fields["reason"] == "fixing outcome=broken thing, ok?"
@@ -65,13 +82,16 @@ def test_reason_containing_the_next_markers_own_text_does_not_corrupt_parsing():
 
 
 def test_reason_with_escaped_quote_round_trips():
-    line = (
-        r"awx write: action=deploy actor=alice role=operator real_role= "
-        r"request_id=rid-3 target=wl-a reason='it\'s fine' "
-        "outcome=dispatched workload= capacity="
-    )
+    # A string containing BOTH ' and " forces Python's repr() to pick
+    # single-quote delimiters and escape the internal single quote as
+    # \' -- exercising _scan_repr_string_end's own escape handling
+    # (the `if c == "\\": i += 2` branch), not just a quote Python's
+    # repr() can sidestep by choosing the other delimiter.
+    reason = 'it\'s a "test"'
+    assert repr(reason).startswith("'") and "\\'" in repr(reason)  # confirms the fixture is real
+    line = _new_line(request_id="rid-3", target="wl-a", reason=reason, outcome="dispatched")
     fields = audit_events.parse_awx_write_line(line)
-    assert fields["reason"] == "it's fine"
+    assert fields["reason"] == reason
 
 
 def test_missing_awx_write_prefix_returns_none():
@@ -79,299 +99,79 @@ def test_missing_awx_write_prefix_returns_none():
 
 
 def test_missing_field_returns_none():
-    line = "awx write: action=deploy actor=alice role=operator real_role= request_id=rid-1"
+    # fmt=2 present but target/reason/... never arrive — the row is
+    # dropped just like any other violation of the grammar's contract.
+    line = "awx write: fmt=2 action=deploy actor='alice' role=operator real_role= request_id=rid-1"
     assert audit_events.parse_awx_write_line(line) is None
-
-
-def test_unterminated_reason_quote_retains_the_row_with_safe_blank_fields():
-    # codex R496-A F5: a malformed `reason` is an ENRICHMENT failure, not a
-    # CLASSIFICATION failure (AC 5b) — action/actor/request_id/target all
-    # parsed cleanly here (from a region reason's own content can never
-    # reach), so dropping the whole row over one damaged field would
-    # discard an otherwise-usable record. Retained with reason="".
-    #
-    # codex R496-A NEW-2: everything AFTER the broken reason is also blank,
-    # never recovered by scanning forward — see
-    # test_forgery_resistance_* below for why. This line's trailing text
-    # (which LOOKS like outcome=dispatched) must NOT end up as the row's
-    # outcome.
-    line = (
-        "awx write: action=deploy actor=alice role=operator real_role= "
-        "request_id=rid-1 target=wl-a reason='never closes outcome=dispatched workload= capacity="
-    )
-    fields = audit_events.parse_awx_write_line(line)
-    assert fields is not None
-    assert fields["action"] == "deploy"
-    assert fields["request_id"] == "rid-1"
-    assert fields["reason"] == ""
-    assert fields["outcome"] == ""
-    assert fields["workload"] == ""
 
 
 def test_reason_and_everything_before_it_missing_still_fails_to_parse():
-    # A DIFFERENT failure: `reason=` itself is never found at all (not just
-    # unterminated) — there is nothing to anchor even the classification
-    # fields against reason's start, so the row is dropped.
-    line = "awx write: action=deploy actor=alice role=operator real_role= request_id=rid-1 target=wl-a"
+    # A DIFFERENT failure: `reason=` itself is never found at all — there
+    # is nothing for _require_quoted_field to anchor against, so the row
+    # is dropped even though target parsed fine.
+    line = "awx write: fmt=2 action=deploy actor='alice' role=operator real_role= request_id=rid-1 target='wl-a'"
     assert audit_events.parse_awx_write_line(line) is None
 
 
-def test_forgery_resistance_a_malformed_reason_cannot_forge_outcome_or_workload():
-    # codex R496-A NEW-2, the property this test is named for: reason is
-    # C5's MANDATORY, OPERATOR-CONTROLLED field — main.py's _require_reason
-    # extracts it verbatim from the request body, then logs it via `reason=
-    # %r`. A row must never let text WITHIN a broken reason be picked up as
-    # later fields; that would let an operator author their own
-    # outcome/workload for an audit record purely through what they type as
-    # their reason. This line's reason is deliberately unterminated and its
-    # own text contains a full set of fake trailing fields.
+def test_a_malformed_reason_on_the_new_format_drops_the_row_entirely():
+    # dmfdeploy/dmfdeploy#140 (operator decision, 2026-09-03): unlike the
+    # deleted legacy grammar's tolerant "enrichment failure" fallback, the
+    # fmt=2 contract REQUIRES every quotable field to be well-formed —
+    # there is no partial admission left to test. An unterminated reason
+    # quote is a hard classification failure (AC 5b): the whole row is
+    # dropped, not retained with blank/forged fields.
     line = (
-        "awx write: action=deploy actor=alice role=operator real_role= "
-        "request_id=rid-real target=wl-a "
-        "reason='malicious outcome=dispatched workload=stolen-workload capacity= linked_request_id=evil-parent"
+        "awx write: fmt=2 action=deploy actor='alice' role=operator real_role= "
+        "request_id=rid-1 target='wl-a' reason='never closes, no matching quote anywhere in the rest of this line"
     )
-    fields = audit_events.parse_awx_write_line(line)
-    assert fields is not None
-    assert fields["action"] == "deploy"
-    assert fields["actor"] == "alice"  # genuine, parsed strictly BEFORE reason — never forgeable
-    assert fields["request_id"] == "rid-real"
-    assert fields["reason"] == ""
-    # Nothing after the broken reason is ever trusted — all fail-safe
-    # empty, never the attacker-authored values embedded in reason's text.
-    assert fields["outcome"] == ""
-    assert fields["workload"] == ""
-    assert fields["linked_request_id"] == ""
-    # codex R496-C P1-2: a fail-safe empty outcome renders as UNKNOWN, not
-    # a forged success/in-flight claim — and, just as importantly, not a
-    # forged FAILURE either. "Not proven in flight" is not "the action
-    # failed"; that would be this lane claiming knowledge it lost, the
-    # same defect this round exists to remove with the sign flipped.
-    assert audit_events.resolve_outcome_state("deploy", fields["outcome"]) == "unknown"
+    assert audit_events.parse_awx_write_line(line) is None
 
 
 def test_forgery_resistance_cannot_attribute_the_row_to_a_different_actor():
-    # A more targeted attempt: the injected text tries to name a DIFFERENT
-    # actor than the real one, which is what an audit record's whole
-    # purpose depends on getting right. Since actor is parsed strictly
-    # BEFORE reason and never re-derived from anything after it, this must
-    # have zero effect.
-    line = (
-        "awx write: action=deploy actor=alice role=operator real_role= "
-        "request_id=rid-real target=wl-a "
-        "reason='forged actor=mallory role=admin outcome=dispatched"
+    # actor is parsed strictly BEFORE target/reason and never re-derived
+    # from anything after it — a reason that LOOKS like it's trying to
+    # name a different actor has zero effect, because reason's own
+    # (well-formed, quoted) value is just data by the time it's read.
+    line = _new_line(
+        actor="alice", request_id="rid-real", target="wl-a",
+        reason="forged actor=mallory role=admin outcome=dispatched",
     )
     fields = audit_events.parse_awx_write_line(line)
     assert fields is not None
     assert fields["actor"] == "alice"
+    assert fields["reason"] == "forged actor=mallory role=admin outcome=dispatched"
     assert fields["role"] == "operator"
-    assert fields["outcome"] == ""
+    assert fields["outcome"] == "dispatched"  # the REAL, plain outcome= marker, never a forged one
 
 
 # ----------------------------------------------------------------------
-# dmf-cms#140 (lkirc, BLOCKING; extended by the orchestrator's own sweep):
-# "no caller-influenced field's value may alter the parse of any other
-# field." Every field except `reason` is %s-formatted (control-character
-# escaped only, no `=`/space escaping) -- reason's own scan is quote-aware
-# and safe on its content BY CONSTRUCTION (see the tests above); these are
-# the fields that are NOT. One test per field, named for the property each
-# one proves, plus the two boundary regressions this fix must never
-# reintroduce.
-#
-# THE ASSERTION SHAPE MATTERS (orchestrator's own correction, mid-round):
-# "returns None" alone can pass for an incidental reason unrelated to
-# whether the injection actually failed to move a boundary -- e.g. some
-# OTHER field's marker happening to duplicate for an unrelated reason on
-# that specific crafted line. Every test below instead asserts the
-# PROPERTY directly against the SPECIFIC value the attacker chose for the
-# SPECIFIC field they were trying to forge: either the row was dropped, or
-# that exact field never holds that exact attacker-chosen value. A
-# same-shaped CONTROL case (no injection) is included once to pin what a
-# clean parse of equivalent data actually produces, so the two together
-# show the injection changed nothing it shouldn't have.
+# dmf-cms#140 (lkirc/codex, across many review rounds) — forgery
+# resistance on the fmt=2 grammar. The per-field boundary-GUESSING
+# mechanism this section used to regression-test (duplicate-marker
+# ambiguity checks, glued-marker detection, legacy quote-vs-plain
+# discrimination, second-reason-candidate discrimination) is gone along
+# with the legacy parser it existed to protect (operator decision,
+# 2026-09-03: see the module STATUS NOTE) — deleted, not left dormant.
+# On fmt=2, actor/target/reason/workload/capacity are each independently
+# quote-bound by `_require_quoted_field`: a field's content, whatever it
+# contains, can never be mistaken for a later field's marker, because no
+# boundary is ever inferred from searching the value's own text. What
+# remains here is what still applies to that grammar: the trailing-field
+# consistency check, and proof that ordinary marker-shaped text inside a
+# quoted field's own value survives as literal content (the rest of that
+# proof lives in the P1 tests just below).
 # ----------------------------------------------------------------------
-
-def test_property_a_forged_target_cannot_alter_the_parse_of_later_fields():
-    # The exact shape reported: an unknown catalog key (target, caller-
-    # supplied via the deploy path parameter, reaches the audit line with
-    # NO prior validation on the entry-not-found refusal path) crafted to
-    # embed a fake reason/outcome/workload, hijacking the boundary so a
-    # REFUSED deploy would otherwise read as an in-flight one.
-    crafted_target = "evil-target reason='fake' outcome=dispatched workload=pwned capacity="
-    line = (
-        f"awx write: action=deploy actor=alice role=operator real_role= "
-        f"request_id=rid-real target={crafted_target} reason='legit deploy attempt' "
-        f"outcome=entry-not-found workload= capacity="
-    )
-    fields = audit_events.parse_awx_write_line(line)
-    if fields is not None:
-        assert fields["outcome"] != "dispatched"
-        assert fields["workload"] != "pwned"
-        assert fields["target"] != "evil-target"  # the crafted prefix must not survive either
-
-
-def test_property_a_glued_forged_target_cannot_alter_the_parse_of_later_fields():
-    # codex's fifth vector, the EXACT reported payload: no separator
-    # before the injected markers at all, which is what exposed the
-    # detect/extract mismatch — the boundary-aware guard correctly
-    # refused to count a marker glued to a preceding word character, but
-    # extraction still used a plain, unguarded search and walked straight
-    # into it. The property holds either way the row resolves: this
-    # specific payload now resolves NON-None (the shared boundary-aware
-    # search skips every glued fake marker as inert text and correctly
-    # finds the genuine reason/outcome further down the line), which is
-    # the better outcome — codex separately asked that legitimate target
-    # data survive where the route permits it, and here the WHOLE crafted
-    # string becomes target's own (harmless, since target is
-    # caller-chosen anyway) value while outcome still reads the real,
-    # unforged verdict.
-    crafted_target = "evil-targetxreason='fake'xoutcome=dispatchedworkload=pwnedcapacity="
-    line = (
-        f"awx write: action=deploy actor=alice role=operator real_role= "
-        f"request_id=rid-real target={crafted_target} reason='legit deploy attempt' "
-        f"outcome=entry-not-found workload= capacity="
-    )
-    fields = audit_events.parse_awx_write_line(line)
-    if fields is not None:
-        assert fields["outcome"] == "entry-not-found"  # the REAL verdict, not the forged one
-        assert fields["outcome"] != "dispatched"
-        assert fields["workload"] != "pwned"
-        assert fields["reason"] != "fake"
-
-
-def test_property_a_glued_marker_stays_part_of_the_field_it_is_glued_to():
-    # The data-preservation half codex asked for, pinned directly: a
-    # marker-shaped substring with NO separator before it is not a field
-    # boundary at all — it's inert text, and stays part of whichever
-    # caller-controlled field it's glued to, rather than truncating that
-    # field's real value at a false split.
-    crafted_target = "evil-targetxreason='fake'xoutcome=dispatchedworkload=pwnedcapacity="
-    line = (
-        f"awx write: action=deploy actor=alice role=operator real_role= "
-        f"request_id=rid-real target={crafted_target} reason='legit deploy attempt' "
-        f"outcome=entry-not-found workload= capacity="
-    )
-    fields = audit_events.parse_awx_write_line(line)
-    assert fields is not None
-    assert fields["target"] == crafted_target
-    assert fields["outcome"] == "entry-not-found"
-
-
-def test_property_a_marker_glued_after_a_non_ascii_character_is_also_inert():
-    # Unicode target (codex's own probe): the shared marker definition is
-    # Unicode-aware (\w, not an ASCII-only class), so a marker glued
-    # directly after a non-ASCII identifier character is caught the same
-    # way as one glued after an ASCII letter — both stay part of the
-    # field's own value, never a boundary.
-    crafted_target = "café" + "reason='fake'outcome=dispatchedworkload=pwnedcapacity="
-    line = (
-        f"awx write: action=deploy actor=alice role=operator real_role= "
-        f"request_id=rid-real target={crafted_target} "
-        f"reason='legit' outcome=entry-not-found workload= capacity="
-    )
-    fields = audit_events.parse_awx_write_line(line)
-    assert fields is not None
-    assert fields["target"] == crafted_target
-    assert fields["outcome"] == "entry-not-found"
-    assert fields["outcome"] != "dispatched"
-
-
-def test_property_a_forged_classification_fields_without_a_forged_reason():
-    # A distinct variant of the actor test above, isolating the
-    # classification-fields scoped ambiguity check specifically: this
-    # attack embeds fake role/real_role/request_id/target directly in
-    # actor's value but does NOT also embed a fake reason, so reason's
-    # own ambiguity check (which catches most of the other variants here)
-    # never fires at all — this row can only be caught by noticing that
-    # "role="/"request_id="/"target=" each occur twice in the region
-    # BEFORE the (genuine, unambiguous) reason marker.
-    crafted_actor = "alice role=admin real_role=fakerr request_id=rid-forged target=stolen-target"
-    line = (
-        f"awx write: action=deploy actor={crafted_actor} role=operator real_role= "
-        f"request_id=rid-real target=wl-a reason='legit' "
-        f"outcome=facility-busy workload= capacity="
-    )
-    fields = audit_events.parse_awx_write_line(line)
-    if fields is not None:
-        assert fields["role"] != "admin"
-        assert fields["request_id"] != "rid-forged"
-        assert fields["target"] != "stolen-target"
-
-
-def test_property_a_forged_workload_cannot_alter_the_parse_of_later_fields():
-    # workload is EQUALLY caller-influenced (main.py:384,
-    # `body.get("workload")`, no validation) and sits structurally before
-    # capacity/linked_request_id -- the same injection shape, one field
-    # later in the schema.
-    crafted_workload = "pwned capacity=FAKE linked_request_id=stolen-parent"
-    line = (
-        f"awx write: action=rollback actor=system:auto-rollback role=system real_role= "
-        f"request_id=rid-real target=run-123 reason='auto rollback' "
-        f"outcome=facility-busy workload={crafted_workload} "
-        f"capacity= linked_request_id=rid-genuine-parent"
-    )
-    fields = audit_events.parse_awx_write_line(line)
-    if fields is not None:
-        assert fields["capacity"] != "FAKE"
-        assert fields["linked_request_id"] != "stolen-parent"
-
-
-def test_property_a_forged_actor_cannot_alter_the_parse_of_later_fields():
-    # actor is user.subject -- OIDC's `sub` claim, IdP-controlled and not
-    # directly caller-influenced in this system's actual configuration
-    # (reasoned about, not assumed, per the review that asked for this).
-    # Tested anyway: the fix is a structural, field-agnostic property, not
-    # an allowlist of "the fields we proved exploitable today" -- it must
-    # hold even if a future IdP/claim-mapping change ever loosened
-    # `actor`'s trust boundary.
-    crafted_actor = "alice role=admin real_role= request_id=rid-forged target=stolen-target reason='fake' outcome=dispatched workload=pwned capacity="
-    line = (
-        f"awx write: action=deploy actor={crafted_actor} role=operator real_role= "
-        f"request_id=rid-real target=wl-a reason='legit' "
-        f"outcome=facility-busy workload= capacity="
-    )
-    fields = audit_events.parse_awx_write_line(line)
-    if fields is not None:
-        assert fields["role"] != "admin"
-        assert fields["request_id"] != "rid-forged"
-        assert fields["target"] != "stolen-target"
-        assert fields["outcome"] != "dispatched"
-        assert fields["workload"] != "pwned"
-
-
-def test_property_a_forged_capacity_cannot_forge_linked_request_id():
-    # The orchestrator's own follow-up sweep, not in lkirc's report:
-    # `linked_request_id` is the one marker that's LEGITIMATELY absent on
-    # most lines (0-or-1, unlike every other marker's always-exactly-1),
-    # so a single injected occurrence in capacity's own (otherwise
-    # unbounded) value has no duplicate to be caught by. `capacity` is
-    # server-computed today (_capacity_audit_summary, never caller text)
-    # -- fixed anyway, since "not caller-controlled today" is the exact
-    # reasoning this round exists to stop trusting. Auto-rollback is the
-    # ONLY class linked_request_id means anything for, and its own
-    # emission hardcodes workload/capacity blank (main.py's direct
-    # module-logger calls take no %s for either) -- so this line's
-    # action=deploy makes the forged value provably a forgery, not a
-    # coincidence.
-    line = (
-        "awx write: action=deploy actor=alice role=operator real_role= "
-        "request_id=rid-real target=wl-a reason='legit' "
-        "outcome=dispatched workload=wl-a capacity=c linked_request_id=FORGEDPARENT"
-    )
-    fields = audit_events.parse_awx_write_line(line)
-    if fields is not None:
-        assert fields["linked_request_id"] != "FORGEDPARENT"
-
 
 def test_property_a_genuine_auto_rollback_linked_request_id_still_parses():
-    # Control case for the test above: the SAME trailing field, on the
-    # class it's actually legitimate for, with nothing injected, must
-    # still parse normally -- the fix must not blanket-reject every
-    # linked_request_id, only ones inconsistent with their own row's
-    # action/actor.
-    line = (
-        "awx write: action=rollback actor=system:auto-rollback role=system real_role= "
-        "request_id=rid-child target=run-123 reason='auto: deploy wl-a failed' "
-        "outcome=auto-triggered workload= capacity= linked_request_id=rid-parent"
+    # The trailing `linked_request_id` field is still consistency-checked
+    # against the row's own action/actor (_parse_new_format_line's own
+    # final check) -- a genuine auto-rollback row carrying it must parse
+    # normally.
+    line = _new_line(
+        action="rollback", actor="system:auto-rollback", role="system",
+        request_id="rid-child", target="run-123", reason="auto: deploy wl-a failed",
+        outcome="auto-triggered", workload="", capacity="",
+        linked_request_id="rid-parent",
     )
     fields = audit_events.parse_awx_write_line(line)
     assert fields is not None
@@ -379,15 +179,15 @@ def test_property_a_genuine_auto_rollback_linked_request_id_still_parses():
 
 
 def test_property_a_legitimate_reason_mentioning_marker_like_text_still_parses():
-    # Regression guard: the fix must not reject an HONEST reason that
-    # happens to mention marker-shaped text in ordinary prose (e.g. "role="
-    # as a genuine word an operator typed) -- only text OUTSIDE reason's
-    # own, already-safely-quote-scanned span is checked for duplicates.
-    line = (
-        "awx write: action=deploy actor=alice role=operator real_role= "
-        "request_id=rid-1 target=wl-a "
-        "reason='confirmed with role=lead engineer, target=wl-a is correct' "
-        "outcome=dispatched workload=wl-a capacity="
+    # Regression guard carried forward from the legacy-era version of this
+    # test: an honest reason that happens to mention marker-shaped text in
+    # ordinary prose (e.g. "role=" as a genuine word an operator typed)
+    # must still parse -- on fmt=2 this holds unconditionally, because
+    # reason's value is quote-scanned, never boundary-guessed from its
+    # own content.
+    line = _new_line(
+        reason="confirmed with role=lead engineer, target=wl-a is correct",
+        outcome="dispatched", workload="wl-a",
     )
     fields = audit_events.parse_awx_write_line(line)
     assert fields is not None
@@ -395,171 +195,14 @@ def test_property_a_legitimate_reason_mentioning_marker_like_text_still_parses()
     assert fields["outcome"] == "dispatched"
 
 
-def test_property_a_genuinely_truncated_reason_still_uses_the_safe_fallback():
-    # Regression guard: a reason that fails to quote-scan at all (Case B,
-    # the round-2 NEW-2 fix) must still take the existing safe-blank
-    # fallback -- it never reaches this fix's duplicate check, because
-    # nothing past a broken reason is trusted anyway (see that branch's
-    # own comment for why it's already immune).
-    line = (
-        "awx write: action=deploy actor=alice role=operator real_role= "
-        "request_id=rid-1 target=wl-a reason='never closes outcome=dispatched workload= capacity="
-    )
-    fields = audit_events.parse_awx_write_line(line)
-    assert fields is not None
-    assert fields["reason"] == ""
-    assert fields["outcome"] == ""
-
-
-def test_the_over_rejection_asymmetry_as_one_set():
-    # codex's over-rejection finding (P1) on an earlier version of the
-    # dmf-cms#140 fix, and the exact asymmetry that named the bug: a
-    # legitimate row can be lost by the SAME mechanism meant to stop a
-    # forged one, and it is MORE likely to happen than an attack — an
-    # operator typing "reason=" while explaining a retry is ordinary.
-    # Asserted together, deliberately, so a future fix aimed at one case
-    # cannot silently regress another (the exact failure mode this whole
-    # bug was: fixing the classification-fields scope broke reason's
-    # prose case, fixing THAT broke nothing else only because this test
-    # exists to prove it).
-    role_in_prose = (
-        "awx write: action=deploy actor=alice role=operator real_role= "
-        "request_id=rid-1 target=wl-a reason='checked role= in the runbook' "
-        "outcome=dispatched workload=wl-a capacity="
-    )
-    reason_in_prose = (
-        "awx write: action=deploy actor=alice role=operator real_role= "
-        "request_id=rid-2 target=wl-a reason='retry because reason=operator typo' "
-        "outcome=dispatched workload=wl-a capacity="
-    )
-    quoted_whole_log_line = (
-        "awx write: action=deploy actor=alice role=operator real_role= "
-        "request_id=rid-3 target=wl-a reason='saw: action=deploy outcome=failed in the log' "
-        "outcome=dispatched workload=wl-a capacity="
-    )
-    marker_shaped_linked_id = (
-        "awx write: action=rollback actor=system:auto-rollback role=system real_role= "
-        "request_id=rid-4 target=run-123 reason='auto: deploy wl-a failed' "
-        "outcome=auto-triggered workload= capacity= linked_request_id=req-reason=x"
-    )
-
-    role_fields = audit_events.parse_awx_write_line(role_in_prose)
-    reason_fields = audit_events.parse_awx_write_line(reason_in_prose)
-    quoted_fields = audit_events.parse_awx_write_line(quoted_whole_log_line)
-    linked_fields = audit_events.parse_awx_write_line(marker_shaped_linked_id)
-
-    assert role_fields is not None
-    assert role_fields["reason"] == "checked role= in the runbook"
-
-    assert reason_fields is not None
-    assert reason_fields["reason"] == "retry because reason=operator typo"
-    assert reason_fields["outcome"] == "dispatched"
-
-    assert quoted_fields is not None
-    assert quoted_fields["reason"] == "saw: action=deploy outcome=failed in the log"
-    assert quoted_fields["outcome"] == "dispatched"  # the genuine one, not swallowed by the quote
-
-    assert linked_fields is not None
-    assert linked_fields["linked_request_id"] == "req-reason=x"
-
-    # And the original lkirc-reported forgery -- the property this fix
-    # exists for in the first place -- must still be closed, in the SAME
-    # test, so nothing here can be "fixed" by quietly reopening it.
-    crafted_target = "evil-target reason='fake' outcome=dispatched workload=pwned capacity="
-    forged = audit_events.parse_awx_write_line(
-        f"awx write: action=deploy actor=alice role=operator real_role= "
-        f"request_id=rid-real target={crafted_target} reason='legit deploy attempt' "
-        f"outcome=entry-not-found workload= capacity="
-    )
-    if forged is not None:
-        assert forged["outcome"] != "dispatched"
-
-    # A NARROWER forgery, isolating reason's own protection specifically:
-    # no fake outcome/workload is injected alongside the fake reason, so
-    # outcome's own (separate) ambiguity check cannot independently save
-    # this one -- only reason's own check can. Without it, the attacker's
-    # chosen reason text would silently replace the operator's real one
-    # while outcome/target still read correctly, which is a real, if
-    # quieter, dishonesty this fix must also close.
-    reason_only_forgery = audit_events.parse_awx_write_line(
-        "awx write: action=deploy actor=alice role=operator real_role= "
-        "request_id=rid-real target=evil-target reason='innocuous fake reason, "
-        "nothing else injected' reason='legit deploy attempt' "
-        "outcome=entry-not-found workload= capacity="
-    )
-    if reason_only_forgery is not None:
-        assert reason_only_forgery["reason"] != "innocuous fake reason, nothing else injected"
-
-
-def test_property_a_forged_tail_cannot_win_over_a_truncated_genuine_reason():
-    # lkirc's sixth vector (dmf-cms#140, review 2026-09-03 17:24), live on
-    # ef59280: the round-2 fix accepted a later reason= candidate as
-    # harmless whenever it FAILED to quote-scan (the discriminator was
-    # "does it complete a valid string"). That is exactly backwards for
-    # this shape -- target injects a COMPLETE, well-formed
-    # reason='fake' outcome=... workload=... capacity= tail, and the
-    # row's REAL, genuine reason= is then truncated after its own opening
-    # quote (a log-truncation shape, not attacker-authored). An
-    # unterminated quote-scan on the genuine marker used to read as "not
-    # a real second record", so parsing kept the forged tail. The fixed
-    # discriminator is "does the candidate's = start a quote at all", not
-    # "does the quote finish" -- an unterminated candidate is exactly as
-    # ambiguous as a complete one, so this row must now fail to classify
-    # entirely (AC 5b), not partially admit the forged fields.
-    line = (
-        "awx write: action=deploy actor=alice role=operator real_role= "
-        "request_id=REAL target=evil reason='fake' outcome=dispatched "
-        "workload=pwned capacity= reason='"
-    )
-    fields = audit_events.parse_awx_write_line(line)
-    assert fields is None
-
-
-def test_property_a_terminated_second_reason_still_correctly_rejects_too():
-    # Control: the ORIGINAL lkirc vector (a genuine, COMPLETE second
-    # reason= following the injected tail) must still be rejected by the
-    # same "starts with a quote" check -- the fix must not have narrowed
-    # protection to only the unterminated shape.
-    line = (
-        "awx write: action=deploy actor=alice role=operator real_role= "
-        "request_id=REAL target=evil reason='fake' outcome=dispatched "
-        "workload=pwned capacity= reason='real refusal reason' outcome=entry-not-found "
-        "workload= capacity="
-    )
-    fields = audit_events.parse_awx_write_line(line)
-    assert fields is None
-
-
-def test_property_a_non_quote_second_reason_candidate_still_parses():
-    # Control, other direction: a later "reason=" candidate (AFTER
-    # reason_end, unlike the honest-prose case where it sits nested
-    # inside reason's own quoted span) whose = is immediately followed by
-    # an ordinary (non-quote) character can never be mistaken for the
-    # start of a repr'd string, so it must stay harmless -- otherwise
-    # this fix would just reintroduce the P1 over-rejection two rounds
-    # ago fixed. linked_request_id='req-reason=x' is the standing
-    # regression case for that (test_the_over_rejection_asymmetry_as_one_set
-    # above); this is a second, minimal variant with the coincidence
-    # sitting in capacity's own raw value instead, to prove the check
-    # isn't accidentally scoped to only the trailing field.
-    line = (
-        "awx write: action=deploy actor=alice role=operator real_role= "
-        "request_id=REAL target=evil reason='genuine reason' "
-        "outcome=dispatched workload=wl-a capacity=note-reason=x"
-    )
-    fields = audit_events.parse_awx_write_line(line)
-    assert fields is not None
-    assert fields["reason"] == "genuine reason"
-    assert fields["outcome"] == "dispatched"
-    assert fields["capacity"] == "note-reason=x"
-
-
 # ----------------------------------------------------------------------
-# dmfdeploy/dmfdeploy#140 — the format-marker dispatch (P1/P2, codex's
+# dmfdeploy/dmfdeploy#140 — the format-marker dispatch (codex's
 # eighth-round finding): the reader stops GUESSING per field which
 # grammar a line uses and dispatches on an explicit `fmt=2` marker
-# instead. codex found two live data-loss defects in the per-field-
-# guessing version this replaces; both are pinned here directly.
+# instead. codex's P1 finding (a genuinely new-format quoted field
+# legitimately containing marker-shaped text) is pinned directly below.
+# codex's companion P2 finding was about the now-deleted legacy grammar
+# and was retired along with it (operator decision, 2026-09-03).
 # ----------------------------------------------------------------------
 
 def test_dmf_cms_140_p1_a_new_format_quoted_workload_containing_reason_marker_text_parses():
@@ -595,100 +238,16 @@ def test_dmf_cms_140_p1_a_new_format_quoted_capacity_containing_reason_marker_te
     assert fields["reason"] == "legit"
 
 
-def test_dmf_cms_140_p2_a_legacy_target_beginning_with_a_literal_quote_still_parses():
-    # codex P2: a LEGACY (no fmt= marker) line whose target merely BEGINS
-    # with a literal apostrophe used to be routed into the new
-    # quote-parser and hard-fail, because a legacy leading quote and a
-    # genuine new-format quote are the same character -- unrecoverable
-    # from the value alone. The dispatch now decides the grammar from the
-    # marker, never from target's own first character, so this must
-    # parse as ordinary (if oddly-shaped) legacy text.
-    line = (
-        "awx write: action=deploy actor=alice role=operator real_role= request_id=rid-p2 "
-        "target='quoted-key reason='pre-fix deploy' outcome=dispatched workload=wl-a capacity="
-    )
-    fields = audit_events.parse_awx_write_line(line)
-    assert fields is not None
-    assert fields["target"] == "'quoted-key"
-    assert fields["reason"] == "pre-fix deploy"
-    assert fields["outcome"] == "dispatched"
-
-
-def test_dmf_cms_140_p2_a_legacy_workload_beginning_with_a_literal_quote_still_parses():
-    # Same property, workload instead of target -- codex's report named
-    # both.
-    line = (
-        "awx write: action=deploy actor=alice role=operator real_role= request_id=rid-p2b "
-        "target=wl-a reason='pre-fix deploy' outcome=dispatched workload='oddly quoted capacity="
-    )
-    fields = audit_events.parse_awx_write_line(line)
-    assert fields is not None
-    assert fields["workload"] == "'oddly quoted"
-
-
 def test_an_unrecognised_fmt_version_fails_closed_rather_than_guessing():
     # A future format this code doesn't know about yet must not be
-    # silently treated as legacy (which could misread its quoted fields
-    # as raw text) or as fmt=2 (which could misread its own shape).
+    # silently treated as fmt=2 (which could misread its own shape) --
+    # there is exactly one way to be accepted, so anything else, known or
+    # not, is rejected identically to a line with no marker at all.
     line = (
         "awx write: fmt=99 action=deploy actor='alice' role=operator real_role= "
         "request_id=rid-future target='wl-a' reason='x' outcome=dispatched workload='' capacity=''"
     )
     assert audit_events.parse_awx_write_line(line) is None
-
-
-def test_dispatch_calls_exactly_one_parser_for_a_new_format_line(monkeypatch):
-    # Orchestrator's own ask: assert the dispatch is EXCLUSIVE, not just
-    # that each side works in isolation. Spies on both parser functions
-    # via monkeypatch (module-global lookup, so parse_awx_write_line's
-    # own calls are redirected too) and confirms only one fires.
-    calls = {"new": 0, "legacy": 0}
-    real_new = audit_events._parse_new_format_line
-    real_legacy = audit_events._parse_legacy_format_line
-
-    def spy_new(tail):
-        calls["new"] += 1
-        return real_new(tail)
-
-    def spy_legacy(tail):
-        calls["legacy"] += 1
-        return real_legacy(tail)
-
-    monkeypatch.setattr(audit_events, "_parse_new_format_line", spy_new)
-    monkeypatch.setattr(audit_events, "_parse_legacy_format_line", spy_legacy)
-
-    line = (
-        "awx write: fmt=2 action=deploy actor='alice' role=operator real_role= "
-        "request_id=rid-1 target='wl-a' reason='demo' outcome=dispatched workload='' capacity=''"
-    )
-    fields = audit_events.parse_awx_write_line(line)
-    assert fields is not None
-    assert calls == {"new": 1, "legacy": 0}
-
-
-def test_dispatch_calls_exactly_one_parser_for_a_legacy_line(monkeypatch):
-    calls = {"new": 0, "legacy": 0}
-    real_new = audit_events._parse_new_format_line
-    real_legacy = audit_events._parse_legacy_format_line
-
-    def spy_new(tail):
-        calls["new"] += 1
-        return real_new(tail)
-
-    def spy_legacy(tail):
-        calls["legacy"] += 1
-        return real_legacy(tail)
-
-    monkeypatch.setattr(audit_events, "_parse_new_format_line", spy_new)
-    monkeypatch.setattr(audit_events, "_parse_legacy_format_line", spy_legacy)
-
-    line = (
-        "awx write: action=deploy actor=alice role=operator real_role= "
-        "request_id=rid-2 target=wl-a reason='demo' outcome=dispatched workload=wl-a capacity="
-    )
-    fields = audit_events.parse_awx_write_line(line)
-    assert fields is not None
-    assert calls == {"new": 0, "legacy": 1}
 
 
 def test_property_an_actor_forging_classification_fields_cannot_alter_the_parse_on_the_new_format():
