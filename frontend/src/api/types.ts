@@ -428,13 +428,19 @@ export interface ChangesPullsResponse {
 // ------------------------------------------------------------------
 
 export interface AuditEventOutcome {
-  state: 'in_flight' | 'succeeded' | 'failed'
+  // 'unknown' (codex R496-C P1-2): the record's outcome could not be read
+  // (e.g. a truncated/corrupted Loki line) — a THIRD case, never folded
+  // into 'failed'. "Not proven in flight" is not "the action failed";
+  // rendering a lost outcome as a definite failure would be this lane
+  // claiming knowledge it does not have.
+  state: 'in_flight' | 'succeeded' | 'failed' | 'unknown'
   // Raw outcome token off the audit record — expert-level detail ONLY.
   // Never render this directly at default (plan §4.5 / AC 2a); use
-  // headline/meaning/next_step below instead.
+  // headline/meaning/next_step below instead. Always "" when
+  // state === 'unknown' (that IS the lost field).
   detail: string
-  // Present only when state === 'failed' — plain-language copy, safe at
-  // default level.
+  // Present when state === 'failed' or 'unknown' — plain-language copy,
+  // safe at default level.
   headline?: string
   meaning?: string
   next_step?: string
