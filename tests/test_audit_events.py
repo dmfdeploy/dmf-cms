@@ -83,12 +83,18 @@ def test_missing_field_returns_none():
     assert audit_events.parse_awx_write_line(line) is None
 
 
-def test_unterminated_reason_quote_retains_the_row_with_a_blank_reason():
+def test_unterminated_reason_quote_retains_the_row_with_safe_blank_fields():
     # codex R496-A F5: a malformed `reason` is an ENRICHMENT failure, not a
     # CLASSIFICATION failure (AC 5b) — action/actor/request_id/target all
-    # parsed cleanly here, so dropping the whole row over one damaged field
-    # would discard an otherwise-usable record. Retained with reason="",
-    # never None.
+    # parsed cleanly here (from a region reason's own content can never
+    # reach), so dropping the whole row over one damaged field would
+    # discard an otherwise-usable record. Retained with reason="".
+    #
+    # codex R496-A NEW-2: everything AFTER the broken reason is also blank,
+    # never recovered by scanning forward — see
+    # test_forgery_resistance_* below for why. This line's trailing text
+    # (which LOOKS like outcome=dispatched) must NOT end up as the row's
+    # outcome.
     line = (
         "awx write: action=deploy actor=alice role=operator real_role= "
         "request_id=rid-1 target=wl-a reason='never closes outcome=dispatched workload= capacity="
@@ -98,15 +104,64 @@ def test_unterminated_reason_quote_retains_the_row_with_a_blank_reason():
     assert fields["action"] == "deploy"
     assert fields["request_id"] == "rid-1"
     assert fields["reason"] == ""
-    assert fields["outcome"] == "dispatched"
+    assert fields["outcome"] == ""
+    assert fields["workload"] == ""
 
 
 def test_reason_and_everything_before_it_missing_still_fails_to_parse():
-    # Contrast case: when even the fallback has nothing to resume from (no
-    # `outcome=` anywhere after the broken reason), there is genuinely
-    # nothing left to classify from, and the row is dropped.
-    line = "awx write: action=deploy actor=alice role=operator real_role= request_id=rid-1 target=wl-a reason='never closes"
+    # A DIFFERENT failure: `reason=` itself is never found at all (not just
+    # unterminated) — there is nothing to anchor even the classification
+    # fields against reason's start, so the row is dropped.
+    line = "awx write: action=deploy actor=alice role=operator real_role= request_id=rid-1 target=wl-a"
     assert audit_events.parse_awx_write_line(line) is None
+
+
+def test_forgery_resistance_a_malformed_reason_cannot_forge_outcome_or_workload():
+    # codex R496-A NEW-2, the property this test is named for: reason is
+    # C5's MANDATORY, OPERATOR-CONTROLLED field — main.py's _require_reason
+    # extracts it verbatim from the request body, then logs it via `reason=
+    # %r`. A row must never let text WITHIN a broken reason be picked up as
+    # later fields; that would let an operator author their own
+    # outcome/workload for an audit record purely through what they type as
+    # their reason. This line's reason is deliberately unterminated and its
+    # own text contains a full set of fake trailing fields.
+    line = (
+        "awx write: action=deploy actor=alice role=operator real_role= "
+        "request_id=rid-real target=wl-a "
+        "reason='malicious outcome=dispatched workload=stolen-workload capacity= linked_request_id=evil-parent"
+    )
+    fields = audit_events.parse_awx_write_line(line)
+    assert fields is not None
+    assert fields["action"] == "deploy"
+    assert fields["actor"] == "alice"  # genuine, parsed strictly BEFORE reason — never forgeable
+    assert fields["request_id"] == "rid-real"
+    assert fields["reason"] == ""
+    # Nothing after the broken reason is ever trusted — all fail-safe
+    # empty, never the attacker-authored values embedded in reason's text.
+    assert fields["outcome"] == ""
+    assert fields["workload"] == ""
+    assert fields["linked_request_id"] == ""
+    # The fail-safe empty outcome must render as a non-claim, never a
+    # forged success or in-flight state.
+    assert audit_events.resolve_outcome_state("deploy", fields["outcome"]) == "failed"
+
+
+def test_forgery_resistance_cannot_attribute_the_row_to_a_different_actor():
+    # A more targeted attempt: the injected text tries to name a DIFFERENT
+    # actor than the real one, which is what an audit record's whole
+    # purpose depends on getting right. Since actor is parsed strictly
+    # BEFORE reason and never re-derived from anything after it, this must
+    # have zero effect.
+    line = (
+        "awx write: action=deploy actor=alice role=operator real_role= "
+        "request_id=rid-real target=wl-a "
+        "reason='forged actor=mallory role=admin outcome=dispatched"
+    )
+    fields = audit_events.parse_awx_write_line(line)
+    assert fields is not None
+    assert fields["actor"] == "alice"
+    assert fields["role"] == "operator"
+    assert fields["outcome"] == ""
 
 
 # ----------------------------------------------------------------------
