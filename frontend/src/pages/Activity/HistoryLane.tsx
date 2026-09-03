@@ -254,7 +254,7 @@ export default function HistoryLane() {
                 )
               ) : (
                 auditState.events.map((event) => (
-                  // lkirc (dmfdeploy/dmfdeploy#140): request_id alone is
+                  // lkirc (dmfdeploy/dmf-cms#140): request_id alone is
                   // NOT a per-row identity — an L3 preflight's own
                   // capacity-skipped/capacity-override row shares its
                   // request_id with that same request's later dispatched
