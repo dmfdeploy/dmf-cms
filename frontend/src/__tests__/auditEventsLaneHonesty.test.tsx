@@ -209,7 +209,8 @@ describe('operator ruling 2026-09-03: the lane states its stopgap status plainly
     await screen.findByText('The automation engine reported an error')
     expect(screen.getByText(/First implementation of this lane/)).toBeTruthy()
     expect(screen.getByText(/an accepted\s*one is never updated with whether the job later finished/)).toBeTruthy()
-    expect(screen.getByText(/Switch source is the exception/)).toBeTruthy()
+    expect(screen.getByText(/Switch source normally carries a real succeeded or failed/)).toBeTruthy()
+    expect(screen.getByText(/subject\s*to the same outcome-unknown case as any other record/)).toBeTruthy()
     expect(screen.getByText(/Coverage is bounded\s*by the window stated above/)).toBeTruthy()
     // STATE, don't apologise or overstate the weakness — Art. 8 register.
     expect(screen.queryByText(/[Ss]orry/)).toBeNull()
@@ -231,6 +232,47 @@ describe('operator ruling 2026-09-03: the lane states its stopgap status plainly
     expect(failedBadge).toBeTruthy() // this row IS a rendered deploy failure
     expect(screen.queryByText(/never as succeeded or failed/)).toBeNull()
     expect(screen.queryByText(/show as\s*dispatched/)).toBeNull()
+  })
+
+  it('codex residual: a truncated switch-source record renders outcome unknown, not the exempted verdict', async () => {
+    // The bug this test pins: the exemption clause was verified only
+    // against 'active'/'degraded' — the two cases the clause itself named
+    // — and never against blank, even though R496-C P1-2 established two
+    // rounds ago that blank-outcome resolution runs BEFORE the
+    // switch-source branch and yields 'unknown' for every class alike.
+    // Render a truncated switch-source row for real rather than trusting
+    // the caveat's own enumeration of what it claims happens.
+    const response: AuditEventsResponse = {
+      ...FAILED_DEPLOY_RESPONSE,
+      events: [
+        {
+          request_id: 'rid-switch-unknown',
+          class: 'switch-source',
+          action: 'switch-source',
+          target: 'wl-b',
+          workload: null,
+          actor: 'erin',
+          role: 'engineer',
+          reason: 'demo',
+          at: '2026-09-03T00:00:00Z',
+          outcome: {
+            state: 'unknown',
+            headline: 'Outcome unknown',
+            meaning:
+              "This action's outcome could not be read from the record — it may have succeeded, failed, or still be in progress.",
+            next_step: 'If this persists, contact a system engineer with the request id below.',
+            detail: '',
+          },
+        },
+      ],
+    }
+    mkFetch(response)
+    renderHistory()
+    expect(await screen.findByText('Switch source on wl-b — outcome unknown')).toBeTruthy()
+    // The corrected clause must not claim switch-source is unconditionally
+    // exempt from the unknown case — it differs from deploy/teardown in
+    // KIND (a real verdict is possible), not in being immune to this case.
+    expect(screen.queryByText(/Switch source is the exception:\s*it carries a real/)).toBeNull()
   })
 })
 

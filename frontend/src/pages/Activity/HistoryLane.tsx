@@ -213,14 +213,24 @@ export default function HistoryLane() {
               visibly, here (not the Workspace) — this surface isn't on the
               demo path, so it costs nothing to state plainly. STATE, don't
               apologise, and be specific about the two limits that actually
-              bite rather than a disclaimer that says nothing checkable. */}
+              bite rather than a disclaimer that says nothing checkable.
+              codex (residual, orchestrator's own miss): the switch-source
+              exemption below is qualified, not unconditional — a truncated/
+              malformed record resolves outcome='' before the switch-source
+              branch even runs, same as deploy/teardown's blank case, and
+              renders "outcome unknown" here too (resolve_outcome_state
+              checks blank first). The clause below now says switch-source
+              differs in KIND (a real verdict is possible), not that it's
+              immune to the general unknown case. */}
           <p className="text-xs text-muted mt-1">
             First implementation of this lane — for deploy and teardown, it
             records the request and any immediate refusal, but an accepted
             one is never updated with whether the job later finished.
-            Switch source is the exception: it carries a real succeeded or
-            failed outcome. Coverage is bounded by the window stated above,
-            not a guarantee of complete history.
+            Switch source normally carries a real succeeded or failed
+            outcome instead — unlike deploy and teardown — but is subject
+            to the same outcome-unknown case as any other record if the
+            underlying log line is truncated. Coverage is bounded by the
+            window stated above, not a guarantee of complete history.
           </p>
         </div>
         <div className="divide-y divide-panel">
