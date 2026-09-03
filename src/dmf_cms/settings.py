@@ -224,6 +224,20 @@ class PromSDSettings:
 
 
 @dataclass(frozen=True)
+class LokiSettings:
+    """dmfdeploy/dmfdeploy#496: the read seam for the durable Activity History
+    lane (mirrors PrometheusSettings/PromSDSettings exactly). Unconfigured
+    means the lane is dark — ``reason: "loki-unconfigured"`` — not a claim
+    that facility history is empty (Constitution Art. 1)."""
+
+    url: str = ""
+
+    @property
+    def configured(self) -> bool:
+        return bool(self.url)
+
+
+@dataclass(frozen=True)
 class MediaTenancySettings:
     """Tenancy posture for the Media Workloads surface (ADR-0037).
 
@@ -452,6 +466,7 @@ class Settings:
     netbox: NetboxSettings = field(default_factory=NetboxSettings)
     prometheus: PrometheusSettings = field(default_factory=PrometheusSettings)
     promsd: PromSDSettings = field(default_factory=PromSDSettings)
+    loki: LokiSettings = field(default_factory=LokiSettings)
     l3: L3Settings = field(default_factory=L3Settings)
     forgejo: ForgejoSettings = field(default_factory=ForgejoSettings)
     mxl: MXLSettings = field(default_factory=MXLSettings)
@@ -532,6 +547,9 @@ def load_settings() -> Settings:
         ),
         promsd=PromSDSettings(
             url=os.getenv("DMF_CONSOLE_PROMSD_URL", ""),
+        ),
+        loki=LokiSettings(
+            url=os.getenv("DMF_CONSOLE_LOKI_URL", ""),
         ),
         l3=L3Settings(
             enabled=_env_l3_enabled("DMF_CONSOLE_L3_ENABLED", True),

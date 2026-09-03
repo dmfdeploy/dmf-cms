@@ -138,7 +138,7 @@ from .switch_source import (
     dispatch_switch_source,
     resolve_topology_for_receiver,
 )
-from . import netbox, prometheus, promsd, forgejo, mxl, media_workloads, capacity, drain, facility
+from . import netbox, prometheus, promsd, forgejo, mxl, media_workloads, capacity, drain, facility, audit_events
 from starlette.concurrency import run_in_threadpool
 import asyncio
 from .security import (
@@ -4488,6 +4488,45 @@ def create_app(settings: Settings | None = None, contract: AppContract | None = 
         except Exception as exc:
             logger.warning("recent changes: Forgejo pulls fetch failed: %s", _sanitize_audit_field(str(exc)))
             return JSONResponse({"pulls": [], "reason": "forgejo-unreachable"})
+
+    @app.get("/api/audit/events")
+    async def api_audit_events(request: Request):
+        """Durable Activity History lane (dmfdeploy/dmfdeploy#496 plan).
+
+        Session-authenticated only — the gate here is PER RECORD CLASS, not
+        one gate for the endpoint (plan §4.3): a plain viewer must be able
+        to call this and get back exactly their own permitted subset (their
+        switch-source rows, if they're in media-engineers; nothing
+        otherwise) — the row-level gate in ``audit_events.py`` is what does
+        the real work. Fail-soft, same reason-token contract as
+        ``/api/changes/jobs``: a Loki outage is a distinct ``reason`` from a
+        real, empty history (plan AC 7), never a raw 500 (Constitution
+        Arts. 1+8). The backend builds its own bounded Loki selector/range/
+        limit here — nothing from the request reaches the query (plan AC 6).
+        """
+        user = effective_user(request.session)
+        if user is None:
+            return JSONResponse({"error": "unauthorized"}, status_code=401)
+        try:
+            payload = await run_in_threadpool(
+                audit_events.list_audit_events,
+                loki_url=settings.loki.url,
+                loki_configured=settings.loki.configured,
+                role=user.role,
+                groups=user.groups,
+            )
+        except Exception as exc:
+            # A bug here must not turn an audit surface into a 500 (Art. 1)
+            # — fail into the same "could not ask" shape a real Loki outage
+            # produces, never a raw traceback.
+            logger.warning("audit events: read failed: %s", _sanitize_audit_field(str(exc)))
+            payload = {
+                "reason": "loki-unreachable",
+                "window": {"known": False, "seconds": None, "reason": "unavailable"},
+                "excluded": list(audit_events.EXCLUDED_DISCLOSURE),
+                "events": [],
+            }
+        return JSONResponse(payload)
 
     # ------------------------------------------------------------------
     # Catalog endpoints — YAML catalog + NetBox tag join + AWX drive
