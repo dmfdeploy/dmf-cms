@@ -208,13 +208,29 @@ describe('operator ruling 2026-09-03: the lane states its stopgap status plainly
     renderHistory()
     await screen.findByText('The automation engine reported an error')
     expect(screen.getByText(/First implementation of this lane/)).toBeTruthy()
-    expect(screen.getByText(/deploy and teardown show as\s*dispatched/)).toBeTruthy()
+    expect(screen.getByText(/an accepted\s*one is never updated with whether the job later finished/)).toBeTruthy()
+    expect(screen.getByText(/Switch source is the exception/)).toBeTruthy()
     expect(screen.getByText(/Coverage is bounded\s*by the window stated above/)).toBeTruthy()
     // STATE, don't apologise or overstate the weakness — Art. 8 register.
     expect(screen.queryByText(/[Ss]orry/)).toBeNull()
     expect(screen.queryByText(/incomplete/i)).toBeNull()
     expect(screen.queryByText(/unreliable/i)).toBeNull()
     expect(screen.queryByText(/forgeable/i)).toBeNull()
+  })
+
+  it('codex F1: the statement does not claim deploy/teardown never render failed', async () => {
+    // The bug this test pins: an earlier version said deploy/teardown
+    // "show as dispatched, never as succeeded or failed" -- flatly false,
+    // since a refused deploy renders failed right here in this same test
+    // fixture (the acceptance-allowlist inversion is what makes it do
+    // so, correctly). The corrected statement only claims what's true: an
+    // ACCEPTED request is never updated with a later verdict.
+    mkFetch(FAILED_DEPLOY_RESPONSE)
+    renderHistory()
+    const failedBadge = await screen.findByText('Failed')
+    expect(failedBadge).toBeTruthy() // this row IS a rendered deploy failure
+    expect(screen.queryByText(/never as succeeded or failed/)).toBeNull()
+    expect(screen.queryByText(/show as\s*dispatched/)).toBeNull()
   })
 })
 

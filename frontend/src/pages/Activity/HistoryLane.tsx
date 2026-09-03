@@ -215,11 +215,12 @@ export default function HistoryLane() {
               apologise, and be specific about the two limits that actually
               bite rather than a disclaimer that says nothing checkable. */}
           <p className="text-xs text-muted mt-1">
-            First implementation of this lane — records what was requested,
-            not yet whether it finished: deploy and teardown show as
-            dispatched, never as succeeded or failed. Coverage is bounded
-            by the window stated above, not a guarantee of complete
-            history.
+            First implementation of this lane — for deploy and teardown, it
+            records the request and any immediate refusal, but an accepted
+            one is never updated with whether the job later finished.
+            Switch source is the exception: it carries a real succeeded or
+            failed outcome. Coverage is bounded by the window stated above,
+            not a guarantee of complete history.
           </p>
         </div>
         <div className="divide-y divide-panel">
