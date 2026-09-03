@@ -381,6 +381,7 @@ describe('regression net: known delegate classifiers produce the CORRECT OUTPUT 
           {
             request_id: 'rid-1', class: 'deploy', action: 'deploy', target: 'wl-a', workload: 'wl-a',
             actor: 'alice', role: 'operator', reason: 'demo', at: '2026-09-03T00:00:00Z',
+            at_ns: '1798000000000000000',
             outcome: { state: 'in_flight', detail: 'dispatched' },
           },
         ],

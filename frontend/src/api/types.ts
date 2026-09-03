@@ -459,6 +459,14 @@ export interface AuditEvent {
   role: string
   reason: string
   at: string
+  // lkirc (dmfdeploy/dmfdeploy#140): request_id is NOT a per-row identity
+  // — one request can legitimately produce multiple rows (an L3
+  // preflight's capacity-skipped/capacity-override line shares its
+  // request_id with that same request's later dispatched line). This is
+  // Loki's own raw, unrounded nanosecond timestamp string for THIS log
+  // line specifically — the real per-row identity, used ONLY for the
+  // React key (HistoryLane), never for display (use `at` for that).
+  at_ns: string
   outcome: AuditEventOutcome
 }
 

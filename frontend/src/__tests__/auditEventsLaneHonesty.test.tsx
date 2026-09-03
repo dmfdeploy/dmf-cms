@@ -6,7 +6,7 @@
  * fails here rather than being re-discovered by a future gate.
  */
 import { afterEach, describe, expect, it, vi } from 'vitest'
-import { cleanup, fireEvent, render, screen, within } from '@testing-library/react'
+import { act, cleanup, fireEvent, render, screen, within } from '@testing-library/react'
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query'
 import { MemoryRouter } from 'react-router-dom'
 import HistoryLane from '../pages/Activity/HistoryLane'
@@ -16,6 +16,7 @@ import type { AuditEventsResponse } from '../api/types'
 afterEach(() => {
   cleanup()
   vi.unstubAllGlobals()
+  vi.useRealTimers()
 })
 
 function json(body: unknown, status = 200) {
@@ -63,6 +64,7 @@ const FAILED_DEPLOY_RESPONSE: AuditEventsResponse = {
       role: 'operator',
       reason: 'demo',
       at: '2026-09-03T00:00:00Z',
+      at_ns: '1798000000000000000',
       outcome: {
         state: 'failed',
         headline: 'The automation engine reported an error',
@@ -255,6 +257,7 @@ describe('operator ruling 2026-09-03: the lane states its stopgap status plainly
           role: 'engineer',
           reason: 'demo',
           at: '2026-09-03T00:00:00Z',
+          at_ns: '1798000000000000001',
           outcome: {
             state: 'unknown',
             headline: 'Outcome unknown',
@@ -324,5 +327,113 @@ describe('F8: the local panel never claims completion for a dispatch-time record
     expect(within(localPanel).getByText('Requested workflow launch: some-jt')).toBeTruthy()
     expect(within(localPanel).queryByText(/^Deleted wl-z permanently$/)).toBeNull()
     expect(within(localPanel).queryByText(/^Launched some-jt$/)).toBeNull()
+  })
+})
+
+describe('lkirc: request_id is not a per-row React key (a single request can produce multiple rows)', () => {
+  // main.py:488/:580 (an L3 preflight's own capacity-skipped/capacity-
+  // override line) and main.py:4868 (that same request's later dispatched
+  // line) share ONE request_id. Two sibling rows with the same key make
+  // React reconciliation unstable across a refetch -- the property under
+  // test is NOT "keys are unique" (that's the mechanism), it's that a
+  // multi-row request survives a refetch without rows swapping content.
+  const rowA = {
+    request_id: 'rid-shared', class: 'deploy' as const, action: 'deploy', target: 'wl-a',
+    workload: 'wl-a', actor: 'alice', role: 'operator', reason: 'demo',
+    at: '2026-09-03T00:00:00.000Z', at_ns: '1798000000000000001',
+    outcome: { state: 'in_flight' as const, detail: 'capacity-skipped' },
+  }
+  const rowB = {
+    request_id: 'rid-shared', class: 'deploy' as const, action: 'deploy', target: 'wl-a',
+    workload: 'wl-a', actor: 'alice', role: 'operator', reason: 'demo',
+    at: '2026-09-03T00:00:05.000Z', at_ns: '1798000000005000002',
+    outcome: { state: 'in_flight' as const, detail: 'dispatched' },
+  }
+  const BASE: AuditEventsResponse = {
+    reason: '', window: { known: true, seconds: 604800, reason: '' }, capped: false, excluded: [],
+    events: [rowB, rowA], // newest-first, matching the real endpoint's own sort
+  }
+
+  function mkSequentialFetch(responses: AuditEventsResponse[]) {
+    let call = 0
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(async (input: RequestInfo | URL) => {
+        const url = (typeof input === 'string' ? input : (input as Request).url).toString()
+        if (url.endsWith('/api/audit/events')) {
+          const body = responses[Math.min(call, responses.length - 1)]
+          call += 1
+          return json(body)
+        }
+        if (url.endsWith('/api/changes/jobs')) return json({ jobs: [], reason: '' })
+        if (url.endsWith('/api/changes/commits')) return json({ repos: [], reason: '' })
+        if (url.endsWith('/api/changes/pulls')) return json({ pulls: [], reason: '' })
+        return json({})
+      }),
+    )
+  }
+
+  it('both rows render distinctly on first load', async () => {
+    mkSequentialFetch([BASE])
+    renderHistory()
+    expect(await screen.findByText('capacity-skipped')).toBeTruthy()
+    expect(screen.getByText('dispatched')).toBeTruthy()
+  })
+
+  it('a multi-row request survives a refetch without rows swapping content', async () => {
+    vi.useFakeTimers()
+    // The realistic refetch shape: the audit trail is append-only, so a
+    // request's SECOND row (the later dispatch) genuinely does not exist
+    // yet on an earlier poll -- the list GROWS from one row to two
+    // sharing the same request_id, not just re-reads the same two. This
+    // is also empirically the shape that actually exercises React's own
+    // reconciliation of the duplicate key (a stable two-row re-fetch does
+    // not, since props at each position are unchanged either way and
+    // React always renders from the new element's own props regardless
+    // of which fiber it reuses -- verified directly before trusting this
+    // shape, not assumed).
+    const firstPoll: AuditEventsResponse = { ...BASE, events: [rowA] }
+    const secondPoll: AuditEventsResponse = { ...BASE, events: [rowB, rowA] }
+    mkSequentialFetch([firstPoll, secondPoll])
+
+    const seenErrors: unknown[][] = []
+    const originalConsoleError = console.error
+    console.error = (...args: unknown[]) => {
+      seenErrors.push(args)
+    }
+
+    try {
+      renderHistory()
+      await act(async () => {
+        await vi.advanceTimersByTimeAsync(60)
+      })
+      expect(screen.getByText('capacity-skipped')).toBeTruthy()
+      expect(screen.queryByText('dispatched')).toBeNull() // not dispatched yet on this poll
+
+      // Past useAuditEvents' 30s refetchInterval -- the list grows.
+      await act(async () => {
+        await vi.advanceTimersByTimeAsync(30_100)
+      })
+    } finally {
+      console.error = originalConsoleError
+    }
+
+    // Both distinguishing details present, each exactly once -- not
+    // merged, not dropped, not duplicated onto one row.
+    expect(screen.getAllByText('capacity-skipped')).toHaveLength(1)
+    expect(screen.getAllByText('dispatched')).toHaveLength(1)
+    const titles = screen.getAllByText(/^Deploy dispatched for wl-a$/)
+    expect(titles).toHaveLength(2)
+
+    // The actual mechanism, checked directly rather than inferred from
+    // rendered text alone (which stays correct either way for these
+    // stateless rows -- confirmed by reverting the fix and observing the
+    // same text assertions above still pass): React itself must not have
+    // logged a duplicate-key warning across the growth from one row to
+    // two sharing a request_id.
+    const duplicateKeyWarning = seenErrors.find((args) =>
+      typeof args[0] === 'string' && args[0].includes('two children with the same key'),
+    )
+    expect(duplicateKeyWarning).toBeUndefined()
   })
 })

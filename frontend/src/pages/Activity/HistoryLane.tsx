@@ -254,7 +254,18 @@ export default function HistoryLane() {
                 )
               ) : (
                 auditState.events.map((event) => (
-                  <div key={event.request_id} className="px-6 py-4 hover:bg-panel/30 transition">
+                  // lkirc (dmfdeploy/dmfdeploy#140): request_id alone is
+                  // NOT a per-row identity — an L3 preflight's own
+                  // capacity-skipped/capacity-override row shares its
+                  // request_id with that same request's later dispatched
+                  // row. Duplicate sibling keys make React reconciliation
+                  // unstable across this panel's refetch, which can
+                  // surface as a row rendering stale or swapped content —
+                  // demo-visible and easy to mistake for the DATA being
+                  // wrong. at_ns is Loki's own raw per-log-line timestamp
+                  // (unrounded, unlike `at`), a real distinguishing
+                  // identity for two rows sharing one request_id.
+                  <div key={`${event.request_id}-${event.at_ns}`} className="px-6 py-4 hover:bg-panel/30 transition">
                     <div className="flex items-start justify-between gap-4">
                       <div className="flex-1 min-w-0">
                         <h3 className="font-semibold text-sm">{eventTitle(event)}</h3>
