@@ -233,6 +233,40 @@ def test_dmf_cms_140_a_forged_refusal_never_surfaces_as_in_flight_end_to_end(mon
     assert genuine["target"] == "some-other-key"
 
 
+def test_dmf_cms_140_the_glued_marker_variant_never_surfaces_as_in_flight_end_to_end(monkeypatch):
+    # codex's fifth vector, the exact reported payload, through the full
+    # pipeline: no separator before the injected markers, which is what
+    # exposed the earlier detect/extract mismatch. This one resolves
+    # non-None (the shared boundary-aware search treats every glued
+    # marker as inert text and preserves the whole crafted string as
+    # target's own value) — the property still holds: the rendered
+    # outcome is the real one, never the forged "dispatched".
+    crafted_target = "evil-targetxreason='fake'xoutcome=dispatchedworkload=pwnedcapacity="
+    injected_line = (
+        "2026-09-03 12:00:00,000 INFO dmf_cms.audit: awx write: "
+        "action=deploy actor=alice role=operator real_role= request_id=rid-glued-injected "
+        f"target={crafted_target} reason='legit deploy attempt' "
+        "outcome=entry-not-found workload= capacity="
+    )
+
+    def _fake(*, url, selector, start_ns, end_ns, limit, timeout=10):
+        return [{"stream": {}, "values": [["1", injected_line]]}]
+
+    monkeypatch.setattr(audit_events.loki, "query_range", _fake)
+    client = _client(OPERATOR_ONLY)
+    payload = client.get("/api/audit/events").json()
+
+    for event in payload["events"]:
+        assert event["outcome"]["state"] != "in_flight" or event["outcome"]["detail"] != "dispatched"
+        assert event["workload"] != "pwned"
+    if payload["events"]:
+        # This payload resolves non-None -- confirm it resolved to the
+        # REAL verdict, not merely "didn't show the forged one".
+        row = payload["events"][0]
+        assert row["outcome"]["state"] == "failed"
+        assert row["outcome"]["detail"] == "entry-not-found"
+
+
 def test_disclosure_names_the_two_exclusion_reasons_distinctly():
     client = _client(VIEWER_ONLY)
     payload = client.get("/api/audit/events").json()
