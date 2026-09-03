@@ -126,6 +126,50 @@ describe('F4: the default/expert split is a real DOM boundary, not just CSS muti
   })
 })
 
+describe('R496-C P1-2: a lost outcome renders as an honest unknown, never a forged verdict', () => {
+  const UNKNOWN_RESPONSE: AuditEventsResponse = {
+    ...FAILED_DEPLOY_RESPONSE,
+    events: [
+      {
+        ...FAILED_DEPLOY_RESPONSE.events[0],
+        request_id: 'rid-unknown',
+        outcome: {
+          state: 'unknown',
+          headline: 'Outcome unknown',
+          meaning: "This action's outcome could not be read from the record — it may have succeeded, failed, or still be in progress.",
+          next_step: 'If this persists, contact a system engineer with the request id below.',
+          detail: '',
+        },
+      },
+    ],
+  }
+
+  it('renders "Outcome unknown", not "Failed", and never claims completion in the title', async () => {
+    mkFetch(UNKNOWN_RESPONSE)
+    renderHistory()
+    // Badge AND headline both legitimately say "Outcome unknown" — assert
+    // there are exactly two matches (not zero, not one drifted away),
+    // rather than picking a single element out of an intentional pair.
+    const matches = await screen.findAllByText('Outcome unknown')
+    expect(matches).toHaveLength(2)
+    expect(screen.queryByText('Failed')).toBeNull()
+    expect(screen.getByText('Deploy — outcome unknown for wl-a')).toBeTruthy()
+    expect(screen.queryByText(/^Deploy failed/)).toBeNull()
+    expect(screen.queryByText(/^Deploy dispatched/)).toBeNull()
+  })
+
+  it('shows the plain-language explanation but no expert-detail disclosure (nothing to disclose)', async () => {
+    mkFetch(UNKNOWN_RESPONSE)
+    renderHistory()
+    await screen.findAllByText('Outcome unknown')
+    expect(screen.getByText(/could not be read from the record/)).toBeTruthy()
+    // 'failed' is fine here — the meaning honestly lists it as ONE of
+    // several possibilities, not an assertion. The <details> disclosure
+    // itself is what must not exist, since there's no raw token to gate.
+    expect(document.querySelector('details')).toBeNull()
+  })
+})
+
 describe('F6: a bound that binds is disclosed', () => {
   it('capped:true renders a distinct notice, separate from the empty/error copy', async () => {
     mkFetch({ ...FAILED_DEPLOY_RESPONSE, capped: true })

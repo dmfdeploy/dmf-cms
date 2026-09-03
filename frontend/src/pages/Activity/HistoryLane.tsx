@@ -17,23 +17,31 @@ import type { AuditEvent, AuditEventOutcome } from '../../api/types'
 // watched action never claims completion, so its title says "dispatched",
 // never a past-tense verb implying it finished. switch-source is the one
 // class with a real terminal outcome, so it's the only one allowed a
-// succeeded/failed past-tense title.
+// succeeded/failed past-tense title. 'unknown' (codex R496-C P1-2) gets
+// its own honest phrasing — never folded into "failed" or "dispatched",
+// either of which would claim knowledge the row does not have.
 function eventTitle(event: AuditEvent): string {
   const label = event.workload ?? event.target
-  const failed = event.outcome.state === 'failed'
+  const state = event.outcome.state
   switch (event.class) {
     case 'deploy':
-      return failed ? `Deploy failed for ${label}` : `Deploy dispatched for ${label}`
+      if (state === 'failed') return `Deploy failed for ${label}`
+      if (state === 'unknown') return `Deploy — outcome unknown for ${label}`
+      return `Deploy dispatched for ${label}`
     case 'teardown':
-      return failed ? `Teardown failed for ${label}` : `Teardown dispatched for ${label}`
-    case 'auto-rollback':
-      return failed
-        ? `Automatic rollback failed${event.workload ? ` for ${event.workload}` : ''}`
-        : `Automatic rollback dispatched${event.workload ? ` for ${event.workload}` : ''}`
+      if (state === 'failed') return `Teardown failed for ${label}`
+      if (state === 'unknown') return `Teardown — outcome unknown for ${label}`
+      return `Teardown dispatched for ${label}`
+    case 'auto-rollback': {
+      const suffix = event.workload ? ` for ${event.workload}` : ''
+      if (state === 'failed') return `Automatic rollback failed${suffix}`
+      if (state === 'unknown') return `Automatic rollback — outcome unknown${suffix}`
+      return `Automatic rollback dispatched${suffix}`
+    }
     case 'switch-source':
-      return event.outcome.state === 'succeeded'
-        ? `Switched source on ${event.target}`
-        : `Switch source failed on ${event.target}`
+      if (state === 'succeeded') return `Switched source on ${event.target}`
+      if (state === 'unknown') return `Switch source on ${event.target} — outcome unknown`
+      return `Switch source failed on ${event.target}`
   }
 }
 
@@ -43,44 +51,50 @@ function AuditEventOutcomeBlock({ outcome }: { outcome: AuditEventOutcome }) {
       ? 'bg-green-500/20 text-green-400'
       : outcome.state === 'failed'
         ? 'bg-red-500/20 text-red-400'
-        : 'bg-blue-500/20 text-blue-400'
+        : outcome.state === 'unknown'
+          ? 'bg-gray-500/20 text-gray-400'
+          : 'bg-blue-500/20 text-blue-400'
+  // Default level (plan §4.5 / AC 2a): what happened, what it means for
+  // the facility, what to do next — all three, not just headline+
+  // next_step (codex R496-A F4 caught `meaning` silently missing here).
+  // Shared by 'failed' AND 'unknown' (codex R496-C P1-2) — both need an
+  // honest explanation at default; only 'failed' also carries a raw
+  // system-error string worth gating below.
+  const plainLanguageBlock = outcome.headline && (
+    <div className="mt-1 text-xs text-muted">
+      <p>{outcome.headline}</p>
+      {outcome.meaning && <p className="mt-0.5">{outcome.meaning}</p>}
+      {outcome.next_step && <p className="mt-0.5">{outcome.next_step}</p>}
+    </div>
+  )
   return (
     <div className="mt-2">
       <span className={`inline-block px-2 py-1 rounded text-xs font-semibold ${badgeClass}`}>
         {auditOutcomeLabel(outcome)}
       </span>
-      {outcome.state === 'failed' ? (
-        <>
-          {/* Default level (plan §4.5 / AC 2a): what happened, what it
-              means for the facility, what to do next — all three, not
-              just headline+next_step (codex R496-A F4 caught `meaning`
-              silently missing here). */}
-          {outcome.headline && (
-            <div className="mt-1 text-xs text-muted">
-              <p>{outcome.headline}</p>
-              {outcome.meaning && <p className="mt-0.5">{outcome.meaning}</p>}
-              {outcome.next_step && <p className="mt-0.5">{outcome.next_step}</p>}
-            </div>
-          )}
-          {/* Expert level ONLY: a raw system-error string (e.g.
-              awx-error:503) must not reach the default view at all —
-              CSS-muted-but-always-rendered is NOT an access boundary
-              (codex R496-A F4). A closed <details> keeps it out of the
-              rendered default view; expanding it is the deliberate,
-              explicit act that makes reading it "expert level". */}
-          <details className="mt-1">
-            <summary className="text-xs text-muted/70 cursor-pointer select-none">
-              Technical detail (for support)
-            </summary>
-            <p className="text-xs text-muted/70 mt-1 font-mono">{outcome.detail}</p>
-          </details>
-        </>
-      ) : (
-        // in_flight/succeeded detail is an ordinary operational word
-        // (dispatched, launched, active, ...), never a raw system-error
-        // string — safe to show plainly, same convention as the Jobs
-        // panel below keeping the raw AWX template name as a muted line
-        // (lib/labels.ts's describeJob comment).
+      {plainLanguageBlock}
+      {outcome.state === 'failed' && (
+        // Expert level ONLY: a raw system-error string (e.g.
+        // awx-error:503) must not reach the default view at all —
+        // CSS-muted-but-always-rendered is NOT an access boundary
+        // (codex R496-A F4). A closed <details> keeps it out of the
+        // rendered default view; expanding it is the deliberate,
+        // explicit act that makes reading it "expert level". Not shown
+        // for 'unknown' — its detail is always "" (that IS the lost
+        // field), nothing to disclose.
+        <details className="mt-1">
+          <summary className="text-xs text-muted/70 cursor-pointer select-none">
+            Technical detail (for support)
+          </summary>
+          <p className="text-xs text-muted/70 mt-1 font-mono">{outcome.detail}</p>
+        </details>
+      )}
+      {(outcome.state === 'in_flight' || outcome.state === 'succeeded') && (
+        // An ordinary operational word (dispatched, launched, active,
+        // ...), never a raw system-error string — safe to show plainly,
+        // same convention as the Jobs panel below keeping the raw AWX
+        // template name as a muted line (lib/labels.ts's describeJob
+        // comment).
         <p className="text-xs text-muted/70 mt-1 font-mono">{outcome.detail}</p>
       )}
     </div>

@@ -114,6 +114,10 @@ export function auditOutcomeLabel(outcome: AuditEventOutcome): string {
       return 'Succeeded'
     case 'failed':
       return 'Failed'
+    case 'unknown':
+      // codex R496-C P1-2: distinct from 'Failed' on purpose — a lost
+      // outcome is not a verdict.
+      return 'Outcome unknown'
   }
 }
 
