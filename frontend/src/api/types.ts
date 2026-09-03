@@ -479,6 +479,12 @@ export interface AuditEventsResponse {
   // genuinely means no matching rows in the window). REQUIRED.
   reason: '' | 'loki-unconfigured' | 'loki-unreachable'
   window: AuditEventsWindow
+  // true when this read is NOT confirmed exhaustive — the retention window
+  // could not be derived (the query ran against a technical ceiling
+  // instead of a real bound) or the raw result count hit the backend's
+  // own limit. A bound that binds must be disclosed, not applied silently
+  // behind what would otherwise read as an ordinary, complete history.
+  capped: boolean
   excluded: AuditEventsExcludedClass[]
   events: AuditEvent[]
 }

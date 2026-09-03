@@ -375,6 +375,7 @@ describe('regression net: known delegate classifiers produce the CORRECT OUTPUT 
       data: {
         reason: '', // '' alone means "ok" — isError must override this, not the other way round
         window: { known: true, seconds: 604800, reason: '' },
+        capped: false,
         excluded: [],
         events: [
           {
