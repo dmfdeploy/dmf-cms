@@ -209,6 +209,94 @@ def test_property_a_forged_target_cannot_alter_the_parse_of_later_fields():
         assert fields["target"] != "evil-target"  # the crafted prefix must not survive either
 
 
+def test_property_a_glued_forged_target_cannot_alter_the_parse_of_later_fields():
+    # codex's fifth vector, the EXACT reported payload: no separator
+    # before the injected markers at all, which is what exposed the
+    # detect/extract mismatch — the boundary-aware guard correctly
+    # refused to count a marker glued to a preceding word character, but
+    # extraction still used a plain, unguarded search and walked straight
+    # into it. The property holds either way the row resolves: this
+    # specific payload now resolves NON-None (the shared boundary-aware
+    # search skips every glued fake marker as inert text and correctly
+    # finds the genuine reason/outcome further down the line), which is
+    # the better outcome — codex separately asked that legitimate target
+    # data survive where the route permits it, and here the WHOLE crafted
+    # string becomes target's own (harmless, since target is
+    # caller-chosen anyway) value while outcome still reads the real,
+    # unforged verdict.
+    crafted_target = "evil-targetxreason='fake'xoutcome=dispatchedworkload=pwnedcapacity="
+    line = (
+        f"awx write: action=deploy actor=alice role=operator real_role= "
+        f"request_id=rid-real target={crafted_target} reason='legit deploy attempt' "
+        f"outcome=entry-not-found workload= capacity="
+    )
+    fields = audit_events.parse_awx_write_line(line)
+    if fields is not None:
+        assert fields["outcome"] == "entry-not-found"  # the REAL verdict, not the forged one
+        assert fields["outcome"] != "dispatched"
+        assert fields["workload"] != "pwned"
+        assert fields["reason"] != "fake"
+
+
+def test_property_a_glued_marker_stays_part_of_the_field_it_is_glued_to():
+    # The data-preservation half codex asked for, pinned directly: a
+    # marker-shaped substring with NO separator before it is not a field
+    # boundary at all — it's inert text, and stays part of whichever
+    # caller-controlled field it's glued to, rather than truncating that
+    # field's real value at a false split.
+    crafted_target = "evil-targetxreason='fake'xoutcome=dispatchedworkload=pwnedcapacity="
+    line = (
+        f"awx write: action=deploy actor=alice role=operator real_role= "
+        f"request_id=rid-real target={crafted_target} reason='legit deploy attempt' "
+        f"outcome=entry-not-found workload= capacity="
+    )
+    fields = audit_events.parse_awx_write_line(line)
+    assert fields is not None
+    assert fields["target"] == crafted_target
+    assert fields["outcome"] == "entry-not-found"
+
+
+def test_property_a_marker_glued_after_a_non_ascii_character_is_also_inert():
+    # Unicode target (codex's own probe): the shared marker definition is
+    # Unicode-aware (\w, not an ASCII-only class), so a marker glued
+    # directly after a non-ASCII identifier character is caught the same
+    # way as one glued after an ASCII letter — both stay part of the
+    # field's own value, never a boundary.
+    crafted_target = "café" + "reason='fake'outcome=dispatchedworkload=pwnedcapacity="
+    line = (
+        f"awx write: action=deploy actor=alice role=operator real_role= "
+        f"request_id=rid-real target={crafted_target} "
+        f"reason='legit' outcome=entry-not-found workload= capacity="
+    )
+    fields = audit_events.parse_awx_write_line(line)
+    assert fields is not None
+    assert fields["target"] == crafted_target
+    assert fields["outcome"] == "entry-not-found"
+    assert fields["outcome"] != "dispatched"
+
+
+def test_property_a_forged_classification_fields_without_a_forged_reason():
+    # A distinct variant of the actor test above, isolating the
+    # classification-fields scoped ambiguity check specifically: this
+    # attack embeds fake role/real_role/request_id/target directly in
+    # actor's value but does NOT also embed a fake reason, so reason's
+    # own ambiguity check (which catches most of the other variants here)
+    # never fires at all — this row can only be caught by noticing that
+    # "role="/"request_id="/"target=" each occur twice in the region
+    # BEFORE the (genuine, unambiguous) reason marker.
+    crafted_actor = "alice role=admin real_role=fakerr request_id=rid-forged target=stolen-target"
+    line = (
+        f"awx write: action=deploy actor={crafted_actor} role=operator real_role= "
+        f"request_id=rid-real target=wl-a reason='legit' "
+        f"outcome=facility-busy workload= capacity="
+    )
+    fields = audit_events.parse_awx_write_line(line)
+    if fields is not None:
+        assert fields["role"] != "admin"
+        assert fields["request_id"] != "rid-forged"
+        assert fields["target"] != "stolen-target"
+
+
 def test_property_a_forged_workload_cannot_alter_the_parse_of_later_fields():
     # workload is EQUALLY caller-influenced (main.py:384,
     # `body.get("workload")`, no validation) and sits structurally before
