@@ -2454,9 +2454,9 @@ def test_auto_trigger_identity_unknown_when_deploy_op_has_no_run_id(monkeypatch)
 
 def test_auto_trigger_dispatch_audit_line_sanitizes_run_id(monkeypatch, caplog):
     # umbrella dmf-cms#108 fix-round 2: run_id lands in this hand-assembled
-    # "awx write: ..." line's target=%s unescaped. On a fresh dispatch it
-    # is this console's own request_id (uuid4 hex), but on a REATTACH it
-    # is hydrated from an AWX job's own extra_vars — a different job
+    # "awx write: ..." line's target field. On a fresh dispatch it is this
+    # console's own request_id (uuid4 hex), but on a REATTACH it is
+    # hydrated from an AWX job's own extra_vars — a different job
     # template's launch, not necessarily this console's own — so it is
     # not provably safe just because today's normal flow keeps it
     # uuid4-shaped. Driven directly via ops_store.update (bypassing the
@@ -2464,6 +2464,12 @@ def test_auto_trigger_dispatch_audit_line_sanitizes_run_id(monkeypatch, caplog):
     # own docstring for why that path can't be assumed first-party),
     # matching this file's own established style for exercising this
     # function (every existing test above already sets run_id this way).
+    #
+    # dmfdeploy/dmfdeploy#140 (the writer fix, 2026-09-03): target here is
+    # now %r-quoted, not %s+_sanitize_audit_field — a raw newline still
+    # cannot reach the line unescaped (repr() escapes it identically), so
+    # this test's own assertions are unchanged, but the MECHANISM making
+    # them true is not the sanitizer anymore.
     import logging
 
     app, ops_store = _fake_app(auto_rollback=True)

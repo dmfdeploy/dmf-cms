@@ -397,10 +397,10 @@ def test_happy_path_reaches_active_with_c5_audit(monkeypatch, caplog):
     assert "actor=operator" in line
     assert "role=engineer" in line
     assert f"request_id={body['request_id']}" in line
-    assert "target=mxl-videotest-view" in line
+    assert "target='mxl-videotest-view'" in line
     assert "reason='operator requested'" in line
     assert "outcome=active" in line
-    assert "workload=source-b" in line  # source_instance rides the workload slot
+    assert "workload='source-b'" in line  # source_instance rides the workload slot
 
 
 def test_failed_rollback_required_is_200_not_an_http_error(monkeypatch, caplog):

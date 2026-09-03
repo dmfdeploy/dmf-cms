@@ -667,7 +667,7 @@ def test_workflow_launch_refusal_audit_uses_effective_action(enabled_settings, c
     # The C5 record must reflect the EFFECTIVE action/target on the catalog
     # entry (deploy vs. teardown), not the generic "launch" wrapper.
     assert any(
-        "action=teardown" in m and f"target={entry.key}" in m and "outcome=lifecycle-jt-refused" in m
+        "action=teardown" in m and f"target='{entry.key}'" in m and "outcome=lifecycle-jt-refused" in m
         for m in lines
     )
     assert not any("action=launch" in m for m in lines)
@@ -917,7 +917,7 @@ def test_workflow_launch_sync_finalise_jt_is_refused_without_touching_awx(disabl
     assert body["catalog_key"] == entry.key
     lines = [r.getMessage() for r in caplog.records if r.getMessage().startswith("awx write:")]
     assert any(
-        "action=teardown" in m and f"target={entry.key}" in m and "outcome=lifecycle-jt-refused" in m
+        "action=teardown" in m and f"target='{entry.key}'" in m and "outcome=lifecycle-jt-refused" in m
         for m in lines
     )
 
@@ -949,7 +949,7 @@ def test_workflow_launch_sync_configure_jt_is_refused_without_touching_awx(disab
     assert body["catalog_key"] == entry.key
     lines = [r.getMessage() for r in caplog.records if r.getMessage().startswith("awx write:")]
     assert any(
-        "action=deploy" in m and f"target={entry.key}" in m and "outcome=lifecycle-jt-refused" in m
+        "action=deploy" in m and f"target='{entry.key}'" in m and "outcome=lifecycle-jt-refused" in m
         for m in lines
     )
 
@@ -1006,7 +1006,7 @@ def test_workflow_launch_shared_configure_jt_is_ambiguous_async(enabled_settings
     lines = [r.getMessage() for r in caplog.records if r.getMessage().startswith("awx write:")]
     assert any(
         "action=launch" in m
-        and "target=shared-configure-jt" in m
+        and "target='shared-configure-jt'" in m
         and "outcome=ambiguous-lifecycle-jt" in m
         for m in lines
     )

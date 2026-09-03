@@ -22,6 +22,7 @@ precedent — a shared-JT, non-catalog-key-keyed async write):
 
 from __future__ import annotations
 
+import ast
 import re
 import time
 
@@ -78,9 +79,13 @@ def _audit_lines(caplog):
 
 _AUDIT_LINE_RE = re.compile(
     r"^awx write: action=(?P<action>\S*) actor=(?P<actor>\S*) role=(?P<role>\S*) "
-    r"real_role=(?P<real_role>\S*) request_id=(?P<request_id>\S*) target=(?P<target>\S*) "
-    r"reason=(?P<reason>.*?) outcome=(?P<outcome>\S*) workload=(?P<workload>\S*) capacity=(?P<capacity>.*)$"
+    r"real_role=(?P<real_role>\S*) request_id=(?P<request_id>\S*) "
+    r"target=(?P<target>'(?:[^'\\]|\\.)*'|\S*) "
+    r"reason=(?P<reason>.*?) outcome=(?P<outcome>\S*) "
+    r"workload=(?P<workload>'(?:[^'\\]|\\.)*'|\S*) capacity=(?P<capacity>'(?:[^'\\]|\\.)*'|.*)$"
 )
+
+_QUOTED_FIELDS = ("target", "workload", "capacity")
 
 
 def _parse_audit_line(line: str) -> dict[str, str]:
@@ -91,10 +96,22 @@ def _parse_audit_line(line: str) -> dict[str, str]:
     coincidentally contain any short digit sequence, making a bare
     ``"22" in line`` check flaky. Parse fields and assert on the parsed
     values instead.
+
+    dmfdeploy/dmfdeploy#140 (the writer fix, 2026-09-03): target/workload/
+    capacity are now quoted (%r) at emission, so this local test parser
+    matches either shape and un-quotes the three fields that can be —
+    keeping this file's own assertions checking the same SEMANTIC value
+    regardless of the field's wire representation, the way
+    audit_events.parse_awx_write_line itself does for the real reader.
     """
     match = _AUDIT_LINE_RE.match(line)
     assert match is not None, f"unparseable audit line: {line!r}"
-    return match.groupdict()
+    fields = match.groupdict()
+    for name in _QUOTED_FIELDS:
+        value = fields[name]
+        if value.startswith("'") and value.endswith("'"):
+            fields[name] = ast.literal_eval(value)
+    return fields
 
 
 def _wait_for(predicate, timeout=5.0):
