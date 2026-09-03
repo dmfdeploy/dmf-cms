@@ -8,6 +8,35 @@ each record's outcome to an honest render state (plan §4.4/§4.5).
 
 Domain logic only — the Loki transport itself lives in ``loki.py``; this
 module is what calls it and knows what the fields mean.
+
+STATUS NOTE for whoever opens this file believing it is production-grade
+(operator ruling, 2026-09-03): it is not, and the boundary is exact. The
+CLASS MEMBERSHIP TABLE, the PER-CLASS AUTHORIZATION GATES, the OUTCOME
+HONESTY RULES (the acceptance allowlist, the unknown-vs-failed-vs-
+in-flight-vs-succeeded distinction, never claiming completion a watched
+action hasn't reached), the DERIVED RETENTION WINDOW, and the OUTCOME
+COMPLETENESS GUARD are the durable design and are meant to survive
+whatever replaces the transport underneath them. ``parse_awx_write_line``
+below is not that. It is a demo-scoped stopgap over a text log format
+that was never designed to be unambiguously re-parsed — every field
+except ``reason`` is control-character-escaped only (``main.py``'s
+``_sanitize_audit_field``, scoped to staying on one physical stdout line,
+a different property from being safely re-splittable by field). Three
+distinct forgery classes were found and closed in this module across one
+review arc (dmfdeploy/dmfdeploy#140): a caller-controlled field's raw text
+hijacking a later field's boundary; detection and extraction disagreeing
+about what a marker even is; and the fix for the first two over-
+correcting into rejecting legitimate rows whose own text happened to
+contain marker-shaped substrings. Each fix is real, each is mutation-
+tested, and codex could not find a further exploit against the result —
+but "correct against everything found so far" is not the same claim as
+"provably complete" for a format whose ambiguity can only be closed by
+construction, not by inspection. Do not treat a clean review pass here as
+proof there is no sixth case; treat it as the ceiling of what hardening a
+hand-rolled boundary scanner can promise. The production answer, when this
+surface needs to be trusted as a real audit record rather than a demo
+slice, is the deferred structured envelope (plan §5) replacing this
+parser entirely — not another round of hardening it.
 """
 
 from __future__ import annotations
@@ -157,18 +186,11 @@ def _find_unambiguous_marker(tail: str, name: str, start: int) -> int | None:
     cannot be trusted to be the genuine one rather than an injected decoy
     with the real marker still ahead of it (dmf-cms#140).
 
-    UNBOUNDED forward on purpose, for the two callers that use it
-    (``reason``'s own position, and the after-``reason`` fields): each of
-    those searches for a marker that genuinely occurs EXACTLY once in a
-    well-formed line, anywhere in the remainder of the tail, so a second
-    occurrence anywhere later is real ambiguity, not a scoping artefact.
-    This is NOT used for the six classification-field markers — those
-    need a DIFFERENTLY scoped check (bounded to before reason starts, see
-    the comment where it's applied in ``parse_awx_write_line``), because
-    an unbounded version of it rejected legitimate rows over marker-
-    shaped text safely sitting inside reason's own already-validated
-    value, which is never a place either the guard or the extraction it
-    protects has any business looking.
+    Used for ``workload`` (protects ``capacity``'s boundary — ``workload``
+    is genuinely caller-controlled, main.py:384) and, defensively, for the
+    other after-``reason`` fields. NOT used for ``reason`` itself — see
+    ``_reason_marker_is_unambiguous`` below for why a plain second-
+    occurrence count is the wrong check for a free-text field.
     """
     found = _find_marker(tail, name, start)
     if found is None:
@@ -176,6 +198,42 @@ def _find_unambiguous_marker(tail: str, name: str, start: int) -> int | None:
     if _find_marker(tail, name, found + len(f"{name}=")) is not None:
         return None  # a second occurrence exists — ambiguous, not just present
     return found
+
+
+def _reason_marker_is_unambiguous(tail: str, reason_end: int) -> bool:
+    """True unless a GENUINE competing record continuation exists after
+    ``reason_end``: a second ``reason=`` occurrence that ALSO
+    independently quote-scans to a complete, validly closed string.
+
+    codex's follow-up finding on dmf-cms#140 (P1, over-rejection): reason
+    is the one field that is genuinely free text an operator writes, so it
+    can legitimately — and ordinarily does — contain the literal substring
+    "reason=" as part of an honest sentence ("retry because
+    reason=operator typo"). That text sits INSIDE reason's own,
+    already-quote-scanned span (at or before ``reason_end``) and this
+    function never looks there — it only searches AT/AFTER ``reason_end``.
+    What was still wrong: a naive "does reason= occur again anywhere
+    later" check (the shape ``_find_unambiguous_marker`` uses for other
+    fields) also flagged a coincidental "reason=" substring sitting inside
+    a LATER field's own raw, unescaped value — e.g. an auto-rollback whose
+    ``linked_request_id`` happens to contain "reason=" as literal text
+    (``linked_request_id=req-reason=x``) — even though nothing downstream
+    ever re-searches for "reason=" again once this field is resolved.
+
+    The discriminator between a REAL forged second reason (the original
+    lkirc-reported vector: a second ``reason=`` that ALSO quote-scans,
+    forming a complete alternate ``reason=...outcome=...`` continuation)
+    and a coincidental substring (never followed by anything that quote-
+    scans as a string) is exactly whether the candidate ALSO quote-scans —
+    so that is what this checks, walking every later candidate rather than
+    just the first, in case an earlier one is itself a coincidence.
+    """
+    candidate = _find_marker(tail, "reason", reason_end)
+    while candidate is not None:
+        if _scan_repr_string_end(tail, candidate + len("reason=")) is not None:
+            return False  # a genuine competing record continuation exists
+        candidate = _find_marker(tail, "reason", candidate + len("reason="))
+    return True
 
 
 def _scan_repr_string_end(text: str, start: int) -> int | None:
@@ -222,13 +280,15 @@ def parse_awx_write_line(line: str) -> dict[str, str] | None:
         positions.append(found)
         pos = found + len(f"{name}=")
 
-    # reason's OWN position IS ambiguity-checked (unbounded forward): a
-    # genuine "reason=" always exists somewhere in a well-formed line, so
-    # if the occurrence we're about to treat as the boundary has ANOTHER
-    # one later, the one we found is exactly the shape the original
-    # lkirc-reported vector needs (a forged reason, real one still
-    # ahead) — caught here, before any extraction happens at all.
-    reason_marker_pos = _find_unambiguous_marker(tail, "reason", pos)
+    # reason's OWN marker position: found PLAIN here (no ambiguity check
+    # yet — codex's over-rejection finding on an earlier version of this
+    # fix, which used the generic unbounded-forward second-occurrence
+    # check and rejected a legitimate reason mentioning "reason=" in its
+    # own prose). The real ambiguity check runs further down, once
+    # reason's value-span is known via quote-scanning — see
+    # _reason_marker_is_unambiguous's docstring for why that's the correct
+    # boundary to check against instead.
+    reason_marker_pos = _find_marker(tail, "reason", pos)
     if reason_marker_pos is None:
         return None
     positions.append(reason_marker_pos)
@@ -303,36 +363,24 @@ def parse_awx_write_line(line: str) -> dict[str, str] | None:
         values[_TRAILING_FIELD] = ""
         return values
 
-    # dmf-cms#140 (lkirc, BLOCKING; hardened again after codex's fifth-
-    # vector finding on an earlier version of this fix): reason just
-    # quote-scanned SUCCESSFULLY, which is exactly the shape a forged,
-    # attacker-crafted reason needs to hijack the boundary of every field
-    # after it (a genuinely truncated/corrupted reason fails the scan
-    # instead, hits the branch above, and is already safe — nothing past
-    # a broken reason boundary is ever trusted at all). `target` and
-    # `workload` are %s-formatted — control-character escaped only, no
-    # `=`/space escaping — so a caller-influenced value can embed literal
-    # marker text that this sequential search would otherwise treat as
-    # genuine, forging e.g. a refused deploy into an in-flight one while
-    # the row still carries the real actor/action/target prefix.
-    #
-    # THE PROPERTY: no caller-influenced field's value may alter the
-    # parse of any other field. Every remaining marker search below goes
-    # through _find_unambiguous_marker — the SAME function the
-    # classification-fields loop above already used, which rejects not
-    # just an absent marker but an AMBIGUOUS one (a second occurrence
-    # later in the tail). There is no separate "count duplicates across
-    # some region" pass any more: an earlier version of this fix had one,
-    # scoped to "the whole line minus reason's span", and it rejected
-    # legitimate rows it shouldn't have — a caller-controlled field
-    # harmlessly containing a LATER field's marker text as incidental
-    # content (not an injection at all) still counted as a "duplicate"
-    # even though extraction, searching for that later field only from
-    # AFTER reason ends, would never have looked at the earlier text in
-    # the first place. Scoping each check to exactly where extraction
-    # itself searches — not a fixed region computed up front — is what
-    # makes "no legitimate row is wrongly dropped" and "no field can be
-    # forged" both true at once, instead of trading one for the other.
+    # dmf-cms#140 (lkirc, BLOCKING; hardened twice more after codex found
+    # a detect/extract mismatch, then an over-rejection, in earlier
+    # versions of this fix): reason just quote-scanned SUCCESSFULLY, which
+    # is exactly the shape a forged, attacker-crafted reason needs to
+    # hijack the boundary of every field after it (a genuinely truncated/
+    # corrupted reason fails the scan instead, hits the branch above, and
+    # is already safe — nothing past a broken reason boundary is ever
+    # trusted at all). Check whether a GENUINE competing continuation
+    # exists — see _reason_marker_is_unambiguous's own docstring for why
+    # this is checked as "does an alternate candidate ALSO quote-scan",
+    # not "does reason= merely occur again somewhere" (that naive version
+    # is what caused the over-rejection: reason is free text, and both a
+    # legitimate reason mentioning "reason=" in its own prose and an
+    # unrelated later field's raw value coincidentally containing
+    # "reason=" would otherwise be misread as a forged second record).
+    if not _reason_marker_is_unambiguous(tail, reason_end):
+        return None
+
     values["reason"] = reason_value
     pos = reason_end
 
