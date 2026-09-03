@@ -17,8 +17,7 @@ in-flight-vs-succeeded distinction, never claiming completion a watched
 action hasn't reached), the DERIVED RETENTION WINDOW, and the OUTCOME
 COMPLETENESS GUARD are the durable design and are meant to survive
 whatever replaces the transport underneath them. The LINE PARSER below is
-not that — it is a demo-scoped stopgap over a text log format that was
-never designed to be unambiguously re-parsed.
+not that — it is a demo-scoped stopgap over a text log format.
 
 THE WRITER FIX (dmfdeploy/dmfdeploy#140, 2026-09-03): seven review rounds
 finding a new forgery vector after every fix converged on a live, PROVEN
@@ -26,164 +25,53 @@ case — not merely unfound — where a forged line and a legitimate one were
 byte-identical, so no reader-side check could ever have existed for it.
 The operator's decision was to fix the WRITER instead of continuing to
 harden the reader: ``main.py``'s ``_audit_awx_write`` (and the
-auto-rollback dispatch's identical-prefix module-logger calls) now quote
-FIVE fields with ``%r`` — the same repr treatment ``reason`` has always
-had. Which five, and why:
-
-- ``target`` — a caller-supplied catalog key/run id/receiver instance,
-  reaching the audit line with no prior validation on several refusal
-  paths.
-- ``actor`` (``user.subject``) — an OIDC claim. ``user_from_claims``
-  applies ZERO validation to whatever the IdP asserts; "IdP-controlled" is
-  not "constrained", it is just a different party controlling it. Quoted
-  as of THIS round, not the original writer fix: the first version of
-  this fix left it plain, reasoning it was "not directly caller-controlled
-  in this system's actual configuration" — true today, but actor is
-  parsed BEFORE target in the classification scan, so on a
-  per-field-guessing design it sat exactly upstream of the one thing
-  proving everything after it, the single externally-sourced field the
-  first version of this fix left unclosed. Operator ruling: quote it, not
-  a defensive duplicate check — this arc has spent six rounds learning
-  that proving a boundary beats detecting a violation.
-- ``reason`` — always has been quoted; the mandatory C5 field taken
-  verbatim from the operator's own request body.
-- ``workload`` — caller-controlled on TWO routes: deploy's
-  ``body.get("workload")`` (main.py:384) and switch-source's
-  ``source_instance`` (main.py:346-352, validated only as "a non-empty
-  string").
-- ``capacity`` — server-computed today (``_capacity_audit_summary``,
-  never caller input on any current route) but quoted anyway: "not
-  caller-controlled today" was never treated as a reason to leave a field
-  open across this whole arc, and quoting it closes the class BY
-  CONSTRUCTION regardless of whether a future route ever makes it
-  reachable.
-
+auto-rollback dispatch's identical-prefix module-logger calls) quote FIVE
+fields with ``%r`` — ``target``, ``actor``, ``reason``, ``workload``,
+``capacity`` — the same repr treatment ``reason`` has always had.
 ``action``, ``role``, ``real_role``, ``request_id`` and ``outcome`` stay
-plain (``%s``) — every one of them is code-generated with a constrained
-shape, never externally sourced, so quoting would add nothing: ``action``
-is a fixed literal per call site; ``role``/``real_role`` are
-server-computed from group membership; ``request_id`` is always
-``uuid.uuid4().hex``; ``outcome`` is always one of a closed, short,
-server-chosen set of tokens.
+plain: every one of them is code-generated with a constrained shape,
+never externally sourced (``action`` a fixed literal per call site;
+``role``/``real_role`` server-computed from group membership;
+``request_id`` always ``uuid.uuid4().hex``; ``outcome`` always one of a
+closed, short, server-chosen set of tokens). Every line also carries an
+explicit ``fmt=2`` marker immediately after the "awx write: " prefix.
 
-THE DISPATCH PROBLEM the first version of this fix had, and the reason
-this file now looks the way it does: quoting the writer is necessary but
-was not sufficient on its own. The first reader-side implementation tried
-each field's own leading character to decide "is this line new-format or
-legacy" — PER FIELD, guessed from content. Codex found two live defects
-in exactly that guess, both data loss (not forgery, but squarely in scope
-under the operator's ruling that a legitimate row vanishing is a
-demo-visible defect):
+LEGACY LINES ARE NOT RENDERED, and this is an operator decision, not an
+implementation shortcut. lkirc's review said it plainly, twice: "The
+writer fix protects future records but cannot make retained ones
+trustworthy; fail closed/drop or otherwise authenticate legacy records
+before rendering them" — correct on principle, since a forged legacy line
+and a legitimate one were PROVEN byte-identical, so no reader-side check
+could ever authenticate one. ``parse_awx_write_line`` below drops any line
+without a valid ``fmt=2`` marker at its first check — not parsed by a
+weaker fallback grammar, not surfaced at all. This is a genuine product
+cost, not a technicality: the lane shows nothing from before the writer
+fix shipped, until new-format lines accumulate. It is also what makes
+``_parse_new_format_line`` below CLOSED, not open: every one of the seven
+forgery vectors found across this arc is closed BY CONSTRUCTION for every
+line this parser will ever accept — no residual gap, no second grammar
+with weaker protections to reason about, no migration window to bound.
 
-- a genuinely NEW-format, properly quoted ``workload``/``capacity`` whose
-  own value legitimately contained literal text like
-  ``reason='operator typo'`` tripped the legacy reason-ambiguity check,
-  which had no way to know it was looking inside an already-safely-bounded
-  quoted span, and the row was dropped;
-- a LEGACY (unquoted) line whose ``target``/``workload`` merely BEGAN
-  with a literal apostrophe was routed into the new quote-parser and hard
-  failed, because a legacy leading quote and a genuine new-format quote
-  are THE SAME CHARACTER — unrecoverable by inspecting the value.
+``test_writer_fix_round_trip_*`` in ``tests/test_audit_events_endpoint.py``
+is the actual evidence, not the absence of a failing test: real payloads
+through the REAL emitter, parsed by the REAL reader, confirmed to come
+back as literal field content, never as forged structure.
 
-Both defects trace to one root cause: the reader had to GUESS, per value,
-which grammar a line was written in, and that guess was itself a format
-ambiguity — the identical disease one level up from the one the writer
-fix had just cured. An alternative that was considered and rejected: try
-the whole line under the strict new grammar first, fall back to the
-legacy grammar wholesale on any failure. That narrows the guess from
-per-field to per-line, but does not remove it — "did parsing succeed" is
-still an inference from the bytes, and a legacy line could in principle
-still parse successfully but wrongly under the new grammar by
-coincidence. THE FIX ADOPTED INSTEAD: an explicit, positional format
-marker. Every line emitted by the CURRENT writer carries ``fmt=2``
-immediately after the "awx write: " prefix; every line already in Loki
-from before this marker existed does not, and never will (nothing about
-re-reading old bytes can retroactively add a marker nobody wrote).
-``parse_awx_write_line`` below checks for that marker ONCE, at a fixed
-position, and dispatches to one of two FULLY SEPARATE parsing functions —
-no line is ever run through both, and no field's content is ever
-inspected to decide which grammar applies:
-
-- ``_parse_new_format_line`` — target/actor/reason/workload/capacity are
-  ALL REQUIRED to be quote-scannable. A value that isn't, or doesn't
-  validly close, is a hard classification failure (AC 5b), never a guess
-  and never a fall-through to the legacy grammar (an attacker forcing
-  that fallback by opening a fake quote and then breaking the promise
-  would just resurrect the exact class this fix removes). No ambiguity
-  checks anywhere in this function, because none are needed: every
-  quoted field's boundary is proven by its own quote-scan, independent of
-  every other field's content, so nothing can inject a marker into
-  anything else — see the function's own docstring for the full
-  reasoning.
-- ``_parse_legacy_format_line`` — the EXACT mechanism as it stood before
-  this fix, byte-for-byte: target/workload/capacity unquoted and
-  boundary-guessed, the classification-field duplicate check, the
-  unambiguous-marker check for workload/capacity, and reason's own
-  quote-aware ambiguity discriminator (the sixth-vector fix), all
-  unchanged. This is what lines already in Loki keep working against.
-
-``test_writer_fix_round_trip_*`` and ``test_format_dispatch_*`` in
-``tests/test_audit_events_endpoint.py`` are the actual evidence, not the
-absence of a failing test: real payloads through the REAL emitter,
-parsed by the REAL reader, confirmed to come back as literal field
-content — including the two payloads codex found, and one aimed at
-actor, new this round. The dispatch's own exclusivity is asserted and
-mutation-verified directly: delete the marker check and the tests that
-assert "no line is accepted by both parsers" fail loudly.
-
-SIX of the seven forgery vectors found across this arc were closed on
-the LEGACY path before this round (mutation-tested, each named below);
-the seventh — a forged line and a legitimate one being byte-for-byte
-identical — is STILL open there, exactly as it always was, because
-nothing about re-reading old, unquoted bytes can prove a boundary that
-was never written. On the NEW path, all seven are closed BY
-CONSTRUCTION, including the one that was proven byte-identical to
-legitimate data: quoting removes the ambiguity the byte-identity
-argument depended on, in a way no amount of additional reader-side
-detection ever could.
-
-THAT GAP IS BOUNDED, NOT PERMANENT — but stating the bound is EXACTLY the
-mistake dmfdeploy/dmfdeploy#530 exists to prevent, so state it #530's
-way, not as a number: THE WINDOW IS THE DEPLOYED RETENTION, WHATEVER THE
-PROFILE SETS, never a role default cited as if it were deployed reality.
-dmf-cms's own Loki stream carries no per-stream retention override
-(dmfdeploy/dmfdeploy#530's three ``retention_stream`` selectors are all
-security streams, none matching ``job="dmf-cms/dmf-cms"``), so it falls
-to whatever the deploying profile's ``loki_retention`` is. dmf-infra's
-OWN role default is 720h/30 days — but a deploying profile overrides
-that default, and the sandbox profile this ships to does: dmf-env's
-``bin/init-wizard.sh`` sets ``loki_retention: 168h`` (7 days) for the
-sandbox. IF that generator is what actually rendered the deployed
-inventory — a live reading of the running environment's own inventory
-is the only thing that would fully settle it, and none has been taken
-— THEN a legacy-format line on that environment is gone within 7 days
-of this fix shipping. That conditional is the whole claim this note is
-entitled to make: 7 days is the best-sourced figure available given what
-has actually been checked, not a settled fact about any specific running
-deployment, and it moves the moment a live inventory reading says
-otherwise. Do not "simplify" this back to a single code path before that
-window has fully elapsed on whatever environment is actually running
-this; the dual dispatch is what lets old data keep working at all
-during it.
-
-The five forgery vectors closed on the legacy path, for the historical
-record: a caller-controlled field's raw text hijacking a later field's
-boundary; detection and extraction disagreeing about what a marker even
-is; the fix for the first two over-correcting into rejecting legitimate
-rows whose own text happened to contain marker-shaped substrings; a
-truncated genuine reason marker losing to an injected complete one; and
-target's own captured value legitimately containing marker-shaped text
-being over-rejected by a duplicate-marker check that didn't know it was
-looking inside an already-safely-bounded quoted span. Each was found by
-an adversarial review round (codex and, for the sixth vector, a human
-reviewer codex's own pass had missed) and is mutation-tested. Do not
-treat a clean review pass — on either path — as proof there is no next
-case on THAT path; treat it as the ceiling of what hardening a
-hand-rolled boundary scanner can promise for data that was never quoted
-to begin with. The production answer for the legacy path, while it still
-exists, was always the deferred structured envelope (plan §5); for the
-current path, quoting the caller-controlled fields and dispatching on an
-explicit marker IS that answer, applied narrowly rather than deferred.
+Historical record of the seven vectors this design closes (found by codex
+across several review rounds, and for the sixth, by a human reviewer
+codex's own pass had missed; each mutation-tested at the time): a
+caller-controlled field's raw text hijacking a later field's boundary;
+detection and extraction disagreeing about what a marker even is;
+over-correcting into rejecting legitimate rows whose own text happened to
+contain marker-shaped substrings; a truncated genuine reason marker
+losing to an injected complete one; a caller-controlled value legitimately
+containing marker-shaped text being mistaken for structure by a check
+that didn't know it was looking inside an already-safely-bounded quoted
+span; and a forged line proven byte-identical to a legitimate one,
+unclosable by any reader-side check — the finding that ended the
+reader-hardening approach entirely and moved the fix upstream to the
+writer, with an explicit format marker so the reader never again has to
+guess which grammar a line was written in.
 """
 
 from __future__ import annotations
@@ -227,40 +115,27 @@ _MAX_RESULT_LINES = 5000
 
 
 # ----------------------------------------------------------------------
-# Line parsing. Two grammars, dispatched by an explicit marker — see the
-# module STATUS NOTE above for the full design and history.
-#
-# CURRENT format (dmfdeploy/dmfdeploy#140's writer fix):
+# Line parsing — ONE grammar (dmfdeploy/dmfdeploy#140's writer fix). A
+# line without it is not rendered at all; see the module STATUS NOTE.
 #
 #   awx write: fmt=2 action=%s actor=%r role=%s real_role=%s
 #              request_id=%s target=%r reason=%r outcome=%s workload=%r
 #              capacity=%r [linked_request_id=%s]
 #
-# LEGACY format, still live in Loki until it ages out of retention (see
-# the module STATUS NOTE for exactly how long that is and why the number
-# is conditional, not a fact):
-#
-#   awx write: action=%s actor=%s role=%s real_role=%s request_id=%s
-#              target=%s reason=%r outcome=%s workload=%s capacity=%s
-#              [linked_request_id=%s]
-#
 # `request_id=<id>` is immune to the trailing `linked_request_id=<id>`
-# substring that contains it on BOTH grammars (plan §4.2's named hazard):
-# every plain field's search anchors on the NEXT field's own marker
-# starting only from just past the current field's marker — sequential,
-# never a whole-line search — so `request_id=` never runs anywhere near
-# the end of the line where `linked_request_id=` lives.
+# substring that contains it (plan §4.2's named hazard): every plain
+# field's search anchors on the NEXT field's own marker starting only
+# from just past the current field's marker — sequential, never a
+# whole-line search.
 # ----------------------------------------------------------------------
 
-_FIELDS_BEFORE_REASON = ("action", "actor", "role", "real_role", "request_id", "target")
-# The five fields that are NEVER caller-controlled and stay plain on the
-# LEGACY grammar — `target` is handled separately in
-# _parse_legacy_format_line precisely because it ISN'T one of these.
-_PLAIN_FIELDS_BEFORE_REASON = ("action", "actor", "role", "real_role", "request_id")
-_FIELDS_AFTER_REASON = ("outcome", "workload", "capacity")
 _TRAILING_FIELD = "linked_request_id"
 
-_ALL_MARKER_NAMES = (*_FIELDS_BEFORE_REASON, "reason", *_FIELDS_AFTER_REASON, _TRAILING_FIELD)
+_ALL_MARKER_NAMES = (
+    "action", "actor", "role", "real_role", "request_id",
+    "target", "reason", "outcome", "workload", "capacity",
+    _TRAILING_FIELD,
+)
 
 
 def _marker_pattern(name: str) -> re.Pattern[str]:
@@ -272,171 +147,26 @@ def _marker_pattern(name: str) -> re.Pattern[str]:
     # character, so "=" itself terminates the match unambiguously.
     #
     # \w, not [A-Za-z0-9_]: Python 3 str patterns are Unicode-aware by
-    # default, so this also treats a marker glued directly after a
-    # non-ASCII identifier character (e.g. a catalog key ending in an
-    # accented letter) as still part of that field's own value, not a
-    # boundary — the same "glued means it's data, not a marker" rule an
-    # ASCII-only class would only apply inconsistently. Relevant to the
-    # LEGACY grammar only now (the new grammar's quotable fields never
-    # rely on marker boundaries at all), but there is no reason to leave
-    # an ASCII-only gap sitting in the one shared definition.
+    # default, so a marker glued directly after a non-ASCII identifier
+    # character (e.g. a catalog key ending in an accented letter) stays
+    # part of that field's own value, not a boundary.
     return re.compile(r"(?<!\w)" + re.escape(name) + "=")
 
 
 _MARKER_PATTERNS = {name: _marker_pattern(name) for name in _ALL_MARKER_NAMES}
 
-# The fmt= marker is a DISPATCH KEY, not a data field: it is matched
-# positionally (must be the very first thing after "awx write: "), never
-# searched for like the fields above, and it is never a field a caller
-# could inject text through — main.py's writer emits it as a fixed
-# literal. Kept out of _ALL_MARKER_NAMES/_MARKER_PATTERNS deliberately —
-# mixing a positional dispatch key into a registry of searched field
-# markers would blur a distinction this whole redesign exists to make
-# explicit.
-#
-# TWO patterns, deliberately, not one (codex's F1, 2026-09-03): presence
-# of the "fmt=" TOKEN and a WELL-FORMED marker are different questions.
-# _FMT_TOKEN_RE answers "does this line CLAIM to be new-format at all" —
-# loose, only the literal token. _FMT_MARKER_RE answers "is that claim
-# well-formed and which version" — strict, requires a parseable version
-# number. A line where the token is present but the marker doesn't
-# parse (`fmt=`, `fmt=2x`, ...) is NOT the same as a line with no token
-# at all: it is a CORRUPTED claim, not an absent one, and must fail
-# closed exactly like an unsupported version does — never fall through
-# to the legacy grammar, which would silently downgrade a mangled line
-# into the weaker parser (where vector 7 is open) instead of rejecting
-# it. See parse_awx_write_line's dispatch for how the two are combined.
-_FMT_TOKEN_RE = re.compile(r"^\s*fmt=")
 _FMT_MARKER_RE = re.compile(r"^\s*fmt=(\d+)\s")
-
 _NEW_FORMAT_VERSION = "2"
 
 
 def _find_marker(tail: str, name: str, start: int) -> int | None:
     """Position of the first occurrence of ``<name>=`` at or after
     ``start``, using the single shared boundary-aware definition
-    (``_MARKER_PATTERNS``).
-
-    dmf-cms#140's real root cause (codex's fifth vector, found against an
-    earlier fix here): detection and extraction used TWO DIFFERENT
-    definitions of "what is a marker" — a boundary-aware regex in one
-    place, plain ``str.find()`` in the other — so an injected marker
-    glued directly to a preceding character was invisible to one and
-    visible to the other, and the guard passed while extraction still
-    walked into the forged boundary. There is exactly one definition now,
-    and every marker search in this module — plain or ambiguity-checked
-    (``_find_unambiguous_marker`` below) — is built on it, so they cannot
-    disagree about what counts as a marker.
-
-    As a side effect this also closes what codex separately asked for: a
-    marker-shaped substring GLUED inside a caller-controlled field (no
-    space before it) is not a boundary at all, so it stays part of that
-    field's own value instead of truncating it at a false split —
-    legitimate target/workload data survives intact. Used by BOTH
-    grammars: the new format's quotable-field boundaries never depend on
-    it, but its own MARKER (the "name=" token itself) is still found this
-    way on both, and every plain field on both grammars uses it directly.
-    """
+    (``_MARKER_PATTERNS``). Every plain-field search in this module is
+    built on it, and every quoted field's own marker is found this way
+    too (only the VALUE that follows is parsed differently)."""
     match = _MARKER_PATTERNS[name].search(tail, start)
     return match.start() if match else None
-
-
-def _find_unambiguous_marker(tail: str, name: str, start: int) -> int | None:
-    """Position of ``<name>=`` at or after ``start``, or None if it's
-    either absent OR ambiguous — a SECOND occurrence of the same marker
-    also exists somewhere later in the tail, so the one found first
-    cannot be trusted to be the genuine one rather than an injected decoy
-    with the real marker still ahead of it (dmf-cms#140).
-
-    LEGACY GRAMMAR ONLY (dmfdeploy/dmfdeploy#140, the writer fix): the
-    new format's quotable fields never call this — their boundaries are
-    proven by quote-scanning, unconditionally, so there is nothing left
-    for a duplicate-marker check to be ambiguous about. This function
-    still protects the exact same things it always did, for lines still
-    written in the legacy shape:
-
-    Used for ``workload`` — REQUIRED, not merely defensive (codex F3,
-    correcting an earlier version of this audit that understated it):
-    ``workload`` is caller-controlled on TWO routes, not one — the deploy
-    path's ``body.get("workload")`` (main.py:384), and switch-source's
-    ``source_instance`` (main.py:346-352, validated only as "a non-empty
-    string", nothing more; passed straight through as ``workload=`` at
-    main.py:5869, :5879, :5892, :5941, :5960). Either route can carry
-    literal marker text, so this check is what protects ``capacity``'s
-    boundary from being hijacked, not a belt-and-suspenders extra.
-
-    Also used, PURELY DEFENSIVELY, for ``outcome``/``capacity`` and the
-    trailing ``linked_request_id`` — an adversarial check confirmed each
-    of those three genuinely cannot carry caller text on any current
-    route (``outcome`` is always a fixed, closed set of tokens; ``capacity``
-    is server-computed budget/preflight data, ``_capacity_audit_summary``;
-    ``linked_request_id`` is backend-generated, an operation's own
-    ``request_id``) — so for THOSE three, unlike ``workload``, this
-    ambiguity check protects against nothing reachable today. Left as-is
-    per operator ruling (2026-09-03): named as a known, accepted
-    imprecision rather than fixed, since none of the three is exploitable
-    and further hardening of the legacy parser is explicitly out of scope.
-
-    NOT used for ``reason`` itself — see ``_reason_marker_is_unambiguous``
-    below for why a plain second-occurrence count is the wrong check for a
-    free-text field.
-    """
-    found = _find_marker(tail, name, start)
-    if found is None:
-        return None
-    if _find_marker(tail, name, found + len(f"{name}=")) is not None:
-        return None  # a second occurrence exists — ambiguous, not just present
-    return found
-
-
-def _reason_marker_is_unambiguous(tail: str, reason_end: int) -> bool:
-    """True unless a candidate second ``reason=`` occurrence after
-    ``reason_end`` COULD BE a real repr'd string — i.e. its ``=`` is
-    immediately followed by a quote character. Whether that candidate's
-    quoted string ever actually closes does NOT matter (dmf-cms#140,
-    lkirc, 2026-09-03 17:24 — the sixth vector): a complete quote-scan is
-    a genuine competing record continuation (the original target-injection
-    vector); an UNTERMINATED one means this row's own genuine trailing
-    ``reason=`` got truncated, and an earlier version of this function
-    treated "didn't finish quote-scanning" as "therefore harmless" —
-    which is exactly backwards. Both shapes are equally untrustworthy and
-    both must fail AC 5b's classification check the same way.
-
-    LEGACY GRAMMAR ONLY: on the new format, target is ALSO independently
-    quote-bound, so the search for reason='s own marker starts exactly
-    where target's quote-scan ended — never from "find the first reason=
-    anywhere" — and this whole question stops being askable. That is why
-    ``_parse_new_format_line`` never calls this function at all, not
-    because the question was re-answered differently, but because
-    nothing upstream of reason on that grammar can inject a competing
-    candidate in the first place.
-
-    codex's earlier follow-up finding on dmf-cms#140 (P1, over-rejection)
-    still holds and is why this is keyed on "starts with a quote", not
-    "any later reason= occurrence at all": reason is the one field that is
-    genuinely free text an operator writes, so it can legitimately — and
-    ordinarily does — contain the literal substring "reason=" as part of
-    an honest sentence ("retry because reason=operator typo"). That text
-    sits INSIDE reason's own, already-quote-scanned span (at or before
-    ``reason_end``) and this function never looks there — it only
-    searches AT/AFTER ``reason_end``. Separately, a coincidental "reason="
-    substring can sit inside a LATER field's own raw, unescaped value —
-    e.g. an auto-rollback whose ``linked_request_id`` happens to contain
-    "reason=" as literal text (``linked_request_id=req-reason=x``) — and
-    that candidate's ``=`` is followed by an ordinary character ("x"), not
-    a quote, so it can never be mistaken for the start of a repr'd string
-    and is correctly treated as harmless. A quote-starting candidate is
-    never that kind of coincidence: no other field's raw text has a
-    reason to independently begin with a bare quote character right after
-    matching this marker's shape.
-    """
-    candidate = _find_marker(tail, "reason", reason_end)
-    while candidate is not None:
-        value_start = candidate + len("reason=")
-        if value_start < len(tail) and tail[value_start] in ("'", '"'):
-            return False  # could be a real repr string, complete or not — ambiguous either way
-        candidate = _find_marker(tail, "reason", value_start)
-    return True
 
 
 def _scan_repr_string_end(text: str, start: int) -> int | None:
@@ -463,23 +193,13 @@ def _scan_repr_string_end(text: str, start: int) -> int | None:
 def _require_quoted_field(tail: str, name: str, start: int) -> tuple[int, str, int] | None:
     """Locate ``<name>=`` at/after ``start`` and REQUIRE its value to be
     repr-quoted — the fmt=2 grammar's contract for target/actor/reason/
-    workload/capacity (dmfdeploy/dmfdeploy#140). Used ONLY by
-    ``_parse_new_format_line``: on that grammar there is no "maybe
-    quoted, maybe not" question to ask, because the line already declared
-    which grammar it uses via the fmt= marker before this function is
-    ever called — see ``parse_awx_write_line``'s dispatch.
+    workload/capacity (dmfdeploy/dmfdeploy#140).
 
     Returns ``(marker_pos, value, value_end)`` on success. Returns
     ``None`` if the marker is missing, its value does not start with a
     quote at all, the quote opens but never validly closes, or it doesn't
     ``literal_eval`` to a str — EVERY one of those is a hard
-    classification failure (AC 5b), never a partial admission and NEVER a
-    fall-through to the legacy grammar. That last point is deliberate,
-    not an oversight: a line that claims fmt=2 and then doesn't deliver a
-    properly quoted field cannot be trusted at all, not just on that one
-    field — allowing a fall-through would let an attacker declare the
-    marker, open a fake quote, and force the weaker legacy handling on
-    purpose, resurrecting the exact class this fix removes.
+    classification failure (AC 5b), never a partial admission.
 
     ``value_end`` is the index just past the closing quote — the caller's
     search for the NEXT field starts there, with no further ambiguity
@@ -492,7 +212,7 @@ def _require_quoted_field(tail: str, name: str, start: int) -> tuple[int, str, i
         return None
     value_start = marker + len(f"{name}=")
     if value_start >= len(tail) or tail[value_start] not in ("'", '"'):
-        return None  # fmt=2 promises quoting; not quoted at all is a hard failure here
+        return None  # fmt=2 promises quoting; not quoted at all is a hard failure
     value_end = _scan_repr_string_end(tail, value_start)
     if value_end is None:
         return None  # opened a quote, never closed
@@ -507,41 +227,23 @@ def _require_quoted_field(tail: str, name: str, start: int) -> tuple[int, str, i
 
 def parse_awx_write_line(line: str) -> dict[str, str] | None:
     """Parse one ``awx write:`` line, or None if it doesn't parse well
-    enough to CLASSIFY the row (plan §7 AC 5b).
-
-    Dispatches on an EXPLICIT, positional format marker
-    (dmfdeploy/dmfdeploy#140) rather than inferring the grammar from any
-    field's content — see the module STATUS NOTE for why an earlier,
-    per-field-guessing version of this function was wrong, and what it
-    cost. A line carrying ``fmt=2`` immediately after the "awx write: "
-    prefix is parsed by ``_parse_new_format_line`` (strict: every
-    quotable field required, no ambiguity checks needed); a line with NO
-    ``fmt=`` token at all in that position — every line already in Loki
-    from before this marker existed — is parsed by
-    ``_parse_legacy_format_line`` (the exact pre-fix mechanism,
-    unchanged).
-
-    A line that CLAIMS a format (any ``fmt=`` token present) but whose
-    claim does not parse into a version this code recognises fails
-    closed — this covers both an unsupported-but-well-formed version
-    (``fmt=3``) and a malformed marker (``fmt=``, ``fmt=2x``, ...)
-    identically (codex's F1, 2026-09-03): a mangled marker is MORE
-    suspicious than an absent one, not less, and must never silently
-    downgrade to the legacy grammar — where vector 7 is still open —
-    just because it failed to match the strict pattern. Legacy parsing
-    is reserved for the genuine absence of any format claim, never for a
-    broken one. No line is ever run through more than one parser.
+    enough to CLASSIFY the row (plan §7 AC 5b) — including, deliberately,
+    any line without a valid ``fmt=2`` marker at all (operator decision,
+    2026-09-03: see the module STATUS NOTE for why retained pre-fix lines
+    are dropped rather than parsed by a weaker grammar). A line that
+    claims a format via a malformed marker (``fmt=``, ``fmt=2x``, ...) or
+    an unsupported version (``fmt=3``) is rejected identically to a line
+    with no marker at all — there is exactly one way to be accepted:
+    a well-formed ``fmt=2``.
     """
     idx = line.find("awx write:")
     if idx == -1:
         return None
     tail = line[idx + len("awx write:"):]
 
-    if _FMT_TOKEN_RE.match(tail) is None:
-        return _parse_legacy_format_line(tail)  # no format claim at all -- genuine legacy
     fmt_match = _FMT_MARKER_RE.match(tail)
     if fmt_match is None or fmt_match.group(1) != _NEW_FORMAT_VERSION:
-        return None  # a format claim that's malformed or unsupported -- fail closed, never guess
+        return None
     return _parse_new_format_line(tail[fmt_match.end():])
 
 
@@ -550,27 +252,18 @@ def _parse_new_format_line(tail: str) -> dict[str, str] | None:
     target, actor, reason, workload and capacity are ALL required to be
     repr-quoted — every one of their boundaries is PROVEN by quote-
     scanning, never guessed, so this function needs no ambiguity checks
-    anywhere. That is the entire point of dispatching on an explicit
-    marker rather than sniffing each value's own leading character: once
-    the LINE ITSELF states which grammar it uses, no field's content can
-    ever be mistaken for another field's marker, because none of the
-    quoted fields' boundaries depend on searching for the next one — each
-    is independently closed by its own quote, and the search for the
-    NEXT field's marker always starts exactly where the current one's
-    quote-scan ended.
+    anywhere. No field's content can ever be mistaken for another field's
+    marker, because none of the quoted fields' boundaries depend on
+    searching for the next one — each is independently closed by its own
+    quote, and the search for the NEXT field's marker always starts
+    exactly where the current one's quote-scan ended.
 
     ``action``, ``role``, ``real_role``, ``request_id`` and ``outcome``
     stay plain (``%s``) — every one of them is code-generated with a
-    constrained shape, never externally sourced: ``action`` is a fixed
-    literal per call site; ``role``/``real_role`` are server-computed
-    from group membership; ``request_id`` is always
-    ``uuid.uuid4().hex``; ``outcome`` is always one of a closed, short,
-    server-chosen set of tokens.
+    constrained shape, never externally sourced.
 
     Any violation of the fmt=2 contract — a quotable field missing, not
     quoted, or malformed — is a hard classification failure (AC 5b).
-    There is deliberately no fallback to the legacy grammar from here —
-    see ``_require_quoted_field``'s own docstring for why.
     """
     action_marker = _find_marker(tail, "action", 0)
     if action_marker is None:
@@ -635,200 +328,15 @@ def _parse_new_format_line(tail: str) -> dict[str, str] | None:
         "capacity": capacity_value,
     }
 
-    # linked_request_id — plain, optional trailing field, same semantics
-    # as the legacy grammar. No ambiguity check needed: every quotable
-    # field between here and the start of the line is independently
-    # quote-bound, so nothing upstream can inject a fake marker for this
-    # one either.
+    # linked_request_id — plain, optional trailing field. No ambiguity
+    # check needed: every quotable field between here and the start of
+    # the line is independently quote-bound, so nothing upstream can
+    # inject a fake marker for this one either.
     trailing_marker = _find_marker(tail, _TRAILING_FIELD, pos)
     values[_TRAILING_FIELD] = (
         tail[trailing_marker + len(f"{_TRAILING_FIELD}="):].strip() if trailing_marker is not None else ""
     )
 
-    if values[_TRAILING_FIELD] and not (
-        values["action"] == "rollback" and values["actor"] == _AUTO_ROLLBACK_ACTOR
-    ):
-        return None
-
-    return values
-
-
-def _parse_legacy_format_line(tail: str) -> dict[str, str] | None:
-    """Parse the pre-fix, unquoted grammar — byte-for-byte the mechanism
-    that stood before dmfdeploy/dmfdeploy#140's writer fix, unchanged by
-    this round. Every line already in Loki without an ``fmt=`` marker
-    (``parse_awx_write_line``'s dispatch) is parsed here, and stays
-    parseable this way until it ages out of retention — see the module
-    STATUS NOTE for exactly how long that is.
-
-    action/actor/request_id/target must all be cleanly extractable, or
-    the row is dropped, never partially admitted (plan §7 AC 5b). A
-    malformed ``reason`` alone does NOT drop the row (that's an
-    enrichment failure, not a classification failure — see the fallback
-    inline below); the row is retained with a blank reason instead.
-    """
-    positions: list[int] = []
-    pos = 0
-    for name in _FIELDS_BEFORE_REASON:
-        found = _find_marker(tail, name, pos)
-        if found is None:
-            return None
-        positions.append(found)
-        pos = found + len(f"{name}=")
-
-    # reason's OWN marker position: found PLAIN here (no ambiguity check
-    # yet — codex's over-rejection finding on an earlier version of this
-    # fix, which used the generic unbounded-forward second-occurrence
-    # check and rejected a legitimate reason mentioning "reason=" in its
-    # own prose). The real ambiguity check runs further down, once
-    # reason's value-span is known via quote-scanning — see
-    # _reason_marker_is_unambiguous's docstring for why that's the correct
-    # boundary to check against instead.
-    reason_marker_pos = _find_marker(tail, "reason", pos)
-    if reason_marker_pos is None:
-        return None
-    positions.append(reason_marker_pos)
-
-    # dmf-cms#140 (codex's fifth-vector finding on an earlier version of
-    # this check): the six classification markers found above must ALSO
-    # be unambiguous, but scoped to BEFORE reason starts — exactly the
-    # region their own sequential search traverses, since it always stops
-    # at the first "reason=" it finds. A duplicate anywhere else (inside
-    # reason's own quoted value, or in outcome/workload/capacity after
-    # it) is irrelevant to THESE six fields and must not reject a
-    # legitimate row over it — an earlier, unbounded version of this
-    # check rejected a genuine reason that simply mentioned "role=" or
-    # "target=" in ordinary prose, and a genuinely malformed reason whose
-    # own (about-to-be-discarded) text happened to contain "role=admin".
-    before_reason = tail[:reason_marker_pos]
-    for name in _FIELDS_BEFORE_REASON:
-        if len(_MARKER_PATTERNS[name].findall(before_reason)) > 1:
-            return None
-
-    values: dict[str, str] = {}
-    for i, name in enumerate(_FIELDS_BEFORE_REASON):
-        start = positions[i] + len(f"{name}=")
-        end = positions[i + 1]
-        values[name] = tail[start:end].strip()
-
-    reason_start = positions[-1] + len("reason=")
-    reason_end = _scan_repr_string_end(tail, reason_start)
-    reason_value: str | None = None
-    if reason_end is not None:
-        try:
-            candidate = ast.literal_eval(tail[reason_start:reason_end])
-            if isinstance(candidate, str):
-                reason_value = candidate
-        except (ValueError, SyntaxError):
-            pass
-
-    if reason_value is None:
-        # AC 5b: a malformed `reason` is an ENRICHMENT failure, not a
-        # CLASSIFICATION failure — action/actor/request_id/target already
-        # parsed cleanly above (strictly BEFORE reason_start, from a source
-        # region reason's own content can never influence), so the row is
-        # still fully usable for membership/gating (codex R496-A F5:
-        # dropping it here discarded an otherwise-classifiable record over
-        # one damaged field).
-        #
-        # codex R496-A NEW-2 — SECURITY: an earlier version of this branch
-        # then searched FORWARD from reason_start for the next `outcome=`
-        # marker to "resume" parsing. `reason` is the mandatory C5 field
-        # taken VERBATIM from the operator's own request body
-        # (_require_reason) — so once its boundary is lost, ANY text after
-        # reason_start must be treated as attacker-influenced, not
-        # log-corruption noise. A forward scan let marker-shaped text
-        # *inside* a deliberately malformed reason be picked up as the
-        # row's real outcome/workload/capacity — forging an audit record's
-        # own outcome (e.g. making a refused deploy read as "dispatched")
-        # using nothing but the reason text an operator is free to type.
-        # There is no way to recover a trustworthy boundary once reason's
-        # own end is unknown, so nothing after it is parsed at all: every
-        # field below defaults to a value that fails CLOSED, never one an
-        # attacker chose. An empty outcome is not in any action's
-        # acceptance allowlist (resolve_outcome_state), so it always
-        # renders as failed/unknown — never a forged success or in-flight
-        # claim. In genuine data this whole branch never fires —
-        # `reason=%r` is a Python repr, always well-formed — so it only
-        # matters for an already-corrupted or adversarial line, where nothing
-        # past this point was ever going to be trustworthy anyway.
-        values["reason"] = ""
-        values["outcome"] = ""
-        values["workload"] = ""
-        values["capacity"] = ""
-        values[_TRAILING_FIELD] = ""
-        return values
-
-    # dmf-cms#140 (lkirc, BLOCKING; hardened twice more after codex found
-    # a detect/extract mismatch, then an over-rejection, in earlier
-    # versions of this fix): reason just quote-scanned SUCCESSFULLY, which
-    # is exactly the shape a forged, attacker-crafted reason needs to
-    # hijack the boundary of every field after it (a genuinely truncated/
-    # corrupted reason fails the scan instead, hits the branch above, and
-    # is already safe — nothing past a broken reason boundary is ever
-    # trusted at all). Check whether a GENUINE competing continuation
-    # exists — see _reason_marker_is_unambiguous's own docstring for why
-    # this is checked as "does an alternate candidate ALSO quote-scan",
-    # not "does reason= merely occur again somewhere" (that naive version
-    # is what caused the over-rejection: reason is free text, and both a
-    # legitimate reason mentioning "reason=" in its own prose and an
-    # unrelated later field's raw value coincidentally containing
-    # "reason=" would otherwise be misread as a forged second record).
-    if not _reason_marker_is_unambiguous(tail, reason_end):
-        return None
-
-    values["reason"] = reason_value
-    pos = reason_end
-
-    after_positions: list[int] = []
-    for name in _FIELDS_AFTER_REASON:
-        found = _find_unambiguous_marker(tail, name, pos)
-        if found is None:
-            return None
-        after_positions.append(found)
-        pos = found + len(f"{name}=")
-
-    trailing_found = _find_unambiguous_marker(tail, _TRAILING_FIELD, pos)
-    trailing_pos = trailing_found if trailing_found is not None else -1
-    tail_end = trailing_pos if trailing_pos != -1 else len(tail)
-    boundaries = [*after_positions, tail_end]
-    for i, name in enumerate(_FIELDS_AFTER_REASON):
-        start = boundaries[i] + len(f"{name}=")
-        end = boundaries[i + 1]
-        values[name] = tail[start:end].strip()
-
-    values[_TRAILING_FIELD] = (
-        tail[trailing_pos + len(f"{_TRAILING_FIELD}="):].strip() if trailing_pos != -1 else ""
-    )
-
-    # dmf-cms#140 follow-up (orchestrator's own sweep, live): `capacity` is
-    # the one field the ambiguity check above cannot cover for
-    # `linked_request_id` specifically, and the reason is structural, not
-    # an oversight — `linked_request_id` is OPTIONAL (0 or 1 occurrences
-    # is legitimate, unlike every other marker, which is always exactly
-    # 1), so an attacker injecting exactly ONE fake occurrence into
-    # capacity's own value (which is otherwise unbounded — nothing
-    # legitimately follows capacity on a non-auto-rollback line) creates
-    # no SECOND occurrence to be caught as ambiguous; it's just the only
-    # one, identical in shape to a genuine one. `capacity` is server-computed today
-    # (_capacity_audit_summary, never caller input) so this is not
-    # currently reachable through THIS field — but treating "not caller-
-    # controlled today" as a reason to leave it open is exactly the
-    # reasoning this round exists to stop trusting (see this morning's
-    # retention-selector hazard for the same shape). Close it
-    # structurally instead: `linked_request_id` is only ever genuine on
-    # the auto-rollback dispatch's own emission, whose action/actor are
-    # both request_id-independent, injection-proof values (a hardcoded
-    # literal and role-derived text respectively — never caller %s
-    # input, and both are locked in from a source region no later
-    # field's content can reach, per the classification-marker ordering
-    # above). So a non-blank `linked_request_id` on any OTHER (action,
-    # actor) pair is definitive proof of a corrupted boundary somewhere
-    # upstream of it, even though nothing rendered from it would be
-    # trusted downstream either way (only the auto-rollback join
-    # consults this field at all) — reject the whole row, consistent
-    # with every other ambiguity this function treats as a
-    # classification failure.
     if values[_TRAILING_FIELD] and not (
         values["action"] == "rollback" and values["actor"] == _AUTO_ROLLBACK_ACTOR
     ):
