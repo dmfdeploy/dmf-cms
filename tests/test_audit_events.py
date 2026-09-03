@@ -411,6 +411,86 @@ def test_property_a_genuinely_truncated_reason_still_uses_the_safe_fallback():
     assert fields["outcome"] == ""
 
 
+def test_the_over_rejection_asymmetry_as_one_set():
+    # codex's over-rejection finding (P1) on an earlier version of the
+    # dmf-cms#140 fix, and the exact asymmetry that named the bug: a
+    # legitimate row can be lost by the SAME mechanism meant to stop a
+    # forged one, and it is MORE likely to happen than an attack — an
+    # operator typing "reason=" while explaining a retry is ordinary.
+    # Asserted together, deliberately, so a future fix aimed at one case
+    # cannot silently regress another (the exact failure mode this whole
+    # bug was: fixing the classification-fields scope broke reason's
+    # prose case, fixing THAT broke nothing else only because this test
+    # exists to prove it).
+    role_in_prose = (
+        "awx write: action=deploy actor=alice role=operator real_role= "
+        "request_id=rid-1 target=wl-a reason='checked role= in the runbook' "
+        "outcome=dispatched workload=wl-a capacity="
+    )
+    reason_in_prose = (
+        "awx write: action=deploy actor=alice role=operator real_role= "
+        "request_id=rid-2 target=wl-a reason='retry because reason=operator typo' "
+        "outcome=dispatched workload=wl-a capacity="
+    )
+    quoted_whole_log_line = (
+        "awx write: action=deploy actor=alice role=operator real_role= "
+        "request_id=rid-3 target=wl-a reason='saw: action=deploy outcome=failed in the log' "
+        "outcome=dispatched workload=wl-a capacity="
+    )
+    marker_shaped_linked_id = (
+        "awx write: action=rollback actor=system:auto-rollback role=system real_role= "
+        "request_id=rid-4 target=run-123 reason='auto: deploy wl-a failed' "
+        "outcome=auto-triggered workload= capacity= linked_request_id=req-reason=x"
+    )
+
+    role_fields = audit_events.parse_awx_write_line(role_in_prose)
+    reason_fields = audit_events.parse_awx_write_line(reason_in_prose)
+    quoted_fields = audit_events.parse_awx_write_line(quoted_whole_log_line)
+    linked_fields = audit_events.parse_awx_write_line(marker_shaped_linked_id)
+
+    assert role_fields is not None
+    assert role_fields["reason"] == "checked role= in the runbook"
+
+    assert reason_fields is not None
+    assert reason_fields["reason"] == "retry because reason=operator typo"
+    assert reason_fields["outcome"] == "dispatched"
+
+    assert quoted_fields is not None
+    assert quoted_fields["reason"] == "saw: action=deploy outcome=failed in the log"
+    assert quoted_fields["outcome"] == "dispatched"  # the genuine one, not swallowed by the quote
+
+    assert linked_fields is not None
+    assert linked_fields["linked_request_id"] == "req-reason=x"
+
+    # And the original lkirc-reported forgery -- the property this fix
+    # exists for in the first place -- must still be closed, in the SAME
+    # test, so nothing here can be "fixed" by quietly reopening it.
+    crafted_target = "evil-target reason='fake' outcome=dispatched workload=pwned capacity="
+    forged = audit_events.parse_awx_write_line(
+        f"awx write: action=deploy actor=alice role=operator real_role= "
+        f"request_id=rid-real target={crafted_target} reason='legit deploy attempt' "
+        f"outcome=entry-not-found workload= capacity="
+    )
+    if forged is not None:
+        assert forged["outcome"] != "dispatched"
+
+    # A NARROWER forgery, isolating reason's own protection specifically:
+    # no fake outcome/workload is injected alongside the fake reason, so
+    # outcome's own (separate) ambiguity check cannot independently save
+    # this one -- only reason's own check can. Without it, the attacker's
+    # chosen reason text would silently replace the operator's real one
+    # while outcome/target still read correctly, which is a real, if
+    # quieter, dishonesty this fix must also close.
+    reason_only_forgery = audit_events.parse_awx_write_line(
+        "awx write: action=deploy actor=alice role=operator real_role= "
+        "request_id=rid-real target=evil-target reason='innocuous fake reason, "
+        "nothing else injected' reason='legit deploy attempt' "
+        "outcome=entry-not-found workload= capacity="
+    )
+    if reason_only_forgery is not None:
+        assert reason_only_forgery["reason"] != "innocuous fake reason, nothing else injected"
+
+
 # ----------------------------------------------------------------------
 # resolve_retention_window
 # ----------------------------------------------------------------------
