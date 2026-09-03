@@ -10,11 +10,14 @@ would be exactly the tautology AC 5a rules out).
 
 from __future__ import annotations
 
+import logging
+
 from fastapi.testclient import TestClient
 import pytest
 
 import dmf_cms.audit_events as audit_events
-from dmf_cms.main import create_app
+from dmf_cms.main import _audit_awx_write, create_app
+from dmf_cms.security import UserIdentity
 from dmf_cms.settings import LokiSettings, Settings
 
 
@@ -515,3 +518,124 @@ def test_capped_when_the_result_count_hits_the_technical_limit(monkeypatch):
     payload = client.get("/api/audit/events").json()
     assert len(padded) == audit_events._MAX_RESULT_LINES
     assert payload["capped"] is True
+
+
+# ----------------------------------------------------------------------
+# dmfdeploy/dmfdeploy#140 — the writer fix (2026-09-03 operator decision):
+# emitter and reader, exercised TOGETHER through the REAL production
+# function on each side, not a hand-written fixture line pretending to be
+# what the emitter would produce. This is the actual evidence the sixth/
+# seventh forgery class is closed for newly emitted lines — not the
+# absence of a failing test (orchestrator's own framing).
+# ----------------------------------------------------------------------
+
+class _FakeRequest:
+    session: dict = {}
+
+
+def test_writer_fix_round_trip_a_forged_looking_target_survives_as_literal_content(caplog):
+    # The exact shape every earlier vector in this arc exploited: a
+    # caller-controlled target crafted to look like a complete forged
+    # tail. Call the REAL emitter with it, capture the REAL emitted line,
+    # feed it to the REAL reader — the forged-looking text must come back
+    # as target's own literal value, never as structure that overrides
+    # reason/outcome/workload/capacity.
+    request = _FakeRequest()
+    user = UserIdentity(
+        subject="alice", display_name="Alice", email="alice@dmf.example.com",
+        role="operator", groups=(),
+    )
+    crafted_target = "evil reason='fake' outcome=dispatched workload=pwned capacity="
+    with caplog.at_level(logging.INFO, logger="dmf_cms.audit"):
+        _audit_awx_write(
+            request, user, action="deploy", target=crafted_target,
+            request_id="rid-roundtrip", reason="legit deploy attempt",
+            outcome="entry-not-found", workload=None, capacity=None,
+        )
+    line = next(m for m in caplog.records if m.getMessage().startswith("awx write:")).getMessage()
+
+    fields = audit_events.parse_awx_write_line(line)
+    assert fields is not None
+    assert fields["target"] == crafted_target  # preserved VERBATIM, not truncated or dropped
+    assert fields["reason"] == "legit deploy attempt"  # the REAL reason, not the forged one
+    assert fields["outcome"] == "entry-not-found"  # the REAL refusal, never "dispatched"
+    assert fields["workload"] == ""  # never "pwned"
+    assert fields["capacity"] == ""
+
+
+def test_writer_fix_round_trip_a_quote_and_backslash_in_target_survive_too(caplog):
+    # A different shape of hostile content: quotes and a backslash inside
+    # the value the quoting mechanism itself uses as its delimiter. If
+    # repr()/literal_eval ever got this wrong, THIS is where it would show.
+    request = _FakeRequest()
+    user = UserIdentity(
+        subject="alice", display_name="Alice", email="alice@dmf.example.com",
+        role="operator", groups=(),
+    )
+    crafted_target = "it's a \"test\" with a \\ backslash and reason='fake'"
+    with caplog.at_level(logging.INFO, logger="dmf_cms.audit"):
+        _audit_awx_write(
+            request, user, action="deploy", target=crafted_target,
+            request_id="rid-roundtrip-2", reason="legit", outcome="entry-not-found",
+            workload="wl'with quote", capacity='cap"with"doublequotes',
+        )
+    line = next(m for m in caplog.records if m.getMessage().startswith("awx write:")).getMessage()
+
+    fields = audit_events.parse_awx_write_line(line)
+    assert fields is not None
+    assert fields["target"] == crafted_target
+    assert fields["workload"] == "wl'with quote"
+    assert fields["capacity"] == 'cap"with"doublequotes'
+    assert fields["reason"] == "legit"
+    assert fields["outcome"] == "entry-not-found"
+
+
+def test_writer_fix_round_trip_blank_workload_and_capacity_never_render_as_the_word_none(caplog):
+    # workload/capacity default to None in _audit_awx_write's own
+    # signature -- %r on a bare None would print the literal text "None",
+    # not an empty value. Confirms the `or ""` coercion at the call site
+    # actually prevents that regression.
+    request = _FakeRequest()
+    user = UserIdentity(
+        subject="alice", display_name="Alice", email="alice@dmf.example.com",
+        role="operator", groups=(),
+    )
+    with caplog.at_level(logging.INFO, logger="dmf_cms.audit"):
+        _audit_awx_write(
+            request, user, action="teardown", target="wl-a",
+            request_id="rid-roundtrip-3", reason="cleanup", outcome="dispatched",
+            workload=None, capacity=None,
+        )
+    line = next(m for m in caplog.records if m.getMessage().startswith("awx write:")).getMessage()
+    assert "None" not in line
+
+    fields = audit_events.parse_awx_write_line(line)
+    assert fields is not None
+    assert fields["workload"] == ""
+    assert fields["capacity"] == ""
+
+
+def test_writer_fix_legacy_unquoted_line_from_before_the_fix_still_renders_end_to_end(monkeypatch):
+    # dmfdeploy/dmfdeploy#530: dmf-cms's own stream has no per-stream
+    # retention override, so it falls to the 720h/30-day default-stream
+    # floor -- old-format lines emitted before this fix shipped stay in
+    # Loki, and readable, for up to that long. A genuine, non-adversarial
+    # legacy line must render exactly as it always did, through the full
+    # endpoint, not just the bare parser.
+    legacy_line = (
+        "2026-08-15 09:00:00,000 INFO dmf_cms.audit: awx write: "
+        "action=deploy actor=alice role=operator real_role= request_id=rid-legacy "
+        "target=wl-legacy reason='pre-fix deploy' outcome=dispatched workload=wl-legacy capacity="
+    )
+
+    def _fake(*, url, selector, start_ns, end_ns, limit, timeout=10):
+        return [{"stream": {}, "values": [["1", legacy_line]]}]
+
+    monkeypatch.setattr(audit_events.loki, "query_range", _fake)
+    client = _client(OPERATOR_ONLY)
+    payload = client.get("/api/audit/events").json()
+
+    row = next(e for e in payload["events"] if e["request_id"] == "rid-legacy")
+    assert row["target"] == "wl-legacy"
+    assert row["workload"] == "wl-legacy"
+    assert row["outcome"]["state"] == "in_flight"

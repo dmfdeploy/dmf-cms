@@ -314,12 +314,20 @@ def test_audit_line_survives_a_hostile_workflow_name_as_one_physical_line(
 
 @pytest.mark.parametrize("control_char,_url_encoded,escaped", _HOSTILE_CONTROL_CHARS)
 def test_audit_line_sanitizes_actor_workload_and_capacity_too(monkeypatch, caplog, control_char, _url_encoded, escaped):
-    # Direct call: the fix lives in _audit_awx_write itself, so every field
-    # that function accepts external input through — not just `target` — is
-    # covered by the same sanitizer. Exercised directly rather than hunting
-    # for a live route that lets a hostile value reach `workload`/`capacity`
-    # specifically; `_audit_awx_write` is the one place all such routes
-    # converge, so this proves the fix at its actual source.
+    # Direct call: `_audit_awx_write` is the one place every route that can
+    # reach `workload`/`capacity` converges, so this proves the property at
+    # its actual source rather than hunting for a live route that lets a
+    # hostile value reach them specifically.
+    #
+    # dmfdeploy/dmfdeploy#140 (the writer fix, 2026-09-03): `target`,
+    # `workload` and `capacity` are no longer covered by
+    # `_sanitize_audit_field` — they're %r-quoted now (repr(), the same
+    # treatment `reason` has always had), which escapes every C0 control
+    # character too, just via a different mechanism. Only `actor` (below)
+    # is still routed through the sanitizer; this test's own assertions
+    # hold for all three regardless of which of the two mechanisms
+    # produced the escaping, since both happen to render LF/CR/NUL
+    # identically.
     import logging
 
     from dmf_cms.main import _audit_awx_write
