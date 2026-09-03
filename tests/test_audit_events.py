@@ -491,6 +491,69 @@ def test_the_over_rejection_asymmetry_as_one_set():
         assert reason_only_forgery["reason"] != "innocuous fake reason, nothing else injected"
 
 
+def test_property_a_forged_tail_cannot_win_over_a_truncated_genuine_reason():
+    # lkirc's sixth vector (dmf-cms#140, review 2026-09-03 17:24), live on
+    # ef59280: the round-2 fix accepted a later reason= candidate as
+    # harmless whenever it FAILED to quote-scan (the discriminator was
+    # "does it complete a valid string"). That is exactly backwards for
+    # this shape -- target injects a COMPLETE, well-formed
+    # reason='fake' outcome=... workload=... capacity= tail, and the
+    # row's REAL, genuine reason= is then truncated after its own opening
+    # quote (a log-truncation shape, not attacker-authored). An
+    # unterminated quote-scan on the genuine marker used to read as "not
+    # a real second record", so parsing kept the forged tail. The fixed
+    # discriminator is "does the candidate's = start a quote at all", not
+    # "does the quote finish" -- an unterminated candidate is exactly as
+    # ambiguous as a complete one, so this row must now fail to classify
+    # entirely (AC 5b), not partially admit the forged fields.
+    line = (
+        "awx write: action=deploy actor=alice role=operator real_role= "
+        "request_id=REAL target=evil reason='fake' outcome=dispatched "
+        "workload=pwned capacity= reason='"
+    )
+    fields = audit_events.parse_awx_write_line(line)
+    assert fields is None
+
+
+def test_property_a_terminated_second_reason_still_correctly_rejects_too():
+    # Control: the ORIGINAL lkirc vector (a genuine, COMPLETE second
+    # reason= following the injected tail) must still be rejected by the
+    # same "starts with a quote" check -- the fix must not have narrowed
+    # protection to only the unterminated shape.
+    line = (
+        "awx write: action=deploy actor=alice role=operator real_role= "
+        "request_id=REAL target=evil reason='fake' outcome=dispatched "
+        "workload=pwned capacity= reason='real refusal reason' outcome=entry-not-found "
+        "workload= capacity="
+    )
+    fields = audit_events.parse_awx_write_line(line)
+    assert fields is None
+
+
+def test_property_a_non_quote_second_reason_candidate_still_parses():
+    # Control, other direction: a later "reason=" candidate (AFTER
+    # reason_end, unlike the honest-prose case where it sits nested
+    # inside reason's own quoted span) whose = is immediately followed by
+    # an ordinary (non-quote) character can never be mistaken for the
+    # start of a repr'd string, so it must stay harmless -- otherwise
+    # this fix would just reintroduce the P1 over-rejection two rounds
+    # ago fixed. linked_request_id='req-reason=x' is the standing
+    # regression case for that (test_the_over_rejection_asymmetry_as_one_set
+    # above); this is a second, minimal variant with the coincidence
+    # sitting in capacity's own raw value instead, to prove the check
+    # isn't accidentally scoped to only the trailing field.
+    line = (
+        "awx write: action=deploy actor=alice role=operator real_role= "
+        "request_id=REAL target=evil reason='genuine reason' "
+        "outcome=dispatched workload=wl-a capacity=note-reason=x"
+    )
+    fields = audit_events.parse_awx_write_line(line)
+    assert fields is not None
+    assert fields["reason"] == "genuine reason"
+    assert fields["outcome"] == "dispatched"
+    assert fields["capacity"] == "note-reason=x"
+
+
 # ----------------------------------------------------------------------
 # resolve_retention_window
 # ----------------------------------------------------------------------

@@ -31,21 +31,45 @@ always one of a closed, short, server-chosen set of tokens. None of those
 five go through ``_sanitize_audit_field`` — they don't need to, because
 their SOURCE constrains them, not because they're escaped.
 
-Three distinct forgery classes were found and closed in this module
-across one review arc (dmfdeploy/dmfdeploy#140): a caller-controlled
-field's raw text hijacking a later field's boundary; detection and
-extraction disagreeing about what a marker even is; and the fix for the
-first two over-correcting into rejecting legitimate rows whose own text
-happened to contain marker-shaped substrings. Each fix is real, each is
-mutation-tested, and codex could not find a further exploit against the
-result — but "correct against everything found so far" is not the same
+Four distinct forgery classes were found and closed in this module across
+one review arc (dmfdeploy/dmfdeploy#140): a caller-controlled field's raw
+text hijacking a later field's boundary; detection and extraction
+disagreeing about what a marker even is; the fix for the first two
+over-correcting into rejecting legitimate rows whose own text happened to
+contain marker-shaped substrings; and — found by a human reviewer
+(lkirc) after an adversarial LLM pass (codex) explicitly could not find
+it — a caller-controlled field's injected, COMPLETE fake tail winning
+over the row's own genuine trailing marker when that genuine marker is
+truncated (log truncation, not attacker-authored) rather than merely
+absent. That last one is the sharpest evidence this module has for its
+own warning below: a clean adversarial-review pass is not proof of
+completeness, and this is now demonstrated, not hypothetical — codex
+passed a version of this exact parser that a different, human reviewer
+then broke on the first read. Each of the four fixes is real and
+mutation-tested.
+
+ONE RESIDUAL GAP IS KNOWN AND DELIBERATELY NOT CLOSED, named here rather
+than left for round seven to rediscover: the same truncation shape as the
+fourth vector above, but where the row's genuine trailing marker is
+truncated so early that NO trace of it remains at all (as opposed to an
+unterminated quote fragment) is structurally indistinguishable, byte for
+byte, from an ordinary, complete, non-adversarial row — nothing in the
+line can tell them apart, because a genuinely complete record with that
+exact shape is equally possible. Closing it would require rejecting
+caller-controlled field values (target, workload) that merely CONTAIN
+marker-shaped substrings at all, independent of any boundary reasoning —
+a materially different, stricter kind of check than anything else here,
+with its own, unassessed over-rejection risk against real catalog
+keys/workload names. Left as an explicit, reported gap rather than a
+silent one (operator ruling stands: stop hunting, no further hardening
+this round) — "correct against everything found so far" is not the same
 claim as "provably complete" for a format whose ambiguity can only be
 closed by construction, not by inspection. Do not treat a clean review
-pass here as proof there is no sixth case; treat it as the ceiling of what
-hardening a hand-rolled boundary scanner can promise. The production answer, when this
-surface needs to be trusted as a real audit record rather than a demo
-slice, is the deferred structured envelope (plan §5) replacing this
-parser entirely — not another round of hardening it.
+pass here as proof there is no seventh case; treat it as the ceiling of
+what hardening a hand-rolled boundary scanner can promise. The production
+answer, when this surface needs to be trusted as a real audit record
+rather than a demo slice, is the deferred structured envelope (plan §5)
+replacing this parser entirely — not another round of hardening it.
 """
 
 from __future__ import annotations
@@ -231,38 +255,50 @@ def _find_unambiguous_marker(tail: str, name: str, start: int) -> int | None:
 
 
 def _reason_marker_is_unambiguous(tail: str, reason_end: int) -> bool:
-    """True unless a GENUINE competing record continuation exists after
-    ``reason_end``: a second ``reason=`` occurrence that ALSO
-    independently quote-scans to a complete, validly closed string.
+    """True unless a candidate second ``reason=`` occurrence after
+    ``reason_end`` COULD BE a real repr'd string — i.e. its ``=`` is
+    immediately followed by a quote character. Whether that candidate's
+    quoted string ever actually closes does NOT matter (dmf-cms#140,
+    lkirc, 2026-09-03 17:24 — the sixth vector, live on ef59280): a
+    complete quote-scan is a genuine competing record continuation (the
+    original target-injection vector); an UNTERMINATED one means this
+    row's own genuine trailing ``reason=`` got truncated, and the earlier
+    version of this function treated "didn't finish quote-scanning" as
+    "therefore harmless" — which is exactly backwards. A caller-controlled
+    field (``target``) can inject a complete, well-formed
+    ``reason='fake' outcome=... workload=... capacity=`` tail; if the
+    row's REAL, genuine ``reason=`` marker is then truncated after its own
+    opening quote (log truncation, not attacker-controlled), the old check
+    let it through as coincidental — but the injected fake reason had
+    already won by then, forging outcome/workload. Both shapes are
+    equally untrustworthy and both must fail AC 5b's classification check
+    the same way.
 
-    codex's follow-up finding on dmf-cms#140 (P1, over-rejection): reason
-    is the one field that is genuinely free text an operator writes, so it
-    can legitimately — and ordinarily does — contain the literal substring
-    "reason=" as part of an honest sentence ("retry because
-    reason=operator typo"). That text sits INSIDE reason's own,
-    already-quote-scanned span (at or before ``reason_end``) and this
-    function never looks there — it only searches AT/AFTER ``reason_end``.
-    What was still wrong: a naive "does reason= occur again anywhere
-    later" check (the shape ``_find_unambiguous_marker`` uses for other
-    fields) also flagged a coincidental "reason=" substring sitting inside
-    a LATER field's own raw, unescaped value — e.g. an auto-rollback whose
-    ``linked_request_id`` happens to contain "reason=" as literal text
-    (``linked_request_id=req-reason=x``) — even though nothing downstream
-    ever re-searches for "reason=" again once this field is resolved.
-
-    The discriminator between a REAL forged second reason (the original
-    lkirc-reported vector: a second ``reason=`` that ALSO quote-scans,
-    forming a complete alternate ``reason=...outcome=...`` continuation)
-    and a coincidental substring (never followed by anything that quote-
-    scans as a string) is exactly whether the candidate ALSO quote-scans —
-    so that is what this checks, walking every later candidate rather than
-    just the first, in case an earlier one is itself a coincidence.
+    codex's earlier follow-up finding on dmf-cms#140 (P1, over-rejection)
+    still holds and is why this is keyed on "starts with a quote", not
+    "any later reason= occurrence at all": reason is the one field that is
+    genuinely free text an operator writes, so it can legitimately — and
+    ordinarily does — contain the literal substring "reason=" as part of
+    an honest sentence ("retry because reason=operator typo"). That text
+    sits INSIDE reason's own, already-quote-scanned span (at or before
+    ``reason_end``) and this function never looks there — it only
+    searches AT/AFTER ``reason_end``. Separately, a coincidental "reason="
+    substring can sit inside a LATER field's own raw, unescaped value —
+    e.g. an auto-rollback whose ``linked_request_id`` happens to contain
+    "reason=" as literal text (``linked_request_id=req-reason=x``) — and
+    that candidate's ``=`` is followed by an ordinary character ("x"), not
+    a quote, so it can never be mistaken for the start of a repr'd string
+    and is correctly treated as harmless. A quote-starting candidate is
+    never that kind of coincidence: no other field's raw text has a
+    reason to independently begin with a bare quote character right after
+    matching this marker's shape.
     """
     candidate = _find_marker(tail, "reason", reason_end)
     while candidate is not None:
-        if _scan_repr_string_end(tail, candidate + len("reason=")) is not None:
-            return False  # a genuine competing record continuation exists
-        candidate = _find_marker(tail, "reason", candidate + len("reason="))
+        value_start = candidate + len("reason=")
+        if value_start < len(tail) and tail[value_start] in ("'", '"'):
+            return False  # could be a real repr string, complete or not — ambiguous either way
+        candidate = _find_marker(tail, "reason", value_start)
     return True
 
 
