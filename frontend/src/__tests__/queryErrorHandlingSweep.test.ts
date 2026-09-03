@@ -102,6 +102,7 @@ import { settleQuery } from '../lib/queryState'
 import { classifyChanges, classifyForgejo, type ChangesQueryLike, type ForgejoQueryLike } from '../lib/changesState'
 import { classifyWorkspaceHealth, type HealthQueryLike } from '../lib/workspaceHealth'
 import { classifyFacilityDetail, type FacilityDetailQueryLike } from '../pages/Facility/Detail'
+import { classifyAuditEvents, type AuditEventsQueryLike } from '../lib/auditEventsState'
 
 // Every .ts/.tsx source file under src, as raw text, keyed by a path
 // relative to src/ (e.g. "pages/Admin.tsx") — eager + raw so this is plain
@@ -225,6 +226,7 @@ const KNOWN_DELEGATES: Record<string, () => unknown> = {
   classifyForgejo: () => classifyForgejo(FAILED_QUERY_FIXTURE),
   classifyWorkspaceHealth: () => classifyWorkspaceHealth(FAILED_QUERY_FIXTURE),
   classifyFacilityDetail: () => classifyFacilityDetail(FAILED_QUERY_FIXTURE),
+  classifyAuditEvents: () => classifyAuditEvents(FAILED_QUERY_FIXTURE),
 }
 
 interface CallSite {
@@ -364,6 +366,28 @@ describe('regression net: known delegate classifiers produce the CORRECT OUTPUT 
   it('classifyForgejo: isError wins over an otherwise-ok retained reason', () => {
     const q: ForgejoQueryLike = { isLoading: false, isError: true, data: { reason: '' } }
     expect(classifyForgejo(q)).toBe('error')
+  })
+
+  it('classifyAuditEvents: isError wins over an otherwise-ok retained reason, events stay visible', () => {
+    const q: AuditEventsQueryLike = {
+      isLoading: false,
+      isError: true,
+      data: {
+        reason: '', // '' alone means "ok" — isError must override this, not the other way round
+        window: { known: true, seconds: 604800, reason: '' },
+        excluded: [],
+        events: [
+          {
+            request_id: 'rid-1', class: 'deploy', action: 'deploy', target: 'wl-a', workload: 'wl-a',
+            actor: 'alice', role: 'operator', reason: 'demo', at: '2026-09-03T00:00:00Z',
+            outcome: { state: 'in_flight', detail: 'dispatched' },
+          },
+        ],
+      },
+    }
+    const s = classifyAuditEvents(q)
+    expect(s.phase).toBe('error')
+    expect(s.events).toHaveLength(1) // Art. 5: retained data still exposed, not suppressed
   })
 
   it('classifyWorkspaceHealth: stale reflects isError even though data is retained, configured, and verified', () => {

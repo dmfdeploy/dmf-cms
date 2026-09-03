@@ -422,6 +422,68 @@ export interface ChangesPullsResponse {
 }
 
 // ------------------------------------------------------------------
+// Audit events (dmfdeploy/dmfdeploy#496) — the durable, server-side
+// Activity History lane over Loki. See lib/auditEventsState.ts for the
+// fail-soft classifier this feeds.
+// ------------------------------------------------------------------
+
+export interface AuditEventOutcome {
+  state: 'in_flight' | 'succeeded' | 'failed'
+  // Raw outcome token off the audit record — expert-level detail ONLY.
+  // Never render this directly at default (plan §4.5 / AC 2a); use
+  // headline/meaning/next_step below instead.
+  detail: string
+  // Present only when state === 'failed' — plain-language copy, safe at
+  // default level.
+  headline?: string
+  meaning?: string
+  next_step?: string
+}
+
+export interface AuditEvent {
+  request_id: string
+  class: 'deploy' | 'teardown' | 'switch-source' | 'auto-rollback'
+  action: string
+  target: string
+  // null when the action's own record never carries a workload, OR (the
+  // ordinary auto-rollback case) the parent record does but is unresolved
+  // — the row still renders; only the label is missing (plan AC 3/5b).
+  workload: string | null
+  actor: string
+  role: string
+  reason: string
+  at: string
+  outcome: AuditEventOutcome
+}
+
+export interface AuditEventsExcludedClass {
+  class: string
+  // The two reasons are NEVER interchangeable (plan §4.3/AC 5): 'access'
+  // means rendering it would widen access beyond its own live surface;
+  // 'scope' means this lane cannot render it meaningfully yet, and nothing
+  // about it is a security decision.
+  reason: 'access' | 'scope'
+}
+
+export interface AuditEventsWindow {
+  known: boolean
+  seconds: number | null
+  // "" when known; else why not — see lib/auditEventsState.ts. Never a
+  // reason to guess a number.
+  reason: string
+}
+
+export interface AuditEventsResponse {
+  // Fail-soft reason token, same shape as ChangesCommitsResponse.reason:
+  // "" means Loki answered and `events` is authoritative (an empty list
+  // genuinely means no matching rows in the window). REQUIRED.
+  reason: '' | 'loki-unconfigured' | 'loki-unreachable'
+  window: AuditEventsWindow
+  excluded: AuditEventsExcludedClass[]
+  events: AuditEvent[]
+}
+
+// ------------------------------------------------------------------
 // Admin (Groups)
 // ------------------------------------------------------------------
 
