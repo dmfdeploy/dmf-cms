@@ -293,6 +293,20 @@ _MARKER_PATTERNS = {name: _marker_pattern(name) for name in _ALL_MARKER_NAMES}
 # mixing a positional dispatch key into a registry of searched field
 # markers would blur a distinction this whole redesign exists to make
 # explicit.
+#
+# TWO patterns, deliberately, not one (codex's F1, 2026-09-03): presence
+# of the "fmt=" TOKEN and a WELL-FORMED marker are different questions.
+# _FMT_TOKEN_RE answers "does this line CLAIM to be new-format at all" —
+# loose, only the literal token. _FMT_MARKER_RE answers "is that claim
+# well-formed and which version" — strict, requires a parseable version
+# number. A line where the token is present but the marker doesn't
+# parse (`fmt=`, `fmt=2x`, ...) is NOT the same as a line with no token
+# at all: it is a CORRUPTED claim, not an absent one, and must fail
+# closed exactly like an unsupported version does — never fall through
+# to the legacy grammar, which would silently downgrade a mangled line
+# into the weaker parser (where vector 7 is open) instead of rejecting
+# it. See parse_awx_write_line's dispatch for how the two are combined.
+_FMT_TOKEN_RE = re.compile(r"^\s*fmt=")
 _FMT_MARKER_RE = re.compile(r"^\s*fmt=(\d+)\s")
 
 _NEW_FORMAT_VERSION = "2"
@@ -501,24 +515,33 @@ def parse_awx_write_line(line: str) -> dict[str, str] | None:
     per-field-guessing version of this function was wrong, and what it
     cost. A line carrying ``fmt=2`` immediately after the "awx write: "
     prefix is parsed by ``_parse_new_format_line`` (strict: every
-    quotable field required, no ambiguity checks needed); a line WITHOUT
-    that marker — every line already in Loki from before this marker
-    existed — is parsed by ``_parse_legacy_format_line`` (the exact
-    pre-fix mechanism, unchanged). A recognised-but-different fmt=
-    version (a future format this code doesn't know about yet) fails
-    closed rather than guessing which grammar might apply. No line is
-    ever run through both parsers.
+    quotable field required, no ambiguity checks needed); a line with NO
+    ``fmt=`` token at all in that position — every line already in Loki
+    from before this marker existed — is parsed by
+    ``_parse_legacy_format_line`` (the exact pre-fix mechanism,
+    unchanged).
+
+    A line that CLAIMS a format (any ``fmt=`` token present) but whose
+    claim does not parse into a version this code recognises fails
+    closed — this covers both an unsupported-but-well-formed version
+    (``fmt=3``) and a malformed marker (``fmt=``, ``fmt=2x``, ...)
+    identically (codex's F1, 2026-09-03): a mangled marker is MORE
+    suspicious than an absent one, not less, and must never silently
+    downgrade to the legacy grammar — where vector 7 is still open —
+    just because it failed to match the strict pattern. Legacy parsing
+    is reserved for the genuine absence of any format claim, never for a
+    broken one. No line is ever run through more than one parser.
     """
     idx = line.find("awx write:")
     if idx == -1:
         return None
     tail = line[idx + len("awx write:"):]
 
+    if _FMT_TOKEN_RE.match(tail) is None:
+        return _parse_legacy_format_line(tail)  # no format claim at all -- genuine legacy
     fmt_match = _FMT_MARKER_RE.match(tail)
-    if fmt_match is None:
-        return _parse_legacy_format_line(tail)
-    if fmt_match.group(1) != _NEW_FORMAT_VERSION:
-        return None  # an unrecognised format version — fail closed, never guess
+    if fmt_match is None or fmt_match.group(1) != _NEW_FORMAT_VERSION:
+        return None  # a format claim that's malformed or unsupported -- fail closed, never guess
     return _parse_new_format_line(tail[fmt_match.end():])
 
 
