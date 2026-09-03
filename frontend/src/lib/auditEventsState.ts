@@ -24,6 +24,10 @@ export interface AuditEventsState {
   phase: AuditEventsPhase
   events: AuditEventsResponse['events']
   window: AuditEventsWindow
+  // See AuditEventsResponse.capped — false by construction whenever there's
+  // nothing to render anyway (loading/unreachable/unconfigured/error all
+  // carry an empty `events`, so "capped" would be meaningless there).
+  capped: boolean
   excluded: AuditEventsExcludedClass[]
 }
 
@@ -57,7 +61,8 @@ export function classifyAuditEvents(q: AuditEventsQueryLike): AuditEventsState {
     }
   }
 
-  return { phase, events, window, excluded }
+  const capped = phase === 'ok' && (settled.data?.capped ?? false)
+  return { phase, events, window, capped, excluded }
 }
 
 // Never claims completeness beyond what the phase actually confirms (Art.
@@ -72,9 +77,20 @@ export function auditEventsEmptyCopy(phase: AuditEventsPhase): string {
     case 'error':
       return 'Facility history could not be loaded. Retrying automatically.'
     default:
-      return 'No facility actions recorded in this window.'
+      // Not "no facility actions" — the read is genuinely role-gated (plan
+      // §4.3), so an empty list here means nothing in this user's
+      // permitted view, never a claim about the facility as a whole
+      // (codex R496-A F7).
+      return 'No actions in your permitted view were recorded in this window.'
   }
 }
+
+// codex R496-A F6: a bound that binds must be disclosed, not applied
+// silently behind what would otherwise read as an ordinary, complete
+// history — see AuditEventsResponse.capped's comment for the two cases
+// this covers.
+export const AUDIT_EVENTS_CAPPED_COPY =
+  "This list may not be complete — the read was capped and can't confirm every matching action is shown."
 
 // Ceiling, never coverage (plan condition 3 / #530): "searches up to X ago"
 // is a bound on how far back a search can reach, not a promise that X of

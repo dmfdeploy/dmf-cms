@@ -9,6 +9,7 @@ import {
   auditWindowCopy,
   auditOutcomeLabel,
   groupExclusions,
+  AUDIT_EVENTS_CAPPED_COPY,
 } from '../../lib/auditEventsState'
 import type { AuditEvent, AuditEventOutcome } from '../../api/types'
 
@@ -48,24 +49,50 @@ function AuditEventOutcomeBlock({ outcome }: { outcome: AuditEventOutcome }) {
       <span className={`inline-block px-2 py-1 rounded text-xs font-semibold ${badgeClass}`}>
         {auditOutcomeLabel(outcome)}
       </span>
-      {outcome.state === 'failed' && outcome.headline && (
-        <div className="mt-1 text-xs text-muted">
-          <p>{outcome.headline}</p>
-          {outcome.next_step && <p className="mt-0.5">{outcome.next_step}</p>}
-        </div>
+      {outcome.state === 'failed' ? (
+        <>
+          {/* Default level (plan §4.5 / AC 2a): what happened, what it
+              means for the facility, what to do next — all three, not
+              just headline+next_step (codex R496-A F4 caught `meaning`
+              silently missing here). */}
+          {outcome.headline && (
+            <div className="mt-1 text-xs text-muted">
+              <p>{outcome.headline}</p>
+              {outcome.meaning && <p className="mt-0.5">{outcome.meaning}</p>}
+              {outcome.next_step && <p className="mt-0.5">{outcome.next_step}</p>}
+            </div>
+          )}
+          {/* Expert level ONLY: a raw system-error string (e.g.
+              awx-error:503) must not reach the default view at all —
+              CSS-muted-but-always-rendered is NOT an access boundary
+              (codex R496-A F4). A closed <details> keeps it out of the
+              rendered default view; expanding it is the deliberate,
+              explicit act that makes reading it "expert level". */}
+          <details className="mt-1">
+            <summary className="text-xs text-muted/70 cursor-pointer select-none">
+              Technical detail (for support)
+            </summary>
+            <p className="text-xs text-muted/70 mt-1 font-mono">{outcome.detail}</p>
+          </details>
+        </>
+      ) : (
+        // in_flight/succeeded detail is an ordinary operational word
+        // (dispatched, launched, active, ...), never a raw system-error
+        // string — safe to show plainly, same convention as the Jobs
+        // panel below keeping the raw AWX template name as a muted line
+        // (lib/labels.ts's describeJob comment).
+        <p className="text-xs text-muted/70 mt-1 font-mono">{outcome.detail}</p>
       )}
-      {/* Raw token, demoted to expert detail — same convention as the Jobs
-          panel below keeping the raw AWX template name as a muted line
-          under the humanised title (see lib/labels.ts's describeJob
-          comment). Never the ONLY thing shown for a failure — the plain-
-          language block above renders first. */}
-      <p className="text-xs text-muted/70 mt-1 font-mono">{outcome.detail}</p>
     </div>
   )
 }
 
 // Human title per console-originated action (#185 WP-E: AWX writes join the
-// clear record in this lane).
+// clear record in this lane). deploy/teardown/switch-source are dead
+// branches for what THIS panel renders now (dmfdeploy/dmfdeploy#496
+// condition 4 — filtered out at render, see localOnlyActions below), kept
+// here only because ConsoleActionType still names them; left unchanged
+// since they're unreachable from this panel's own data.
 function actionTitle(action: ConsoleActionType, target: string): string {
   switch (action) {
     case 'clear-for-deployment':
@@ -75,11 +102,16 @@ function actionTitle(action: ConsoleActionType, target: string): string {
     case 'teardown':
       return `Tore down ${target}`
     case 'launch':
-      return `Launched ${target}`
+      // codex R496-A F8: this record is written at DISPATCH time, not
+      // confirmed completion — directly beneath a facility panel that
+      // carefully never claims completion, a past-tense "Launched" read
+      // as a confirmed outcome it cannot actually vouch for.
+      return `Requested workflow launch: ${target}`
     case 'switch-source':
       return `Switched source on ${target}`
     case 'finalise-purge':
-      return `Deleted ${target} permanently`
+      // Same reasoning as 'launch' above.
+      return `Requested permanent deletion of ${target}`
   }
 }
 
@@ -147,8 +179,11 @@ export default function HistoryLane() {
           </h2>
           <p className="text-xs text-muted mt-1">
             Deploys, teardowns, source switches, and automatic rollbacks —
-            recorded server-side and visible to every operator, regardless
-            of browser. {auditWindowCopy(auditState.window)}
+            recorded server-side, the same for every browser. Shows what
+            your role is permitted to see, not a merged view across every
+            role: deploy/teardown/rollback need operator, source switches
+            need engineer or media-engineers membership.{' '}
+            {auditWindowCopy(auditState.window)}
           </p>
           {(exclusions.access.length > 0 || exclusions.scope.length > 0) && (
             <p className="text-xs text-muted mt-1">
@@ -170,6 +205,9 @@ export default function HistoryLane() {
                 <div className="px-6 py-2 text-xs text-amber-300 bg-amber-500/10">
                   {auditEventsEmptyCopy(auditState.phase)}
                 </div>
+              )}
+              {auditState.phase === 'ok' && auditState.capped && (
+                <div className="px-6 py-2 text-xs text-amber-300 bg-amber-500/10">{AUDIT_EVENTS_CAPPED_COPY}</div>
               )}
               {auditState.events.length === 0 ? (
                 auditState.phase === 'ok' && (
