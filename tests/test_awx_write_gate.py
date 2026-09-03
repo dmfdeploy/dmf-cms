@@ -319,7 +319,7 @@ def test_audit_line_sanitizes_actor_workload_and_capacity_too(monkeypatch, caplo
     # its actual source rather than hunting for a live route that lets a
     # hostile value reach them specifically.
     #
-    # dmfdeploy/dmfdeploy#140 (the writer fix, 2026-09-03): `target`,
+    # dmfdeploy/dmf-cms#140 (the writer fix, 2026-09-03): `target`,
     # `workload` and `capacity` are no longer covered by
     # `_sanitize_audit_field` — they're %r-quoted now (repr(), the same
     # treatment `reason` has always had), which escapes every C0 control

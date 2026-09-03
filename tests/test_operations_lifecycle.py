@@ -2465,7 +2465,7 @@ def test_auto_trigger_dispatch_audit_line_sanitizes_run_id(monkeypatch, caplog):
     # matching this file's own established style for exercising this
     # function (every existing test above already sets run_id this way).
     #
-    # dmfdeploy/dmfdeploy#140 (the writer fix, 2026-09-03): target here is
+    # dmfdeploy/dmf-cms#140 (the writer fix, 2026-09-03): target here is
     # now %r-quoted, not %s+_sanitize_audit_field — a raw newline still
     # cannot reach the line unescaped (repr() escapes it identically), so
     # this test's own assertions are unchanged, but the MECHANISM making
