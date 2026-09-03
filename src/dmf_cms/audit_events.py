@@ -18,22 +18,31 @@ action hasn't reached), the DERIVED RETENTION WINDOW, and the OUTCOME
 COMPLETENESS GUARD are the durable design and are meant to survive
 whatever replaces the transport underneath them. ``parse_awx_write_line``
 below is not that. It is a demo-scoped stopgap over a text log format
-that was never designed to be unambiguously re-parsed — every field
-except ``reason`` is control-character-escaped only (``main.py``'s
-``_sanitize_audit_field``, scoped to staying on one physical stdout line,
-a different property from being safely re-splittable by field). Three
-distinct forgery classes were found and closed in this module across one
-review arc (dmfdeploy/dmfdeploy#140): a caller-controlled field's raw text
-hijacking a later field's boundary; detection and extraction disagreeing
-about what a marker even is; and the fix for the first two over-
-correcting into rejecting legitimate rows whose own text happened to
-contain marker-shaped substrings. Each fix is real, each is mutation-
-tested, and codex could not find a further exploit against the result —
-but "correct against everything found so far" is not the same claim as
-"provably complete" for a format whose ambiguity can only be closed by
-construction, not by inspection. Do not treat a clean review pass here as
-proof there is no sixth case; treat it as the ceiling of what hardening a
-hand-rolled boundary scanner can promise. The production answer, when this
+that was never designed to be unambiguously re-parsed. Precisely, not
+"every field except reason" (codex F2, an overclaim in the one place
+overclaiming matters most): ``main.py``'s ``_audit_awx_write`` applies
+``_sanitize_audit_field`` — control-character escaping only, scoped to
+staying on one physical stdout line, a different property from being
+safely re-splittable by field — to exactly FOUR fields: ``actor``,
+``target``, ``workload``, ``capacity``. ``action`` is a fixed literal per
+call site; ``role``/``real_role`` are server-computed from group
+membership; ``request_id`` is always ``uuid.uuid4().hex``; ``outcome`` is
+always one of a closed, short, server-chosen set of tokens. None of those
+five go through ``_sanitize_audit_field`` — they don't need to, because
+their SOURCE constrains them, not because they're escaped.
+
+Three distinct forgery classes were found and closed in this module
+across one review arc (dmfdeploy/dmfdeploy#140): a caller-controlled
+field's raw text hijacking a later field's boundary; detection and
+extraction disagreeing about what a marker even is; and the fix for the
+first two over-correcting into rejecting legitimate rows whose own text
+happened to contain marker-shaped substrings. Each fix is real, each is
+mutation-tested, and codex could not find a further exploit against the
+result — but "correct against everything found so far" is not the same
+claim as "provably complete" for a format whose ambiguity can only be
+closed by construction, not by inspection. Do not treat a clean review
+pass here as proof there is no sixth case; treat it as the ceiling of what
+hardening a hand-rolled boundary scanner can promise. The production answer, when this
 surface needs to be trusted as a real audit record rather than a demo
 slice, is the deferred structured envelope (plan §5) replacing this
 parser entirely — not another round of hardening it.
@@ -186,11 +195,32 @@ def _find_unambiguous_marker(tail: str, name: str, start: int) -> int | None:
     cannot be trusted to be the genuine one rather than an injected decoy
     with the real marker still ahead of it (dmf-cms#140).
 
-    Used for ``workload`` (protects ``capacity``'s boundary — ``workload``
-    is genuinely caller-controlled, main.py:384) and, defensively, for the
-    other after-``reason`` fields. NOT used for ``reason`` itself — see
-    ``_reason_marker_is_unambiguous`` below for why a plain second-
-    occurrence count is the wrong check for a free-text field.
+    Used for ``workload`` — REQUIRED, not merely defensive (codex F3,
+    correcting an earlier version of this audit that understated it):
+    ``workload`` is caller-controlled on TWO routes, not one — the deploy
+    path's ``body.get("workload")`` (main.py:384), and switch-source's
+    ``source_instance`` (main.py:346-352, validated only as "a non-empty
+    string", nothing more; passed straight through as ``workload=`` at
+    main.py:5869, :5879, :5892, :5941, :5960). Either route can carry
+    literal marker text, so this check is what protects ``capacity``'s
+    boundary from being hijacked, not a belt-and-suspenders extra.
+
+    Also used, PURELY DEFENSIVELY, for ``outcome``/``capacity`` and the
+    trailing ``linked_request_id`` — an adversarial check confirmed each
+    of those three genuinely cannot carry caller text on any current
+    route (``outcome`` is always a fixed, closed set of tokens; ``capacity``
+    is server-computed budget/preflight data, ``_capacity_audit_summary``;
+    ``linked_request_id`` is backend-generated, an operation's own
+    ``request_id``) — so for THOSE three, unlike ``workload``, this
+    ambiguity check protects against nothing reachable today. Left as-is
+    per operator ruling (2026-09-03): named as a known, accepted
+    imprecision rather than fixed, since none of the three is exploitable
+    and further hardening of this parser is explicitly out of scope for
+    this round.
+
+    NOT used for ``reason`` itself — see ``_reason_marker_is_unambiguous``
+    below for why a plain second-occurrence count is the wrong check for a
+    free-text field.
     """
     found = _find_marker(tail, name, start)
     if found is None:
