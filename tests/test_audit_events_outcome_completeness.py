@@ -81,7 +81,7 @@ def _sweep_outcome_tokens() -> tuple[dict[str, set[str]], dict[str, bool]]:
     substrings embedded in the format string rather than passed as ``%s``
     args to ``_audit_awx_write``).
 
-    dmfdeploy/dmfdeploy#140 (codex F2, 2026-09-03): the direct-emission
+    dmfdeploy/dmf-cms#140 (codex F2, 2026-09-03): the direct-emission
     branch used to key on the literal substring ``"awx write:
     action=rollback"`` — which broke SILENTLY, with the guard staying
     green, the moment the writer fix inserted an `fmt=2 ` token between
@@ -251,7 +251,7 @@ def test_the_sweep_itself_finds_a_realistic_number_of_tokens_per_action():
 
 
 def test_the_sweep_finds_the_auto_rollback_dispatchs_own_direct_emitters():
-    # dmfdeploy/dmfdeploy#140 (codex F2, 2026-09-03): this is the SPECIFIC
+    # dmfdeploy/dmf-cms#140 (codex F2, 2026-09-03): this is the SPECIFIC
     # regression the "realistic number" test above cannot be trusted to
     # catch on its own — main.py's _audit_awx_write-routed rollback calls
     # alone already clear the >=5 threshold, so the sweep going blind to

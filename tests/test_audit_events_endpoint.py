@@ -43,7 +43,7 @@ def _line(
     *, action, actor, role, request_id, target, reason, outcome,
     workload="", capacity="", linked_request_id=None,
 ) -> str:
-    # dmfdeploy/dmfdeploy#140: the fmt=2 grammar -- target/actor/reason/
+    # dmfdeploy/dmf-cms#140: the fmt=2 grammar -- target/actor/reason/
     # workload/capacity are quoted (%r), exactly as the real emitter
     # writes them; action/role/real_role/request_id/outcome stay plain.
     line = (
@@ -107,7 +107,7 @@ UNRECOGNISED_ACTION = _line(
     target="wl-a", reason="should never appear", outcome="dispatched",
 )
 UNPARSEABLE = "2026-09-03 12:00:00,000 INFO dmf_cms.audit: awx write: action=deploy actor=alice request_id=rid-broken"
-# dmfdeploy/dmfdeploy#140: legacy is dropped, not parsed by a fallback
+# dmfdeploy/dmf-cms#140: legacy is dropped, not parsed by a fallback
 # grammar (operator decision) — so a truncated/malformed line, WITH or
 # WITHOUT a truncated fmt=2 marker, is unparseable for the same reason
 # UNPARSEABLE above already is, and needs no dedicated fixture. What DOES
@@ -416,7 +416,7 @@ def test_capped_when_the_result_count_hits_the_technical_limit(monkeypatch):
 
 
 # ----------------------------------------------------------------------
-# dmfdeploy/dmfdeploy#140 — the writer fix (2026-09-03 operator decision):
+# dmfdeploy/dmf-cms#140 — the writer fix (2026-09-03 operator decision):
 # emitter and reader, exercised TOGETHER through the REAL production
 # function on each side, not a hand-written fixture line pretending to be
 # what the emitter would produce. This is the actual evidence the sixth/
@@ -512,7 +512,7 @@ def test_writer_fix_round_trip_blank_workload_and_capacity_never_render_as_the_w
 
 def test_a_legacy_unquoted_line_from_before_the_writer_fix_is_not_rendered_end_to_end(monkeypatch):
     # Operator decision (2026-09-03, following lkirc's fifth review,
-    # dmfdeploy/dmfdeploy#140): the writer fix protects future records but
+    # dmfdeploy/dmf-cms#140): the writer fix protects future records but
     # cannot make retained ones trustworthy — a forged legacy line and a
     # legitimate one were PROVEN byte-identical, so no reader-side check
     # could ever authenticate one. Legacy lines are dropped, not parsed by
@@ -538,7 +538,7 @@ def test_a_legacy_unquoted_line_from_before_the_writer_fix_is_not_rendered_end_t
 
 
 # ----------------------------------------------------------------------
-# dmfdeploy/dmfdeploy#140 — codex's P1/P2 findings against the first
+# dmfdeploy/dmf-cms#140 — codex's P1/P2 findings against the first
 # version of the writer fix, and the format-marker redesign that fixed
 # them (both data-loss defects, not forgery, per the operator's ruling
 # that a legitimate row vanishing is squarely in scope). Round-tripped

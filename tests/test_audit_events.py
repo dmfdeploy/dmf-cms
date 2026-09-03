@@ -16,7 +16,7 @@ def _new_line(
     target="wl-a", reason="demo", outcome="dispatched", workload="", capacity="",
     linked_request_id=None, prefix="awx write: fmt=2 ",
 ) -> str:
-    """Build a fmt=2 grammar line (dmfdeploy/dmfdeploy#140) for unit tests
+    """Build a fmt=2 grammar line (dmfdeploy/dmf-cms#140) for unit tests
     below — target/actor/reason/workload/capacity quoted, exactly as the
     real emitter writes them; action/role/real_role/request_id/outcome
     plain. `prefix` is overridable so a handful of tests can exercise a
@@ -114,7 +114,7 @@ def test_reason_and_everything_before_it_missing_still_fails_to_parse():
 
 
 def test_a_malformed_reason_on_the_new_format_drops_the_row_entirely():
-    # dmfdeploy/dmfdeploy#140 (operator decision, 2026-09-03): unlike the
+    # dmfdeploy/dmf-cms#140 (operator decision, 2026-09-03): unlike the
     # deleted legacy grammar's tolerant "enrichment failure" fallback, the
     # fmt=2 contract REQUIRES every quotable field to be well-formed —
     # there is no partial admission left to test. An unterminated reason
@@ -196,7 +196,7 @@ def test_property_a_legitimate_reason_mentioning_marker_like_text_still_parses()
 
 
 # ----------------------------------------------------------------------
-# dmfdeploy/dmfdeploy#140 — the format-marker dispatch (codex's
+# dmfdeploy/dmf-cms#140 — the format-marker dispatch (codex's
 # eighth-round finding): the reader stops GUESSING per field which
 # grammar a line uses and dispatches on an explicit `fmt=2` marker
 # instead. codex's P1 finding (a genuinely new-format quoted field

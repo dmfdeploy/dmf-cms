@@ -19,7 +19,7 @@ COMPLETENESS GUARD are the durable design and are meant to survive
 whatever replaces the transport underneath them. The LINE PARSER below is
 not that — it is a demo-scoped stopgap over a text log format.
 
-THE WRITER FIX (dmfdeploy/dmfdeploy#140, 2026-09-03): seven review rounds
+THE WRITER FIX (dmfdeploy/dmf-cms#140, 2026-09-03): seven review rounds
 finding a new forgery vector after every fix converged on a live, PROVEN
 case — not merely unfound — where a forged line and a legitimate one were
 byte-identical, so no reader-side check could ever have existed for it.
@@ -115,7 +115,7 @@ _MAX_RESULT_LINES = 5000
 
 
 # ----------------------------------------------------------------------
-# Line parsing — ONE grammar (dmfdeploy/dmfdeploy#140's writer fix). A
+# Line parsing — ONE grammar (dmfdeploy/dmf-cms#140's writer fix). A
 # line without it is not rendered at all; see the module STATUS NOTE.
 #
 #   awx write: fmt=2 action=%s actor=%r role=%s real_role=%s
@@ -193,7 +193,7 @@ def _scan_repr_string_end(text: str, start: int) -> int | None:
 def _require_quoted_field(tail: str, name: str, start: int) -> tuple[int, str, int] | None:
     """Locate ``<name>=`` at/after ``start`` and REQUIRE its value to be
     repr-quoted — the fmt=2 grammar's contract for target/actor/reason/
-    workload/capacity (dmfdeploy/dmfdeploy#140).
+    workload/capacity (dmfdeploy/dmf-cms#140).
 
     Returns ``(marker_pos, value, value_end)`` on success. Returns
     ``None`` if the marker is missing, its value does not start with a
@@ -248,7 +248,7 @@ def parse_awx_write_line(line: str) -> dict[str, str] | None:
 
 
 def _parse_new_format_line(tail: str) -> dict[str, str] | None:
-    """Parse the fmt=2 grammar (dmfdeploy/dmfdeploy#140, the writer fix):
+    """Parse the fmt=2 grammar (dmfdeploy/dmf-cms#140, the writer fix):
     target, actor, reason, workload and capacity are ALL required to be
     repr-quoted — every one of their boundaries is PROVEN by quote-
     scanning, never guessed, so this function needs no ambiguity checks
@@ -864,7 +864,7 @@ def list_audit_events(
             "role": fields.get("role", ""),
             "reason": fields.get("reason", ""),
             "at": _iso(ts_ns_str),
-            # lkirc (dmfdeploy/dmfdeploy#140): a single request_id can
+            # lkirc (dmfdeploy/dmf-cms#140): a single request_id can
             # legitimately carry MULTIPLE rows — e.g. an L3 preflight's
             # own capacity-skipped/capacity-override line (main.py:488,
             # :580) shares its request_id with that same request's later
