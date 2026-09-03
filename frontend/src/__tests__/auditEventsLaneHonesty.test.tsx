@@ -202,6 +202,22 @@ describe('F7: the facility panel never claims completeness across roles', () => 
   })
 })
 
+describe('operator ruling 2026-09-03: the lane states its stopgap status plainly', () => {
+  it('names the two limits that actually bite, without apologising or claiming unreliability', async () => {
+    mkFetch(FAILED_DEPLOY_RESPONSE)
+    renderHistory()
+    await screen.findByText('The automation engine reported an error')
+    expect(screen.getByText(/First implementation of this lane/)).toBeTruthy()
+    expect(screen.getByText(/deploy and teardown show as\s*dispatched/)).toBeTruthy()
+    expect(screen.getByText(/Coverage is bounded\s*by the window stated above/)).toBeTruthy()
+    // STATE, don't apologise or overstate the weakness — Art. 8 register.
+    expect(screen.queryByText(/[Ss]orry/)).toBeNull()
+    expect(screen.queryByText(/incomplete/i)).toBeNull()
+    expect(screen.queryByText(/unreliable/i)).toBeNull()
+    expect(screen.queryByText(/forgeable/i)).toBeNull()
+  })
+})
+
 describe('F8: the local panel never claims completion for a dispatch-time record', () => {
   it('finalise-purge and launch render as requested, not as a confirmed past-tense outcome', async () => {
     mkFetch({ ...FAILED_DEPLOY_RESPONSE, events: [] })

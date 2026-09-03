@@ -209,6 +209,18 @@ export default function HistoryLane() {
               )}
             </p>
           )}
+          {/* Operator ruling, 2026-09-03: name the stopgap honestly and
+              visibly, here (not the Workspace) — this surface isn't on the
+              demo path, so it costs nothing to state plainly. STATE, don't
+              apologise, and be specific about the two limits that actually
+              bite rather than a disclaimer that says nothing checkable. */}
+          <p className="text-xs text-muted mt-1">
+            First implementation of this lane — records what was requested,
+            not yet whether it finished: deploy and teardown show as
+            dispatched, never as succeeded or failed. Coverage is bounded
+            by the window stated above, not a guarantee of complete
+            history.
+          </p>
         </div>
         <div className="divide-y divide-panel">
           {auditState.phase === 'loading' ? (
