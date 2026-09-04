@@ -199,8 +199,23 @@ describe('F7: the facility panel never claims completeness across roles', () => 
   it('an empty, permitted-view read never says "no facility actions"', async () => {
     mkFetch({ ...FAILED_DEPLOY_RESPONSE, events: [] })
     renderHistory()
-    expect(await screen.findByText(/No actions in your permitted view were recorded/)).toBeTruthy()
+    expect(await screen.findByText(/No actions in your permitted view were found/)).toBeTruthy()
     expect(screen.queryByText(/No facility actions/)).toBeNull()
+  })
+
+  it('dmfdeploy/dmfdeploy#553: does not claim the empty result was "recorded" (a claim about Loki this read can\'t back)', async () => {
+    // The bug this test pins: "were recorded" asserted knowledge about
+    // the underlying Loki log that this read doesn't have -- a handful
+    // of lines that fail to parse (legacy pre-fmt=2 shape, or a
+    // genuinely corrupted line) are silently dropped in audit_events.py
+    // and never counted toward `capped` unless enough accumulate to hit
+    // the result-line ceiling, so events:[] capped:false can mean
+    // something real existed and was excluded, not that nothing was
+    // recorded. "Were found" only claims what this read actually knows.
+    mkFetch({ ...FAILED_DEPLOY_RESPONSE, events: [] })
+    renderHistory()
+    expect(await screen.findByText(/No actions in your permitted view were found in this window/)).toBeTruthy()
+    expect(screen.queryByText(/were recorded in this window/)).toBeNull()
   })
 })
 
@@ -221,6 +236,35 @@ describe('operator ruling 2026-09-03: the lane states its stopgap status plainly
     expect(screen.queryByText(/forgeable/i)).toBeNull()
   })
 
+  it('dmfdeploy/dmfdeploy#552: does not claim every refusal is recorded', async () => {
+    // The bug this test pins: the copy said deploy/teardown record "any
+    // immediate refusal" -- false, since a role or missing-reason
+    // rejection returns before request_id is minted and writes no audit
+    // line at all (live-confirmed, W1c step 4: a missing-reason attempt
+    // left the event list byte-identical to its before-image). The
+    // corrected clause narrows to what's actually true: a refusal after
+    // the role and reason checks.
+    mkFetch(FAILED_DEPLOY_RESPONSE)
+    renderHistory()
+    await screen.findByText('The automation engine reported an error')
+    expect(screen.getByText(/any refusal after the role and reason checks/)).toBeTruthy()
+    expect(screen.queryByText(/any immediate refusal/)).toBeNull()
+  })
+
+  it('dmfdeploy/dmfdeploy#553: does not claim truncation causes outcome-unknown', async () => {
+    // The bug this test pins: the copy said the outcome-unknown case
+    // applies "if the underlying log line is truncated" -- false, a
+    // truncated/malformed line fails parse_awx_write_line and is dropped
+    // before it ever reaches an outcome value at all. Unknown is reached
+    // only by a complete, parseable line whose outcome field is blank.
+    // The corrected clause names that cause instead.
+    mkFetch(FAILED_DEPLOY_RESPONSE)
+    renderHistory()
+    await screen.findByText('The automation engine reported an error')
+    expect(screen.getByText(/when its outcome field is blank/)).toBeTruthy()
+    expect(screen.queryByText(/if the underlying log line is truncated/)).toBeNull()
+  })
+
   it('codex F1: the statement does not claim deploy/teardown never render failed', async () => {
     // The bug this test pins: an earlier version said deploy/teardown
     // "show as dispatched, never as succeeded or failed" -- flatly false,
@@ -236,14 +280,17 @@ describe('operator ruling 2026-09-03: the lane states its stopgap status plainly
     expect(screen.queryByText(/show as\s*dispatched/)).toBeNull()
   })
 
-  it('codex residual: a truncated switch-source record renders outcome unknown, not the exempted verdict', async () => {
+  it('codex residual: a switch-source record with a blank outcome renders outcome unknown, not the exempted verdict', async () => {
     // The bug this test pins: the exemption clause was verified only
     // against 'active'/'degraded' — the two cases the clause itself named
     // — and never against blank, even though R496-C P1-2 established two
     // rounds ago that blank-outcome resolution runs BEFORE the
     // switch-source branch and yields 'unknown' for every class alike.
-    // Render a truncated switch-source row for real rather than trusting
-    // the caveat's own enumeration of what it claims happens.
+    // Render a blank-outcome switch-source row for real rather than
+    // trusting the caveat's own enumeration of what it claims happens.
+    // (dmfdeploy/dmfdeploy#553: not "truncated" — a truncated/malformed
+    // line fails to parse and is dropped before reaching an outcome at
+    // all; this is a complete line whose outcome field is blank.)
     const response: AuditEventsResponse = {
       ...FAILED_DEPLOY_RESPONSE,
       events: [
@@ -486,7 +533,7 @@ describe('lkirc P2 (dmfdeploy/dmf-cms#140, 2026-09-04): an untrustworthy reason 
   it('control: reason === "" still renders the genuine empty-result claim', async () => {
     mkFetch({ ...FAILED_DEPLOY_RESPONSE, reason: '', events: [] })
     renderHistory()
-    expect(await screen.findByText(/No actions in your permitted view were recorded/)).toBeTruthy()
+    expect(await screen.findByText(/No actions in your permitted view were found/)).toBeTruthy()
     expect(screen.queryByText(/Facility history could not be loaded/)).toBeNull()
   })
 })

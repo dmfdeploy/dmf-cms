@@ -428,11 +428,16 @@ export interface ChangesPullsResponse {
 // ------------------------------------------------------------------
 
 export interface AuditEventOutcome {
-  // 'unknown' (codex R496-C P1-2): the record's outcome could not be read
-  // (e.g. a truncated/corrupted Loki line) — a THIRD case, never folded
+  // 'unknown' (codex R496-C P1-2): the record's outcome field is blank on
+  // an otherwise complete, parseable line — a THIRD case, never folded
   // into 'failed'. "Not proven in flight" is not "the action failed";
   // rendering a lost outcome as a definite failure would be this lane
   // claiming knowledge it does not have.
+  //
+  // dmfdeploy/dmfdeploy#553: NOT a truncated/corrupted line — that fails
+  // parsing in audit_events.py's parse_awx_write_line and is dropped
+  // before it ever reaches an outcome value at all. Only a line that
+  // parses in full, with an explicitly empty outcome= field, gets here.
   state: 'in_flight' | 'succeeded' | 'failed' | 'unknown'
   // Raw outcome token off the audit record — expert-level detail ONLY.
   // Never render this directly at default (plan §4.5 / AC 2a); use
