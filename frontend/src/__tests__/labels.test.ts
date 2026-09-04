@@ -42,8 +42,8 @@ describe('humanizeContext', () => {
 describe('describeJob', () => {
   // umbrella #432 §F fix-round 3 (codex gate): describeJob's second argument
   // is the ALREADY-COMPUTED jobOutcome() word, not a raw AWX status — every
-  // call below runs it through jobOutcome() first, exactly like both real
-  // callers (RecentChanges.tsx, HistoryLane.tsx) now do, computing it once
+  // call below runs it through jobOutcome() first, exactly like the real
+  // caller (HistoryLane.tsx's Recent Jobs panel) now does, computing it once
   // and handing the same value to both the title and the badge.
   it('turns a genuinely finished launcher run into a past-tense title', () => {
     expect(describeJob('media-launch-mxl-videotestsrc', jobOutcome('successful'))).toBe('Deployed MXL Test-Pattern Source')

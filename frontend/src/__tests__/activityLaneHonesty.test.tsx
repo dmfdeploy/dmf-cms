@@ -365,9 +365,9 @@ describe('History lane: Forgejo commits/pulls degraded-read honesty', () => {
 })
 
 // fix-round 4 (PR #81, codex sibling sweep): the History lane's OWN Recent
-// Jobs panel shares classifyChanges with the Workspace RecentChanges widget
-// (see recentChanges.test.tsx for the matching pin on that widget) — same
-// gap, same fix: a settled failed refetch used to retain non-empty `jobs`
+// Jobs panel — same gap, same fix, as the (now-removed, dmfdeploy/
+// dmfdeploy#419/#554) Workspace RecentChanges widget once shared via
+// classifyChanges: a settled failed refetch used to retain non-empty `jobs`
 // with no notice at all.
 describe('History lane: Recent Jobs panel retained-error honesty', () => {
   it('a settled failed refetch keeps retained jobs visible but adds a notice — never silently current', async () => {
