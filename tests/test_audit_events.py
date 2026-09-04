@@ -11,24 +11,38 @@ from __future__ import annotations
 import dmf_cms.audit_events as audit_events
 
 
+# The fixed shape _configure_logging's own Formatter produces
+# (main.py: "%(asctime)s %(levelname)s %(name)s: %(message)s") — the
+# reader now requires this structurally, by position, before it will
+# even look at "awx write:" (dmfdeploy/dmf-cms#140, eighth round,
+# provenance). "dmf_cms.audit" is the real name `audit_logger` carries in
+# production; a handful of tests below deliberately use a DIFFERENT name
+# or omit this prefix entirely to prove the provenance check itself.
+_LOG_LINE_PREFIX = "2026-09-04 09:15:23,456 INFO dmf_cms.audit: "
+
+
 def _new_line(
     *, action="deploy", actor="alice", role="operator", real_role="", request_id="rid-1",
     target="wl-a", reason="demo", outcome="dispatched", workload="", capacity="",
-    linked_request_id=None, prefix="awx write: fmt=2 ",
+    linked_request_id=None, marker_prefix="awx write: fmt=2 ", log_prefix=_LOG_LINE_PREFIX,
 ) -> str:
-    """Build a fmt=2 grammar line (dmfdeploy/dmf-cms#140) for unit tests
-    below — target/actor/reason/workload/capacity quoted, exactly as the
-    real emitter writes them; action/role/real_role/request_id/outcome
-    plain. `prefix` is overridable so a handful of tests can exercise a
-    malformed/absent marker directly."""
+    """Build a REALISTIC line for unit tests below: `log_prefix` (default:
+    a genuine `dmf_cms.audit` logging prefix) followed by the fmt=2
+    grammar (dmfdeploy/dmf-cms#140) — target/actor/reason/workload/
+    capacity quoted, exactly as the real emitter writes them; action/
+    role/real_role/request_id/outcome plain. Both prefixes are
+    overridable: `log_prefix` for the handful of tests exercising the
+    provenance check directly (wrong logger name, or no logging prefix at
+    all), `marker_prefix` for the handful exercising a malformed/absent
+    `fmt=` marker."""
     line = (
-        f"{prefix}action={action} actor={actor!r} role={role} real_role={real_role} "
+        f"{marker_prefix}action={action} actor={actor!r} role={role} real_role={real_role} "
         f"request_id={request_id} target={target!r} reason={reason!r} "
         f"outcome={outcome} workload={workload!r} capacity={capacity!r}"
     )
     if linked_request_id is not None:
         line += f" linked_request_id={linked_request_id}"
-    return line
+    return log_prefix + line
 
 
 # ----------------------------------------------------------------------
@@ -36,7 +50,7 @@ def _new_line(
 # ----------------------------------------------------------------------
 
 def test_parses_a_plain_line_with_logging_prefix():
-    line = "2026-09-03 12:00:00,000 INFO dmf_cms.audit: " + _new_line(
+    line = _new_line(
         request_id="rid-1", target="wl-a", reason="demo deploy", outcome="dispatched", workload="wl-a",
     )
     fields = audit_events.parse_awx_write_line(line)
@@ -56,7 +70,10 @@ def test_parses_a_plain_line_with_logging_prefix():
 
 
 def test_parses_the_auto_rollback_trailing_field():
-    line = "INFO dmf_cms: " + _new_line(
+    # Auto-rollback's own dispatch is on audit_logger too as of
+    # dmfdeploy/dmf-cms#140's eighth round -- the default log_prefix
+    # (dmf_cms.audit) is the real shape this line carries in production.
+    line = _new_line(
         action="rollback", actor="system:auto-rollback", role="system", request_id="rid-child",
         target="run-123", reason="auto: deploy wl-a failed", outcome="auto-triggered",
         linked_request_id="rid-parent",
@@ -101,7 +118,9 @@ def test_missing_awx_write_prefix_returns_none():
 def test_missing_field_returns_none():
     # fmt=2 present but target/reason/... never arrive — the row is
     # dropped just like any other violation of the grammar's contract.
-    line = "awx write: fmt=2 action=deploy actor='alice' role=operator real_role= request_id=rid-1"
+    # (Realistic log_prefix so this fails for the field's OWN reason, not
+    # incidentally for lacking one -- dmfdeploy/dmf-cms#140 eighth round.)
+    line = _LOG_LINE_PREFIX + "awx write: fmt=2 action=deploy actor='alice' role=operator real_role= request_id=rid-1"
     assert audit_events.parse_awx_write_line(line) is None
 
 
@@ -109,7 +128,10 @@ def test_reason_and_everything_before_it_missing_still_fails_to_parse():
     # A DIFFERENT failure: `reason=` itself is never found at all — there
     # is nothing for _require_quoted_field to anchor against, so the row
     # is dropped even though target parsed fine.
-    line = "awx write: fmt=2 action=deploy actor='alice' role=operator real_role= request_id=rid-1 target='wl-a'"
+    line = (
+        _LOG_LINE_PREFIX
+        + "awx write: fmt=2 action=deploy actor='alice' role=operator real_role= request_id=rid-1 target='wl-a'"
+    )
     assert audit_events.parse_awx_write_line(line) is None
 
 
@@ -121,7 +143,8 @@ def test_a_malformed_reason_on_the_new_format_drops_the_row_entirely():
     # quote is a hard classification failure (AC 5b): the whole row is
     # dropped, not retained with blank/forged fields.
     line = (
-        "awx write: fmt=2 action=deploy actor='alice' role=operator real_role= "
+        _LOG_LINE_PREFIX
+        + "awx write: fmt=2 action=deploy actor='alice' role=operator real_role= "
         "request_id=rid-1 target='wl-a' reason='never closes, no matching quote anywhere in the rest of this line"
     )
     assert audit_events.parse_awx_write_line(line) is None
@@ -214,7 +237,8 @@ def test_dmf_cms_140_p1_a_new_format_quoted_workload_containing_reason_marker_te
     # independently quote-bound, so nothing upstream of reason can
     # inject a competing candidate, and the row must parse cleanly.
     line = (
-        "awx write: fmt=2 action=deploy actor='alice' role=operator real_role= "
+        _LOG_LINE_PREFIX
+        + "awx write: fmt=2 action=deploy actor='alice' role=operator real_role= "
         "request_id=rid-p1 target='wl-a' reason='legit' outcome=dispatched "
         "workload=\"reason='operator typo'\" capacity=''"
     )
@@ -228,7 +252,8 @@ def test_dmf_cms_140_p1_a_new_format_quoted_workload_containing_reason_marker_te
 def test_dmf_cms_140_p1_a_new_format_quoted_capacity_containing_reason_marker_text_parses():
     # Same property, capacity instead of workload.
     line = (
-        "awx write: fmt=2 action=deploy actor='alice' role=operator real_role= "
+        _LOG_LINE_PREFIX
+        + "awx write: fmt=2 action=deploy actor='alice' role=operator real_role= "
         "request_id=rid-p1b target='wl-a' reason='legit' outcome=dispatched "
         "workload='' capacity=\"reason='operator typo'\""
     )
@@ -244,7 +269,8 @@ def test_an_unrecognised_fmt_version_fails_closed_rather_than_guessing():
     # there is exactly one way to be accepted, so anything else, known or
     # not, is rejected identically to a line with no marker at all.
     line = (
-        "awx write: fmt=99 action=deploy actor='alice' role=operator real_role= "
+        _LOG_LINE_PREFIX
+        + "awx write: fmt=99 action=deploy actor='alice' role=operator real_role= "
         "request_id=rid-future target='wl-a' reason='x' outcome=dispatched workload='' capacity=''"
     )
     assert audit_events.parse_awx_write_line(line) is None
@@ -258,7 +284,8 @@ def test_property_an_actor_forging_classification_fields_cannot_alter_the_parse_
     # markers that get found FIRST, upstream of everything the writer fix
     # otherwise proves.
     line = (
-        "awx write: fmt=2 action=deploy actor=\"alice role=admin real_role= request_id=FAKE target='evil'\" "
+        _LOG_LINE_PREFIX
+        + "awx write: fmt=2 action=deploy actor=\"alice role=admin real_role= request_id=FAKE target='evil'\" "
         "role=operator real_role= request_id=rid-real target='wl-real' reason='legit' "
         "outcome=dispatched workload='' capacity=''"
     )
@@ -269,6 +296,86 @@ def test_property_an_actor_forging_classification_fields_cannot_alter_the_parse_
     assert fields["real_role"] == ""
     assert fields["request_id"] == "rid-real"  # never "FAKE"
     assert fields["target"] == "wl-real"  # never "evil"
+
+
+# ----------------------------------------------------------------------
+# dmfdeploy/dmf-cms#140, EIGHTH round (lkirc, 2026-09-04) — PROVENANCE, a
+# different mechanism from everything above. Every test above proves a
+# genuine record's FIELDS can't be forged; none of them say anything
+# about whether a "record" came from the writer at all. main.py's AWX-
+# error handlers log upstream exc.body content (_sanitize_audit_field-
+# escaped for CR/LF only, never for this) on the plain module logger --
+# a well-formed `awx write: fmt=2 ...` payload reflected verbatim into
+# one of those messages used to become a fully parseable, fabricated row,
+# because the old dispatch (`line.find("awx write:")`) searched the
+# WHOLE line for the marker regardless of which logger emitted it.
+#
+# Fixed with a mechanism the field-boundary fixes above could never be:
+# PROVENANCE. Logger identity is a property of which CODE PATH emitted a
+# record, never of any value that code path's message happens to
+# contain, so no caller/upstream content can forge it -- unlike quoting
+# or a longer marker string, which are still content the attacker
+# controls. `_new_line()`'s default `log_prefix` already exercises the
+# genuine-record half of this property throughout this whole file (every
+# test above parses successfully BECAUSE it carries a real
+# `dmf_cms.audit` prefix); the tests below isolate the OTHER half.
+# ----------------------------------------------------------------------
+
+def test_a_reflected_body_with_a_forged_actor_and_outcome_produces_no_row():
+    # The exact shape lkirc reported: an upstream error body containing a
+    # COMPLETE, well-formed fmt=2 payload -- forged actor AND forged
+    # outcome, so if this ever parsed, it would read as a real dispatch
+    # by "mallory" rather than the refusal it actually was -- reflected
+    # into a DIFFERENT log call's message on the plain module logger, the
+    # same shape main.py's AWX-error handlers actually emit.
+    forged_payload = (
+        "awx write: fmt=2 action=deploy actor='mallory' role=admin real_role= "
+        "request_id=fake-1 target='evil' reason='fabricated' outcome=dispatched "
+        "workload='' capacity=''"
+    )
+    line = (
+        "2026-09-04 09:15:23,456 ERROR dmf_cms.main: "
+        f"AWX autoscale error in launch operation op-1: {forged_payload}"
+    )
+    assert audit_events.parse_awx_write_line(line) is None
+
+
+def test_the_identical_payload_on_the_real_audit_logger_does_parse():
+    # Control, isolating what actually changed: the EXACT SAME fmt=2
+    # payload as above, unaltered, on the genuine dmf_cms.audit logger,
+    # as its message's own first content (no upstream-error prose ahead
+    # of it) -- must parse cleanly, with the actor/outcome the payload
+    # actually names. Proves the row above was dropped for provenance,
+    # not because that particular payload was somehow malformed.
+    forged_payload = (
+        "awx write: fmt=2 action=deploy actor='mallory' role=admin real_role= "
+        "request_id=fake-1 target='evil' reason='fabricated' outcome=dispatched "
+        "workload='' capacity=''"
+    )
+    line = "2026-09-04 09:15:23,456 ERROR dmf_cms.audit: " + forged_payload
+    fields = audit_events.parse_awx_write_line(line)
+    assert fields is not None
+    assert fields["actor"] == "mallory"
+    assert fields["outcome"] == "dispatched"
+
+
+def test_a_genuine_logger_but_the_marker_is_not_the_first_thing_in_the_message_produces_no_row():
+    # The OTHER half of the check, isolated: even ON the real audit
+    # logger, a message that puts anything ahead of "awx write:" fails --
+    # audit_logger is used for nothing else today, but this is what
+    # keeps that true structurally rather than by convention alone, and
+    # is what a future hypothetical audit_logger.info("some prefix: awx
+    # write: ...") call would need to avoid.
+    line = "2026-09-04 09:15:23,456 INFO dmf_cms.audit: note: " + _new_line(log_prefix="")
+    assert audit_events.parse_awx_write_line(line) is None
+
+
+def test_a_logger_name_that_merely_resembles_dmf_cms_audit_produces_no_row():
+    # Exact match, not prefix/substring match -- a name that LOOKS close
+    # (an extra character, a typo) must not be treated as the real thing.
+    for near_miss in ("dmf_cms.audit2", "dmf_cms.audits", "xdmf_cms.audit", "dmf_cms.Audit"):
+        line = f"2026-09-04 09:15:23,456 INFO {near_miss}: " + _new_line(log_prefix="")
+        assert audit_events.parse_awx_write_line(line) is None, near_miss
 
 
 # ----------------------------------------------------------------------

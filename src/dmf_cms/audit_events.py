@@ -1,10 +1,11 @@
 """Durable Activity History lane — dmfdeploy/dmfdeploy#496.
 
 Read path only. Parses the ``awx write:`` audit line already emitted by
-``main.py``'s ``_audit_awx_write`` (and, on the same prefix, the
-auto-rollback dispatch's direct module-logger calls) out of Loki, applies
-the per-class authorization gate the spec requires (plan §4.3), and maps
-each record's outcome to an honest render state (plan §4.4/§4.5).
+``main.py``'s ``_audit_awx_write`` (and, on the same prefix and the same
+``audit_logger``, the auto-rollback dispatch's direct emissions) out of
+Loki, applies the per-class authorization gate the spec requires (plan
+§4.3), and maps each record's outcome to an honest render state (plan
+§4.4/§4.5).
 
 Domain logic only — the Loki transport itself lives in ``loki.py``; this
 module is what calls it and knows what the fields mean.
@@ -25,8 +26,8 @@ case — not merely unfound — where a forged line and a legitimate one were
 byte-identical, so no reader-side check could ever have existed for it.
 The operator's decision was to fix the WRITER instead of continuing to
 harden the reader: ``main.py``'s ``_audit_awx_write`` (and the
-auto-rollback dispatch's identical-prefix module-logger calls) quote FIVE
-fields with ``%r`` — ``target``, ``actor``, ``reason``, ``workload``,
+auto-rollback dispatch's identical-prefix, identical-logger direct calls)
+quote FIVE fields with ``%r`` — ``target``, ``actor``, ``reason``, ``workload``,
 ``capacity`` — the same repr treatment ``reason`` has always had.
 ``action``, ``role``, ``real_role``, ``request_id`` and ``outcome`` stay
 plain: every one of them is code-generated with a constrained shape,
@@ -46,32 +47,72 @@ could ever authenticate one. ``parse_awx_write_line`` below drops any line
 without a valid ``fmt=2`` marker at its first check — not parsed by a
 weaker fallback grammar, not surfaced at all. This is a genuine product
 cost, not a technicality: the lane shows nothing from before the writer
-fix shipped, until new-format lines accumulate. It is also what makes
-``_parse_new_format_line`` below CLOSED, not open: every one of the seven
-forgery vectors found across this arc is closed BY CONSTRUCTION for every
-line this parser will ever accept — no residual gap, no second grammar
-with weaker protections to reason about, no migration window to bound.
+fix shipped, until new-format lines accumulate.
 
 ``test_writer_fix_round_trip_*`` in ``tests/test_audit_events_endpoint.py``
 is the actual evidence, not the absence of a failing test: real payloads
 through the REAL emitter, parsed by the REAL reader, confirmed to come
 back as literal field content, never as forged structure.
 
-Historical record of the seven vectors this design closes (found by codex
-across several review rounds, and for the sixth, by a human reviewer
-codex's own pass had missed; each mutation-tested at the time): a
-caller-controlled field's raw text hijacking a later field's boundary;
-detection and extraction disagreeing about what a marker even is;
-over-correcting into rejecting legitimate rows whose own text happened to
-contain marker-shaped substrings; a truncated genuine reason marker
-losing to an injected complete one; a caller-controlled value legitimately
-containing marker-shaped text being mistaken for structure by a check
-that didn't know it was looking inside an already-safely-bounded quoted
-span; and a forged line proven byte-identical to a legitimate one,
-unclosable by any reader-side check — the finding that ended the
-reader-hardening approach entirely and moved the fix upstream to the
-writer, with an explicit format marker so the reader never again has to
-guess which grammar a line was written in.
+TWO SEPARATE MECHANISMS close two SEPARATE claims this parser makes, and
+they must be reasoned about independently, not as one "closed" property:
+
+1. FIELD BOUNDARIES — "the fields I extracted from this record are the
+   ones the writer put there, not ones a caller's own data forged partway
+   through it." Proven by the fmt=2 grammar: target/actor/reason/
+   workload/capacity are quote-scanned, never boundary-guessed, so no
+   field's content can ever be mistaken for a later field's marker (see
+   ``_parse_new_format_line`` below). This is the historical record of
+   the SEVEN vectors below, and it is closed BY CONSTRUCTION for every
+   line that reaches ``_parse_new_format_line`` — no residual gap in
+   THIS mechanism, no second grammar with weaker protections, no
+   migration window to bound.
+
+2. PROVENANCE — "this record came from the writer at all, not from
+   caller/upstream content that happened to be reflected, verbatim, into
+   some UNRELATED log call on the same stdout stream." lkirc's EIGHTH
+   finding (2026-09-04) proved mechanism 1 has nothing to say about this:
+   quoting a forged line's fields perfectly does not prove the line was
+   never forged in the first place, if an attacker can get their own
+   well-formed ``awx write: fmt=2 ...`` text echoed inside e.g. an AWX
+   error body that a DIFFERENT log call reports verbatim (main.py's
+   ``*APIError`` handlers, `_sanitize_audit_field`-escaped for CR/LF
+   only, never for this). Closed by REQUIRING the record's actual
+   ``logging.Logger`` identity, not by any content check: ``audit_logger``
+   (``logging.getLogger("dmf_cms.audit")``) is used for NOTHING else
+   anywhere in this codebase, so ``parse_awx_write_line`` below parses
+   the fixed asctime/levelname/name/message shape ``_configure_logging``'s
+   own formatter always produces STRUCTURALLY — by position, never by
+   searching the line for a substring — and requires the parsed name to
+   equal ``dmf_cms.audit`` before it will even look at the message.
+   Logger identity is a property of which CODE PATH emitted a record, not
+   of any value that code path's message happens to contain, so no
+   caller/upstream content can ever forge it. A content-shape rule (a
+   longer marker string, or requiring the marker merely be the first
+   thing in the MESSAGE) was considered and rejected: both are still
+   substring searches an attacker who fully controls the reflected text
+   can simply include, which is the same class of mistake mechanism 1
+   already spent seven rounds learning not to make one level down.
+
+Historical record of the seven FIELD-BOUNDARY vectors mechanism 1 closes
+(found by codex across several review rounds, and for the sixth, by a
+human reviewer codex's own pass had missed; each mutation-tested at the
+time): a caller-controlled field's raw text hijacking a later field's
+boundary; detection and extraction disagreeing about what a marker even
+is; over-correcting into rejecting legitimate rows whose own text
+happened to contain marker-shaped substrings; a truncated genuine reason
+marker losing to an injected complete one; a caller-controlled value
+legitimately containing marker-shaped text being mistaken for structure
+by a check that didn't know it was looking inside an already-safely-
+bounded quoted span; and a forged line proven byte-identical to a
+legitimate one, unclosable by any reader-side check — the finding that
+ended the reader-hardening approach entirely and moved the fix upstream
+to the writer, with an explicit format marker so the reader never again
+has to guess which grammar a line was written in. The EIGHTH vector,
+above, is not a member of this list — it is a different mechanism
+closing a different claim, and any future, NINTH finding of the same
+provenance shape belongs with it, not folded back into the field-
+boundary list it has nothing to do with.
 """
 
 from __future__ import annotations
@@ -89,10 +130,21 @@ from .security import MEDIA_ENGINEERS_GROUP, role_at_least
 
 
 # ----------------------------------------------------------------------
-# The query — content match, never a logger-field filter (plan §4.1): the
-# auto-rollback dispatch emits the identical "awx write:" shape on the
-# module logger, not the audit child logger, so a `logger="dmf_cms.audit"`
-# filter would silently drop a covered class.
+# The query — a coarse content match, never a Loki-level logger filter:
+# logger name is not an indexed Loki label this query can select on (only
+# namespace/job are — see _QUERY_LABELS), it is text this reader itself
+# parses back out of each candidate line (see parse_awx_write_line's own
+# provenance check, module STATUS NOTE mechanism 2). This `|= "awx
+# write:"` filter exists purely to keep the fetched volume down; it is
+# NOT the security boundary and deliberately admits lines that will later
+# fail the real, structural check (e.g. a reflected body that merely
+# CONTAINS the substring) — that is expected and safe, not a gap.
+#
+# vector-8 fix (2026-09-04): the auto-rollback dispatch used to emit on
+# the plain module logger, not the audit child logger — main.py now
+# routes it through `audit_logger` too, so `dmf_cms.audit` is EXCLUSIVE
+# to genuine records and the provenance check below has something to
+# check against for every covered class, not just _audit_awx_write's own.
 # ----------------------------------------------------------------------
 
 _NAMESPACE = "dmf-cms"
@@ -115,12 +167,14 @@ _MAX_RESULT_LINES = 5000
 
 
 # ----------------------------------------------------------------------
-# Line parsing — ONE grammar (dmfdeploy/dmf-cms#140's writer fix). A
-# line without it is not rendered at all; see the module STATUS NOTE.
+# Line parsing — ONE grammar (dmfdeploy/dmf-cms#140's writer fix), on
+# lines PROVEN to come from ``audit_logger`` (dmfdeploy/dmf-cms#140's
+# eighth-round, provenance fix). A line failing either check is not
+# rendered at all; see the module STATUS NOTE's two-mechanism split.
 #
-#   awx write: fmt=2 action=%s actor=%r role=%s real_role=%s
-#              request_id=%s target=%r reason=%r outcome=%s workload=%r
-#              capacity=%r [linked_request_id=%s]
+#   <asctime> <levelname> dmf_cms.audit: awx write: fmt=2 action=%s
+#       actor=%r role=%s real_role=%s request_id=%s target=%r reason=%r
+#       outcome=%s workload=%r capacity=%r [linked_request_id=%s]
 #
 # `request_id=<id>` is immune to the trailing `linked_request_id=<id>`
 # substring that contains it (plan §4.2's named hazard): every plain
@@ -128,6 +182,32 @@ _MAX_RESULT_LINES = 5000
 # from just past the current field's marker — sequential, never a
 # whole-line search.
 # ----------------------------------------------------------------------
+
+# The fixed shape _configure_logging's own Formatter always produces
+# (main.py: ``"%(asctime)s %(levelname)s %(name)s: %(message)s"``) —
+# asctime/levelname/name are LogRecord attributes the formatter emits
+# BEFORE the message, never derived from anything the message contains,
+# so no caller/upstream value reflected INTO a message can ever alter
+# what this pattern extracts for `name`. Matched by POSITION against the
+# whole line, never by searching for a substring anywhere in it — that
+# distinction is the entire fix (dmfdeploy/dmf-cms#140, eighth round):
+# `line.find("awx write:")` would happily find the marker wherever a
+# reflected upstream/caller value put it, on ANY logger's line; this
+# requires it to be the first thing the ACTUAL emitting logger's message
+# says, and requires that logger to genuinely be `_AUDIT_LOGGER_NAME`.
+_LOG_LINE_RE = re.compile(
+    r"^\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2},\d{3} \S+ (?P<name>\S+): (?P<message>.*)\Z",
+    re.DOTALL,
+)
+
+# `logging.getLogger("dmf_cms.audit")` in main.py — used at exactly ONE
+# call site there (`_audit_awx_write`) plus, as of this fix, the
+# auto-rollback dispatch's two direct emissions, and NOTHING else in this
+# codebase. That exclusivity is what makes this name meaningful evidence
+# of provenance rather than another string to match: it is a property of
+# which CODE PATH emitted a record, never of any value that code path's
+# own message happens to contain.
+_AUDIT_LOGGER_NAME = "dmf_cms.audit"
 
 _TRAILING_FIELD = "linked_request_id"
 
@@ -226,20 +306,34 @@ def _require_quoted_field(tail: str, name: str, start: int) -> tuple[int, str, i
 
 
 def parse_awx_write_line(line: str) -> dict[str, str] | None:
-    """Parse one ``awx write:`` line, or None if it doesn't parse well
-    enough to CLASSIFY the row (plan §7 AC 5b) — including, deliberately,
-    any line without a valid ``fmt=2`` marker at all (operator decision,
-    2026-09-03: see the module STATUS NOTE for why retained pre-fix lines
-    are dropped rather than parsed by a weaker grammar). A line that
-    claims a format via a malformed marker (``fmt=``, ``fmt=2x``, ...) or
-    an unsupported version (``fmt=3``) is rejected identically to a line
-    with no marker at all — there is exactly one way to be accepted:
-    a well-formed ``fmt=2``.
+    """Parse one raw Loki line into a record, or None if it fails either
+    of the two independent checks this module's STATUS NOTE describes —
+    provenance, then field boundaries (plan §7 AC 5b).
+
+    PROVENANCE (dmfdeploy/dmf-cms#140, eighth round): ``line`` must
+    structurally match `_configure_logging`'s own fixed formatter shape,
+    matched by POSITION, never by searching for "awx write:" anywhere in
+    the line — a caller/upstream value reflected verbatim into some OTHER
+    log call's message can never satisfy this, because it never
+    determines which ``logging.Logger`` actually emitted the surrounding
+    record. The parsed logger name must equal ``_AUDIT_LOGGER_NAME``
+    exactly, and the message it carries must begin with "awx write:" as
+    its very first characters — not merely contain it — since a genuine
+    emission's format string always starts there literally.
+
+    FIELD BOUNDARIES: once provenance is proven, the message tail must
+    carry a valid ``fmt=2`` marker (operator decision, 2026-09-03: any
+    line without one — malformed marker, unsupported version, or none at
+    all — is rejected identically; there is exactly one way to be
+    accepted) and then parse under the fmt=2 grammar.
     """
-    idx = line.find("awx write:")
-    if idx == -1:
+    match = _LOG_LINE_RE.match(line)
+    if match is None or match.group("name") != _AUDIT_LOGGER_NAME:
         return None
-    tail = line[idx + len("awx write:"):]
+    message = match.group("message")
+    if not message.startswith("awx write:"):
+        return None
+    tail = message[len("awx write:"):]
 
     fmt_match = _FMT_MARKER_RE.match(tail)
     if fmt_match is None or fmt_match.group(1) != _NEW_FORMAT_VERSION:
