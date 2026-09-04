@@ -91,17 +91,25 @@ def _sweep_outcome_tokens() -> tuple[dict[str, set[str]], dict[str, bool]]:
     Fixed to key on STRUCTURE, not on a substring of the rendered
     message that this guard does not control:
 
-    - WHICH LOGGER: ``logger.info(...)``, not ``audit_logger.info(...)``
-      — main.py's own convention (see its module-top comment) is that
-      only ``_audit_awx_write``'s own calls route through the dedicated
-      ``audit_logger``; the auto-rollback dispatch's two hand-assembled
-      calls use the plain module ``logger`` specifically because they
-      run from a background task with no ``Request`` object, which is
-      what makes them a SEPARATE emission path this sweep has to find a
-      second way for in the first place. That distinction is a property
-      of the CODE (which logger object is called), not of any message
-      text, and is exactly as stable as `_audit_awx_write` calls being
-      found by their own function name above.
+    - WHICH LOGGER: ``audit_logger.info(...)`` (dmfdeploy/dmf-cms#140,
+      EIGHTH round, 2026-09-04: the vector-8 provenance fix moved the
+      auto-rollback dispatch's two hand-assembled calls off the plain
+      module ``logger`` onto ``audit_logger`` too, so the real reader can
+      require every genuine record's logger identity to match — see
+      audit_events.py's module STATUS NOTE, mechanism 2. This guard's own
+      structural key had to move with it: it USED to distinguish
+      ``_audit_awx_write``'s templated internal call from the direct
+      emitters by "plain logger vs audit_logger"; now both are on
+      ``audit_logger``, so this branch matches ANY ``audit_logger.info``
+      call whose literal starts with "awx write:" — including, harmlessly,
+      ``_audit_awx_write``'s OWN internal call, whose format string reads
+      literally ``action=%s`` (an unsubstituted placeholder): the
+      action-token regex below extracts the literal text ``"%s"``, which
+      is not a member of ``_COVERED_WATCHED_ACTIONS`` and is filtered out
+      by the same ``if action not in _COVERED_WATCHED_ACTIONS`` check
+      every other candidate already goes through — no special-casing
+      needed, verified directly by the token-set assertions below, not
+      assumed).
     - WHICH PREFIX: the message literal must start with "awx write:" —
       the one substring this guard is entitled to depend on, because the
       REAL reader (``audit_events.parse_awx_write_line``) depends on the
@@ -189,7 +197,9 @@ def _sweep_outcome_tokens_from_source(source: str) -> tuple[dict[str, set[str]],
             name == "info"
             and isinstance(func, ast.Attribute)
             and isinstance(func.value, ast.Name)
-            and func.value.id == "logger"  # structural: the module logger, not audit_logger
+            and func.value.id == "audit_logger"  # both _audit_awx_write's own call and the
+            # auto-rollback dispatch's two direct emitters live here as of the vector-8 fix —
+            # see this function's own docstring for why that's not a false-positive risk
             and node.args
             and isinstance(node.args[0], ast.Constant)
             and isinstance(node.args[0].value, str)
@@ -282,9 +292,12 @@ def test_guard_still_finds_the_direct_emitters_after_their_message_text_changes(
     # share the old brittleness, not just that it happens to work on
     # today's exact text.
     def _snippet(message: str) -> str:
+        # audit_logger, not logger, as of the vector-8 provenance fix
+        # (dmfdeploy/dmf-cms#140, eighth round) -- see this file's own
+        # sweep docstring for why that's not a false-positive risk.
         return (
             "def _fake():\n"
-            f"    logger.info(\n        {message!r},\n"
+            f"    audit_logger.info(\n        {message!r},\n"
             "        rollback_op.request_id, run_id, reason, deploy_op.request_id,\n"
             "    )\n"
         )

@@ -2480,7 +2480,10 @@ def test_auto_trigger_dispatch_audit_line_sanitizes_run_id(monkeypatch, caplog):
     )
     monkeypatch.setattr(main, "_spawn_rollback_task", lambda *a, **k: None)
 
-    with caplog.at_level(logging.INFO, logger="dmf_cms.main"):
+    # dmfdeploy/dmf-cms#140, eighth round: this dispatch moved onto
+    # audit_logger (vector-8 provenance fix) -- "dmf_cms.main" is no
+    # longer where it lands.
+    with caplog.at_level(logging.INFO, logger="dmf_cms.audit"):
         asyncio.run(main._maybe_auto_trigger_rollback(app, deploy_op.operation_id, "key1"))
 
     lines = [r.getMessage() for r in caplog.records if r.getMessage().startswith("awx write: fmt=2 action=rollback")]
@@ -2494,7 +2497,7 @@ def test_auto_trigger_dispatch_audit_line_sanitizes_run_id(monkeypatch, caplog):
 
 def test_auto_trigger_reattach_audit_line_sanitizes_run_id(monkeypatch, caplog):
     # Same defect, the OTHER call site: the already-in-progress
-    # (reattach) branch has its own separate logger.info call.
+    # (reattach) branch has its own separate audit_logger.info call.
     import logging
 
     app, ops_store = _fake_app(auto_rollback=True)
@@ -2513,7 +2516,9 @@ def test_auto_trigger_reattach_audit_line_sanitizes_run_id(monkeypatch, caplog):
         AssertionError("must not spawn a second rollback")
     ))
 
-    with caplog.at_level(logging.INFO, logger="dmf_cms.main"):
+    # dmfdeploy/dmf-cms#140, eighth round: same move as the sibling test
+    # above -- this branch's logger.info call is audit_logger.info now.
+    with caplog.at_level(logging.INFO, logger="dmf_cms.audit"):
         asyncio.run(main._maybe_auto_trigger_rollback(app, deploy_op.operation_id, "key1"))
 
     lines = [r.getMessage() for r in caplog.records if r.getMessage().startswith("awx write: fmt=2 action=rollback")]
@@ -2523,6 +2528,47 @@ def test_auto_trigger_reattach_audit_line_sanitizes_run_id(monkeypatch, caplog):
     assert "\r" not in line
     assert "injected-run-id" in line
     assert "outcome=already-in-progress" in line
+
+
+def test_auto_trigger_dispatch_survives_the_real_reader_on_its_new_logger(monkeypatch, caplog):
+    # dmfdeploy/dmf-cms#140, eighth round: the "genuine records must still
+    # parse" half of the vector-8 fix, proven through the REAL function on
+    # BOTH sides, not a hand-built fixture pretending to be what it
+    # emits -- same discipline as the writer-fix round's own round-trip
+    # tests (test_audit_events_endpoint.py). The auto-rollback dispatch
+    # moved from the plain module logger onto audit_logger this round;
+    # this is the evidence that move didn't just avoid breaking, but that
+    # the record it produces still reads as genuine to the real reader.
+    import logging as _logging
+
+    import dmf_cms.audit_events as audit_events
+
+    app, ops_store = _fake_app(auto_rollback=True)
+    deploy_op = ops_store.create("deploy", "key1", request_id="d" * 32)
+    ops_store.update(
+        deploy_op.operation_id, state=OperationState.FAILED_ROLLBACK_REQUIRED, job_id=1, run_id="run-real-123",
+    )
+    monkeypatch.setattr(main, "_spawn_rollback_task", lambda *a, **k: None)
+
+    with caplog.at_level(_logging.INFO, logger="dmf_cms.audit"):
+        asyncio.run(main._maybe_auto_trigger_rollback(app, deploy_op.operation_id, "key1"))
+
+    record = next(r for r in caplog.records if r.getMessage().startswith("awx write: fmt=2 action=rollback"))
+    # Reproduces the exact line production's real StreamHandler would
+    # write to stdout (and Loki would store) for this record -- caplog's
+    # own record.getMessage() is just the message half, which is no
+    # longer enough to feed the reader now that provenance depends on the
+    # asctime/levelname/name prefix too (see audit_events.py's own
+    # STATUS NOTE, mechanism 2, and test_audit_events_endpoint.py's
+    # _formatted_line for the same reasoning on the sibling emitter).
+    line = _logging.Formatter("%(asctime)s %(levelname)s %(name)s: %(message)s").format(record)
+
+    fields = audit_events.parse_awx_write_line(line)
+    assert fields is not None
+    assert fields["action"] == "rollback"
+    assert fields["actor"] == "system:auto-rollback"
+    assert fields["target"] == "run-real-123"
+    assert fields["outcome"] == "auto-triggered"
 
 
 def test_auto_trigger_identity_unknown_when_request_id_set_but_run_id_not_hydrated(monkeypatch):

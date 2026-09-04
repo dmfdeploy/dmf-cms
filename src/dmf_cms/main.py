@@ -2458,9 +2458,12 @@ async def _maybe_auto_trigger_rollback(app: FastAPI, operation_id: str, key: str
 
     Runs from inside the watcher (a background task, no ``Request``
     object) — the C5 audit line is hand-assembled here in the same
-    "awx write:" shape ``_audit_awx_write`` emits, with actor
-    "system:auto-rollback" and a ``linked_request_id`` trailing field
-    tying it back to the failed deploy's own request_id for correlation.
+    "awx write:" shape ``_audit_awx_write`` emits, on ``audit_logger``
+    (dmfdeploy/dmf-cms#140, eighth round: the reader now checks that
+    identity, so this can no longer be the plain module logger), with
+    actor "system:auto-rollback" and a ``linked_request_id`` trailing
+    field tying it back to the failed deploy's own request_id for
+    correlation.
 
     codex R2-3: the outcome is recorded on the deploy op's ``auto_rollback``
     field, kept SEPARATE from ``l3_outcome`` — ``l3_outcome`` always keeps
@@ -2527,13 +2530,23 @@ async def _maybe_auto_trigger_rollback(app: FastAPI, operation_id: str, key: str
     # this line satisfies the fmt=2 grammar's contract, not because it is
     # externally influenced; workload/capacity are always blank on this
     # path, quoted-empty for the same reason).
+    #
+    # dmfdeploy/dmf-cms#140, eighth round (vector-8, provenance): emitted
+    # on `audit_logger`, not the plain module `logger`, as of this fix —
+    # the reader now requires a record's ACTUAL logger identity to equal
+    # `audit_logger`'s own name before it will look at the message at all
+    # (audit_events.py's module STATUS NOTE, mechanism 2). `audit_logger`
+    # is used for NOTHING else anywhere in this codebase; keeping this
+    # dispatch on it is what makes that exclusivity — and therefore the
+    # reader's provenance check — actually true for every covered class,
+    # not just _audit_awx_write's own.
     if not created:
         # codex R2-8: reattached to an already-in-progress rollback (manual
         # or a racing auto-trigger) — the fresh_request_id we minted above
         # was never persisted anywhere, so the audit line must cite the
         # EXISTING op's own request_id, not that discarded one.
         ops_store.update(operation_id, auto_rollback="already-in-progress")
-        logger.info(
+        audit_logger.info(
             "awx write: fmt=2 action=rollback actor='system:auto-rollback' role=system real_role= "
             "request_id=%s target=%r reason=%r outcome=already-in-progress workload='' capacity='' linked_request_id=%s",
             rollback_op.request_id, run_id, reason, deploy_op.request_id,
@@ -2542,7 +2555,7 @@ async def _maybe_auto_trigger_rollback(app: FastAPI, operation_id: str, key: str
 
     ops_store.update(operation_id, auto_rollback="triggered")
 
-    logger.info(
+    audit_logger.info(
         "awx write: fmt=2 action=rollback actor='system:auto-rollback' role=system real_role= "
         "request_id=%s target=%r reason=%r outcome=auto-triggered workload='' capacity='' linked_request_id=%s",
         fresh_request_id, run_id, reason, deploy_op.request_id,

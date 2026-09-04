@@ -428,6 +428,23 @@ class _FakeRequest:
     session: dict = {}
 
 
+def _formatted_line(record: logging.LogRecord) -> str:
+    """Reproduce the line production's real StreamHandler emits for this
+    captured record. caplog's own `record.getMessage()` is just the
+    message text -- `_audit_awx_write`'s %s/%r substitution result -- not
+    the full asctime/levelname/name-prefixed line `_configure_logging`'s
+    Formatter actually writes to stdout (and that Loki actually stores).
+    dmfdeploy/dmf-cms#140's eighth round made that prefix load-bearing:
+    parse_awx_write_line now requires it structurally, so a round-trip
+    test claiming to prove "the real emitter's output survives the real
+    reader" has to feed the reader what the real reader actually
+    receives, not merely the message half of it. Must match
+    _configure_logging's own Formatter string exactly (see main.py) --
+    this is the one place in this repo that duplicates it, deliberately,
+    same as "awx write:" itself is duplicated between writer and reader."""
+    return logging.Formatter("%(asctime)s %(levelname)s %(name)s: %(message)s").format(record)
+
+
 def test_writer_fix_round_trip_a_forged_looking_target_survives_as_literal_content(caplog):
     # The exact shape every earlier vector in this arc exploited: a
     # caller-controlled target crafted to look like a complete forged
@@ -447,7 +464,7 @@ def test_writer_fix_round_trip_a_forged_looking_target_survives_as_literal_conte
             request_id="rid-roundtrip", reason="legit deploy attempt",
             outcome="entry-not-found", workload=None, capacity=None,
         )
-    line = next(m for m in caplog.records if m.getMessage().startswith("awx write:")).getMessage()
+    line = _formatted_line(next(r for r in caplog.records if r.getMessage().startswith("awx write:")))
 
     fields = audit_events.parse_awx_write_line(line)
     assert fields is not None
@@ -474,7 +491,7 @@ def test_writer_fix_round_trip_a_quote_and_backslash_in_target_survive_too(caplo
             request_id="rid-roundtrip-2", reason="legit", outcome="entry-not-found",
             workload="wl'with quote", capacity='cap"with"doublequotes',
         )
-    line = next(m for m in caplog.records if m.getMessage().startswith("awx write:")).getMessage()
+    line = _formatted_line(next(r for r in caplog.records if r.getMessage().startswith("awx write:")))
 
     fields = audit_events.parse_awx_write_line(line)
     assert fields is not None
@@ -501,7 +518,7 @@ def test_writer_fix_round_trip_blank_workload_and_capacity_never_render_as_the_w
             request_id="rid-roundtrip-3", reason="cleanup", outcome="dispatched",
             workload=None, capacity=None,
         )
-    line = next(m for m in caplog.records if m.getMessage().startswith("awx write:")).getMessage()
+    line = _formatted_line(next(r for r in caplog.records if r.getMessage().startswith("awx write:")))
     assert "None" not in line
 
     fields = audit_events.parse_awx_write_line(line)
@@ -537,6 +554,54 @@ def test_a_legacy_unquoted_line_from_before_the_writer_fix_is_not_rendered_end_t
     assert payload["reason"] == ""  # a genuine empty read, not an outage
 
 
+def test_a_reflected_body_on_a_non_audit_logger_does_not_produce_a_row_end_to_end(monkeypatch):
+    # lkirc's EIGHTH finding, through the full pipeline (dmfdeploy/dmf-
+    # cms#140, 2026-09-04) -- a genuinely different class from every
+    # forgery test above: those all prove a record's FIELDS can't be
+    # forged; this proves a record's very EXISTENCE can't be forged
+    # either, by an upstream/caller value reflected verbatim into a
+    # DIFFERENT log call. The shape below is the REAL one -- main.py's
+    # AWX-error handlers (`logger.error("AWX autoscale error in launch
+    # operation %s: %s", operation_id, _sanitize_audit_field(exc.body))`)
+    # -- with a hostile exc.body containing a COMPLETE, well-formed fmt=2
+    # payload: forged actor (never the real caller) AND forged outcome
+    # (dispatched, when nothing dispatched), so if this parsed at all it
+    # would render as an in-flight deploy nobody actually ran.
+    forged_payload = (
+        "awx write: fmt=2 action=deploy actor='mallory' role=admin real_role= "
+        "request_id=fake-1 target='evil' reason='fabricated' outcome=dispatched "
+        "workload='' capacity=''"
+    )
+    reflected_line = (
+        "2026-09-04 09:15:23,456 ERROR dmf_cms.main: "
+        f"AWX autoscale error in launch operation op-1: {forged_payload}"
+    )
+    genuine_line = _line(
+        action="deploy", actor="alice", role="operator", request_id="rid-genuine",
+        target="wl-a", reason="ordinary deploy", outcome="dispatched", workload="wl-a",
+    )
+
+    def _fake(*, url, selector, start_ns, end_ns, limit, timeout=10):
+        return [{"stream": {}, "values": [["1", reflected_line], ["2", genuine_line]]}]
+
+    monkeypatch.setattr(audit_events.loki, "query_range", _fake)
+    client = _client(OPERATOR_ONLY)
+    payload = client.get("/api/audit/events").json()
+
+    ids = _event_ids(payload)
+    assert "fake-1" not in ids  # the forged row never appears at all
+    for event in payload["events"]:
+        assert event["actor"] != "mallory"
+        assert event["target"] != "evil"
+    # And the genuine, unrelated record in the SAME response is unaffected
+    # -- this isn't just "the forged row vanished", the real one must
+    # still read correctly.
+    assert "rid-genuine" in ids
+    genuine = next(e for e in payload["events"] if e["request_id"] == "rid-genuine")
+    assert genuine["actor"] == "alice"
+    assert genuine["outcome"]["state"] == "in_flight"
+
+
 # ----------------------------------------------------------------------
 # dmfdeploy/dmf-cms#140 — codex's P1/P2 findings against the first
 # version of the writer fix, and the format-marker redesign that fixed
@@ -558,7 +623,7 @@ def test_writer_fix_p1_round_trip_workload_legitimately_containing_reason_marker
             request_id="rid-p1", reason="legit", outcome="dispatched",
             workload="reason='operator typo'", capacity=None,
         )
-    line = next(m for m in caplog.records if m.getMessage().startswith("awx write:")).getMessage()
+    line = _formatted_line(next(r for r in caplog.records if r.getMessage().startswith("awx write:")))
 
     fields = audit_events.parse_awx_write_line(line)
     assert fields is not None
@@ -579,7 +644,7 @@ def test_writer_fix_p1_round_trip_capacity_legitimately_containing_reason_marker
             request_id="rid-p1b", reason="legit", outcome="dispatched",
             workload=None, capacity="reason='operator typo'",
         )
-    line = next(m for m in caplog.records if m.getMessage().startswith("awx write:")).getMessage()
+    line = _formatted_line(next(r for r in caplog.records if r.getMessage().startswith("awx write:")))
 
     fields = audit_events.parse_awx_write_line(line)
     assert fields is not None
@@ -605,7 +670,7 @@ def test_writer_fix_round_trip_an_actor_forging_classification_fields_survives_a
             request_id="rid-actor", reason="legit", outcome="dispatched",
             workload=None, capacity=None,
         )
-    line = next(m for m in caplog.records if m.getMessage().startswith("awx write:")).getMessage()
+    line = _formatted_line(next(r for r in caplog.records if r.getMessage().startswith("awx write:")))
 
     fields = audit_events.parse_awx_write_line(line)
     assert fields is not None
@@ -645,7 +710,7 @@ def test_writer_fix_round_trip_every_quotable_field_survives_every_other_fields_
         caplog.clear()
         with caplog.at_level(logging.INFO, logger="dmf_cms.audit"):
             _audit_awx_write(request, user, **kwargs)
-        line = next(m for m in caplog.records if m.getMessage().startswith("awx write:")).getMessage()
+        line = _formatted_line(next(r for r in caplog.records if r.getMessage().startswith("awx write:")))
 
         fields = audit_events.parse_awx_write_line(line)
         assert fields is not None, f"field={field} dropped a row it should have preserved"
