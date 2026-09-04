@@ -96,11 +96,17 @@ WRITES = [
 
 
 @pytest.mark.parametrize("_name,path", WRITES)
-def test_viewer_forbidden_and_no_awx_call(awx_spy, _name, path):
+def test_viewer_forbidden_and_no_awx_call(awx_spy, caplog, _name, path):
+    import logging
     client = _client(VIEWER)
-    resp = client.post(path, json={"reason": "trying"})
+    with caplog.at_level(logging.INFO, logger="dmf_cms.main"):
+        resp = client.post(path, json={"reason": "trying"})
     assert resp.status_code == 403
     assert awx_spy["launch"] == 0  # gate fires before any actuator call
+    # dmfdeploy/dmfdeploy#552: the role gate returns before request_id is
+    # even minted, so it must write NO audit line at all — pinning this
+    # directly rather than only "no AWX call", which is a different claim.
+    assert _audit_lines(caplog) == []
 
 
 @pytest.mark.parametrize("_name,path", WRITES)
@@ -116,13 +122,19 @@ def test_operator_passes_and_request_id_echoed(awx_spy, _name, path):
 
 
 @pytest.mark.parametrize("_name,path", WRITES)
-def test_missing_reason_is_400_with_no_awx_call(awx_spy, _name, path):
+def test_missing_reason_is_400_with_no_awx_call(awx_spy, caplog, _name, path):
+    import logging
     client = _client(OPERATOR)
-    for body in ({}, {"reason": ""}, {"reason": "   "}):
-        resp = client.post(path, json=body)
-        assert resp.status_code == 400, body
-        assert resp.json()["error"] == "reason-required"
+    with caplog.at_level(logging.INFO, logger="dmf_cms.main"):
+        for body in ({}, {"reason": ""}, {"reason": "   "}):
+            resp = client.post(path, json=body)
+            assert resp.status_code == 400, body
+            assert resp.json()["error"] == "reason-required"
     assert awx_spy["launch"] == 0  # reason precondition fires before AWX
+    # dmfdeploy/dmfdeploy#552: reason validation returns before request_id
+    # is minted too, so a missing/blank reason must write NO audit line —
+    # this is the live-walk finding (W1c step 4) pinned as a regression test.
+    assert _audit_lines(caplog) == []
 
 
 @pytest.mark.parametrize("_name,path", WRITES)

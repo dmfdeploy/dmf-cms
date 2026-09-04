@@ -721,14 +721,17 @@ def resolve_outcome_state(action: str, outcome: str) -> str:
     'unknown' is a THIRD case, never a member of "an unenumerated token is
     terminal" — that rule stays exactly as it was (F3, re-confirmed
     codex R496-B/C) for any REAL, non-blank token. A blank outcome is
-    different in kind: it means the record's outcome field could not be
-    recovered at all — codex R496-C P1-2's finding — reachable without an
-    adversary via a truncated/corrupted Loki line (the NEW-2 fail-closed
-    parser boundary is precisely the path that produces it). "Not proven
-    in flight" is NOT "the action failed"; rendering a lost outcome as a
-    definite failure would be this lane claiming knowledge it does not
-    have, the same defect this whole round exists to remove, just with
-    the opposite sign. So this check runs FIRST, before either the
+    different in kind: it means the record's outcome field is blank on an
+    otherwise complete, parseable line — codex R496-C P1-2's finding.
+    dmfdeploy/dmfdeploy#553: NOT a truncated/corrupted line — that fails
+    one of _parse_new_format_line's required-quoted-field checks and is
+    dropped by the caller (`if fields is None: continue`) before this
+    function ever runs; only a line that parses in full, with an
+    explicitly empty outcome= value, reaches here. "Not proven in flight"
+    is NOT "the action failed"; rendering a lost outcome as a definite
+    failure would be this lane claiming knowledge it does not have, the
+    same defect this whole round exists to remove, just with the
+    opposite sign. So this check runs FIRST, before either the
     switch-source or the acceptance-allowlist branch, and neither of
     those ever sees a blank outcome.
 

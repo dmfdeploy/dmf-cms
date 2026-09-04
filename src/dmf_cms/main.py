@@ -4738,7 +4738,10 @@ def create_app(settings: Settings | None = None, contract: AppContract | None = 
         """Launch the AWX job template for this catalog entry (Provision/Configure).
 
         Operator+ gated with the C5 quartet (reason mandatory, request_id echoed
-        + audited on every path): a viewer can no longer deploy by curl.
+        + audited on every path once past the role and reason checks): a viewer
+        can no longer deploy by curl. dmfdeploy/dmfdeploy#552: "on every path"
+        overclaimed — a role or missing-reason rejection returns before
+        request_id is even minted, so it writes no audit line at all.
         """
         user, err = _require_min_role(request, "operator")
         if err is not None:
@@ -5034,7 +5037,10 @@ def create_app(settings: Settings | None = None, contract: AppContract | None = 
         """Launch the finalise (teardown) AWX job template for this catalog entry.
 
         Operator+ gated with the C5 quartet (reason mandatory, request_id echoed
-        + audited on every path): a viewer can no longer teardown by curl.
+        + audited on every path once past the role and reason checks): a viewer
+        can no longer teardown by curl. dmfdeploy/dmfdeploy#552: same overclaim
+        as deploy's docstring — a role or missing-reason rejection returns
+        before request_id is minted and writes no audit line.
         """
         user, err = _require_min_role(request, "operator")
         if err is not None:

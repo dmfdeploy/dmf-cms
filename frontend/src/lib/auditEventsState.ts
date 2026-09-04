@@ -94,7 +94,16 @@ export function auditEventsEmptyCopy(phase: AuditEventsPhase): string {
       // §4.3), so an empty list here means nothing in this user's
       // permitted view, never a claim about the facility as a whole
       // (codex R496-A F7).
-      return 'No actions in your permitted view were recorded in this window.'
+      //
+      // dmfdeploy/dmfdeploy#553: "were recorded" claimed knowledge this
+      // read doesn't have — a handful of lines that fail to parse (a
+      // legacy pre-fmt=2 shape, or a genuinely corrupted line) are
+      // silently dropped in audit_events.py and never counted toward
+      // `capped` unless enough of them accumulate to hit the result-line
+      // ceiling, so this response can be events:[] capped:false even
+      // though something real existed and was excluded. "Were found" is
+      // the honest claim: nothing renderable, not nothing recorded.
+      return 'No actions in your permitted view were found in this window.'
   }
 }
 
