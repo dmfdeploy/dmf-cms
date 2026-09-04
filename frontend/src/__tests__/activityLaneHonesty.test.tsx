@@ -26,6 +26,23 @@ function json(body: unknown, status = 200) {
   return new Response(JSON.stringify(body), { status, headers: { 'Content-Type': 'application/json' } })
 }
 
+// lkirc P2 (dmfdeploy/dmf-cms#140, 2026-09-04): every fetch mock in this
+// file that renders HistoryLane falls through an unmatched-route `return
+// json({})` -- which used to read as an accidental "ok, empty" for
+// /api/audit/events, now correctly reads as an untrustworthy (absent)
+// reason and renders "Facility history could not be loaded" instead
+// (classifyAuditEvents no longer fails OPEN into 'ok'). None of these
+// tests are ABOUT the audit lane; give it a genuine, well-formed empty
+// response explicitly so its notice doesn't leak into a global
+// `queryByText` assertion scoped to a different panel entirely.
+const EMPTY_AUDIT_EVENTS = {
+  reason: '',
+  window: { known: false, seconds: null, reason: 'unavailable' },
+  capped: false,
+  excluded: [],
+  events: [],
+}
+
 function identity(overrides: Partial<UserIdentity> = {}): UserIdentity {
   return {
     subject: 'ops',
@@ -99,6 +116,7 @@ describe('History lane: Forgejo commits/pulls degraded-read honesty', () => {
         if (url.endsWith('/api/changes/jobs')) return json({ jobs: [], reason: 'awx-unconfigured' })
         if (url.endsWith('/api/changes/commits')) return json(routes.commits ?? { repos: [], reason: '' })
         if (url.endsWith('/api/changes/pulls')) return json(routes.pulls ?? { pulls: [], reason: '' })
+        if (url.endsWith('/api/audit/events')) return json(EMPTY_AUDIT_EVENTS)
         return json({})
       }),
     )
@@ -220,6 +238,7 @@ describe('History lane: Forgejo commits/pulls degraded-read honesty', () => {
           if (calls === 1) return json({ repos: [], reason: '' })
           return new Response('boom', { status: 500 })
         }
+        if (url.endsWith('/api/audit/events')) return json(EMPTY_AUDIT_EVENTS)
         return json({})
       }),
     )
@@ -278,6 +297,7 @@ describe('History lane: Forgejo commits/pulls degraded-read honesty', () => {
           }
           return new Response('boom', { status: 500 })
         }
+        if (url.endsWith('/api/audit/events')) return json(EMPTY_AUDIT_EVENTS)
         return json({})
       }),
     )
@@ -323,6 +343,7 @@ describe('History lane: Forgejo commits/pulls degraded-read honesty', () => {
           }
           return new Response('boom', { status: 500 })
         }
+        if (url.endsWith('/api/audit/events')) return json(EMPTY_AUDIT_EVENTS)
         return json({})
       }),
     )
@@ -378,6 +399,7 @@ describe('History lane: Recent Jobs panel retained-error honesty', () => {
           }
           return new Response('boom', { status: 500 })
         }
+        if (url.endsWith('/api/audit/events')) return json(EMPTY_AUDIT_EVENTS)
         return json({})
       }),
     )
@@ -429,6 +451,7 @@ describe('History lane: Recent Jobs panel title/badge outcome agreement', () => 
             reason: '',
           })
         }
+        if (url.endsWith('/api/audit/events')) return json(EMPTY_AUDIT_EVENTS)
         return json({})
       }),
     )

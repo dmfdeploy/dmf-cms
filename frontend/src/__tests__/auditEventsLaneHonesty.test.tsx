@@ -437,3 +437,56 @@ describe('lkirc: request_id is not a per-row React key (a single request can pro
     expect(duplicateKeyWarning).toBeUndefined()
   })
 })
+
+describe('lkirc P2 (dmfdeploy/dmf-cms#140, 2026-09-04): an untrustworthy reason token fails closed, never open', () => {
+  // classifyAuditEvents defaulted an unrecognised OR absent reason to 'ok'
+  // -- absence presented as an assertion, in the very classifier that
+  // decides what the operator is told, the exact thing this lane exists
+  // to prevent. apiCall's generic return type is a compile-time cast, not
+  // runtime response validation, so a malformed response or a future
+  // reason token this frontend doesn't yet recognise must fail CLOSED
+  // (the "could not be loaded" state), never open into the authoritative
+  // "no actions were recorded" claim. Same shape as classifyForgejo
+  // (changesState.ts): only an EXACT '' authorises 'ok'. Asserted against
+  // what HistoryLane actually RENDERS, not the phase constant -- the
+  // phase is the mechanism, the rendered claim is the property.
+
+  it('an unrecognised reason token renders "could not be loaded", never the empty-result claim', async () => {
+    // Cast deliberately: `reason` is a closed string-literal union at
+    // compile time, but nothing at RUNTIME guarantees the backend (or a
+    // future version skew) only ever sends one of those three values --
+    // that gap is lkirc's exact point.
+    mkFetch({
+      ...FAILED_DEPLOY_RESPONSE,
+      reason: 'some-future-token-this-frontend-does-not-know-yet',
+      events: [],
+    } as unknown as AuditEventsResponse)
+    renderHistory()
+    expect(await screen.findByText(/Facility history could not be loaded/)).toBeTruthy()
+    expect(screen.queryByText(/No actions in your permitted view/)).toBeNull()
+  })
+
+  it('a response missing the reason field entirely renders the same, never the empty-result claim', async () => {
+    // Deliberately NOT built via a spread of a well-formed response --
+    // `reason` is omitted outright, simulating the real gap: nothing at
+    // runtime guarantees the backend (or a proxy, or a future version
+    // skew) always sends it.
+    const malformed = {
+      window: FAILED_DEPLOY_RESPONSE.window,
+      capped: false,
+      excluded: [],
+      events: [],
+    } as unknown as AuditEventsResponse
+    mkFetch(malformed)
+    renderHistory()
+    expect(await screen.findByText(/Facility history could not be loaded/)).toBeTruthy()
+    expect(screen.queryByText(/No actions in your permitted view/)).toBeNull()
+  })
+
+  it('control: reason === "" still renders the genuine empty-result claim', async () => {
+    mkFetch({ ...FAILED_DEPLOY_RESPONSE, reason: '', events: [] })
+    renderHistory()
+    expect(await screen.findByText(/No actions in your permitted view were recorded/)).toBeTruthy()
+    expect(screen.queryByText(/Facility history could not be loaded/)).toBeNull()
+  })
+})
