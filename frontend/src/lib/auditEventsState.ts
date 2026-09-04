@@ -56,8 +56,21 @@ export function classifyAuditEvents(q: AuditEventsQueryLike): AuditEventsState {
       case 'loki-unconfigured':
         phase = 'unconfigured'
         break
-      default:
+      case '':
         phase = 'ok'
+        break
+      default:
+        // lkirc P2 (dmfdeploy/dmf-cms#140, 2026-09-04), same shape as
+        // classifyForgejo above (changesState.ts): apiCall's generic
+        // return type is a compile-time cast, not runtime response
+        // validation -- an ABSENT reason, or a malformed/unrecognised
+        // token this frontend doesn't yet know about, must not fail OPEN
+        // into 'ok' (which auditEventsEmptyCopy reads as the
+        // authoritative "no actions were recorded" claim). Only an EXACT
+        // "" authorises that claim; every other shape fails closed to
+        // 'error' -- we could not establish the result, which is honest,
+        // not a positive claim that nothing happened.
+        phase = 'error'
     }
   }
 
