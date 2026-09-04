@@ -49,6 +49,26 @@ function alert(name: string, severity: string, summary = '', id = '', context = 
   }
 }
 
+// dmfdeploy/dmfdeploy#419/#554: Workspace's pinned "what just changed" panel
+// is now ActivityPanel (/api/audit/events), not the old RecentChanges
+// widget (/api/changes/jobs) — a well-formed empty response for both keeps
+// these HealthCore-focused tests from tripping ActivityPanel's own
+// fail-closed "could not be loaded" state on an unmatched-route fallback
+// (same reasoning as activityLaneHonesty.test.tsx's EMPTY_AUDIT_EVENTS).
+// `window.known: true` deliberately, NOT the more "neutral"-looking
+// `false` — that renders auditWindowCopy's "...retention could not be
+// confirmed", which collides with this file's own unrelated
+// /could not be confirmed/ staleness-notice assertion (found live, not
+// assumed: the false-window fixture made an unrelated HealthCore test
+// fail on a false positive from ActivityPanel's own copy).
+const EMPTY_AUDIT_EVENTS = {
+  reason: '',
+  window: { known: true, seconds: 604800, reason: '' },
+  capped: false,
+  excluded: [],
+  events: [],
+}
+
 function renderWorkspace(healthBody: WorkspaceHealth) {
   vi.stubGlobal(
     'fetch',
@@ -58,6 +78,7 @@ function renderWorkspace(healthBody: WorkspaceHealth) {
       if (url.endsWith('/api/me')) body = user
       if (url.endsWith('/api/workspace/health')) body = healthBody
       if (url.endsWith('/api/changes/jobs')) body = { jobs: [] }
+      if (url.endsWith('/api/audit/events')) body = EMPTY_AUDIT_EVENTS
       return new Response(JSON.stringify(body), {
         status: 200,
         headers: { 'Content-Type': 'application/json' },
@@ -102,9 +123,21 @@ describe('Workspace health core states (plan §6)', () => {
     expect(screen.queryByText('HostMemoryPressure')).toBeNull()
     expect(screen.getByText('memory tight')).toBeTruthy()
     expect(screen.getByText('warning')).toBeTruthy()
-    // Non-mutating actions only: Investigate link, no Ack anywhere.
+    // Non-mutating actions only: Investigate link, no Ack CONTROL anywhere —
+    // checked by role/accessible-name, not by a bare text substring
+    // (dmfdeploy/dmfdeploy#419/#554: Workspace's own ActivityPanel, mounted
+    // right below HealthCore, has real, unrelated prose containing "ack" —
+    // "automatic rollb-ACK-s" — which false-failed a plain `queryByText
+    // (/ack/i)` page-wide scan; found live, not assumed. The property under
+    // test is "no Ack button/link exists", which a role query proves
+    // directly instead of leaning on a substring that any future prose
+    // anywhere on the page could collide with again).
     expect(screen.getByRole('link', { name: 'Investigate' })).toBeTruthy()
-    expect(screen.queryByText(/ack/i)).toBeNull()
+    const ackControls = [
+      ...screen.queryAllByRole('button', { name: /ack/i }),
+      ...screen.queryAllByRole('link', { name: /ack/i }),
+    ]
+    expect(ackControls).toHaveLength(0)
     // No Info tile — the tile row classifies problems only (Critical/Warning).
     expect(screen.queryByText('Info')).toBeNull()
     expect(screen.getByText('Critical')).toBeTruthy()
@@ -172,6 +205,9 @@ describe('Workspace health core states (plan §6)', () => {
         const url = (typeof input === 'string' ? input : (input as Request).url).toString()
         if (url.endsWith('/api/me')) return new Response(JSON.stringify(user), { status: 200 })
         if (url.endsWith('/api/changes/jobs')) return new Response(JSON.stringify({ jobs: [] }), { status: 200 })
+        if (url.endsWith('/api/audit/events')) {
+          return new Response(JSON.stringify(EMPTY_AUDIT_EVENTS), { status: 200, headers: { 'Content-Type': 'application/json' } })
+        }
         if (url.endsWith('/api/workspace/health')) {
           calls += 1
           if (calls === 1) {

@@ -1,10 +1,11 @@
 import type { AdminJobsResponse, ChangesCommitsResponse, ChangesPullsResponse } from '../api/types'
 import { settleQuery } from './queryState'
 
-// Single source of truth for the "recent changes" degraded states, shared by
-// the Workspace RecentChanges widget and the Activity → History jobs lane so
-// the two can never disagree (Constitution Art. 1). Pure over the react-query
-// result shape, mirroring lib/workspaceHealth.ts.
+// Single source of truth for the "recent changes" degraded states — the
+// Activity → History lane's own Recent Jobs panel (Workspace's Recent
+// Changes widget read the same states until dmfdeploy/dmfdeploy#419/#554
+// replaced it with the audit-events-backed ActivityPanel). Pure over the
+// react-query result shape, mirroring lib/workspaceHealth.ts.
 //
 // The backend (/api/changes/jobs) is fail-soft: it always answers 200 with a
 // reason token, so an unreachable AWX is designed content, not an error

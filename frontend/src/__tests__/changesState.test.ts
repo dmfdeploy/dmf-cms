@@ -1,6 +1,6 @@
 /**
- * classifyForgejo / forgejoEmptyCopy — pure classifier unit tests
- * (fix-round on umbrella #385 PR #81).
+ * classifyForgejo / forgejoEmptyCopy and classifyChanges / changesEmptyCopy
+ * — pure classifier unit tests (fix-round on umbrella #385 PR #81).
  *
  * Component-level coverage of the same defect class lives in
  * mediaWorkloadsGrid.test.tsx and facility.test.tsx (hold-then-reject
@@ -8,9 +8,26 @@
  * fast-to-reason-about pins on the classifier itself — the exact input
  * shape react-query hands it once a background refetch has settled into
  * error with prior data still retained.
+ *
+ * classifyChanges/changesEmptyCopy moved here from recentChanges.test.tsx
+ * (dmfdeploy/dmfdeploy#419/#554): that file's own component-level coverage
+ * mounted the Workspace RecentChanges widget directly, which is now deleted
+ * (replaced by ActivityPanel, over /api/audit/events — a different
+ * classifier entirely, see auditEventsLaneHonesty.test.tsx). The classifier
+ * these two functions back is still live — HistoryLane.tsx's own Recent
+ * Jobs panel — component-level regression coverage for it (retained-error
+ * notice, title/badge outcome agreement) already lives independently in
+ * activityLaneHonesty.test.tsx, so nothing here duplicates it; only the
+ * pure-function pins move.
  */
 import { describe, expect, it } from 'vitest'
-import { classifyForgejo, forgejoEmptyCopy, type ForgejoQueryLike } from '../lib/changesState'
+import {
+  classifyChanges,
+  changesEmptyCopy,
+  classifyForgejo,
+  forgejoEmptyCopy,
+  type ForgejoQueryLike,
+} from '../lib/changesState'
 
 describe('classifyForgejo', () => {
   it('loading with no data yet', () => {
@@ -98,5 +115,45 @@ describe('forgejoEmptyCopy', () => {
 
   it('partial and unreachable read as distinguishable, non-identical copy', () => {
     expect(forgejoEmptyCopy('partial', 'commits')).not.toBe(forgejoEmptyCopy('unreachable', 'commits'))
+  })
+})
+
+describe('classifyChanges', () => {
+  const base = { isLoading: false, isError: false }
+
+  it('maps each backend token to its own phase', () => {
+    expect(classifyChanges({ ...base, data: { jobs: [], reason: '' } }).phase).toBe('ok')
+    expect(classifyChanges({ ...base, data: { jobs: [], reason: 'awx-not-running' } }).phase).toBe('not-running')
+    expect(classifyChanges({ ...base, data: { jobs: [], reason: 'awx-unreachable' } }).phase).toBe('unreachable')
+    expect(classifyChanges({ ...base, data: { jobs: [], reason: 'awx-unconfigured' } }).phase).toBe('unconfigured')
+  })
+
+  it('treats a payload with no reason field as ok (older payloads/fixtures)', () => {
+    expect(classifyChanges({ ...base, data: { jobs: [] } }).phase).toBe('ok')
+  })
+
+  it('reports a genuine console API failure as error', () => {
+    expect(classifyChanges({ isLoading: false, isError: true }).phase).toBe('error')
+  })
+
+  it('reports loading only before any data arrives', () => {
+    expect(classifyChanges({ isLoading: true, isError: false }).phase).toBe('loading')
+    expect(classifyChanges({ isLoading: true, isError: false, data: { jobs: [], reason: '' } }).phase).toBe('ok')
+  })
+})
+
+describe('changesEmptyCopy', () => {
+  it('never claims AWX is asleep — we cannot know that', () => {
+    // The only authoritative discriminator is spec.replicas, which the
+    // console does not read. Guard the wording, not just the token.
+    for (const phase of ['not-running', 'unreachable', 'unconfigured', 'error', 'ok'] as const) {
+      expect(changesEmptyCopy(phase).toLowerCase()).not.toContain('asleep')
+      expect(changesEmptyCopy(phase).toLowerCase()).not.toContain('sleep')
+    }
+  })
+
+  it('gives every phase distinct copy', () => {
+    const all = (['not-running', 'unreachable', 'unconfigured', 'error', 'ok'] as const).map(changesEmptyCopy)
+    expect(new Set(all).size).toBe(all.length)
   })
 })
