@@ -1,4 +1,4 @@
-import { History } from 'lucide-react'
+import { History, Info } from 'lucide-react'
 import { useAuditEvents } from '../api/hooks'
 import {
   classifyAuditEvents,
@@ -117,6 +117,17 @@ function AuditEventOutcomeBlock({ outcome }: { outcome: AuditEventOutcome }) {
 
 interface ActivityPanelProps {
   title: string
+  /**
+   * dmfdeploy/dmfdeploy#555: how the header's three explanatory paragraphs
+   * are disclosed. 'inline' (the default — Activity → History) renders them
+   * as before. 'disclosure' (Workspace) folds the SAME paragraphs — one
+   * shared fragment, not a second copy — behind a closed native <details>
+   * in the heading row, whose <summary> is the ⓘ icon with a visually-hidden
+   * accessible name (focusable, tappable, keyboard-operable — Arc 4 WP-4 /
+   * Art. 11: not a title= tooltip, not hover-only). The text stays in the
+   * DOM and one keypress/tap away; only its disclosure changes.
+   */
+  explainer?: 'inline' | 'disclosure'
 }
 
 // The durable, server-side audit record (dmfdeploy/dmfdeploy#496), over
@@ -126,75 +137,115 @@ interface ActivityPanelProps {
 // rendered there as plain "Activity" — Workspace already has its own
 // "Facilities" page, so "Facility activity" there would misname itself).
 // Same data, same states, same disclosures at both sites; only the heading
-// text is parameterized. A NEW render site on Workspace, not a component
-// move — Activity → History keeps its own instance.
-export default function ActivityPanel({ title }: ActivityPanelProps) {
+// text and (dmfdeploy/dmfdeploy#555) how the explanatory paragraphs are
+// disclosed are parameterized. A NEW render site on Workspace, not a
+// component move — Activity → History keeps its own instance.
+export default function ActivityPanel({ title, explainer = 'inline' }: ActivityPanelProps) {
   const auditState = classifyAuditEvents(useAuditEvents())
   const exclusions = groupExclusions(auditState.excluded)
 
+  // dmfdeploy/dmfdeploy#555: ONE derivation of the three header paragraphs,
+  // rendered inline (History) or inside the ⓘ disclosure (Workspace). Their
+  // wording went through the #552/#553 honesty gates — a second copy per
+  // mode is exactly what would let the two sites drift apart.
+  const explainerParagraphs = (
+    <>
+      <p className="text-xs text-muted mt-1">
+        Deploys, teardowns, source switches, and automatic rollbacks —
+        recorded server-side, the same for every browser. Shows what
+        your role is permitted to see, not a merged view across every
+        role: deploy/teardown/rollback need operator, source switches
+        need engineer or media-engineers membership.{' '}
+        {auditWindowCopy(auditState.window)}
+      </p>
+      {(exclusions.access.length > 0 || exclusions.scope.length > 0) && (
+        <p className="text-xs text-muted mt-1">
+          {exclusions.access.length > 0 && (
+            <>Kept off this record, access-scoped: {exclusions.access.join(', ')}. </>
+          )}
+          {exclusions.scope.length > 0 && (
+            <>Not shown here yet — out of scope this round, not a security decision: {exclusions.scope.join(', ')}.</>
+          )}
+        </p>
+      )}
+      {/* Operator ruling, 2026-09-03: name the stopgap honestly and
+          visibly, here (not the Workspace) — this surface isn't on the
+          demo path, so it costs nothing to state plainly. STATE, don't
+          apologise, and be specific about the two limits that actually
+          bite rather than a disclaimer that says nothing checkable.
+          codex (residual, orchestrator's own miss): the switch-source
+          exemption below is qualified, not unconditional — a record
+          whose outcome field itself is blank resolves outcome=''
+          before the switch-source branch even runs, same as
+          deploy/teardown's blank case, and renders "outcome unknown"
+          here too (resolve_outcome_state checks blank first). The
+          clause below now says switch-source differs in KIND (a real
+          verdict is possible), not that it's immune to the general
+          unknown case.
+          dmfdeploy/dmfdeploy#552/#553: two more overclaims found by a
+          live walk, both corrected below. Deploy/teardown's own
+          refusal record is gated on the SAME role+reason checks the
+          request itself is gated on (main.py's C5 quartet) — a
+          refusal ahead of those checks (wrong role, no reason) writes
+          no record at all, so "any refusal" was too strong. And
+          outcome-unknown is reached only by a complete, parseable
+          line whose outcome field is blank — a truncated/malformed
+          line fails parsing and is dropped before it ever reaches an
+          outcome, so "if truncated" named the wrong cause. This surface
+          is now on TWO pages (Workspace included, umbrella#419/#554) —
+          the same honesty bar applies at both, since Workspace is the
+          more-visible one, not the less.
+          dmfdeploy/dmfdeploy#555: on Workspace these three paragraphs sit
+          behind the heading's ⓘ info disclosure (closed by default, same
+          text), while Activity → History keeps them inline. */}
+      <p className="text-xs text-muted mt-1">
+        First implementation of this lane — for deploy and teardown, it
+        records the request and any refusal after the role and reason
+        checks, but an accepted one is never updated with whether the
+        job later finished. Switch source normally carries a real
+        succeeded or failed outcome instead — unlike deploy and
+        teardown — but is subject to the same outcome-unknown case as
+        any other record when its outcome field is blank. Coverage is
+        bounded by the window stated above, not a guarantee of
+        complete history.
+      </p>
+    </>
+  )
+
+  const heading = (
+    <h2 className="text-lg font-semibold flex items-center gap-2">
+      <History className="w-5 h-5 text-accent" />
+      {title}
+    </h2>
+  )
+
   return (
     <div className="panel mb-6">
-      <div className="px-6 py-4 border-b border-panel">
-        <h2 className="text-lg font-semibold flex items-center gap-2">
-          <History className="w-5 h-5 text-accent" />
-          {title}
-        </h2>
-        <p className="text-xs text-muted mt-1">
-          Deploys, teardowns, source switches, and automatic rollbacks —
-          recorded server-side, the same for every browser. Shows what
-          your role is permitted to see, not a merged view across every
-          role: deploy/teardown/rollback need operator, source switches
-          need engineer or media-engineers membership.{' '}
-          {auditWindowCopy(auditState.window)}
-        </p>
-        {(exclusions.access.length > 0 || exclusions.scope.length > 0) && (
-          <p className="text-xs text-muted mt-1">
-            {exclusions.access.length > 0 && (
-              <>Kept off this record, access-scoped: {exclusions.access.join(', ')}. </>
-            )}
-            {exclusions.scope.length > 0 && (
-              <>Not shown here yet — out of scope this round, not a security decision: {exclusions.scope.join(', ')}.</>
-            )}
-          </p>
+      <div className="px-6 py-4 border-b border-panel flow-root">
+        {explainer === 'disclosure' ? (
+          <>
+            {/* The heading floats so the icon-sized <summary> sits beside it
+                on the same line while the paragraphs, once opened, run the
+                panel's full width underneath — a flex row would indent the
+                opened text by the heading's width. `flow-root` on the parent
+                contains the float. */}
+            <div className="float-left mr-2">{heading}</div>
+            <details>
+              <summary
+                className="inline-flex h-7 w-7 items-center justify-center rounded align-top text-muted hover:text-text cursor-pointer select-none list-none [&::-webkit-details-marker]:hidden focus-visible:outline focus-visible:outline-2 focus-visible:outline-accent"
+              >
+                <Info className="w-4 h-4" aria-hidden="true" />
+                <span className="sr-only">About this record</span>
+              </summary>
+              {explainerParagraphs}
+            </details>
+          </>
+        ) : (
+          <>
+            {heading}
+            {explainerParagraphs}
+          </>
         )}
-        {/* Operator ruling, 2026-09-03: name the stopgap honestly and
-            visibly, here (not the Workspace) — this surface isn't on the
-            demo path, so it costs nothing to state plainly. STATE, don't
-            apologise, and be specific about the two limits that actually
-            bite rather than a disclaimer that says nothing checkable.
-            codex (residual, orchestrator's own miss): the switch-source
-            exemption below is qualified, not unconditional — a record
-            whose outcome field itself is blank resolves outcome=''
-            before the switch-source branch even runs, same as
-            deploy/teardown's blank case, and renders "outcome unknown"
-            here too (resolve_outcome_state checks blank first). The
-            clause below now says switch-source differs in KIND (a real
-            verdict is possible), not that it's immune to the general
-            unknown case.
-            dmfdeploy/dmfdeploy#552/#553: two more overclaims found by a
-            live walk, both corrected below. Deploy/teardown's own
-            refusal record is gated on the SAME role+reason checks the
-            request itself is gated on (main.py's C5 quartet) — a
-            refusal ahead of those checks (wrong role, no reason) writes
-            no record at all, so "any refusal" was too strong. And
-            outcome-unknown is reached only by a complete, parseable
-            line whose outcome field is blank — a truncated/malformed
-            line fails parsing and is dropped before it ever reaches an
-            outcome, so "if truncated" named the wrong cause. This surface
-            is now on TWO pages (Workspace included, umbrella#419/#554) —
-            the same honesty bar applies at both, since Workspace is the
-            more-visible one, not the less. */}
-        <p className="text-xs text-muted mt-1">
-          First implementation of this lane — for deploy and teardown, it
-          records the request and any refusal after the role and reason
-          checks, but an accepted one is never updated with whether the
-          job later finished. Switch source normally carries a real
-          succeeded or failed outcome instead — unlike deploy and
-          teardown — but is subject to the same outcome-unknown case as
-          any other record when its outcome field is blank. Coverage is
-          bounded by the window stated above, not a guarantee of
-          complete history.
-        </p>
       </div>
       <div className="divide-y divide-panel">
         {auditState.phase === 'loading' ? (
