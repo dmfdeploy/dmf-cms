@@ -44,7 +44,10 @@ export default function Workspace() {
     <div className="flex-1 overflow-y-auto p-6">
       <PageHeading>Workspace</PageHeading>
       <HealthCore />
-      <ActivityPanel title="Activity" />
+      {/* dmfdeploy/dmfdeploy#555: the three explanatory paragraphs sit
+          behind the heading's ⓘ disclosure here (closed by default); Activity
+          → History renders the same component with them inline. */}
+      <ActivityPanel title="Activity" explainer="disclosure" />
     </div>
   )
 }
