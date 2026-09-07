@@ -25,6 +25,7 @@ import time
 import urllib.parse
 from typing import Any, Callable, Optional
 
+from .catalog import CATALOG_DIR, load_catalog_entries, load_topology_instance
 from .log_safety import sanitize_audit_field
 
 logger = logging.getLogger(__name__)
@@ -124,14 +125,57 @@ def _tag_suffix(names: list[str], prefix: str) -> Optional[str]:
     return None
 
 
+def _resolve_topology_source_pattern(
+    topology_parent_key: Optional[str],
+    topology_source_id: Optional[str],
+    catalog_dir: str,
+) -> Optional[str]:
+    """umbrella #452 — the declared test pattern (e.g. ``"smpte"``) a
+    topology-spawned source instance emits, for a static illustration on
+    its tile. Resolved from the SAME two provenance tags as
+    topology_parent_key/topology_source_id above: ``topology_parent_key``
+    names the catalog entry that deployed this source, whose
+    ``topology_ref`` is loaded via the SAME loader
+    ``switch_source.resolve_topology_for_receiver`` uses
+    (``catalog.load_topology_instance``) — never a second, parallel
+    parser. ``sources[].pattern`` where ``sources[].id ==
+    topology_source_id`` is the answer.
+
+    None on any miss — no parent key/source id, no catalog entry with
+    that key, the entry carries no topology_ref, the referenced
+    topology_params instance fails to load/validate, or no sources[]
+    entry matches the id. All degrade identically to "genuinely
+    unresolvable", NEVER derived from the instance's own name — the same
+    honest-unknown posture topology_parent_key/topology_source_id already
+    keep.
+    """
+    if not topology_parent_key or not topology_source_id:
+        return None
+    entries = load_catalog_entries(catalog_dir)
+    entry = next((e for e in entries if e.key == topology_parent_key), None)
+    if entry is None or not entry.topology_ref:
+        return None
+    topology_params, error = load_topology_instance(catalog_dir, entry.topology_ref)
+    if error is not None or not isinstance(topology_params, dict):
+        return None
+    for source in topology_params.get("sources") or []:
+        if isinstance(source, dict) and source.get("id") == topology_source_id:
+            pattern = source.get("pattern")
+            return pattern if isinstance(pattern, str) and pattern else None
+    return None
+
+
 def _service_to_instance(
     svc: dict[str, Any],
     *,
     sidecar_namespaces: frozenset[str] = _DEFAULT_SIDECAR_NAMESPACES,
     sidecar_ports: frozenset[int] = _DEFAULT_SIDECAR_PORTS,
+    catalog_dir: str = CATALOG_DIR,
 ) -> dict[str, Any]:
     names = _tag_names(svc)
     parent = svc.get("device") or svc.get("virtual_machine") or {}
+    topology_parent_key = _tag_suffix(names, "topology-parent")
+    topology_source_id = _tag_suffix(names, "topology-source")
     return {
         "instance": svc.get("name", ""),
         "netbox_id": svc.get("id"),
@@ -148,8 +192,13 @@ def _service_to_instance(
         # topology-spawned), or a topology-spawned instance provisioned
         # before this tagging existed — both degrade identically to
         # "genuinely unresolvable via this path", never a guess.
-        "topology_parent_key": _tag_suffix(names, "topology-parent"),
-        "topology_source_id": _tag_suffix(names, "topology-source"),
+        "topology_parent_key": topology_parent_key,
+        "topology_source_id": topology_source_id,
+        # umbrella #452 — see _resolve_topology_source_pattern's own
+        # docstring for the exact resolution + null-on-miss rules.
+        "topology_source_pattern": _resolve_topology_source_pattern(
+            topology_parent_key, topology_source_id, catalog_dir
+        ),
         # ONLY a boolean leaves the backend — never the coords/URL/IP. WP-C
         # uses it to decide which tiles poll the live-view endpoints.
         "live_view": sidecar_base_url(
@@ -275,6 +324,7 @@ def list_instances(
     prometheus_url: str = "",
     sidecar_namespaces: frozenset[str] = _DEFAULT_SIDECAR_NAMESPACES,
     sidecar_ports: frozenset[int] = _DEFAULT_SIDECAR_PORTS,
+    catalog_dir: str = CATALOG_DIR,
 ) -> dict[str, Any]:
     """Inventory payload: instances + per-function rollup, desired vs observed."""
     from . import netbox as _netbox
@@ -290,7 +340,10 @@ def list_instances(
 
     instances = [
         _service_to_instance(
-            svc, sidecar_namespaces=sidecar_namespaces, sidecar_ports=sidecar_ports
+            svc,
+            sidecar_namespaces=sidecar_namespaces,
+            sidecar_ports=sidecar_ports,
+            catalog_dir=catalog_dir,
         )
         for svc in services
     ]
@@ -530,6 +583,7 @@ def list_workloads_grouped(
     prometheus_url: str = "",
     sidecar_namespaces: frozenset[str] = _DEFAULT_SIDECAR_NAMESPACES,
     sidecar_ports: frozenset[int] = _DEFAULT_SIDECAR_PORTS,
+    catalog_dir: str = CATALOG_DIR,
 ) -> dict[str, Any]:
     """Grouped workload-first payload (ADR-0046 decisions 3 + 5).
 
@@ -551,7 +605,10 @@ def list_workloads_grouped(
 
     instances = [
         _service_to_instance(
-            svc, sidecar_namespaces=sidecar_namespaces, sidecar_ports=sidecar_ports
+            svc,
+            sidecar_namespaces=sidecar_namespaces,
+            sidecar_ports=sidecar_ports,
+            catalog_dir=catalog_dir,
         )
         for svc in services
     ]

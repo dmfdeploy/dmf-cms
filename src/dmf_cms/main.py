@@ -5632,6 +5632,7 @@ def create_app(settings: Settings | None = None, contract: AppContract | None = 
             # (codex WP-D P3).
             settings.mxl.sidecar_namespaces,
             settings.mxl.sidecar_ports,
+            catalog_dir=CATALOG_DIR,
         )
         payload["configured"] = True
         payload["scope"] = "all" if tenant_slugs is None else list(tenant_slugs)
@@ -5679,6 +5680,7 @@ def create_app(settings: Settings | None = None, contract: AppContract | None = 
             settings.prometheus.url if settings.prometheus.configured else "",
             settings.mxl.sidecar_namespaces,
             settings.mxl.sidecar_ports,
+            catalog_dir=CATALOG_DIR,
         )
         payload["configured"] = True
         payload["scope"] = "all" if tenant_slugs is None else list(tenant_slugs)
