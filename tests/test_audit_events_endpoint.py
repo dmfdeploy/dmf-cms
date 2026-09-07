@@ -200,6 +200,45 @@ DEPLOY_PREFLIGHT_DISPATCH_TERMINAL_JOIN = _line(
     outcome="run_complete", linked_request_id="rid-preflight-1",
 )
 
+# gate round 5 (lkirc): a reattach row is written by a FRESH, different
+# request_id (a new HTTP request) but concerns the SAME run as the
+# original dispatch — main.py's deploy/teardown reattach call sites now
+# carry that run's own stable identity (the original op's request_id) via
+# linked_request_id. Two reattaches on the SAME run (rid-run-1), by two
+# DIFFERENT users, prove the fix generalizes past a single reattach.
+DEPLOY_ORIGINAL_DISPATCH_FOR_REATTACH = _line(
+    action="deploy", actor="frank", role="operator", request_id="rid-run-1",
+    target="wl-i", reason="the original dispatch", outcome="dispatched", workload="wl-i",
+)
+DEPLOY_REATTACH_1 = _line(
+    action="deploy", actor="grace", role="operator", request_id="rid-reattach-1a",
+    target="wl-i", reason="a browser refresh reattaches", outcome="reattached",
+    linked_request_id="rid-run-1",
+)
+DEPLOY_REATTACH_2 = _line(
+    action="deploy", actor="heidi", role="operator", request_id="rid-reattach-1b",
+    target="wl-i", reason="a second reattach, a different user", outcome="reattached",
+    linked_request_id="rid-run-1",
+)
+DEPLOY_RUN_1_TERMINAL_JOIN = _line(
+    action="deploy", actor="system:job-watch", role="system", request_id="rid-run-1-watch",
+    target="wl-i", reason="job watch: deploy on wl-i reached terminal state run_complete",
+    outcome="run_complete", linked_request_id="rid-run-1",
+)
+TEARDOWN_ORIGINAL_DISPATCH_FOR_REATTACH = _line(
+    action="teardown", actor="frank", role="operator", request_id="rid-run-2",
+    target="wl-j", reason="the original teardown dispatch", outcome="dispatched",
+)
+TEARDOWN_REATTACH_1 = _line(
+    action="teardown", actor="grace", role="operator", request_id="rid-reattach-2a",
+    target="wl-j", reason="a reattach", outcome="reattached", linked_request_id="rid-run-2",
+)
+TEARDOWN_RUN_2_TERMINAL_JOIN = _line(
+    action="teardown", actor="system:job-watch", role="system", request_id="rid-run-2-watch",
+    target="wl-j", reason="job watch: teardown on wl-j reached terminal state run_failed",
+    outcome="run_failed", linked_request_id="rid-run-2",
+)
+
 FIXTURE_LINES = [
     DEPLOY, DEPLOY_REFUSED, TEARDOWN, SWITCH_SOURCE, AUTO_ROLLBACK, AUTO_ROLLBACK_ORPHAN,
     FINALISE_PURGE, LAUNCH, VERIFY_DRAIN, OPERATOR_ROLLBACK, UNRECOGNISED_ACTION, UNPARSEABLE,
@@ -210,6 +249,8 @@ FIXTURE_LINES = [
     COLLIDING_ACTOR_REAL_USER_DEPLOY,
     DEPLOY_PREFLIGHT_SKIPPED_SHARING_REQUEST_ID, DEPLOY_DISPATCH_SHARING_REQUEST_ID,
     DEPLOY_PREFLIGHT_DISPATCH_TERMINAL_JOIN,
+    DEPLOY_ORIGINAL_DISPATCH_FOR_REATTACH, DEPLOY_REATTACH_1, DEPLOY_REATTACH_2, DEPLOY_RUN_1_TERMINAL_JOIN,
+    TEARDOWN_ORIGINAL_DISPATCH_FOR_REATTACH, TEARDOWN_REATTACH_1, TEARDOWN_RUN_2_TERMINAL_JOIN,
 ]
 
 _VALID_RETENTION_CONFIG = """
@@ -272,6 +313,8 @@ def test_operator_not_in_media_engineers_sees_deploy_teardown_rollback_not_switc
         "rid-deploy-corrupted",
         "rid-deploy-term-1", "rid-teardown-term-1", "rid-deploy-term-2",
         "rid-collision-1", "rid-preflight-1",
+        "rid-run-1", "rid-reattach-1a", "rid-reattach-1b",
+        "rid-run-2", "rid-reattach-2a",
     }
 
 
@@ -289,6 +332,8 @@ def test_operator_in_media_engineers_sees_every_covered_row():
         "rid-deploy-corrupted",
         "rid-deploy-term-1", "rid-teardown-term-1", "rid-deploy-term-2",
         "rid-collision-1", "rid-preflight-1",
+        "rid-run-1", "rid-reattach-1a", "rid-reattach-1b",
+        "rid-run-2", "rid-reattach-2a",
     }
 
 
@@ -573,6 +618,48 @@ def test_gate_round_4_lkirc_b1_a_preflight_row_keeps_its_own_outcome_the_dispatc
     # 'succeeded' — never two.
     succeeded_count = sum(1 for r in rows if r["outcome"]["state"] == "succeeded")
     assert succeeded_count == 1
+
+
+def test_gate_round_5_lkirc_a_reattached_deploy_receives_the_same_terminal_outcome_as_the_original():
+    # lkirc: request_id identifies the HTTP REQUEST that wrote a row, not
+    # the RUN it concerns. DEPLOY_REATTACH_1/_2 are written by fresh,
+    # DIFFERENT request_ids (their own) but concern the SAME run as
+    # DEPLOY_ORIGINAL_DISPATCH_FOR_REATTACH (rid-run-1) — main.py's
+    # reattach call sites now carry that run's own stable identity via
+    # linked_request_id, so the terminal join (also keyed to rid-run-1)
+    # must resolve onto all three rows identically.
+    client = _client(OPERATOR_ONLY)
+    payload = client.get("/api/audit/events").json()
+    original = next(e for e in payload["events"] if e["request_id"] == "rid-run-1")
+    reattach_1 = next(e for e in payload["events"] if e["request_id"] == "rid-reattach-1a")
+    reattach_2 = next(e for e in payload["events"] if e["request_id"] == "rid-reattach-1b")
+    expected = {"state": "succeeded", "detail": "run_complete"}
+    assert original["outcome"] == expected
+    assert reattach_1["outcome"] == expected
+    assert reattach_2["outcome"] == expected
+
+
+def test_gate_round_5_lkirc_a_reattached_teardown_receives_the_same_terminal_outcome_as_the_original():
+    # Same fix, the other action class lkirc explicitly named (both call
+    # sites, not just one).
+    client = _client(OPERATOR_ONLY)
+    payload = client.get("/api/audit/events").json()
+    original = next(e for e in payload["events"] if e["request_id"] == "rid-run-2")
+    reattach = next(e for e in payload["events"] if e["request_id"] == "rid-reattach-2a")
+    assert original["outcome"]["state"] == "failed"
+    assert reattach["outcome"] == original["outcome"]
+
+
+def test_gate_round_5_lkirc_multiple_reattaches_all_resolve_no_row_double_counted():
+    client = _client(OPERATOR_ONLY)
+    payload = client.get("/api/audit/events").json()
+    run_1_rows = [e for e in payload["events"] if e["request_id"] in ("rid-run-1", "rid-reattach-1a", "rid-reattach-1b")]
+    # Exactly the dispatch plus its two reattaches — no duplicates, no
+    # extras, and none of them collapsed into each other.
+    assert len(run_1_rows) == 3
+    assert all(r["outcome"] == {"state": "succeeded", "detail": "run_complete"} for r in run_1_rows)
+    # The join record itself is still never its own row.
+    assert not any(e["request_id"] == "rid-run-1-watch" for e in payload["events"])
 
 
 # ----------------------------------------------------------------------
@@ -870,6 +957,49 @@ def test_writer_fix_round_trip_blank_workload_and_capacity_never_render_as_the_w
     assert fields is not None
     assert fields["workload"] == ""
     assert fields["capacity"] == ""
+
+
+def test_writer_fix_round_trip_a_reattach_carries_its_run_id_through_the_real_emitter(caplog):
+    # gate round 5 (lkirc): _audit_awx_write's own new linked_request_id
+    # parameter, through the REAL emitter -- not just the hand-built
+    # fixture lines the other reattach tests use.
+    request = _FakeRequest()
+    user = UserIdentity(
+        subject="grace", display_name="Grace", email="grace@dmf.example.com",
+        role="operator", groups=(),
+    )
+    with caplog.at_level(logging.INFO, logger="dmf_cms.audit"):
+        _audit_awx_write(
+            request, user, action="deploy", target="wl-a",
+            request_id="rid-reattach-real", reason="a real reattach", outcome="reattached",
+            linked_request_id="rid-run-real",
+        )
+    line = _formatted_line(next(r for r in caplog.records if r.getMessage().startswith("awx write:")))
+    fields = audit_events.parse_awx_write_line(line)
+    assert fields is not None
+    assert fields["request_id"] == "rid-reattach-real"
+    assert fields["linked_request_id"] == "rid-run-real"
+
+
+def test_writer_fix_omitting_linked_request_id_never_appends_the_trailing_field(caplog):
+    # Every OTHER existing _audit_awx_write caller passes nothing for the
+    # new parameter -- confirms the default genuinely omits the field
+    # rather than appending e.g. "linked_request_id=None".
+    request = _FakeRequest()
+    user = UserIdentity(
+        subject="alice", display_name="Alice", email="alice@dmf.example.com",
+        role="operator", groups=(),
+    )
+    with caplog.at_level(logging.INFO, logger="dmf_cms.audit"):
+        _audit_awx_write(
+            request, user, action="deploy", target="wl-a",
+            request_id="rid-ordinary", reason="an ordinary dispatch", outcome="dispatched",
+        )
+    line = _formatted_line(next(r for r in caplog.records if r.getMessage().startswith("awx write:")))
+    assert "linked_request_id" not in line
+    fields = audit_events.parse_awx_write_line(line)
+    assert fields is not None
+    assert fields["linked_request_id"] == ""
 
 
 def test_a_legacy_unquoted_line_from_before_the_writer_fix_is_not_rendered_end_to_end(monkeypatch):

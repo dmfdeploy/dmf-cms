@@ -467,6 +467,17 @@ def _parse_new_format_line(tail: str) -> dict[str, str] | None:
             and values["actor"] == _JOB_WATCH_ACTOR
             and values["role"] == "system"
         )
+        # gate round 5 (lkirc): a reattach row correlating to the run's
+        # own stable identity — main.py's _audit_awx_write, deploy/
+        # teardown reattach call sites only. Deliberately gated on
+        # `outcome` rather than actor/role (a reattach is genuinely
+        # user-initiated: real actor, real role, never "system") — safe
+        # because `outcome="reattached"` is ALWAYS a fixed code literal at
+        # those call sites, never derived from anything user-supplied, the
+        # same property every other plain field in this grammar already
+        # relies on. See list_audit_events' own run-id resolution for what
+        # this correlation is actually FOR.
+        or (values["action"] in ("deploy", "teardown") and values["outcome"] == "reattached")
     ):
         return None
 
@@ -1234,7 +1245,32 @@ def list_audit_events(
         # behavior change.
         outcome = build_outcome(action, fields.get("outcome", ""))
         if cls in ("deploy", "teardown"):
-            terminal_fields = terminal_by_request_id.get(fields.get("request_id", ""))
+            # gate round 5 (lkirc): request_id identifies the HTTP REQUEST
+            # that wrote a given row, not the RUN the row concerns — a
+            # reattach row is written by a fresh request (its own,
+            # different request_id) but concerns the SAME run as the
+            # original dispatch. `run_id` is that stable identity: the
+            # ORIGINAL op's own request_id, which every row belonging to
+            # that run can reach — the dispatch row IS it already (its own
+            # request_id, no linked_request_id needed); a reattach row
+            # carries it explicitly via linked_request_id (main.py's
+            # reattach call sites, gate round 5); the terminal join's own
+            # linked_request_id already pointed at it from round 1.
+            # Resolving ALL THREE the same way is what makes
+            # terminal_by_request_id (keyed by that same identity) find a
+            # reattach row's terminal outcome at all — before this, a
+            # reattach could never match, since its own request_id never
+            # equalled anything the join map was ever keyed by.
+            run_id = fields.get("linked_request_id") or fields.get("request_id", "")
+            terminal_fields = terminal_by_request_id.get(run_id)
+            # gate round 4 (lkirc B1): is_dispatch_row still gates on THIS
+            # row's own outcome token, unchanged — resolving run_id above
+            # never widens which ROWS are eligible, only which KEY a
+            # genuinely-eligible row (dispatch OR reattach) looks up. A
+            # preflight row's own token (capacity-skipped/-override) is
+            # still never in _DISPATCH_OUTCOME_TOKENS, so it is still never
+            # eligible regardless of what run_id it resolves to — the r4
+            # fix stays intact.
             is_dispatch_row = fields.get("outcome") in _DISPATCH_OUTCOME_TOKENS
             if terminal_fields is not None and is_dispatch_row:
                 outcome = build_terminal_join_outcome(terminal_fields.get("outcome", ""))
