@@ -16,7 +16,8 @@ from fastapi.testclient import TestClient
 import pytest
 
 import dmf_cms.audit_events as audit_events
-from dmf_cms.main import _audit_awx_write, create_app
+from dmf_cms.main import _audit_awx_write, _audit_watch_terminal, create_app
+from dmf_cms.operations import OperationState
 from dmf_cms.security import UserIdentity
 from dmf_cms.settings import LokiSettings, Settings
 
@@ -380,6 +381,103 @@ def test_gate_round_1_codex_p1_a_real_user_colliding_with_the_reserved_actor_sti
     assert row["class"] == "deploy"
     assert row["actor"] == "system:job-watch"
     assert row["outcome"]["state"] == "in_flight"
+
+
+def test_gate_round_2_codex_f5_producer_to_reader_invariant_end_to_end(monkeypatch, caplog):
+    # gate round 2 (codex F5): every OTHER test in this file hand-builds
+    # its fixture lines, role= values included -- that proves the READER's
+    # logic but nothing about whether the REAL producers actually emit
+    # what the P1 invariant assumes. This one drives the real
+    # _audit_awx_write (a colliding user-initiated deploy, and a genuine
+    # one) and the real _audit_watch_terminal (its terminal join), captures
+    # their ACTUAL emitted lines, and reads them back through the REAL
+    # /api/audit/events endpoint -- not a second hand-written copy of the
+    # same shape.
+    request_obj = _FakeRequest()
+    colliding_user = UserIdentity(
+        subject="system:job-watch", display_name="Collider", email="collider@dmf.example.com",
+        role="operator", groups=(),
+    )
+    dispatching_user = UserIdentity(
+        subject="frank", display_name="Frank", email="frank@dmf.example.com",
+        role="operator", groups=(),
+    )
+    with caplog.at_level(logging.INFO, logger="dmf_cms.audit"):
+        # A real user whose subject collides with the reserved actor,
+        # doing a genuine deploy of their own.
+        _audit_awx_write(
+            request_obj, colliding_user, action="deploy", target="wl-real-collision",
+            request_id="rid-real-collision", reason="a real emitted collision",
+            outcome="dispatched", workload="wl-real-collision",
+        )
+        # A genuine dispatch...
+        _audit_awx_write(
+            request_obj, dispatching_user, action="deploy", target="wl-real-dispatch",
+            request_id="rid-real-dispatch", reason="a real dispatch",
+            outcome="dispatched", workload="wl-real-dispatch",
+        )
+        # ...and its REAL terminal join, via the console's own emitter.
+        _audit_watch_terminal("deploy", "wl-real-dispatch", "rid-real-dispatch", OperationState.RUN_COMPLETE, None)
+
+    real_lines = [
+        _formatted_line(r) for r in caplog.records
+        if r.name == "dmf_cms.audit" and r.getMessage().startswith("awx write:")
+    ]
+    assert len(real_lines) == 3  # sanity: all three calls above actually emitted
+
+    def _real_query_range(*, url, selector, start_ns, end_ns, limit, timeout=10):
+        return [{"stream": {}, "values": [[str(i), line] for i, line in enumerate(real_lines)]}]
+
+    monkeypatch.setattr(audit_events.loki, "query_range", _real_query_range)
+
+    client = _client(OPERATOR_ONLY)
+    payload = client.get("/api/audit/events").json()
+
+    # The colliding row survives, correctly classified -- never dropped.
+    collision_row = next(e for e in payload["events"] if e["request_id"] == "rid-real-collision")
+    assert collision_row["class"] == "deploy"
+
+    # The genuine terminal join resolves onto its dispatch row.
+    dispatch_row = next(e for e in payload["events"] if e["request_id"] == "rid-real-dispatch")
+    assert dispatch_row["outcome"] == {"state": "succeeded", "detail": "run_complete"}
+
+    # The join record itself never renders as a THIRD row.
+    assert {e["request_id"] for e in payload["events"]} == {"rid-real-collision", "rid-real-dispatch"}
+
+
+def test_gate_round_2_codex_f2_a_missing_operations_store_never_masquerades_as_a_loki_outage(monkeypatch, caplog):
+    # codex F2: app.state.operations only exists once the app's ASGI
+    # lifespan has actually run -- a TestClient invoked WITHOUT that
+    # startup (deliberately NOT using __enter__ here, unlike this file's
+    # own _client() helper as of gate round 1) must not fall into the
+    # endpoint's generic except-Exception handler and mislabel a real,
+    # working Loki read as "Loki itself is unreachable".
+    monkeypatch.setattr(audit_events.time, "time_ns", lambda: 10_000 * 1_000_000_000)  # would age, if aging ran
+    settings = Settings(
+        runtime_mode="local", dev_login_enabled=True, dev_groups=OPERATOR_ONLY,
+        loki=LokiSettings(url="http://loki.test"),
+    )
+    client = TestClient(create_app(settings=settings))  # deliberately NOT entered -- no lifespan, no app.state.operations
+    client.get("/auth/login", follow_redirects=False)
+
+    with caplog.at_level(logging.ERROR, logger="dmf_cms.main"):
+        payload = client.get("/api/audit/events").json()
+
+    # The real read still succeeds -- NOT the Loki-outage shape.
+    assert payload["reason"] == ""
+    row = next(e for e in payload["events"] if e["request_id"] == "rid-deploy-1")
+    # Aging fails OPEN when the bound can't be resolved -- the row stays
+    # in_flight even though "now" above was pushed well past the bound
+    # that WOULD have aged it had app.state.operations been available
+    # (see test_gate_round_1_codex_p2_a_stale_never_joined_row_ages_into_
+    # the_honest_unknown, same now_ns, same row, opposite outcome).
+    assert row["outcome"]["state"] == "in_flight"
+
+    # Never silent: a distinct, loudly-logged condition, not folded into
+    # the generic "read failed" warning either.
+    messages = [r.getMessage() for r in caplog.records]
+    assert any("app.state.operations is unavailable" in m for m in messages)
+    assert not any("audit events: read failed" in m for m in messages)
 
 
 def test_gate_round_1_codex_p2_a_stale_never_joined_row_ages_into_the_honest_unknown(monkeypatch):
