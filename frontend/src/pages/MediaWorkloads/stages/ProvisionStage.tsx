@@ -14,7 +14,7 @@ import { isValidWorkloadSlug } from '../../../lib/workloadSlug'
 import type { CatalogEntry, ClearForDeploymentResult, MediaWorkload } from '../../../api/types'
 import type { StageActionId, StageState } from '../../../lib/workloadLifecycle'
 import ClearForDeployment from '../ClearForDeployment'
-import { requestedBadge, requestedLabel, REQUESTED_TITLE } from '../stateBadges'
+import { lookupState, requestedBadge, requestedLabel, REQUESTED_TITLE } from '../stateBadges'
 import StageCard from './StageCard'
 import { JobStatusLine, OperationStatusLine } from './JobProgress'
 import { settleQuery } from '../../../lib/queryState'
@@ -43,7 +43,7 @@ const EMPTY_TRACK: EntryTrack = { jobId: null, opId: null }
 // dmfdeploy/dmfdeploy#556: one icon per REQUESTED-state vocabulary word
 // (stateBadges.ts's requestedLabel) for the default-level Members list.
 // Decorative only (aria-hidden) — the label text is the accessible content.
-const REQUESTED_ICON: Record<string, LucideIcon> = {
+const REQUESTED_ICON: Record<string, LucideIcon> & { unknown: LucideIcon } = {
   bootstrapped: CalendarCheck,
   active: CheckCircle2,
   unknown: HelpCircle,
@@ -342,16 +342,16 @@ export default function ProvisionStage({
           <h3 className="text-xs uppercase tracking-wide text-muted">Members</h3>
           <ul className="mt-2 space-y-2">
             {members.map((inst) => {
-              const Icon = REQUESTED_ICON[inst.requested_state] ?? REQUESTED_ICON.unknown
+              const Icon = lookupState(REQUESTED_ICON, inst.requested_state)
               return (
                 <li key={inst.instance} className="flex items-center justify-between gap-3">
                   <span className="font-mono text-xs text-muted">{inst.instance}</span>
                   <span
-                    className={`badge text-xs inline-flex items-center gap-1 ${requestedBadge[inst.requested_state] ?? requestedBadge.unknown}`}
+                    className={`badge text-xs inline-flex items-center gap-1 ${lookupState(requestedBadge, inst.requested_state)}`}
                     title={REQUESTED_TITLE}
                   >
                     <Icon className="w-3 h-3" aria-hidden="true" />
-                    {requestedLabel[inst.requested_state] ?? requestedLabel.unknown}
+                    {lookupState(requestedLabel, inst.requested_state)}
                   </span>
                 </li>
               )
