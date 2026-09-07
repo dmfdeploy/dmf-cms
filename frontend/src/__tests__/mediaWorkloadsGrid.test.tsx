@@ -991,6 +991,73 @@ function mkListFetch(workloads: MediaWorkloadsGroupedResponse['workloads']) {
   return { fetchMock }
 }
 
+describe('representativeInstance (umbrella #452): prefers the non-source viewer', () => {
+  it('a topology-spawned source and its viewer both qualify — the viewer represents the workload, not the source', async () => {
+    mkListFetch([
+      {
+        slug: 'test',
+        name: 'test',
+        lifecycle: 'operate',
+        health: 'ok',
+        instances: [
+          inst({
+            instance: 'mxl-source-a',
+            function_key: 'mxl-videotest-view-source-a',
+            topology_parent_key: 'mxl-videotest-view',
+            topology_source_id: 'source-a',
+            topology_source_pattern: 'smpte',
+          }),
+          inst({ instance: 'mxl-videotest-view', function_key: 'mxl-videotest-view' }),
+        ].map((i) => ({ ...i, workload_assignment: 'ok' })),
+        functions: [],
+      },
+    ])
+    renderListPage()
+
+    // The list page's own tile shows workload.name, not the per-instance
+    // catalog display_name (that join lives in WorkloadTile, one level in).
+    await screen.findByRole('heading', { name: 'test', level: 2 })
+    // The viewer was picked: no pattern on it, so no static card renders.
+    expect(screen.queryByText('STATIC')).toBeNull()
+  })
+
+  it('a sources-only workload (no qualifying viewer) falls back to the original first-in-order rule', async () => {
+    mkListFetch([
+      {
+        slug: 'test',
+        name: 'test',
+        lifecycle: 'operate',
+        health: 'ok',
+        instances: [
+          inst({
+            instance: 'mxl-source-b',
+            function_key: 'mxl-videotest-view-source-b',
+            topology_parent_key: 'mxl-videotest-view',
+            topology_source_id: 'source-b',
+            topology_source_pattern: 'checkers-8',
+          }),
+          inst({
+            instance: 'mxl-source-a',
+            function_key: 'mxl-videotest-view-source-a',
+            topology_parent_key: 'mxl-videotest-view',
+            topology_source_id: 'source-a',
+            topology_source_pattern: 'smpte',
+          }),
+        ].map((i) => ({ ...i, workload_assignment: 'ok' })),
+        functions: [],
+      },
+    ])
+    renderListPage()
+
+    await screen.findByText('STATIC')
+    // Deterministic order sorts by `instance` name — 'mxl-source-a' sorts
+    // before 'mxl-source-b' — so the ORIGINAL rule's "first qualifying
+    // instance" is source-a: 8 rects (7 SMPTE bars + 1 lower band), never
+    // checkers-8's 64-cell grid.
+    expect(document.querySelectorAll('svg rect').length).toBe(8)
+  })
+})
+
 describe('tile lifecycle badge grammar (umbrella #285 addendum)', () => {
   it.each([
     ['provision', 'planned'],

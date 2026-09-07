@@ -151,3 +151,81 @@ describe('WorkloadTile node placement — no placeholder glyph for an absent one
     expect(screen.getByText('node node-7')).toBeTruthy()
   })
 })
+
+// umbrella #452 — the static pattern illustration branch. A topology-spawned
+// SOURCE carries a live sidecar (live_view: true) whose preview endpoint
+// 404s for a source role: `available: true, preview: false` — today's
+// "Sidecar live · no preview on this side" case, now the static card's home.
+const NO_PREVIEW_STATUS = {
+  available: true,
+  role: 'source',
+  provider: 'aliyun',
+  preview: false,
+  mxl_version: '1.2.3',
+  flow: null,
+}
+
+function renderTileWithInstance(overrides: Partial<MediaWorkloadInstance>) {
+  const queryClient = new QueryClient({ defaultOptions: { queries: { retry: false } } })
+  return render(
+    <QueryClientProvider client={queryClient}>
+      <WorkloadTile instance={instance(overrides)} displayName="Source A" active motionAllowed onOpen={() => {}} />
+    </QueryClientProvider>,
+  )
+}
+
+describe('WorkloadTile live preview — the static pattern card (umbrella #452)', () => {
+  it('a known pattern with no preview shows the static illustration: no live dot, the exact caption, no <img>', async () => {
+    // The static caption is true even on the FIRST render (pattern known,
+    // hasPreview trivially false before any fetch resolves) — fake timers +
+    // an explicit settle is what proves `available` has actually turned
+    // true and liveDot is STILL suppressed, not merely not-yet-computed
+    // (the exact race a `findByText`-only assertion here would miss).
+    vi.useFakeTimers()
+    vi.stubGlobal('fetch', vi.fn(async () => new Response(JSON.stringify({ instance: 'mxl-source-a', ...NO_PREVIEW_STATUS }), { status: 200, headers: { 'Content-Type': 'application/json' } })))
+    const { container } = renderTileWithInstance({
+      instance: 'mxl-source-a',
+      function_key: 'mxl-videotest-view-source-a',
+      topology_parent_key: 'mxl-videotest-view',
+      topology_source_id: 'source-a',
+      topology_source_pattern: 'smpte',
+    })
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(60)
+    })
+    expect(screen.getByText('Emits the smpte pattern · static illustration')).toBeTruthy()
+    expect(container.querySelector('.bg-green-400')).toBeNull()
+    expect(container.querySelector('img')).toBeNull()
+    expect(screen.getByText('STATIC')).toBeTruthy()
+    // No Refresh affordance either — this is not a held live frame.
+    expect(screen.queryByRole('button', { name: 'Refresh' })).toBeNull()
+  })
+
+  it('an unrecognised pattern falls back to the ordinary PlaceholderThumb caption, never the static card', async () => {
+    vi.stubGlobal('fetch', vi.fn(async () => new Response(JSON.stringify({ instance: 'mxl-source-a', ...NO_PREVIEW_STATUS }), { status: 200, headers: { 'Content-Type': 'application/json' } })))
+    renderTileWithInstance({
+      instance: 'mxl-source-a',
+      function_key: 'mxl-videotest-view-source-a',
+      topology_parent_key: 'mxl-videotest-view',
+      topology_source_id: 'source-a',
+      topology_source_pattern: 'ball', // a real sources[].pattern value this component does not draw
+    })
+    expect(await screen.findByText('Sidecar live · no preview on this side')).toBeTruthy()
+    expect(screen.queryByText('STATIC')).toBeNull()
+  })
+
+  it('a genuinely live preview wins over the static card even when the pattern is known', async () => {
+    vi.stubGlobal('fetch', vi.fn(async () => new Response(JSON.stringify({ instance: 'mxl-source-a', ...AVAILABLE_STATUS }), { status: 200, headers: { 'Content-Type': 'application/json' } })))
+    const { container } = renderTileWithInstance({
+      instance: 'mxl-source-a',
+      function_key: 'mxl-videotest-view-source-a',
+      topology_parent_key: 'mxl-videotest-view',
+      topology_source_id: 'source-a',
+      topology_source_pattern: 'smpte',
+    })
+    expect(await screen.findByText('Live · sidecar preview')).toBeTruthy()
+    expect(container.querySelector('img')).toBeTruthy()
+    expect(screen.queryByText('STATIC')).toBeNull()
+    expect(container.querySelector('.bg-green-400')).toBeTruthy()
+  })
+})
