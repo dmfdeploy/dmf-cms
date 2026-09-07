@@ -26,6 +26,18 @@ import type { AuditEventsResponse, UserIdentity, WorkspaceHealth } from '../api/
 
 const STOPGAP = /First implementation of this lane/
 
+// One access-scoped exclusion so the conditional exclusions paragraph
+// (ActivityPanel.tsx's `{(exclusions.access.length > 0 || ...` block)
+// actually renders — the "all three travel together" assertion below is
+// only true when that paragraph is present to check.
+const AUDIT_WITH_EXCLUSION: AuditEventsResponse = {
+  reason: '',
+  window: { known: true, seconds: 604800, reason: '' },
+  capped: false,
+  excluded: [{ class: 'teardown', reason: 'access' }],
+  events: [],
+}
+
 function json(body: unknown, status = 200) {
   return new Response(JSON.stringify(body), { status, headers: { 'Content-Type': 'application/json' } })
 }
@@ -52,14 +64,14 @@ const AUDIT: AuditEventsResponse = {
   events: [],
 }
 
-function stubFetch() {
+function stubFetch(audit: AuditEventsResponse = AUDIT) {
   vi.stubGlobal(
     'fetch',
     vi.fn(async (input: RequestInfo | URL) => {
       const url = (typeof input === 'string' ? input : (input as Request).url).toString()
       if (url.endsWith('/api/me')) return json(IDENTITY)
       if (url.endsWith('/api/workspace/health')) return json(HEALTH)
-      if (url.endsWith('/api/audit/events')) return json(AUDIT)
+      if (url.endsWith('/api/audit/events')) return json(audit)
       if (url.endsWith('/api/changes/jobs')) return json({ jobs: [], reason: '' })
       if (url.endsWith('/api/changes/commits')) return json({ repos: [], reason: '' })
       if (url.endsWith('/api/changes/pulls')) return json({ pulls: [], reason: '' })
@@ -68,8 +80,8 @@ function stubFetch() {
   )
 }
 
-function renderWithQuery(ui: React.ReactElement) {
-  stubFetch()
+function renderWithQuery(ui: React.ReactElement, audit: AuditEventsResponse = AUDIT) {
+  stubFetch(audit)
   const queryClient = new QueryClient({ defaultOptions: { queries: { retry: false } } })
   return render(
     <QueryClientProvider client={queryClient}>
@@ -86,7 +98,11 @@ afterEach(() => {
 
 describe('dmfdeploy/dmfdeploy#555: the Activity explainer is a disclosure on Workspace, inline on History', () => {
   it('(a) Workspace: the stopgap sentence sits inside a CLOSED <details> whose summary is named "About this record"', async () => {
-    renderWithQuery(<Workspace />)
+    // AUDIT_WITH_EXCLUSION, not the empty AUDIT fixture: the conditional
+    // exclusions paragraph only renders when `excluded` is non-empty, and
+    // the "all three travel together" assertion below needs it present to
+    // check.
+    renderWithQuery(<Workspace />, AUDIT_WITH_EXCLUSION)
     const stopgap = await screen.findByText(STOPGAP)
 
     const details = stopgap.closest('details')
@@ -104,19 +120,34 @@ describe('dmfdeploy/dmfdeploy#555: the Activity explainer is a disclosure on Wor
     expect(summary.querySelector('svg')?.getAttribute('aria-hidden')).toBe('true')
 
     // All three paragraphs travel together — the shared fragment, not just
-    // the stopgap one.
+    // the stopgap one. The exclusions paragraph only renders at all when
+    // `excluded` is non-empty (AUDIT_WITH_EXCLUSION above), so checking it
+    // here is what makes "all three" a real claim rather than two-out-of-
+    // three plus an absence nothing was asserted about.
     const first = screen.getByText(/Deploys, teardowns, source switches, and automatic rollbacks/)
     expect(first.closest('details')).toBe(details)
+    // The header paragraphs render unconditionally from first paint —
+    // `excluded` defaults to [] until the audit fetch settles — so this
+    // one has to be awaited: it exists only once the fixture's real
+    // `excluded` array has landed, unlike STOPGAP above.
+    const exclusionsParagraph = await screen.findByText(/Kept off this record, access-scoped/)
+    expect(exclusionsParagraph.closest('details')).toBe(details)
 
     // The heading itself is NOT inside the disclosure and keeps its name.
     const heading = screen.getByRole('heading', { level: 2, name: 'Activity' })
     expect(heading.closest('details')).toBeNull()
   })
 
-  it('(b) History: the same stopgap sentence is present and NOT inside any <details>', async () => {
-    renderWithQuery(<HistoryLane />)
+  it('(b) History: the same stopgap sentence, and the exclusions paragraph, are present and NOT inside any <details>', async () => {
+    renderWithQuery(<HistoryLane />, AUDIT_WITH_EXCLUSION)
     const stopgap = await screen.findByText(STOPGAP)
     expect(stopgap.closest('details')).toBeNull()
+    // The header paragraphs render unconditionally from first paint —
+    // `excluded` defaults to [] until the audit fetch settles — so this
+    // one has to be awaited: it exists only once the fixture's real
+    // `excluded` array has landed, unlike STOPGAP above.
+    const exclusionsParagraph = await screen.findByText(/Kept off this record, access-scoped/)
+    expect(exclusionsParagraph.closest('details')).toBeNull()
     expect(screen.queryByText('About this record')).toBeNull()
   })
 

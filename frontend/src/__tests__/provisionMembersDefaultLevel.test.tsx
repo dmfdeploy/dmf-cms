@@ -4,9 +4,15 @@
  * observed state deliberately absent so intent is never read as running),
  * and the clear-for-deployment control — a NetBox-intent write that 503s on
  * every deployed env today (#487) — sits behind a collapsed "Desired state
- * (expert)" <details>. Mutation ownership stays in the stage (GATE-S1-RV2
- * P1); this test renders the stage directly, so a wrong owner would surface
- * as a broken clear path here too.
+ * (expert)" <details>.
+ *
+ * What these two tests pin: (a) the default-render structure — one row per
+ * member with its requested-state label, and every matching Clear button's
+ * nearest <details> exists and is closed; (b) opening the "Desired state
+ * (expert)" summary exposes the existing, unmodified Clear control and it
+ * still arms correctly. (Mutation ownership living in the stage, not a
+ * child, is a separate property pinned by workloadSetup.test.tsx's own
+ * mount/pending/remount coverage — not by anything here.)
  *
  * Honest limit: jsdom applies no user-agent stylesheet to a closed
  * <details>, so role queries still find the button inside it — which is why
