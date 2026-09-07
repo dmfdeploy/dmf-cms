@@ -1000,6 +1000,44 @@ def _audit_awx_write(
     produces a line the reader drops entirely (fails closed, same as any
     other malformed trailing field), never a silently-ignored value.
     """
+    # gate round 6 (lkirc, PR review): the invariant "an audit row that
+    # describes an EXISTING operation must carry that operation's
+    # identity" has now been forgotten independently at two call sites in
+    # a row (reattached, round 5; already-active, round 6) — remembering
+    # harder at each call site is not a fix. Enforced HERE instead, once,
+    # against audit_events.REFERENCES_EXISTING_OPERATION_TOKENS (derived
+    # from that module's own dispatch-token vocabulary, never a second
+    # copy that could drift). Scoped to deploy/teardown only — the only
+    # actions this lane's terminal join covers this round; launch/
+    # rollback/finalise-purge emit these SAME tokens but have no join to
+    # ever consume the link, so requiring one there would be unenforceable
+    # ceremony with no reader, not a real fix, and touching those four
+    # call sites is outside this round's scope.
+    #
+    # Logged, never raised: _audit_awx_write is called synchronously,
+    # inline, from every one of its ~40 call sites with NO exception
+    # handling around any of them — for a reattach/already-active branch
+    # specifically, the underlying operation has ALREADY succeeded (an
+    # existing op was correctly found) by the time this runs, so letting
+    # a bug HERE turn into a raised exception would abort an
+    # already-successful response with a spurious 500, trading a
+    # correlation gap for a broken request — strictly worse. The row is
+    # still written (unjoinable, same degraded shape the bug already
+    # produced — but now VISIBLE rather than silent) and this exact log
+    # line is what a dedicated test asserts against, so a THIRD omission
+    # fails the test suite, not a live request.
+    if (
+        action in ("deploy", "teardown")
+        and outcome in audit_events.REFERENCES_EXISTING_OPERATION_TOKENS
+        and not linked_request_id
+    ):
+        logger.error(
+            "audit: %s outcome=%r references an existing operation but was "
+            "written with no linked_request_id -- this row can never receive "
+            "its terminal outcome (request_id=%s target=%s)",
+            action, outcome, request_id, _sanitize_audit_field(target),
+        )
+
     real = session_user(request.session)
     real_role = real.role if (real is not None and request.session.get("view_as")) else ""
     # dmfdeploy/dmf-cms#140 (operator ruling 2026-09-03, revised same
@@ -5140,7 +5178,21 @@ def create_app(settings: Settings | None = None, contract: AppContract | None = 
                     )
                     if ops_store_for_check is not None else None
                 )
-                _audit_awx_write(request, user, action="deploy", target=key, request_id=request_id, reason=reason, outcome="already-active")
+                # gate round 6 (lkirc): the SAME defect as the async
+                # reattach sites (round 5), at the SYNC already-active path
+                # — op.request_id is the tracked op's own stable identity
+                # (whether it was already tracked, or _track_sync_reattach
+                # just created the FIRST tracking record for it moments
+                # ago — either way this is what the watcher's own terminal
+                # record links back to). None when no ops-store tracking
+                # exists at all (ops_store_for_check was None) — never
+                # guess a link that doesn't exist.
+                linked_op = ops_store_for_check.get(op_id) if op_id is not None else None
+                _audit_awx_write(
+                    request, user, action="deploy", target=key, request_id=request_id, reason=reason,
+                    outcome="already-active",
+                    linked_request_id=linked_op.request_id if linked_op is not None else None,
+                )
                 body = {"job_id": active, "status": "already-active", "request_id": request_id}
                 if op_id is not None:
                     body["operation_id"] = op_id
@@ -5389,7 +5441,14 @@ def create_app(settings: Settings | None = None, contract: AppContract | None = 
                     )
                     if ops_store_for_check is not None else None
                 )
-                _audit_awx_write(request, user, action="teardown", target=key, request_id=request_id, reason=reason, outcome="already-active")
+                # gate round 6 (lkirc): same fix as the deploy already-active
+                # site above — see its own comment.
+                linked_op = ops_store_for_check.get(op_id) if op_id is not None else None
+                _audit_awx_write(
+                    request, user, action="teardown", target=key, request_id=request_id, reason=reason,
+                    outcome="already-active",
+                    linked_request_id=linked_op.request_id if linked_op is not None else None,
+                )
                 body = {"job_id": active, "status": "already-active", "request_id": request_id}
                 if op_id is not None:
                     body["operation_id"] = op_id
