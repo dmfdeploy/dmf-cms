@@ -220,15 +220,30 @@ describe('F7: the facility panel never claims completeness across roles', () => 
 })
 
 describe('operator ruling 2026-09-03: the lane states its stopgap status plainly', () => {
-  it('names the two limits that actually bite, without apologising or claiming unreliability', async () => {
+  it('dmfdeploy/dmfdeploy#419/#554: names the two NEW limits that actually bite, without apologising or claiming unreliability', async () => {
+    // The lane's stopgap status evolved -- deploy/teardown now DO get a
+    // confirmed outcome (the old "never updated" limit is gone), but two
+    // real ones replace it: the watcher is in-process on a single replica
+    // (a console restart mid-job loses the watch), and its own give-up
+    // path reads "outcome unknown" rather than resolving anything. Both
+    // must be stated plainly, same STATE-don't-apologise register as
+    // before.
     mkFetch(FAILED_DEPLOY_RESPONSE)
     renderHistory()
     await screen.findByText('The automation engine reported an error')
-    expect(screen.getByText(/First implementation of this lane/)).toBeTruthy()
-    expect(screen.getByText(/an accepted\s*one is never updated with whether the job later finished/)).toBeTruthy()
-    expect(screen.getByText(/Switch source normally carries a real succeeded or failed/)).toBeTruthy()
-    expect(screen.getByText(/subject\s*to the same outcome-unknown case as any other record/)).toBeTruthy()
-    expect(screen.getByText(/Coverage is bounded\s*by the window stated above/)).toBeTruthy()
+    expect(screen.getByText(/any refusal after the role and reason checks/)).toBeTruthy()
+    expect(
+      screen.getByText(/now also\s*confirms whether an accepted request's job later succeeded or failed/),
+    ).toBeTruthy()
+    expect(
+      screen.getByText(/if the console\s*restarts while a job is still being watched, the watch is lost/),
+    ).toBeTruthy()
+    expect(
+      screen.getByText(/if\s*the watcher gives up without a clean read instead, the row\s*reads "outcome unknown"/),
+    ).toBeTruthy()
+    expect(screen.getByText(/Switch source\s*carries a real succeeded or failed outcome immediately at\s*dispatch/)).toBeTruthy()
+    expect(screen.getByText(/same outcome-unknown case as any other record when its outcome\s*field is blank/)).toBeTruthy()
+    expect(screen.getByText(/Coverage is bounded by the window stated\s*above, not a guarantee of/)).toBeTruthy()
     // STATE, don't apologise or overstate the weakness — Art. 8 register.
     expect(screen.queryByText(/[Ss]orry/)).toBeNull()
     expect(screen.queryByText(/incomplete/i)).toBeNull()
@@ -318,7 +333,10 @@ describe('operator ruling 2026-09-03: the lane states its stopgap status plainly
     }
     mkFetch(response)
     renderHistory()
-    expect(await screen.findByText('Switch source on wl-b — outcome unknown')).toBeTruthy()
+    // dmfdeploy/dmfdeploy#419: "Switch source" -> "Set source" (interim
+    // generic config-parameter phrasing) — see ActivityPanel.tsx's own
+    // switch-source case.
+    expect(await screen.findByText('Set source on wl-b — outcome unknown')).toBeTruthy()
     // The corrected clause must not claim switch-source is unconditionally
     // exempt from the unknown case — it differs from deploy/teardown in
     // KIND (a real verdict is possible), not in being immune to this case.

@@ -24,7 +24,11 @@ import Workspace from '../pages/Workspace'
 import HistoryLane from '../pages/Activity/HistoryLane'
 import type { AuditEventsResponse, UserIdentity, WorkspaceHealth } from '../api/types'
 
-const STOPGAP = /First implementation of this lane/
+// dmfdeploy/dmfdeploy#419/#554: retargeted onto the rewritten caveat
+// paragraph's own distinctive text (the "First implementation of this
+// lane" opening it used to pin is gone — deploy/teardown now DO get a
+// confirmed outcome; see ActivityPanel.tsx's own explainerParagraphs).
+const STOPGAP = /That watcher runs in-process on a single console replica/
 
 // One access-scoped exclusion so the conditional exclusions paragraph
 // (ActivityPanel.tsx's `{(exclusions.access.length > 0 || ...` block)

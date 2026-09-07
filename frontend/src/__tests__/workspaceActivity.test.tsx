@@ -207,8 +207,118 @@ describe('umbrella#554: the in_flight badge is gone, on Workspace as everywhere 
         ],
       }),
     )
-    expect(await screen.findByText('Switched source on wl-d')).toBeTruthy()
+    // dmfdeploy/dmfdeploy#419: "Switch source" -> "Set source" (interim
+    // generic config-parameter phrasing) — see ActivityPanel.tsx.
+    expect(await screen.findByText('Set source on wl-d')).toBeTruthy()
     expect(screen.getByText('Succeeded')).toBeTruthy()
+  })
+})
+
+describe('dmfdeploy/dmfdeploy#419: deploy/teardown carry a confirmed terminal outcome onto this same row', () => {
+  it('a deploy row with a confirmed succeeded outcome titles "Deploy succeeded for X", with the Succeeded badge', async () => {
+    renderActivityPanel(
+      auditResponse({
+        events: [
+          {
+            request_id: 'rid-5', class: 'deploy', action: 'deploy', target: 'wl-e', workload: 'wl-e',
+            actor: 'erin', role: 'operator', reason: 'demo', at: '2026-09-04T00:00:00Z', at_ns: '5',
+            outcome: { state: 'succeeded', detail: 'run_complete' },
+          },
+        ],
+      }),
+    )
+    expect(await screen.findByText('Deploy succeeded for wl-e')).toBeTruthy()
+    expect(screen.getByText('Succeeded')).toBeTruthy()
+    // Never the pre-#419 phrasing, on this same row.
+    expect(screen.queryByText('Deploy dispatched for wl-e')).toBeNull()
+  })
+
+  it('a teardown row with a confirmed failed outcome titles "Teardown failed for X", with plain-language copy', async () => {
+    renderActivityPanel(
+      auditResponse({
+        events: [
+          {
+            request_id: 'rid-6', class: 'teardown', action: 'teardown', target: 'wl-f', workload: null,
+            actor: 'erin', role: 'operator', reason: 'demo', at: '2026-09-04T00:00:00Z', at_ns: '6',
+            outcome: {
+              state: 'failed',
+              headline: 'The automation job did not finish successfully',
+              meaning: 'The action was dispatched and the automation job ran to a terminal state, but it did not complete successfully.',
+              next_step: 'Check Activity → Jobs or the automation engine for details, or contact a system engineer.',
+              detail: 'run_failed',
+            },
+          },
+        ],
+      }),
+    )
+    expect(await screen.findByText('Teardown failed for wl-f')).toBeTruthy()
+    expect(screen.getByText('The automation job did not finish successfully')).toBeTruthy()
+    // The raw token is expert-level only, behind the closed <details>.
+    const details = document.querySelector('details')
+    expect(details).not.toBeNull()
+    expect((details as HTMLDetailsElement).open).toBe(false)
+  })
+
+  it('a deploy row that never got a terminal join stays "Deploy dispatched for X" — never a guessed success', async () => {
+    // The residual, documented in-process limitation this whole feature
+    // exists around (a console restart mid-job loses the watch): the
+    // dispatch-only shape from before #419, still honestly reachable.
+    renderActivityPanel(
+      auditResponse({
+        events: [
+          {
+            request_id: 'rid-7', class: 'deploy', action: 'deploy', target: 'wl-g', workload: 'wl-g',
+            actor: 'erin', role: 'operator', reason: 'demo', at: '2026-09-04T00:00:00Z', at_ns: '7',
+            outcome: { state: 'in_flight', detail: 'dispatched' },
+          },
+        ],
+      }),
+    )
+    expect(await screen.findByText('Deploy dispatched for wl-g')).toBeTruthy()
+    expect(screen.queryByText('Deploy succeeded for wl-g')).toBeNull()
+  })
+})
+
+describe('dmfdeploy/dmfdeploy#419: switch-source names the value it was set to, generically', () => {
+  it('succeeded: "Set source to Y on X" — the value that was set to, not silently dropped', async () => {
+    renderActivityPanel(
+      auditResponse({
+        events: [
+          {
+            request_id: 'rid-8', class: 'switch-source', action: 'switch-source', target: 'receiver-1',
+            workload: 'src-1', actor: 'dave', role: 'engineer', reason: 'demo',
+            at: '2026-09-04T00:00:00Z', at_ns: '8',
+            outcome: { state: 'succeeded', detail: 'active' },
+          },
+        ],
+      }),
+    )
+    const title = await screen.findByText('Set source to src-1 on receiver-1')
+    // Never the demo-specific "Switch(ed) source" title vocabulary the
+    // operator asked to move away from — scoped to the title itself
+    // (the shared explainer paragraph elsewhere on the page legitimately
+    // still says "Switch source" in prose, describing the action class).
+    expect(title.textContent).not.toMatch(/Switch/)
+  })
+
+  it('failed: names the attempted value even though it did not land', async () => {
+    renderActivityPanel(
+      auditResponse({
+        events: [
+          {
+            request_id: 'rid-9', class: 'switch-source', action: 'switch-source', target: 'receiver-2',
+            workload: 'src-2', actor: 'dave', role: 'engineer', reason: 'demo',
+            at: '2026-09-04T00:00:00Z', at_ns: '9',
+            outcome: {
+              state: 'failed', headline: 'The action did not complete',
+              meaning: 'The action failed. This lane does not yet have specific guidance for the reason recorded.',
+              next_step: 'Contact a system engineer with the request id below.', detail: 'some-switch-failure',
+            },
+          },
+        ],
+      }),
+    )
+    expect(await screen.findByText('Failed to set source to src-2 on receiver-2')).toBeTruthy()
   })
 })
 
