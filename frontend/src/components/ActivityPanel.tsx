@@ -11,12 +11,21 @@ import {
 import type { AuditEvent, AuditEventOutcome } from '../api/types'
 
 // Per-class title, honest about acceptance-vs-verdict (plan §4.4/AC 2): a
-// watched action never claims completion, so its title says "dispatched",
-// never a past-tense verb implying it finished. switch-source is the one
-// class with a real terminal outcome, so it's the only one allowed a
-// succeeded/failed past-tense title. 'unknown' (codex R496-C P1-2) gets
-// its own honest phrasing — never folded into "failed" or "dispatched",
-// either of which would claim knowledge the row does not have.
+// watched action never claims completion it hasn't reached, so its title
+// only ever says "dispatched" while genuinely unconfirmed. 'unknown'
+// (codex R496-C P1-2) gets its own honest phrasing — never folded into
+// "failed" or "dispatched", either of which would claim knowledge the row
+// does not have.
+//
+// dmfdeploy/dmfdeploy#419/#554: deploy/teardown are no longer acceptance-
+// only. Once the console's own watcher resolves a dispatched job to a
+// terminal state, the backend joins that confirmed outcome onto this SAME
+// row (audit_events.py's terminal_by_request_id) — so 'succeeded' is now
+// a real, reachable state for these two classes too, not just switch-
+// source's. A row with no such join yet keeps reading "dispatched"
+// (still honestly unconfirmed, not a claim either way); the in-process
+// limitation that can leave it that way permanently is stated in the
+// panel's own explainer text below, not just here.
 function eventTitle(event: AuditEvent): string {
   const label = event.workload ?? event.target
   const state = event.outcome.state
@@ -24,10 +33,12 @@ function eventTitle(event: AuditEvent): string {
     case 'deploy':
       if (state === 'failed') return `Deploy failed for ${label}`
       if (state === 'unknown') return `Deploy — outcome unknown for ${label}`
+      if (state === 'succeeded') return `Deploy succeeded for ${label}`
       return `Deploy dispatched for ${label}`
     case 'teardown':
       if (state === 'failed') return `Teardown failed for ${label}`
       if (state === 'unknown') return `Teardown — outcome unknown for ${label}`
+      if (state === 'succeeded') return `Teardown succeeded for ${label}`
       return `Teardown dispatched for ${label}`
     case 'auto-rollback': {
       const suffix = event.workload ? ` for ${event.workload}` : ''
@@ -35,10 +46,24 @@ function eventTitle(event: AuditEvent): string {
       if (state === 'unknown') return `Automatic rollback — outcome unknown${suffix}`
       return `Automatic rollback dispatched${suffix}`
     }
-    case 'switch-source':
-      if (state === 'succeeded') return `Switched source on ${event.target}`
-      if (state === 'unknown') return `Switch source on ${event.target} — outcome unknown`
-      return `Switch source failed on ${event.target}`
+    case 'switch-source': {
+      // dmfdeploy/dmfdeploy#419: interim, generic "config parameter set to
+      // a value" phrasing. Operator, verbatim: "switch is something very
+      // specific to our demo, it should really be named more generically"
+      // and "it should be naming which config was changed to what". The
+      // general model is every media function exposing named config
+      // parameters, of which "source" is one — event.workload already
+      // carries the value it was set to (written by the endpoint, parsed
+      // by audit_events.py, typed on AuditEvent — nothing new produced
+      // here, just rendered). The durable config-parameter model (the
+      // previous value, the audit log-line grammar, the switch-source
+      // action class itself) is dmfdeploy/dmfdeploy#559's own scope, not
+      // this label — do not mistake this workaround for that design.
+      const value = event.workload ? ` to ${event.workload}` : ''
+      if (state === 'succeeded') return `Set source${value} on ${event.target}`
+      if (state === 'unknown') return `Set source${value} on ${event.target} — outcome unknown`
+      return `Failed to set source${value} on ${event.target}`
+    }
   }
 }
 
@@ -197,17 +222,30 @@ export default function ActivityPanel({ title, explainer = 'inline' }: ActivityP
           more-visible one, not the less.
           dmfdeploy/dmfdeploy#555: on Workspace these three paragraphs sit
           behind the heading's ⓘ info disclosure (closed by default, same
-          text), while Activity → History keeps them inline. */}
+          text), while Activity → History keeps them inline.
+          dmfdeploy/dmfdeploy#419/#554: the third paragraph below is
+          rewritten now that deploy/teardown DO get a confirmed outcome —
+          the honesty gap moved from "never updated at all" to the
+          narrower, still-real in-process limitation named explicitly
+          below (a console restart mid-watch), per the operator ruling
+          above: state it, don't just fix the common case and stay
+          silent about the one that isn't. */}
       <p className="text-xs text-muted mt-1">
-        First implementation of this lane — for deploy and teardown, it
-        records the request and any refusal after the role and reason
-        checks, but an accepted one is never updated with whether the
-        job later finished. Switch source normally carries a real
-        succeeded or failed outcome instead — unlike deploy and
-        teardown — but is subject to the same outcome-unknown case as
-        any other record when its outcome field is blank. Coverage is
-        bounded by the window stated above, not a guarantee of
-        complete history.
+        For deploy and teardown, this lane records the request and any
+        refusal after the role and reason checks, and now also
+        confirms whether an accepted request's job later succeeded or
+        failed, once the console's own watcher observes it reach a
+        terminal state — resolved onto this same record. That watcher
+        runs in-process on a single console replica: if the console
+        restarts while a job is still being watched, the watch is lost
+        and that row can keep reading "dispatched" indefinitely; if
+        the watcher gives up without a clean read instead, the row
+        reads "outcome unknown" — never a false success. Switch source
+        carries a real succeeded or failed outcome immediately at
+        dispatch, unlike deploy and teardown, but is subject to the
+        same outcome-unknown case as any other record when its outcome
+        field is blank. Coverage is bounded by the window stated
+        above, not a guarantee of complete history.
       </p>
     </>
   )
