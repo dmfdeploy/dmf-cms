@@ -201,6 +201,37 @@ def test_property_a_genuine_auto_rollback_linked_request_id_still_parses():
     assert fields["linked_request_id"] == "rid-parent"
 
 
+def test_property_a_genuine_job_watch_linked_request_id_still_parses():
+    # dmfdeploy/dmfdeploy#419: the SAME trailing-field mechanism, extended
+    # to a second, narrowly-scoped (action, actor) pair — a genuine
+    # terminal-outcome join record for deploy/teardown must parse.
+    for action in ("deploy", "teardown"):
+        line = _new_line(
+            action=action, actor="system:job-watch", role="system",
+            request_id="rid-join", target="wl-a",
+            reason=f"job watch: {action} on wl-a reached terminal state run_complete",
+            outcome="run_complete", workload="", capacity="",
+            linked_request_id="rid-dispatch",
+        )
+        fields = audit_events.parse_awx_write_line(line)
+        assert fields is not None
+        assert fields["linked_request_id"] == "rid-dispatch"
+
+
+def test_a_linked_request_id_on_a_non_qualifying_action_actor_pair_is_rejected():
+    # The trailing field's whole point is that it's restricted to the two
+    # KNOWN correlated shapes (auto-rollback, job-watch) — a real user
+    # actor on an ordinary deploy carrying it is not one of those, and
+    # must fail closed exactly like an unrecognised fmt version does,
+    # never silently accepted as a third, undocumented shape.
+    line = _new_line(
+        action="deploy", actor="alice", role="operator",
+        request_id="rid-1", target="wl-a", reason="demo", outcome="dispatched",
+        linked_request_id="rid-somewhere-else",
+    )
+    assert audit_events.parse_awx_write_line(line) is None
+
+
 def test_property_a_legitimate_reason_mentioning_marker_like_text_still_parses():
     # Regression guard carried forward from the legacy-era version of this
     # test: an honest reason that happens to mention marker-shaped text in
@@ -581,6 +612,15 @@ def test_classify_unrecognised_action_fails_closed():
     assert audit_events.classify_record("mystery-action", "alice") is None
 
 
+def test_classify_job_watch_actor_never_gets_its_own_row():
+    # dmfdeploy/dmfdeploy#419: checked by actor alone, before the rollback
+    # split and the table lookup — a terminal-outcome join record is
+    # join-only for every action it could plausibly carry, not just
+    # deploy/teardown (the two _audit_watch_terminal actually emits).
+    for action in ("deploy", "teardown", "rollback", "mystery-action"):
+        assert audit_events.classify_record(action, "system:job-watch") is None
+
+
 def test_gate_operator_role_passes_operator_classes_not_media_workloads():
     assert audit_events.user_passes_gate("deploy", role="operator", groups=()) is True
     assert audit_events.user_passes_gate("teardown", role="operator", groups=()) is True
@@ -727,3 +767,63 @@ def test_resolve_outcome_state_fails_safe_outside_the_known_vocabulary():
     # but the function itself must not invent an in-flight/succeeded claim
     # for an action it does not recognise.
     assert audit_events.resolve_outcome_state("some-unknown-action", "whatever") == "failed"
+
+
+# ----------------------------------------------------------------------
+# build_terminal_join_outcome — dmfdeploy/dmfdeploy#419/#554's terminal-
+# outcome join, resolved onto a dispatch row in place of that row's own
+# dispatch-time build_outcome result. See _audit_watch_terminal (main.py)
+# for what writes the compound <state>[:<l3_outcome>] token this reads.
+# ----------------------------------------------------------------------
+
+def test_run_complete_is_succeeded_with_the_state_token_as_detail():
+    result = audit_events.build_terminal_join_outcome("run_complete")
+    assert result == {"state": "succeeded", "detail": "run_complete"}
+
+
+def test_run_failed_is_failed_with_the_state_token_as_detail_when_no_l3_outcome():
+    result = audit_events.build_terminal_join_outcome("run_failed")
+    assert result["state"] == "failed"
+    assert result["detail"] == "run_failed"
+    for key in ("headline", "meaning", "next_step"):
+        assert result[key]  # honest plain-language copy present, never raw-only
+
+
+def test_a_launcher_marker_suffix_becomes_the_detail_not_the_bare_state():
+    # The compound token's second half (a genuine DMF_L3_OUTCOME marker,
+    # e.g. a pre-mutation refusal) is more specific expert-level detail
+    # than the bare terminal state -- it wins over the state token.
+    result = audit_events.build_terminal_join_outcome("run_failed:pre-mutation-refused")
+    assert result["state"] == "failed"
+    assert result["detail"] == "pre-mutation-refused"
+
+
+def test_failed_rollback_required_is_a_failed_verdict_not_a_dirty_third_state():
+    # Deploy's own confirmed-mutation-failure terminal is still, from the
+    # Activity row's point of view, an honest "failed" -- DIRTY_STATES is
+    # an internal facility-locking distinction, not a user-facing verdict.
+    result = audit_events.build_terminal_join_outcome("failed_rollback_required")
+    assert result["state"] == "failed"
+
+
+def test_run_status_unknown_is_the_honest_unknown_shape_never_a_verdict():
+    # The watcher's own give-up path (TTL/lost/crash) -- this is what
+    # keeps a row from silently reading "dispatched" forever once the
+    # watcher could not confirm anything, without ever claiming success
+    # or failure it did not observe.
+    result = audit_events.build_terminal_join_outcome("run_status_unknown")
+    assert result == {
+        "state": "unknown",
+        "headline": audit_events._UNKNOWN_OUTCOME_COPY["headline"],
+        "meaning": audit_events._UNKNOWN_OUTCOME_COPY["meaning"],
+        "next_step": audit_events._UNKNOWN_OUTCOME_COPY["next_step"],
+        "detail": "",
+    }
+
+
+def test_an_unrecognised_terminal_state_token_fails_closed_to_unknown_never_a_guess():
+    # Same fail-closed-to-honest-doubt posture as a blank dispatch outcome
+    # (codex R496-C P1-2) -- a future state this mapping was never
+    # extended for must never render as a silent success OR failure.
+    result = audit_events.build_terminal_join_outcome("some-future-state-nobody-mapped-yet")
+    assert result["state"] == "unknown"

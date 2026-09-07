@@ -2073,6 +2073,75 @@ def _watch_lost_terminal_state(action: str, seen_started: bool) -> OperationStat
     return OperationState.RUN_FAILED
 
 
+# dmfdeploy/dmfdeploy#419: the actor literal identifying a terminal-outcome
+# join record — must exactly match audit_events.py's own copy of this
+# string (that module is read-path only and deliberately not import-coupled
+# to main.py, the same layering that already holds for
+# "system:auto-rollback"; see that module's own comment on the mirrored
+# constant). classify_record() special-cases this actor to never render
+# its own row — it exists purely to be joined onto the dispatch row it
+# corresponds to.
+_JOB_WATCH_ACTOR = "system:job-watch"
+
+
+def _audit_watch_terminal(
+    action: str, key: str, request_id: str | None, state: OperationState, l3_outcome: str | None,
+) -> None:
+    """Emit the terminal-outcome join record for a watched deploy/teardown
+    operation (dmfdeploy/dmfdeploy#419/#554), from inside
+    ``_watch_job_operation`` at every point it resolves such an op to a
+    final state — including its give-up paths (TTL timeout, 3 lost
+    ``get_job`` calls, an unexpected crash), which map to the lane's
+    honest 'unknown' outcome rather than leaving the row to silently keep
+    reading its dispatch-time "dispatched" forever.
+
+    No-op for any action other than deploy/teardown (auto-rollback's own
+    terminal confirmation is not this round's scope) — callers do not need
+    to guard the call themselves.
+
+    Follows ``_maybe_auto_trigger_rollback``'s exact precedent, quoted from
+    its own docstring: "Runs from inside the watcher (a background task, no
+    ``Request`` object) — the C5 audit line is hand-assembled here in the
+    same 'awx write:' shape ``_audit_awx_write`` emits, on ``audit_logger``
+    ..., with actor [...] and a ``linked_request_id`` trailing field tying
+    it back to the [original] request's own request_id for correlation."
+    This is the SAME shape, on the SAME logger, with the SAME trailing-
+    field correlation mechanism — never a second, parallel audit-line
+    format. audit_events.py's ``_parse_new_format_line`` is extended to
+    permit ``linked_request_id`` for this actor the same way it already
+    does for ``system:auto-rollback``; nothing else about the grammar
+    changes.
+
+    ``request_id`` is the ORIGINAL dispatch's own op.request_id — ``None``
+    means the dispatch itself never got one (should not happen in
+    practice, but "never guess" applies here exactly as it does to
+    ``_maybe_auto_trigger_rollback``'s own ``run_id is None`` case): no
+    write, the row simply has nothing to join against and keeps reading
+    its dispatch-time outcome.
+
+    ``outcome=`` carries the terminal ``state`` (an ``OperationState``
+    value — code-generated, closed vocabulary) optionally suffixed
+    ``:<l3_outcome>`` when a launcher-side marker was fetched — the SAME
+    compound-token convention ``_audit_awx_write``'s own callers already
+    use for e.g. ``outcome=f"awx-error:{exc.status}"``. Both halves stay
+    plain (never quoted): ``state`` is one of a handful of enum values,
+    and ``l3_outcome`` is regex-anchored to ``[a-z0-9_-]+`` by
+    ``_L3_OUTCOME_RE`` before it ever reaches here — neither is
+    externally-sourced free text.
+    """
+    if action not in ("deploy", "teardown"):
+        return
+    if request_id is None:
+        return
+    outcome = state.value if l3_outcome is None else f"{state.value}:{l3_outcome}"
+    reason = f"job watch: {action} on {key} reached terminal state {state.value}"
+    audit_logger.info(
+        "awx write: fmt=2 action=%s actor='system:job-watch' role=system real_role= "
+        "request_id=%s target=%r reason=%r outcome=%s workload='' capacity='' linked_request_id=%s",
+        action, uuid.uuid4().hex, key, reason, outcome, request_id,
+    )
+
+
 async def _watch_job_operation(app: FastAPI, operation_id: str, job_id: int, action: str, key: str) -> None:
     """Poll an AWX job to its terminal state and resolve the operation (umbrella #202 WP2).
 
@@ -2181,11 +2250,13 @@ async def _watch_job_operation(app: FastAPI, operation_id: str, job_id: int, act
     try:
         while True:
             if datetime.now(timezone.utc) > deadline:
+                give_up_state = _watch_lost_terminal_state(action, seen_started)
                 ops_store.update(
                     operation_id,
-                    state=_watch_lost_terminal_state(action, seen_started),
+                    state=give_up_state,
                     error="job-watch-timeout",
                 )
+                _audit_watch_terminal(action, key, op.request_id, give_up_state, None)
                 return
 
             try:
@@ -2210,11 +2281,13 @@ async def _watch_job_operation(app: FastAPI, operation_id: str, job_id: int, act
                     operation_id, job_id, _sanitize_audit_field(key), consecutive_failures,
                 )
                 if consecutive_failures >= 3:
+                    give_up_state = _watch_lost_terminal_state(action, seen_started)
                     ops_store.update(
                         operation_id,
-                        state=_watch_lost_terminal_state(action, seen_started),
+                        state=give_up_state,
                         error="job-watch-lost",
                     )
+                    _audit_watch_terminal(action, key, op.request_id, give_up_state, None)
                     return
                 await asyncio.sleep(poll_interval)
                 continue
@@ -2330,13 +2403,22 @@ async def _watch_job_operation(app: FastAPI, operation_id: str, job_id: int, act
                             _spawn_drain_verification(app, operation_id, key)
                     return
 
+                # dmfdeploy/dmfdeploy#419/#554: every branch below is the
+                # deploy/teardown terminal classification (rollback and
+                # finalise-purge already returned above) — each one now
+                # also writes the terminal-outcome join record so the
+                # dispatch row's own Activity entry stops reading
+                # "dispatched" once this resolves. See
+                # _audit_watch_terminal's own docstring for the shape.
                 if status == "successful":
                     ops_store.update(operation_id, state=OperationState.RUN_COMPLETE)
+                    _audit_watch_terminal(action, key, op.request_id, OperationState.RUN_COMPLETE, None)
                 elif not started:
                     ops_store.update(
                         operation_id, state=OperationState.RUN_FAILED,
                         error=_append_kv(f"job-{status}", outcome_kv), l3_outcome=outcome_token,
                     )
+                    _audit_watch_terminal(action, key, op.request_id, OperationState.RUN_FAILED, outcome_token)
                 elif action == "deploy":
                     if outcome_token in _PRE_MUTATION_TOKENS:
                         # codex R2-3: the launcher refused up front — the
@@ -2346,10 +2428,14 @@ async def _watch_job_operation(app: FastAPI, operation_id: str, job_id: int, act
                             operation_id, state=OperationState.RUN_FAILED,
                             error=_append_kv(f"job-{status}", outcome_kv), l3_outcome=outcome_token,
                         )
+                        _audit_watch_terminal(action, key, op.request_id, OperationState.RUN_FAILED, outcome_token)
                     else:
                         ops_store.update(
                             operation_id, state=OperationState.FAILED_ROLLBACK_REQUIRED,
                             error=_append_kv(f"job-{status}", outcome_kv), l3_outcome=outcome_token,
+                        )
+                        _audit_watch_terminal(
+                            action, key, op.request_id, OperationState.FAILED_ROLLBACK_REQUIRED, outcome_token,
                         )
                         await _maybe_auto_trigger_rollback(app, operation_id, key)
                 else:
@@ -2357,6 +2443,7 @@ async def _watch_job_operation(app: FastAPI, operation_id: str, job_id: int, act
                         operation_id, state=OperationState.RUN_FAILED,
                         error=_append_kv(f"job-{status}", outcome_kv), l3_outcome=outcome_token,
                     )
+                    _audit_watch_terminal(action, key, op.request_id, OperationState.RUN_FAILED, outcome_token)
                 return
 
             if not seen_running:
@@ -2432,11 +2519,13 @@ async def _watch_job_operation(app: FastAPI, operation_id: str, job_id: int, act
             "job watch: unexpected crash for operation %s (job %s, target %s)",
             operation_id, job_id, _sanitize_audit_field(key),
         )
+        give_up_state = _watch_lost_terminal_state(action, seen_started)
         ops_store.update(
             operation_id,
-            state=_watch_lost_terminal_state(action, seen_started),
+            state=give_up_state,
             error="job-watch-crashed",
         )
+        _audit_watch_terminal(action, key, op.request_id, give_up_state, None)
 
 
 async def _maybe_auto_trigger_rollback(app: FastAPI, operation_id: str, key: str) -> None:
