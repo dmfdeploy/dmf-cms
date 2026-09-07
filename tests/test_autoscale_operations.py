@@ -1106,3 +1106,120 @@ def test_async_teardown_runner_blocked_by_active_opposite_job(enabled_settings):
     assert op is not None and op.state == OperationState.ERROR
     assert op.error == "Conflicting lifecycle operation in progress"
     launch_mock.assert_not_called()
+
+
+# --------------------------------------------------------------------------
+# gate round 6 (lkirc, dmfdeploy/dmfdeploy#419): the sync already-active
+# path (codex R3-4's own _track_sync_reattach bridge) writes an audit row
+# that, before this round, carried no correlation back to the original
+# tracked operation — a reattach to an AWX-side-already-running job could
+# never receive its terminal outcome. Drives the REAL endpoint (not a
+# hand-built fixture line, unlike test_audit_events_endpoint.py's own
+# coverage of the same fix) so a regression at the actual call site
+# (main.py:5143/:5392) fails HERE, not just in a synthetic reader-side test.
+# --------------------------------------------------------------------------
+
+def _lookup_jt_by_name(entry):
+    # Cross-JT guard (#24) looks up BOTH this action's own template and
+    # the OPPOSITE action's, within a single request — a flat
+    # side_effect list would consume entries out of order across the two
+    # different lookups. Keyed by name instead, like this file's own
+    # existing cross-JT tests (test_async_deploy_runner_blocked_by_
+    # active_opposite_job) already do for find_active_job_for_template.
+    table = {entry.configure["awx_job_template"]: {"id": 7}, entry.finalise["awx_job_template"]: {"id": 8}}
+
+    def _lookup(*, api_url, api_token, name, ssl_verify):
+        return table[name]
+
+    return _lookup
+
+
+def _find_active_for_own_template_only(own_template_id, sequence):
+    # Same cross-JT reason as _lookup_jt_by_name above: the OPPOSITE
+    # template's own already-active check must always see None (this
+    # test is never about a cross-action conflict), and the OWN
+    # template's check advances through `sequence` once per call (None
+    # first -> genuine dispatch, then the SAME job_id repeated ->
+    # already-active).
+    calls = {"n": 0}
+
+    def _find_active(*, api_url, api_token, job_template_id, ssl_verify):
+        if job_template_id != own_template_id:
+            return None
+        idx = min(calls["n"], len(sequence) - 1)
+        calls["n"] += 1
+        return sequence[idx]
+
+    return _find_active
+
+
+def test_gate_round_6_lkirc_sync_deploy_already_active_links_to_the_original_operation(disabled_settings, caplog):
+    from fastapi.testclient import TestClient
+    from dmf_cms.main import create_app
+
+    entry = _catalog_entry_134()
+    # First call: no active job -> genuine dispatch, creates the tracked
+    # op. Second and third calls: AWX reports the SAME job already active
+    # -> the sync already-active branch, exercised TWICE (repeated
+    # reattaches on one run, lkirc's own explicit ask).
+    with patch("dmf_cms.main.load_catalog_entries", return_value=[entry]), \
+         patch("dmf_cms.main.lookup_job_template_by_name", side_effect=_lookup_jt_by_name(entry)), \
+         patch("dmf_cms.main.launch_job", return_value=9001), \
+         patch("dmf_cms.main.get_job", return_value={"status": "running", "started": "t0"}), \
+         patch(
+             "dmf_cms.main.find_active_job_for_template",
+             side_effect=_find_active_for_own_template_only(7, [None, 9001, 9001]),
+         ):
+        app = create_app(settings=disabled_settings)
+        with TestClient(app) as client:
+            client.get("/auth/login", follow_redirects=False)
+
+            resp1 = client.post(f"/api/catalog/{entry.key}/deploy", json={"reason": "the original dispatch"})
+            assert resp1.status_code == 200, resp1.text
+            original_request_id = resp1.json()["request_id"]
+
+            with caplog.at_level(logging.INFO, logger="dmf_cms.audit"):
+                resp2 = client.post(f"/api/catalog/{entry.key}/deploy", json={"reason": "already-active hit 1"})
+                resp3 = client.post(f"/api/catalog/{entry.key}/deploy", json={"reason": "already-active hit 2"})
+            assert resp2.status_code == 200, resp2.text
+            assert resp2.json()["job_id"] == 9001
+            assert resp3.status_code == 200, resp3.text
+            assert resp3.json()["job_id"] == 9001
+
+    lines = [r.getMessage() for r in caplog.records if r.getMessage().startswith("awx write:")]
+    already_active_lines = [m for m in lines if "outcome=already-active" in m]
+    assert len(already_active_lines) == 2  # both hits recorded, no double-count into one
+    for line in already_active_lines:
+        assert f"linked_request_id={original_request_id}" in line
+
+
+def test_gate_round_6_lkirc_sync_teardown_already_active_links_to_the_original_operation(disabled_settings, caplog):
+    from fastapi.testclient import TestClient
+    from dmf_cms.main import create_app
+
+    entry = _catalog_entry_134()
+    with patch("dmf_cms.main.load_catalog_entries", return_value=[entry]), \
+         patch("dmf_cms.main.lookup_job_template_by_name", side_effect=_lookup_jt_by_name(entry)), \
+         patch("dmf_cms.main.launch_job", return_value=9002), \
+         patch("dmf_cms.main.get_job", return_value={"status": "running", "started": "t0"}), \
+         patch(
+             "dmf_cms.main.find_active_job_for_template",
+             side_effect=_find_active_for_own_template_only(8, [None, 9002]),
+         ):
+        app = create_app(settings=disabled_settings)
+        with TestClient(app) as client:
+            client.get("/auth/login", follow_redirects=False)
+
+            resp1 = client.post(f"/api/catalog/{entry.key}/teardown", json={"reason": "the original dispatch"})
+            assert resp1.status_code == 200, resp1.text
+            original_request_id = resp1.json()["request_id"]
+
+            with caplog.at_level(logging.INFO, logger="dmf_cms.audit"):
+                resp2 = client.post(f"/api/catalog/{entry.key}/teardown", json={"reason": "already-active hit"})
+            assert resp2.status_code == 200, resp2.text
+            assert resp2.json()["job_id"] == 9002
+
+    lines = [r.getMessage() for r in caplog.records if r.getMessage().startswith("awx write:")]
+    already_active_lines = [m for m in lines if "outcome=already-active" in m]
+    assert len(already_active_lines) == 1
+    assert f"linked_request_id={original_request_id}" in already_active_lines[0]

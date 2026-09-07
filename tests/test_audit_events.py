@@ -235,6 +235,23 @@ def test_property_a_genuine_reattach_linked_request_id_still_parses():
         assert fields["linked_request_id"] == "rid-run"
 
 
+def test_property_a_genuine_already_active_linked_request_id_still_parses():
+    # gate round 6 (lkirc): the SAME permission, the outcome token round
+    # 5's own version of this check was missing — REFERENCES_EXISTING_
+    # OPERATION_TOKENS covers both, so this can't happen a third time by
+    # enumerating outcome tokens by hand at this call site again.
+    for action in ("deploy", "teardown"):
+        line = _new_line(
+            action=action, actor="grace", role="operator",
+            request_id="rid-active", target="wl-a",
+            reason="a sync already-active hit", outcome="already-active",
+            linked_request_id="rid-run",
+        )
+        fields = audit_events.parse_awx_write_line(line)
+        assert fields is not None
+        assert fields["linked_request_id"] == "rid-run"
+
+
 def test_a_linked_request_id_on_an_ordinary_dispatch_outcome_is_still_rejected():
     # THE discriminator for the new reattach permission: outcome=
     # "dispatched" (not "reattached") on an otherwise-identical line must

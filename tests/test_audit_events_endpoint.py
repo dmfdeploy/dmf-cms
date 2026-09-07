@@ -239,6 +239,44 @@ TEARDOWN_RUN_2_TERMINAL_JOIN = _line(
     outcome="run_failed", linked_request_id="rid-run-2",
 )
 
+# gate round 6 (lkirc): the SAME defect as round 5's reattach fixtures,
+# at the SYNC already-active path — main.py:5143/:5392 (deploy/teardown)
+# now carry the run's own stable identity too. Two already-active rows on
+# the SAME run (rid-run-3), proving repeated sync reattaches all resolve.
+DEPLOY_ORIGINAL_DISPATCH_FOR_ALREADY_ACTIVE = _line(
+    action="deploy", actor="frank", role="operator", request_id="rid-run-3",
+    target="wl-k", reason="the original dispatch", outcome="dispatched", workload="wl-k",
+)
+DEPLOY_ALREADY_ACTIVE_1 = _line(
+    action="deploy", actor="grace", role="operator", request_id="rid-active-3a",
+    target="wl-k", reason="a sync already-active hit", outcome="already-active",
+    linked_request_id="rid-run-3",
+)
+DEPLOY_ALREADY_ACTIVE_2 = _line(
+    action="deploy", actor="heidi", role="operator", request_id="rid-active-3b",
+    target="wl-k", reason="a second sync already-active hit", outcome="already-active",
+    linked_request_id="rid-run-3",
+)
+DEPLOY_RUN_3_TERMINAL_JOIN = _line(
+    action="deploy", actor="system:job-watch", role="system", request_id="rid-run-3-watch",
+    target="wl-k", reason="job watch: deploy on wl-k reached terminal state run_complete",
+    outcome="run_complete", linked_request_id="rid-run-3",
+)
+TEARDOWN_ORIGINAL_DISPATCH_FOR_ALREADY_ACTIVE = _line(
+    action="teardown", actor="frank", role="operator", request_id="rid-run-4",
+    target="wl-l", reason="the original teardown dispatch", outcome="dispatched",
+)
+TEARDOWN_ALREADY_ACTIVE_1 = _line(
+    action="teardown", actor="grace", role="operator", request_id="rid-active-4a",
+    target="wl-l", reason="a sync already-active hit", outcome="already-active",
+    linked_request_id="rid-run-4",
+)
+TEARDOWN_RUN_4_TERMINAL_JOIN = _line(
+    action="teardown", actor="system:job-watch", role="system", request_id="rid-run-4-watch",
+    target="wl-l", reason="job watch: teardown on wl-l reached terminal state run_failed",
+    outcome="run_failed", linked_request_id="rid-run-4",
+)
+
 FIXTURE_LINES = [
     DEPLOY, DEPLOY_REFUSED, TEARDOWN, SWITCH_SOURCE, AUTO_ROLLBACK, AUTO_ROLLBACK_ORPHAN,
     FINALISE_PURGE, LAUNCH, VERIFY_DRAIN, OPERATOR_ROLLBACK, UNRECOGNISED_ACTION, UNPARSEABLE,
@@ -251,6 +289,9 @@ FIXTURE_LINES = [
     DEPLOY_PREFLIGHT_DISPATCH_TERMINAL_JOIN,
     DEPLOY_ORIGINAL_DISPATCH_FOR_REATTACH, DEPLOY_REATTACH_1, DEPLOY_REATTACH_2, DEPLOY_RUN_1_TERMINAL_JOIN,
     TEARDOWN_ORIGINAL_DISPATCH_FOR_REATTACH, TEARDOWN_REATTACH_1, TEARDOWN_RUN_2_TERMINAL_JOIN,
+    DEPLOY_ORIGINAL_DISPATCH_FOR_ALREADY_ACTIVE, DEPLOY_ALREADY_ACTIVE_1, DEPLOY_ALREADY_ACTIVE_2,
+    DEPLOY_RUN_3_TERMINAL_JOIN,
+    TEARDOWN_ORIGINAL_DISPATCH_FOR_ALREADY_ACTIVE, TEARDOWN_ALREADY_ACTIVE_1, TEARDOWN_RUN_4_TERMINAL_JOIN,
 ]
 
 _VALID_RETENTION_CONFIG = """
@@ -315,6 +356,8 @@ def test_operator_not_in_media_engineers_sees_deploy_teardown_rollback_not_switc
         "rid-collision-1", "rid-preflight-1",
         "rid-run-1", "rid-reattach-1a", "rid-reattach-1b",
         "rid-run-2", "rid-reattach-2a",
+        "rid-run-3", "rid-active-3a", "rid-active-3b",
+        "rid-run-4", "rid-active-4a",
     }
 
 
@@ -334,6 +377,8 @@ def test_operator_in_media_engineers_sees_every_covered_row():
         "rid-collision-1", "rid-preflight-1",
         "rid-run-1", "rid-reattach-1a", "rid-reattach-1b",
         "rid-run-2", "rid-reattach-2a",
+        "rid-run-3", "rid-active-3a", "rid-active-3b",
+        "rid-run-4", "rid-active-4a",
     }
 
 
@@ -660,6 +705,45 @@ def test_gate_round_5_lkirc_multiple_reattaches_all_resolve_no_row_double_counte
     assert all(r["outcome"] == {"state": "succeeded", "detail": "run_complete"} for r in run_1_rows)
     # The join record itself is still never its own row.
     assert not any(e["request_id"] == "rid-run-1-watch" for e in payload["events"])
+
+
+def test_gate_round_6_lkirc_a_sync_already_active_deploy_receives_the_same_terminal_outcome_as_the_original():
+    # lkirc, round 6: the SAME defect as round 5, at the sync
+    # already-active path instead of the async reattach path — main.py's
+    # _track_sync_reattach returns the SAME existing op, but the audit row
+    # used to carry no link to it at all.
+    client = _client(OPERATOR_ONLY)
+    payload = client.get("/api/audit/events").json()
+    original = next(e for e in payload["events"] if e["request_id"] == "rid-run-3")
+    active_1 = next(e for e in payload["events"] if e["request_id"] == "rid-active-3a")
+    active_2 = next(e for e in payload["events"] if e["request_id"] == "rid-active-3b")
+    expected = {"state": "succeeded", "detail": "run_complete"}
+    assert original["outcome"] == expected
+    assert active_1["outcome"] == expected
+    assert active_2["outcome"] == expected
+
+
+def test_gate_round_6_lkirc_a_sync_already_active_teardown_receives_the_same_terminal_outcome_as_the_original():
+    # Same fix, the other action class — do not fix one and leave the
+    # other (both explicitly named in the review).
+    client = _client(OPERATOR_ONLY)
+    payload = client.get("/api/audit/events").json()
+    original = next(e for e in payload["events"] if e["request_id"] == "rid-run-4")
+    active = next(e for e in payload["events"] if e["request_id"] == "rid-active-4a")
+    assert original["outcome"]["state"] == "failed"
+    assert active["outcome"] == original["outcome"]
+
+
+def test_gate_round_6_lkirc_repeated_sync_reattaches_all_resolve_no_row_double_counted():
+    # lkirc asked for this explicitly: REPEATED sync reattaches (not just
+    # one) on a single run all resolve to that run's single terminal
+    # outcome, and none of them collapse into or duplicate each other.
+    client = _client(OPERATOR_ONLY)
+    payload = client.get("/api/audit/events").json()
+    run_3_rows = [e for e in payload["events"] if e["request_id"] in ("rid-run-3", "rid-active-3a", "rid-active-3b")]
+    assert len(run_3_rows) == 3
+    assert all(r["outcome"] == {"state": "succeeded", "detail": "run_complete"} for r in run_3_rows)
+    assert not any(e["request_id"] == "rid-run-3-watch" for e in payload["events"])
 
 
 # ----------------------------------------------------------------------
@@ -1000,6 +1084,75 @@ def test_writer_fix_omitting_linked_request_id_never_appends_the_trailing_field(
     fields = audit_events.parse_awx_write_line(line)
     assert fields is not None
     assert fields["linked_request_id"] == ""
+
+
+def test_gate_round_6_lkirc_the_missing_link_guard_fires_loudly_for_a_referencing_outcome_with_no_link(caplog):
+    # gate round 6 (lkirc): "an audit row that describes an EXISTING
+    # operation must carry that operation's identity" is now enforced
+    # inside _audit_awx_write itself, not just remembered per call site —
+    # this is what makes a THIRD omission impossible rather than merely
+    # unlikely. Deliberately calling it wrong (a referencing outcome, no
+    # link) to prove the guard actually fires.
+    request = _FakeRequest()
+    user = UserIdentity(
+        subject="alice", display_name="Alice", email="alice@dmf.example.com",
+        role="operator", groups=(),
+    )
+    with caplog.at_level(logging.ERROR, logger="dmf_cms.main"):
+        _audit_awx_write(
+            request, user, action="deploy", target="wl-a",
+            request_id="rid-broken-caller", reason="a hypothetical future call site forgetting the link",
+            outcome="reattached",
+            # linked_request_id deliberately omitted
+        )
+    messages = [r.getMessage() for r in caplog.records]
+    assert any("references an existing operation but was written with no linked_request_id" in m for m in messages)
+
+
+def test_gate_round_6_lkirc_the_guard_never_raises_the_row_still_gets_written(caplog):
+    # "Cannot take down an audit write in production": the guard logs, it
+    # never raises -- a bug here must degrade the audit trail (the row
+    # still gets written, unjoinable), never abort an already-successful
+    # caller's own response.
+    request = _FakeRequest()
+    user = UserIdentity(
+        subject="alice", display_name="Alice", email="alice@dmf.example.com",
+        role="operator", groups=(),
+    )
+    with caplog.at_level(logging.INFO):
+        _audit_awx_write(  # must not raise
+            request, user, action="teardown", target="wl-b",
+            request_id="rid-broken-caller-2", reason="same shape, teardown", outcome="already-active",
+        )
+    line = _formatted_line(next(r for r in caplog.records if r.getMessage().startswith("awx write:")))
+    fields = audit_events.parse_awx_write_line(line)
+    assert fields is not None
+    assert fields["outcome"] == "already-active"
+    assert fields["linked_request_id"] == ""  # degraded, but the row exists
+
+
+def test_gate_round_6_lkirc_the_guard_never_fires_for_launch_rollback_or_finalise_purge(caplog):
+    # Deliberate scope decision, not silence: these three actions emit the
+    # SAME referencing tokens but have no terminal join to consume a link
+    # this round (launch/verify-drain/rollback stay excluded-scope,
+    # finalise-purge excluded-access — see audit_events.py's own COVERED
+    # table) -- requiring a link nothing downstream ever reads would be
+    # unenforceable ceremony, not a real fix, so the guard must never fire
+    # for them regardless of what outcome they carry.
+    request = _FakeRequest()
+    user = UserIdentity(
+        subject="alice", display_name="Alice", email="alice@dmf.example.com",
+        role="operator", groups=(),
+    )
+    with caplog.at_level(logging.ERROR, logger="dmf_cms.main"):
+        for action in ("launch", "rollback", "finalise-purge"):
+            _audit_awx_write(
+                request, user, action=action, target="wl-a",
+                request_id=f"rid-{action}-noguard", reason="no join consumes this action's link",
+                outcome="already-active",
+            )
+    messages = [r.getMessage() for r in caplog.records]
+    assert not any("references an existing operation" in m for m in messages)
 
 
 def test_a_legacy_unquoted_line_from_before_the_writer_fix_is_not_rendered_end_to_end(monkeypatch):

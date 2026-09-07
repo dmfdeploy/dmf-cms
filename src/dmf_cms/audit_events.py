@@ -467,17 +467,24 @@ def _parse_new_format_line(tail: str) -> dict[str, str] | None:
             and values["actor"] == _JOB_WATCH_ACTOR
             and values["role"] == "system"
         )
-        # gate round 5 (lkirc): a reattach row correlating to the run's
-        # own stable identity — main.py's _audit_awx_write, deploy/
-        # teardown reattach call sites only. Deliberately gated on
-        # `outcome` rather than actor/role (a reattach is genuinely
-        # user-initiated: real actor, real role, never "system") — safe
-        # because `outcome="reattached"` is ALWAYS a fixed code literal at
-        # those call sites, never derived from anything user-supplied, the
-        # same property every other plain field in this grammar already
-        # relies on. See list_audit_events' own run-id resolution for what
-        # this correlation is actually FOR.
-        or (values["action"] in ("deploy", "teardown") and values["outcome"] == "reattached")
+        # gate round 5/6 (lkirc): a row correlating to its run's own
+        # stable identity — main.py's _audit_awx_write, deploy/teardown
+        # call sites only, whose outcome MEANS "an existing operation was
+        # found" (REFERENCES_EXISTING_OPERATION_TOKENS below: reattached,
+        # round 5; already-active, round 6 — the second one this same
+        # permission check was ALSO missing at first, exactly the "wrong
+        # enumeration" lesson of round 6). Deliberately gated on `outcome`
+        # rather than actor/role (both are genuinely user-initiated: a
+        # real actor, a real role, never "system") — safe because every
+        # token in that set is ALWAYS a fixed code literal at those call
+        # sites, never derived from anything user-supplied, the same
+        # property every other plain field in this grammar already relies
+        # on. See list_audit_events' own run-id resolution for what this
+        # correlation is actually FOR.
+        or (
+            values["action"] in ("deploy", "teardown")
+            and values["outcome"] in REFERENCES_EXISTING_OPERATION_TOKENS
+        )
     ):
         return None
 
@@ -812,6 +819,20 @@ _ACCEPTANCE_OUTCOMES: dict[str, frozenset[str]] = {
 # terminal join is restricted to this set for exactly that reason — see
 # its own comment for what happens without the restriction.
 _DISPATCH_OUTCOME_TOKENS = frozenset({"dispatched", "launched", "reattached", "already-active"})
+
+# gate round 6 (lkirc, PR review): the subset of _DISPATCH_OUTCOME_TOKENS
+# that means "an EXISTING operation was found" (reattached, already-active)
+# rather than "a new one was just created" (dispatched, launched) — a row
+# carrying one of these can only ever join to its terminal outcome if it
+# ALSO carries a linked_request_id pointing at that existing operation's
+# own stable identity (see list_audit_events' own run_id resolution).
+# main.py's _audit_awx_write needs this SAME vocabulary, write-side, to
+# refuse writing such a row without the link — DERIVED as a subset here,
+# never redefined independently in main.py, so the two can never drift
+# apart the way the missing-link bug itself has now been found twice
+# (reattached, round 5; already-active, round 6) by enumerating this
+# wrong: by call site, not by what the OUTCOME TOKEN itself means.
+REFERENCES_EXISTING_OPERATION_TOKENS = _DISPATCH_OUTCOME_TOKENS - frozenset({"dispatched", "launched"})
 
 
 def resolve_outcome_state(action: str, outcome: str) -> str:
