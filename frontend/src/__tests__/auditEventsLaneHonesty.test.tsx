@@ -251,6 +251,29 @@ describe('operator ruling 2026-09-03: the lane states its stopgap status plainly
     expect(screen.queryByText(/forgeable/i)).toBeNull()
   })
 
+  it('gate round 3 (codex, tail gate on #419): names the staleness-check-itself-can-be-unavailable caveat, rows still render', async () => {
+    // The backend's own aging fix (audit_events.py's _age_stale_in_flight)
+    // fails OPEN when it cannot resolve its own bound (app.state.operations
+    // missing) -- silently, from this surface's point of view, logged only
+    // server-side. This is the standing, always-present disclosure that
+    // closes that gap: a reader must be able to learn the limitation
+    // exists without reading a log, the same bar every other sentence in
+    // this paragraph already meets.
+    mkFetch(FAILED_DEPLOY_RESPONSE)
+    renderHistory()
+    // A real row renders ALONGSIDE the caveat -- the fix must never come
+    // at the cost of the events themselves.
+    await screen.findByText('The automation engine reported an error')
+    expect(
+      screen.getByText(
+        /staleness check itself depends on the console's own internal\s*operation tracking being available/,
+      ),
+    ).toBeTruthy()
+    expect(
+      screen.getByText(/when it isn't, a row can\s*keep reading "dispatched" past the point it would otherwise/),
+    ).toBeTruthy()
+  })
+
   it('dmfdeploy/dmfdeploy#552: does not claim every refusal is recorded', async () => {
     // The bug this test pins: the copy said deploy/teardown record "any
     // immediate refusal" -- false, since a role or missing-reason
