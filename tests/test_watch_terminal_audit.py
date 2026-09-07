@@ -213,18 +213,32 @@ def test_watcher_started_then_ttl_timeout_writes_the_honest_unknown_join(monkeyp
     assert fields["linked_request_id"] == "rid-dispatch-5"
 
 
-def test_watcher_never_started_then_ttl_timeout_writes_a_run_failed_join(monkeypatch):
-    # The OTHER give-up outcome (never observed to have started -> plain
-    # RUN_FAILED, not the dirty RUN_STATUS_UNKNOWN) -- distinguished here
-    # so both halves of _watch_lost_terminal_state's own branch are
-    # actually exercised through the join, not just one.
-    app, ops_store = _fake_app(ttl_seconds=0)
+def test_watcher_never_started_then_ttl_timeout_reports_unknown_but_keeps_run_failed_internally(monkeypatch):
+    # gate round 4 (lkirc B2): the OTHER give-up outcome (never observed
+    # to have started) still resolves the INTERNAL ops-store state to
+    # plain RUN_FAILED, UNCHANGED — rollback eligibility and
+    # _facility_busy_check's dirty-state handling both still need that
+    # exact distinction from RUN_STATUS_UNKNOWN (see
+    # _watch_lost_terminal_state's own docstring), and this proves it.
+    # But the AUDIT claim is now unconditionally the honest
+    # run_status_unknown regardless — nobody ever observed this job to
+    # fail (no get_job call was ever even made), so the row must never
+    # assert a confirmed failure it did not see.
+    app, ops_store = _fake_app(ttl_seconds=3600)
     op = ops_store.create("deploy", "key1", request_id="rid-dispatch-6")
+    real_now = [op.created_at + timedelta(hours=2)]  # already past the deadline on tick 1
+
+    class _FakeDatetime:
+        @staticmethod
+        def now(tz=None):
+            return real_now[0]
 
     def _boom(**k):
         raise AssertionError("get_job must never be called once the deadline has already elapsed")
 
+    monkeypatch.setattr(main, "datetime", _FakeDatetime)
     monkeypatch.setattr(main, "get_job", _boom)
+
     caplog_records: list[logging.LogRecord] = []
     handler = logging.Handler()
     handler.emit = caplog_records.append
@@ -236,13 +250,37 @@ def test_watcher_never_started_then_ttl_timeout_writes_a_run_failed_join(monkeyp
     finally:
         audit_logger.removeHandler(handler)
 
-    # ttl_seconds=0 means the store's own GC reaps the op the instant it's
-    # looked up again (unrelated to this change) — the join write itself,
-    # captured above independently of the store, is the actual proof here.
+    updated = ops_store.get(op.operation_id)
+    assert updated.state == OperationState.RUN_FAILED
+    assert updated.error == "job-watch-timeout"
+
     lines = [_formatted_line(r) for r in caplog_records if r.getMessage().startswith("awx write:")]
     assert len(lines) == 1
     fields = audit_events.parse_awx_write_line(lines[0])
-    assert fields["outcome"] == "run_failed"
+    assert fields["outcome"] == "run_status_unknown"
+
+
+def test_watcher_three_failed_get_job_reads_reports_unknown_never_a_confirmed_failure(monkeypatch, caplog):
+    # gate round 4 (lkirc B2): the other cited give-up path — three
+    # consecutive get_job failures, never having observed the job start.
+    # Same fix, same proof shape as the TTL site above.
+    app, ops_store = _fake_app()
+    op = ops_store.create("deploy", "key1", request_id="rid-dispatch-8")
+
+    def _always_fails(**k):
+        raise RuntimeError("AWX unreachable")
+
+    monkeypatch.setattr(main, "get_job", _always_fails)
+
+    with caplog.at_level(logging.INFO, logger="dmf_cms.audit"):
+        _run_watcher(app, op.operation_id, 111, "deploy", "key1")
+
+    updated = ops_store.get(op.operation_id)
+    assert updated.state == OperationState.RUN_FAILED  # internal state unchanged
+    assert updated.error == "job-watch-lost"
+
+    fields = audit_events.parse_awx_write_line(_audit_lines(caplog)[0])
+    assert fields["outcome"] == "run_status_unknown"  # audit claim: honest, not a confirmed failure
 
 
 def test_watcher_rollback_terminal_never_writes_a_job_watch_join(monkeypatch, caplog):

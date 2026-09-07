@@ -788,6 +788,20 @@ _ACCEPTANCE_OUTCOMES: dict[str, frozenset[str]] = {
     "finalise-purge": frozenset({"dispatched", "reattached"}),
 }
 
+# gate round 4 (lkirc B1): the subset of deploy/teardown's own acceptance
+# vocabulary that means "a job was actually dispatched/launched/reattached
+# to" — as opposed to "an L3 preflight decision was made and the run
+# proceeds" (capacity-skipped/capacity-override, deploy-only). Both kinds
+# resolve to the SAME 'in_flight' state via _ACCEPTANCE_OUTCOMES above
+# (correct — both really are non-terminal acceptances), but only a row
+# carrying one of THESE tokens is the actual dispatch record a watcher
+# could ever be attached to; a preflight row shares its request_id with
+# that later dispatch line (main.py's _l3_preflight, e.g. capacity-skipped
+# at main.py:485-490) but is never itself watched. list_audit_events'
+# terminal join is restricted to this set for exactly that reason — see
+# its own comment for what happens without the restriction.
+_DISPATCH_OUTCOME_TOKENS = frozenset({"dispatched", "launched", "reattached", "already-active"})
+
 
 def resolve_outcome_state(action: str, outcome: str) -> str:
     """'in_flight' | 'succeeded' | 'failed' | 'unknown', per plan §4.4's table.
@@ -1196,36 +1210,45 @@ def list_audit_events(
         # outcome onto the dispatch row it belongs to, in place of that
         # row's own dispatch-time acceptance token — the same record on
         # both Workspace and Activity → History (one derivation, not two;
-        # see ActivityPanel.tsx). No join found for this row's request_id
-        # -> unchanged from before: its own dispatch-time outcome, honest
-        # about not yet being confirmed.
+        # see ActivityPanel.tsx). No (eligible) join found for this row's
+        # request_id -> unchanged from before: its own dispatch-time
+        # outcome, honest about not yet being confirmed.
         #
-        # gate round 1 (codex, tightening item): keyed by request_id
-        # alone, this substitutes onto EVERY covered row sharing that
-        # request_id, not just the literal "outcome=dispatched" line —
-        # e.g. an L3 preflight's own capacity-skipped/capacity-override
-        # acceptance row (see the request_id-is-not-a-per-row-identity
-        # comment on `events.append` below). Deliberate, not an oversight:
-        # every row sharing a request_id is a facet of the SAME underlying
-        # operation's progression toward the ONE terminal state the
-        # watcher observes — there is no meaningful sense in which a
-        # preflight's own acceptance row is "still in flight" while the
-        # dispatch row it led to has already succeeded or failed. A
-        # refusal row never reaches here at all (its own outcome already
-        # resolves to 'failed' in build_outcome, and no watcher is ever
-        # attached to a refusal — nothing to join against even if one
-        # existed), so this can never turn a real refusal into a false
-        # success.
+        # gate round 4 (lkirc B1): keyed by request_id alone is NOT
+        # enough on its own — a request_id can carry an L3 preflight's own
+        # acceptance row (capacity-skipped/capacity-override, main.py's
+        # _l3_preflight, e.g. main.py:485-490) sharing it with that SAME
+        # request's later dispatch row. Applying the join to both (gate
+        # round 1's own "every row is a facet of one operation" call,
+        # which lkirc correctly overturned) rendered one deployment as
+        # DUPLICATE succeeded/failed rows and destroyed the preflight
+        # row's own distinct result by overwriting it with a verdict it
+        # never described. The join below additionally requires THIS
+        # row's own outcome token to be a genuine dispatch-shaped
+        # acceptance (_DISPATCH_OUTCOME_TOKENS) — a preflight row is never
+        # eligible, no matter what its shared request_id resolves to
+        # elsewhere. A refusal row is excluded the same way (its own
+        # token, e.g. "facility-busy", is in neither set), on top of
+        # already resolving to 'failed' in build_outcome and never having
+        # a watcher attached to begin with — belt and suspenders, not a
+        # behavior change.
         outcome = build_outcome(action, fields.get("outcome", ""))
         if cls in ("deploy", "teardown"):
             terminal_fields = terminal_by_request_id.get(fields.get("request_id", ""))
-            if terminal_fields is not None:
+            is_dispatch_row = fields.get("outcome") in _DISPATCH_OUTCOME_TOKENS
+            if terminal_fields is not None and is_dispatch_row:
                 outcome = build_terminal_join_outcome(terminal_fields.get("outcome", ""))
             else:
-                # gate round 1 (codex P2): STILL no join for this row —
+                # gate round 1 (codex P2): no ELIGIBLE join for this row —
                 # age it into 'unknown' once it's provably outlived any
-                # watcher that could still be attached to it. A no-op
-                # (returns `outcome` unchanged) whenever state isn't
+                # watcher that could still be attached to it. Reaches a
+                # preflight row too (it can never receive the join's own
+                # verdict, per the restriction above, but it can still
+                # honestly age out of 'in_flight' rather than sit there
+                # forever once its sibling dispatch row has long since
+                # resolved — never a guessed verdict, just an honest "we
+                # don't know" once nothing could still be watching it). A
+                # no-op (returns `outcome` unchanged) whenever state isn't
                 # 'in_flight', the bound wasn't passed, or the row hasn't
                 # aged out yet.
                 outcome = _age_stale_in_flight(outcome, ts_ns_str, now_ns, max_in_flight_age_seconds)
