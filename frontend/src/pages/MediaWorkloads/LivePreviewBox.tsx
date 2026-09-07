@@ -114,14 +114,31 @@ export function useLivePreview({
 
   const showImage = canPoll && hasPreview && !imgError
 
-  // umbrella #452: a topology-spawned source's declared test pattern, drawn
-  // as a static illustration whenever there is no live image to show AND
-  // StaticPatternCard actually knows how to draw it (an unrecognised
-  // pattern string, or an ordinary non-topology instance with no pattern at
-  // all, falls through to the existing PlaceholderThumb branch below/in
-  // LivePreviewFrame — never a guessed illustration).
+  // umbrella #452 fix-round r1 (codex P1): showStaticCard is driven by the
+  // SAME condition as the tick effect's gate above — `!hasPreview` — never
+  // `!showImage`. `showImage` also flips false on an ordinary <img> load
+  // failure (imgError) while the sidecar still advertises preview:true; under
+  // a `!showImage` condition that combination made the card appear WHILE the
+  // tick kept running (it was, correctly, still gated on hasPreview, which
+  // was still true) — every tick's imgError reset (below) flipped showImage
+  // back true, re-mounting the <img>, which failed again, flipping back to
+  // the card, forever. Deriving both from `!hasPreview` makes "the tick does
+  // not run" and "the card is showing" the SAME fact by construction, so
+  // that flip-flop is unrepresentable, not merely untested.
+  //
+  // This is also the honest reading, not just the stable one: if the sidecar
+  // SAYS it has a live preview and a frame fails to load, that is a live-
+  // signal failure — it falls back to the ordinary PlaceholderThumb ("no
+  // preview"), exactly like every other live-eligible instance already
+  // does, never to an illustration of what the source is merely configured
+  // to emit. Presenting configuration as a stand-in for a failed live
+  // signal is the exact confusion this whole feature exists to prevent.
+  //
+  // A pattern-carrying instance with an unrecognised pattern string, or an
+  // ordinary non-topology instance with no pattern at all, still falls
+  // through to PlaceholderThumb — never a guessed illustration.
   const pattern = instance.topology_source_pattern ?? null
-  const showStaticCard = !showImage && !!pattern && hasStaticPattern(pattern)
+  const showStaticCard = !hasPreview && !!pattern && hasStaticPattern(pattern)
 
   // Honest about whether the frame is live, paused, or unavailable — never a
   // still frame silently presented as live (Art. 1). The static-card branch

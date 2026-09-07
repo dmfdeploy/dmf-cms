@@ -11,10 +11,10 @@
  * itself, the same shared hook both consume.
  */
 import { afterEach, describe, expect, it, vi } from 'vitest'
-import { act, cleanup, render, screen } from '@testing-library/react'
+import { act, cleanup, fireEvent, render, screen } from '@testing-library/react'
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query'
 import WorkloadTile from '../pages/MediaWorkloads/WorkloadTile'
-import { STATUS_POLL_MS } from '../pages/MediaWorkloads/liveView'
+import { PREVIEW_TICK_MS, STATUS_POLL_MS } from '../pages/MediaWorkloads/liveView'
 import type { MediaWorkloadInstance } from '../api/types'
 
 function instance(overrides: Partial<MediaWorkloadInstance> = {}): MediaWorkloadInstance {
@@ -227,5 +227,75 @@ describe('WorkloadTile live preview — the static pattern card (umbrella #452)'
     expect(container.querySelector('img')).toBeTruthy()
     expect(screen.queryByText('STATIC')).toBeNull()
     expect(container.querySelector('.bg-green-400')).toBeTruthy()
+  })
+
+  // fix-round r1 (codex P1): a sidecar that ADVERTISES a preview
+  // (preview: true) but whose actual frame fails to load must never show
+  // the static card — that combination is a live-signal failure, not a
+  // reason to fall back to "what the source is configured to emit". Before
+  // this round, showStaticCard read `!showImage` (which goes true on ANY
+  // imgError, preview:true included) while the tick effect stayed gated on
+  // `hasPreview` alone (still true here) — so the card appeared, then the
+  // next tick's imgError reset flipped showImage back true, re-mounting
+  // the <img>, which failed again, flipping back to the card: an endless
+  // cycle. `showStaticCard` now reads `!hasPreview` — the SAME condition
+  // the tick effect gates on — so this state is structurally impossible.
+  it('a preview-advertising sidecar whose frame fails to load falls back to the ordinary placeholder, never the static card, even across a tick', async () => {
+    vi.useFakeTimers()
+    vi.stubGlobal('fetch', vi.fn(async () => new Response(JSON.stringify({ instance: 'mxl-source-a', ...AVAILABLE_STATUS }), { status: 200, headers: { 'Content-Type': 'application/json' } })))
+    const { container } = renderTileWithInstance({
+      instance: 'mxl-source-a',
+      function_key: 'mxl-videotest-view-source-a',
+      topology_parent_key: 'mxl-videotest-view',
+      topology_source_id: 'source-a',
+      topology_source_pattern: 'smpte',
+    })
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(60)
+    })
+    const img = screen.getByAltText(/Live preview of/)
+    fireEvent.error(img)
+
+    expect(screen.getByText('no preview')).toBeTruthy()
+    expect(screen.queryByText('STATIC')).toBeNull()
+    expect(container.querySelector('img')).toBeNull()
+
+    // Advance past the tick that resets imgError — the ordinary <img> retry
+    // (pre-existing, unrelated to #452: "a fresh src is a fresh chance for
+    // a recovered preview") may legitimately re-attempt the image, but the
+    // static card must never appear at any point in that cycle.
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(PREVIEW_TICK_MS + 10)
+    })
+    expect(screen.queryByText('STATIC')).toBeNull()
+  })
+
+  // fix-round r1 (codex P2): the known-pattern-with-no-preview test above
+  // only proved the card RENDERS — it never proved the cache-bust interval
+  // (whose only purpose is refreshing an <img> src, at PREVIEW_TICK_MS)
+  // stays OFF while the card is showing. `vi.getTimerCount()` alone can't
+  // tell it apart from react-query's OWN status-poll interval (STATUS_POLL_MS,
+  // a DIFFERENT period, and one this branch deliberately leaves running —
+  // "status polling may continue, cheap"), so this spies on `setInterval`
+  // directly and asserts no call was ever scheduled at the preview-tick
+  // period specifically.
+  it('no cache-bust interval runs while the static card is showing (status polling still may)', async () => {
+    vi.useFakeTimers()
+    const intervalSpy = vi.spyOn(globalThis, 'setInterval')
+    vi.stubGlobal('fetch', vi.fn(async () => new Response(JSON.stringify({ instance: 'mxl-source-a', ...NO_PREVIEW_STATUS }), { status: 200, headers: { 'Content-Type': 'application/json' } })))
+    renderTileWithInstance({
+      instance: 'mxl-source-a',
+      function_key: 'mxl-videotest-view-source-a',
+      topology_parent_key: 'mxl-videotest-view',
+      topology_source_id: 'source-a',
+      topology_source_pattern: 'smpte',
+    })
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(60)
+    })
+    expect(screen.getByText('STATIC')).toBeTruthy()
+    const previewTickIntervals = intervalSpy.mock.calls.filter(([, delay]) => delay === PREVIEW_TICK_MS)
+    expect(previewTickIntervals).toHaveLength(0)
+    intervalSpy.mockRestore()
   })
 })

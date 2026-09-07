@@ -742,7 +742,11 @@ def test_list_instances_live_view_uses_configured_allowlists(monkeypatch):
 # ---------------------------------------------------------------------------
 from pathlib import Path  # noqa: E402
 
-from dmf_cms.media_workloads import _resolve_topology_source_pattern  # noqa: E402
+from dmf_cms.media_workloads import (  # noqa: E402
+    _resolve_topology_source_pattern,
+    list_instances,
+    list_workloads_grouped,
+)
 
 
 def _write_parent_entry(tmp_path: Path, *, key: str = "mxl-videotest-view", topology_ref: str | None = "topology-params.j1.yaml") -> None:
@@ -830,3 +834,78 @@ def test_topology_source_pattern_none_when_parent_has_no_topology_ref(tmp_path: 
         _resolve_topology_source_pattern("mxl-videotest-view", "source-a", str(tmp_path))
         == "smpte"
     )
+
+
+# ---------------------------------------------------------------------------
+# fix-round r1 (codex 452-r1 gate) — two gaps the r1 gate found:
+#
+# P2 "single derivation" is asserted only by source inspection: both
+# list_instances and list_workloads_grouped visibly pass catalog_dir to
+# _service_to_instance, but nothing had ever exercised BOTH real list
+# functions against the same fixture and compared their outputs.
+#
+# P2 "None on miss" boundary: the paired mutation tests above cover a wrong
+# id, a wrong parent key, and a missing topology_ref — never a genuinely
+# ABSENT tag (topology_parent_key/topology_source_id is None, the ordinary
+# case for a non-topology-spawned instance).
+# ---------------------------------------------------------------------------
+
+
+def test_topology_source_pattern_none_when_parent_key_is_none(tmp_path: Path):
+    _write_parent_entry(tmp_path)
+    (tmp_path / "topology-params.j1.yaml").write_text(_TOPOLOGY_J1)
+    # No topology-parent: tag at all (an ordinary, never-topology-spawned
+    # instance) — genuinely nothing to resolve from.
+    assert _resolve_topology_source_pattern(None, "source-a", str(tmp_path)) is None
+
+
+def test_topology_source_pattern_none_when_source_id_is_none(tmp_path: Path):
+    _write_parent_entry(tmp_path)
+    (tmp_path / "topology-params.j1.yaml").write_text(_TOPOLOGY_J1)
+    # No topology-source: tag at all.
+    assert _resolve_topology_source_pattern("mxl-videotest-view", None, str(tmp_path)) is None
+
+
+def test_topology_source_pattern_agrees_between_flat_and_grouped_reads(monkeypatch, tmp_path: Path):
+    """umbrella #452 fix-round r1 (codex P2): list_instances (flat) and
+    list_workloads_grouped both claim to build their instance dicts through
+    the SAME _service_to_instance call — this is the test that makes that a
+    fact about the real functions, not an inspection of the source. Exercises
+    BOTH against the identical NetBox + catalog fixture and asserts the same
+    instance's topology_source_pattern is present and EQUAL in both reads.
+    """
+    _write_parent_entry(tmp_path)
+    (tmp_path / "topology-params.j1.yaml").write_text(_TOPOLOGY_J1)
+
+    def fake_request(netbox_url, netbox_token, path, ssl_context=None):
+        return {
+            "results": [
+                _service(
+                    "mxl-videotest-view-source-a",
+                    [
+                        "dmf-catalog",
+                        "app:mxl-videotest-view-source-a",
+                        "lifecycle:active",
+                        "workload:test",
+                        "topology-parent:mxl-videotest-view",
+                        "topology-source:source-a",
+                    ],
+                ),
+            ]
+        }
+
+    monkeypatch.setattr(netbox_module, "_request", fake_request)
+
+    flat = list_instances(
+        "http://netbox.test", "tok", True, None, catalog_dir=str(tmp_path)
+    )
+    grouped = list_workloads_grouped(
+        "http://netbox.test", "tok", True, None, catalog_dir=str(tmp_path)
+    )
+
+    flat_pattern = flat["instances"][0]["topology_source_pattern"]
+    grouped_pattern = grouped["workloads"][0]["instances"][0]["topology_source_pattern"]
+
+    assert flat_pattern == "smpte"
+    assert grouped_pattern == "smpte"
+    assert flat_pattern == grouped_pattern
