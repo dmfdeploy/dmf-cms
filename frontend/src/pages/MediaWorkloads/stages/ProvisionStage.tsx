@@ -377,7 +377,6 @@ export default function ProvisionStage({
             Desired state (expert)
           </summary>
           <div className="mt-2">
-            <h3 className="text-xs uppercase tracking-wide text-muted">Desired state</h3>
             <div className="mt-2 space-y-2">
               {needsClearing.map((inst) => (
                 <div key={inst.instance} className="flex items-center justify-between gap-3">
