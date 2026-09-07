@@ -218,6 +218,36 @@ def test_property_a_genuine_job_watch_linked_request_id_still_parses():
         assert fields["linked_request_id"] == "rid-dispatch"
 
 
+def test_property_a_genuine_reattach_linked_request_id_still_parses():
+    # gate round 5 (lkirc): the trailing field's THIRD narrowly-scoped
+    # case — a reattach row correlating to its run's own stable identity.
+    # Gated on outcome, not actor/role: a reattach is genuinely
+    # user-initiated (a real actor, a real role, never "system").
+    for action in ("deploy", "teardown"):
+        line = _new_line(
+            action=action, actor="grace", role="operator",
+            request_id="rid-reattach", target="wl-a",
+            reason="a browser refresh reattaches", outcome="reattached",
+            linked_request_id="rid-run",
+        )
+        fields = audit_events.parse_awx_write_line(line)
+        assert fields is not None
+        assert fields["linked_request_id"] == "rid-run"
+
+
+def test_a_linked_request_id_on_an_ordinary_dispatch_outcome_is_still_rejected():
+    # THE discriminator for the new reattach permission: outcome=
+    # "dispatched" (not "reattached") on an otherwise-identical line must
+    # still fail closed -- the permission is keyed on the SPECIFIC
+    # outcome token, not on "any deploy/teardown line a real user wrote".
+    line = _new_line(
+        action="deploy", actor="grace", role="operator",
+        request_id="rid-1", target="wl-a", reason="an ordinary dispatch",
+        outcome="dispatched", linked_request_id="rid-somewhere-else",
+    )
+    assert audit_events.parse_awx_write_line(line) is None
+
+
 def test_a_linked_request_id_on_a_non_qualifying_action_actor_pair_is_rejected():
     # The trailing field's whole point is that it's restricted to the two
     # KNOWN correlated shapes (auto-rollback, job-watch) — a real user

@@ -960,6 +960,7 @@ def _audit_awx_write(
     outcome: str,
     workload: str | None = None,
     capacity: str | None = None,
+    linked_request_id: str | None = None,
 ) -> None:
     """Emit the C5 quartet audit line for a DMF-initiated AWX write.
 
@@ -983,6 +984,21 @@ def _audit_awx_write(
     ``capacity-override``/``capacity-denied`` outcomes (plan §3.3: "the C5
     quartet ... + the budget numbers") — same optional-trailing-field pattern
     as ``workload``, blank when omitted.
+
+    ``linked_request_id`` (dmfdeploy/dmfdeploy#419, gate round 5, lkirc):
+    ``None`` (the default) omits the trailing field entirely, same as
+    every existing caller today — no behavior change for them. Callers
+    that DO pass it are correlating this line to a DIFFERENT run's own
+    stable identity, the same trailing-field mechanism
+    ``_maybe_auto_trigger_rollback``/``_audit_watch_terminal`` already use
+    from outside this function (hand-assembled there because they run
+    with no ``Request``); this is the ONE caller of ``_audit_awx_write``
+    itself that needs it, for the reattach case — see the deploy/teardown
+    reattach call sites' own comments for why. audit_events.py's
+    ``_parse_new_format_line`` gates which (action, outcome) pairs may
+    carry it; passing it from a call site that isn't on that allowlist
+    produces a line the reader drops entirely (fails closed, same as any
+    other malformed trailing field), never a silently-ignored value.
     """
     real = session_user(request.session)
     real_role = real.role if (real is not None and request.session.get("view_as")) else ""
@@ -1016,8 +1032,11 @@ def _audit_awx_write(
     # pre-marker lines fundamentally unauthenticatable. See
     # audit_events.py's module STATUS NOTE and parse_awx_write_line for
     # the dispatch itself.
-    audit_logger.info(
-        "awx write: fmt=2 action=%s actor=%r role=%s real_role=%s request_id=%s target=%r reason=%r outcome=%s workload=%r capacity=%r",
+    fmt = (
+        "awx write: fmt=2 action=%s actor=%r role=%s real_role=%s request_id=%s "
+        "target=%r reason=%r outcome=%s workload=%r capacity=%r"
+    )
+    fmt_args = [
         action,
         user.subject,
         user.role,
@@ -1028,7 +1047,11 @@ def _audit_awx_write(
         outcome,
         workload or "",
         capacity or "",
-    )
+    ]
+    if linked_request_id is not None:
+        fmt += " linked_request_id=%s"
+        fmt_args.append(linked_request_id)
+    audit_logger.info(fmt, *fmt_args)
 
 
 def _bootstrap_console_groups(settings: Settings) -> None:
@@ -5001,7 +5024,18 @@ def create_app(settings: Settings | None = None, contract: AppContract | None = 
                 # v1 behavior: browser refresh loses live spinner but re-clicking
                 # safely reattaches via get_or_create (no double launch). No
                 # preflight here (#202 R2-7): the original create already ran it.
-                _audit_awx_write(request, user, action="deploy", target=key, request_id=request_id, reason=reason, outcome="reattached")
+                # gate round 5 (lkirc): THIS request's own request_id is a
+                # fresh id minted above, never the run's own identity —
+                # op.request_id is the ORIGINAL dispatch's id (set once at
+                # creation, never overwritten on reattach — Operation's own
+                # docstring) and is what the watcher's own terminal record
+                # links back to. Without linking this row to it too, a
+                # reattach could never receive that run's terminal outcome
+                # — see audit_events.py's own run-id resolution.
+                _audit_awx_write(
+                    request, user, action="deploy", target=key, request_id=request_id, reason=reason,
+                    outcome="reattached", linked_request_id=op.request_id,
+                )
                 return JSONResponse({**op.to_dict(), "request_id": request_id}, status_code=200)
 
             # #202 WP2 §4.5 P2-2: advisory facility check — after the
@@ -5279,7 +5313,13 @@ def create_app(settings: Settings | None = None, contract: AppContract | None = 
                 # Existing operation found - return it without spawning new task
                 # v1 behavior: browser refresh loses live spinner but re-clicking
                 # safely reattaches via get_or_create (no double launch)
-                _audit_awx_write(request, user, action="teardown", target=key, request_id=request_id, reason=reason, outcome="reattached")
+                # gate round 5 (lkirc): same fix, same reasoning as the
+                # deploy reattach site above — op.request_id is the run's
+                # own stable identity, not this request's fresh one.
+                _audit_awx_write(
+                    request, user, action="teardown", target=key, request_id=request_id, reason=reason,
+                    outcome="reattached", linked_request_id=op.request_id,
+                )
                 return JSONResponse({**op.to_dict(), "request_id": request_id}, status_code=200)
 
             # codex R2-6: advisory facility check, now wired into teardown
