@@ -3,6 +3,7 @@ import { useInstanceMxlStatus } from '../../api/hooks'
 import type { MediaWorkloadInstance } from '../../api/types'
 import { PREVIEW_TICK_MS, STATUS_POLL_MS } from './liveView'
 import { settleQuery } from '../../lib/queryState'
+import StaticPatternCard, { hasStaticPattern } from './StaticPatternCard'
 
 /**
  * The live sidecar preview for ONE instance, with its polling bounds.
@@ -78,17 +79,6 @@ export function useLivePreview({
     refetchInterval: canPoll && motionAllowed ? statusPollMs : false,
   })
 
-  const [tick, setTick] = useState(0)
-  useEffect(() => {
-    if (!canPoll || !motionAllowed) return
-    const id = setInterval(() => setTick((t) => (t + 1) % 100000), previewTickMs)
-    return () => clearInterval(id)
-  }, [canPoll, motionAllowed, previewTickMs])
-
-  // A fresh src is a fresh chance for a recovered preview to render.
-  const [imgError, setImgError] = useState(false)
-  useEffect(() => setImgError(false), [tick])
-
   // fix-round 6 (PR #81, umbrella #385 codex sweep): `status.isError` was
   // never checked — a settled failed refetch after a successful
   // available+preview read kept the "Live · sidecar preview" caption, the
@@ -96,16 +86,53 @@ export function useLivePreview({
   // had actually failed. `settleQuery` makes `failed` win unconditionally;
   // `data` below is still the RETAINED payload on purpose (Art. 5 — the
   // frame keeps showing, `caption`/`liveDot` are what carry the caveat).
+  //
+  // Computed BEFORE the tick effect below (umbrella #452) so that effect can
+  // gate on `hasPreview` too, not just `canPoll`/`motionAllowed`.
   const settled = settleQuery(status)
   const data = settled.data
   const available = data?.available === true
   const hasPreview = available && data?.preview === true
+
+  const [tick, setTick] = useState(0)
+  useEffect(() => {
+    // umbrella #452: the tick exists ONLY to cache-bust the <img> src below —
+    // pointless churn (a re-render every previewTickMs) when there is no
+    // preview to refresh, which is every topology-spawned SOURCE instance
+    // (live_view sidecar present, but its own preview endpoint 404s for a
+    // source role) as well as any other live-eligible instance with no
+    // preview capability. `!hasPreview` added alongside the pre-existing
+    // `motionAllowed` gate, not a replacement for it.
+    if (!canPoll || !motionAllowed || !hasPreview) return
+    const id = setInterval(() => setTick((t) => (t + 1) % 100000), previewTickMs)
+    return () => clearInterval(id)
+  }, [canPoll, motionAllowed, hasPreview, previewTickMs])
+
+  // A fresh src is a fresh chance for a recovered preview to render.
+  const [imgError, setImgError] = useState(false)
+  useEffect(() => setImgError(false), [tick])
+
   const showImage = canPoll && hasPreview && !imgError
 
+  // umbrella #452: a topology-spawned source's declared test pattern, drawn
+  // as a static illustration whenever there is no live image to show AND
+  // StaticPatternCard actually knows how to draw it (an unrecognised
+  // pattern string, or an ordinary non-topology instance with no pattern at
+  // all, falls through to the existing PlaceholderThumb branch below/in
+  // LivePreviewFrame — never a guessed illustration).
+  const pattern = instance.topology_source_pattern ?? null
+  const showStaticCard = !showImage && !!pattern && hasStaticPattern(pattern)
+
   // Honest about whether the frame is live, paused, or unavailable — never a
-  // still frame silently presented as live (Art. 1).
+  // still frame silently presented as live (Art. 1). The static-card branch
+  // takes priority over every other caption below: it is drawing something
+  // concrete in the box (not a placeholder glyph) and that fact stays true
+  // regardless of `active`/`liveEligible`/`available` — the same "no image,
+  // no live claim" note those states would otherwise print.
   let caption: string
-  if (!liveEligible) {
+  if (showStaticCard) {
+    caption = `Emits the ${pattern} pattern · static illustration`
+  } else if (!liveEligible) {
     caption = 'No live view for this function'
   } else if (!active) {
     caption = 'Paused — tab not visible'
@@ -133,15 +160,21 @@ export function useLivePreview({
     canPoll,
     available,
     showImage,
+    showStaticCard,
+    pattern,
     tick,
     caption,
     setImgError,
-    // Held frames get an explicit way forward rather than a stale-looking tile.
-    showRefresh: liveEligible && active && !motionAllowed,
+    // Held frames get an explicit way forward rather than a stale-looking
+    // tile — but a static illustration is not a held live frame, so it gets
+    // no Refresh affordance either (umbrella #452).
+    showRefresh: !showStaticCard && liveEligible && active && !motionAllowed,
     // A settled failed poll can never light the live dot, even off retained
     // available:true data — the dot claims the CURRENT read confirmed live,
-    // and a failed read is the one thing that did not confirm it.
-    liveDot: liveEligible && active && available && motionAllowed && !settled.failed,
+    // and a failed read is the one thing that did not confirm it. Nor can
+    // the static-card branch: `available` alone (the sidecar answering at
+    // all) is not "this box is showing you something live" (umbrella #452).
+    liveDot: !showStaticCard && liveEligible && active && available && motionAllowed && !settled.failed,
     refresh: () => {
       setTick((t) => (t + 1) % 100000)
       if (canPoll) status.refetch()
@@ -165,7 +198,7 @@ export function LivePreviewFrame({
   displayName: string
   preview: ReturnType<typeof useLivePreview>
 }) {
-  const { liveEligible, available, showImage, tick, setImgError } = preview
+  const { liveEligible, available, showImage, showStaticCard, pattern, tick, setImgError } = preview
 
   return (
     <div
@@ -179,6 +212,10 @@ export function LivePreviewFrame({
           className="h-full w-full object-cover"
           onError={() => setImgError(true)}
         />
+      ) : showStaticCard ? (
+        // umbrella #452: `pattern` is non-null whenever showStaticCard is —
+        // see useLivePreview's own derivation of both above.
+        <StaticPatternCard pattern={pattern as string} displayName={displayName} />
       ) : (
         <PlaceholderThumb
           label={liveEligible ? (available ? 'no preview' : 'offline') : 'no live view'}

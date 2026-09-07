@@ -151,10 +151,25 @@ const INCOMPLETE_INVALID_TAGS_COPY =
  * The instance whose preview represents the workload on its tile: the first
  * live-view-capable one in deterministic order, so an unchanged poll never
  * swaps which instance the tile is showing.
+ *
+ * umbrella #452 addendum: among instances that already qualify (live-view,
+ * `mxl`-family), a topology-spawned SOURCE (`topology_source_id` set) is one
+ * fixed test pattern feeding the workload's viewer, not the workload's own
+ * face — the viewer (no `topology_source_id`) is preferred whenever one also
+ * qualifies. Falls back to the original "first qualifying instance,
+ * deterministic order" rule when no qualifying non-source instance exists
+ * (a sources-only workload, or nothing qualifies at all), so a workload with
+ * no viewer still gets a representative tile exactly as before.
  */
 function representativeInstance(wl: MediaWorkload): MediaWorkloadInstance | null {
   const sorted = [...wl.instances].sort((a, b) => a.instance.localeCompare(b.instance))
-  return sorted.find((i) => i.live_view && i.function_key?.startsWith('mxl')) ?? sorted[0] ?? null
+  const qualifies = (i: MediaWorkloadInstance) => Boolean(i.live_view && i.function_key?.startsWith('mxl'))
+  return (
+    sorted.find((i) => qualifies(i) && !i.topology_source_id) ??
+    sorted.find(qualifies) ??
+    sorted[0] ??
+    null
+  )
 }
 
 export default function MediaWorkloads() {

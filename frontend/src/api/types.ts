@@ -703,6 +703,15 @@ export interface MediaWorkloadInstance {
   // builds a MediaWorkloadInstance literal stays valid without an edit.
   topology_parent_key?: string | null
   topology_source_id?: string | null
+  // umbrella #452 — the declared topology sources[].pattern this source
+  // instance emits (e.g. "smpte"), resolved server-side from the SAME two
+  // tags above via catalog.load_topology_instance (never derived from
+  // `instance`/function_key here either). Null means "unresolvable" —
+  // no parent key, no matching catalog entry, no topology_ref, failed
+  // validation, or no matching sources[].id — NOT "this source has no
+  // pattern"; an ordinary (non-topology) instance is also null. Optional,
+  // same fixture-compatibility reasoning as the two fields above.
+  topology_source_pattern?: string | null
 }
 
 export interface MediaWorkloadFunction {
