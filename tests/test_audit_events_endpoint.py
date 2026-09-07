@@ -179,6 +179,27 @@ COLLIDING_ACTOR_REAL_USER_DEPLOY = _line(
     workload="wl-g",
 )
 
+# gate round 4 (lkirc B1): a single deploy REQUEST that shares one
+# request_id across TWO rows — an L3 preflight acceptance (capacity-
+# skipped, main.py's _l3_preflight) and the later real dispatch — exactly
+# main.py:485-490's own shape, plus a terminal join for that same
+# request_id. Proves the join lands on the dispatch row alone; the
+# preflight row must keep its own distinct result, never overwritten with
+# a verdict it never described.
+DEPLOY_PREFLIGHT_SKIPPED_SHARING_REQUEST_ID = _line(
+    action="deploy", actor="frank", role="operator", request_id="rid-preflight-1",
+    target="wl-h", reason="L3 disabled, preflight skipped", outcome="capacity-skipped",
+)
+DEPLOY_DISPATCH_SHARING_REQUEST_ID = _line(
+    action="deploy", actor="frank", role="operator", request_id="rid-preflight-1",
+    target="wl-h", reason="the same request's real dispatch", outcome="dispatched", workload="wl-h",
+)
+DEPLOY_PREFLIGHT_DISPATCH_TERMINAL_JOIN = _line(
+    action="deploy", actor="system:job-watch", role="system", request_id="rid-preflight-1-watch",
+    target="wl-h", reason="job watch: deploy on wl-h reached terminal state run_complete",
+    outcome="run_complete", linked_request_id="rid-preflight-1",
+)
+
 FIXTURE_LINES = [
     DEPLOY, DEPLOY_REFUSED, TEARDOWN, SWITCH_SOURCE, AUTO_ROLLBACK, AUTO_ROLLBACK_ORPHAN,
     FINALISE_PURGE, LAUNCH, VERIFY_DRAIN, OPERATOR_ROLLBACK, UNRECOGNISED_ACTION, UNPARSEABLE,
@@ -187,6 +208,8 @@ FIXTURE_LINES = [
     TEARDOWN_TERMINAL_FAILED, TEARDOWN_TERMINAL_FAILED_JOIN,
     DEPLOY_TERMINAL_WATCHER_GAVE_UP, DEPLOY_TERMINAL_WATCHER_GAVE_UP_JOIN,
     COLLIDING_ACTOR_REAL_USER_DEPLOY,
+    DEPLOY_PREFLIGHT_SKIPPED_SHARING_REQUEST_ID, DEPLOY_DISPATCH_SHARING_REQUEST_ID,
+    DEPLOY_PREFLIGHT_DISPATCH_TERMINAL_JOIN,
 ]
 
 _VALID_RETENTION_CONFIG = """
@@ -248,7 +271,7 @@ def test_operator_not_in_media_engineers_sees_deploy_teardown_rollback_not_switc
         "rid-deploy-1", "rid-deploy-2", "rid-teardown-1", "rid-autorb-1", "rid-autorb-2",
         "rid-deploy-corrupted",
         "rid-deploy-term-1", "rid-teardown-term-1", "rid-deploy-term-2",
-        "rid-collision-1",
+        "rid-collision-1", "rid-preflight-1",
     }
 
 
@@ -265,7 +288,7 @@ def test_operator_in_media_engineers_sees_every_covered_row():
         "rid-deploy-1", "rid-deploy-2", "rid-teardown-1", "rid-autorb-1", "rid-autorb-2", "rid-switch-1",
         "rid-deploy-corrupted",
         "rid-deploy-term-1", "rid-teardown-term-1", "rid-deploy-term-2",
-        "rid-collision-1",
+        "rid-collision-1", "rid-preflight-1",
     }
 
 
@@ -518,6 +541,38 @@ def test_gate_round_1_codex_p2_a_join_resolved_row_is_never_aged_regardless_of_n
     payload = client.get("/api/audit/events").json()
     row = next(e for e in payload["events"] if e["request_id"] == "rid-deploy-term-1")
     assert row["outcome"] == {"state": "succeeded", "detail": "run_complete"}
+
+
+def test_gate_round_4_lkirc_b1_a_preflight_row_keeps_its_own_outcome_the_dispatch_row_alone_carries_the_verdict():
+    # lkirc B1: DEPLOY_PREFLIGHT_SKIPPED_SHARING_REQUEST_ID and
+    # DEPLOY_DISPATCH_SHARING_REQUEST_ID share ONE request_id
+    # (rid-preflight-1) — exactly main.py's own _l3_preflight shape
+    # (capacity-skipped, then the real dispatch, same request). A
+    # terminal join for that request_id must resolve onto the DISPATCH
+    # row only; the preflight row must keep reading its own
+    # capacity-skipped acceptance, never overwritten with a verdict it
+    # never described, and never duplicated into a second "succeeded" row.
+    client = _client(OPERATOR_ONLY)
+    payload = client.get("/api/audit/events").json()
+    rows = [e for e in payload["events"] if e["request_id"] == "rid-preflight-1"]
+    assert len(rows) == 2  # both rows present — request_id is not a per-row identity
+
+    dispatch_rows = [r for r in rows if r["reason"] == "the same request's real dispatch"]
+    preflight_rows = [r for r in rows if r["reason"] == "L3 disabled, preflight skipped"]
+    assert len(dispatch_rows) == 1
+    assert len(preflight_rows) == 1
+
+    # The dispatch row alone carries the confirmed verdict.
+    assert dispatch_rows[0]["outcome"] == {"state": "succeeded", "detail": "run_complete"}
+
+    # The preflight row keeps its OWN outcome — its own dispatch-time
+    # acceptance token, never the job's verdict.
+    assert preflight_rows[0]["outcome"] == {"state": "in_flight", "detail": "capacity-skipped"}
+
+    # No duplicate verdict: exactly ONE row for this request_id reads
+    # 'succeeded' — never two.
+    succeeded_count = sum(1 for r in rows if r["outcome"]["state"] == "succeeded")
+    assert succeeded_count == 1
 
 
 # ----------------------------------------------------------------------

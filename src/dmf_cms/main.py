@@ -2128,6 +2128,19 @@ def _audit_watch_terminal(
     and ``l3_outcome`` is regex-anchored to ``[a-z0-9_-]+`` by
     ``_L3_OUTCOME_RE`` before it ever reaches here — neither is
     externally-sourced free text.
+
+    gate round 4 (lkirc B2): ``state`` here is the AUDIT claim, deliberately
+    NOT always the same value the caller just wrote to the ops store.
+    Every give-up call site (TTL timeout, 3 lost ``get_job`` calls, a
+    crash) passes ``OperationState.RUN_STATUS_UNKNOWN`` here regardless of
+    what ``_watch_lost_terminal_state`` returned for the ops store itself
+    (``RUN_FAILED`` when the job was never even seen to start) — none of
+    those paths ever achieved a clean read of the job, so reporting
+    ``RUN_FAILED`` to this audit trail would assert a CONFIRMED failure
+    nobody observed. Same separation this module already keeps between
+    ``auto_rollback`` and ``l3_outcome`` on the deploy op: one value for
+    what the internal state machine needs, a different one for what gets
+    asserted to a reader.
     """
     if action not in ("deploy", "teardown"):
         return
@@ -2292,7 +2305,11 @@ async def _watch_job_operation(app: FastAPI, operation_id: str, job_id: int, act
                     state=give_up_state,
                     error="job-watch-timeout",
                 )
-                _audit_watch_terminal(action, key, op.request_id, give_up_state, None)
+                # gate round 4 (lkirc B2): the AUDIT claim, not the
+                # internal ops-store state — see the comment on the next
+                # give-up site below for why these must never be the same
+                # argument here.
+                _audit_watch_terminal(action, key, op.request_id, OperationState.RUN_STATUS_UNKNOWN, None)
                 return
 
             try:
@@ -2323,7 +2340,30 @@ async def _watch_job_operation(app: FastAPI, operation_id: str, job_id: int, act
                         state=give_up_state,
                         error="job-watch-lost",
                     )
-                    _audit_watch_terminal(action, key, op.request_id, give_up_state, None)
+                    # gate round 4 (lkirc B2): every give-up path here
+                    # (this one, the TTL-before-first-poll site above, and
+                    # the crash handler below) never achieves a CLEAN read
+                    # of the job — that is the definition of "gave up",
+                    # not "observed to fail". `give_up_state` (RUN_FAILED
+                    # when the job was never even seen to start,
+                    # RUN_STATUS_UNKNOWN otherwise) is correct and
+                    # unchanged for the INTERNAL ops store — rollback
+                    # eligibility and _facility_busy_check's dirty-state
+                    # handling both still need that exact distinction, and
+                    # neither is touched here. But reporting RUN_FAILED to
+                    # the AUDIT trail would tell the operator this job was
+                    # CONFIRMED to have failed, which nobody ever observed
+                    # — it may still be running, or may have already
+                    # succeeded. So the audit claim on every give-up path
+                    # is unconditionally RUN_STATUS_UNKNOWN (already the
+                    # exact token _TERMINAL_STATE_RESULT maps to 'unknown'
+                    # — no new vocabulary needed), regardless of what
+                    # `give_up_state` itself resolved to. Same separation
+                    # of concerns this module already keeps between
+                    # `auto_rollback` and `l3_outcome` on the deploy op —
+                    # one field for what the internal state machine needs,
+                    # a DIFFERENT one for what gets asserted to a reader.
+                    _audit_watch_terminal(action, key, op.request_id, OperationState.RUN_STATUS_UNKNOWN, None)
                     return
                 await asyncio.sleep(poll_interval)
                 continue
@@ -2561,7 +2601,11 @@ async def _watch_job_operation(app: FastAPI, operation_id: str, job_id: int, act
             state=give_up_state,
             error="job-watch-crashed",
         )
-        _audit_watch_terminal(action, key, op.request_id, give_up_state, None)
+        # gate round 4 (lkirc B2): same give-up-path separation as the two
+        # sites above — see the get_job-failure site's own comment. No
+        # clean job read happened here either, so the audit claim is
+        # unconditionally RUN_STATUS_UNKNOWN regardless of `give_up_state`.
+        _audit_watch_terminal(action, key, op.request_id, OperationState.RUN_STATUS_UNKNOWN, None)
 
 
 async def _maybe_auto_trigger_rollback(app: FastAPI, operation_id: str, key: str) -> None:
