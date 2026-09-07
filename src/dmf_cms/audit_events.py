@@ -432,7 +432,13 @@ def _parse_new_format_line(tail: str) -> dict[str, str] | None:
     )
 
     if values[_TRAILING_FIELD] and not (
-        values["action"] == "rollback" and values["actor"] == _AUTO_ROLLBACK_ACTOR
+        (values["action"] == "rollback" and values["actor"] == _AUTO_ROLLBACK_ACTOR)
+        # dmfdeploy/dmfdeploy#419: the job-watch terminal-outcome join
+        # record extends this same trailing field to a second, narrowly-
+        # scoped case — same mechanism, not a second grammar. See
+        # main.py's _audit_watch_terminal and this module's own
+        # _JOB_WATCH_ACTOR/classify_record.
+        or (values["action"] in ("deploy", "teardown") and values["actor"] == _JOB_WATCH_ACTOR)
     ):
         return None
 
@@ -613,6 +619,16 @@ _CLASS_INFO = {
 
 _AUTO_ROLLBACK_ACTOR = "system:auto-rollback"
 
+# dmfdeploy/dmfdeploy#419: the actor literal main.py's own
+# `_audit_watch_terminal` emits its terminal-outcome join records under —
+# must exactly match that copy (this module is read-path only and
+# deliberately not import-coupled to main.py, the same layering
+# `_AUTO_ROLLBACK_ACTOR` above already has). classify_record() below never
+# gives this actor its own row: these records exist purely to be joined
+# onto the dispatch row they correlate to (see list_audit_events'
+# `terminal_by_request_id`), never rendered standalone.
+_JOB_WATCH_ACTOR = "system:job-watch"
+
 # What the lane discloses as excluded (plan §7 AC 5), the two reasons kept
 # distinct: `finalise-purge` is out because rendering it would WIDEN access
 # (its live surface is tenant-scoped, this lane is not); the other three are
@@ -630,7 +646,19 @@ def classify_record(action: str, actor: str) -> str | None:
     """Map a parsed row's (action, actor) to a closed class key, or None if
     the action is unrecognised. `rollback` splits by actor BEFORE the table
     lookup — auto-rollback answers to its parent deploy's gate; an
-    operator-initiated rollback is excluded regardless of who ran it."""
+    operator-initiated rollback is excluded regardless of who ran it.
+
+    dmfdeploy/dmfdeploy#419: a job-watch terminal-outcome join record
+    (actor == _JOB_WATCH_ACTOR) is checked first, before either the
+    rollback split or the table lookup, and always returns None — it is
+    never its own row (see this module's own comment on
+    `_JOB_WATCH_ACTOR` and `list_audit_events`' `terminal_by_request_id`
+    join). Checked by actor alone, regardless of action, the same way the
+    rollback split below is checked by actor alone regardless of anything
+    else about the record.
+    """
+    if actor == _JOB_WATCH_ACTOR:
+        return None
     if action == "rollback":
         return "auto-rollback" if actor == _AUTO_ROLLBACK_ACTOR else "rollback"
     if action in _CLASS_INFO:
@@ -833,6 +861,75 @@ def build_outcome(action: str, outcome: str) -> dict[str, object]:
 
 
 # ----------------------------------------------------------------------
+# Terminal-outcome join (dmfdeploy/dmfdeploy#419/#554) — a SECOND record,
+# written from main.py's `_watch_job_operation` once a watched deploy/
+# teardown op reaches its own terminal state, resolved onto the matching
+# dispatch row (never rendered as a row of its own — see classify_record's
+# `_JOB_WATCH_ACTOR` short-circuit and `list_audit_events`'
+# `terminal_by_request_id`). This is what turns "Deploy dispatched for X"
+# into "Deploy succeeded/failed for X", and — for the watcher's own give-up
+# paths (TTL timeout, lost `get_job` calls, an unexpected crash) — into
+# "outcome unknown" rather than leaving the row to silently keep reading
+# its dispatch-time acceptance token forever.
+#
+# `outcome=` on this record carries the OperationState value the watcher
+# actually reached, optionally suffixed `:<l3_outcome>` — see
+# `_audit_watch_terminal`'s own docstring for why the compound token stays
+# safe as a plain field. Only the states the deploy/teardown branches of
+# `_watch_job_operation` can ever actually reach are mapped: RUN_COMPLETE,
+# RUN_FAILED, FAILED_ROLLBACK_REQUIRED (deploy's own confirmed-mutation-
+# failure state), and RUN_STATUS_UNKNOWN (a give-up path). Any OTHER token
+# — a future state this mapping hasn't been extended for, or a malformed/
+# empty one — resolves to 'unknown', the same fail-closed-to-honest-doubt
+# posture as a blank dispatch outcome (never a guessed success or a
+# guessed failure).
+_TERMINAL_STATE_RESULT: dict[str, str] = {
+    "run_complete": "succeeded",
+    "run_failed": "failed",
+    "failed_rollback_required": "failed",
+    "run_status_unknown": "unknown",
+}
+
+_JOB_TERMINAL_FAILURE_COPY = {
+    "headline": "The automation job did not finish successfully",
+    "meaning": "The action was dispatched and the automation job ran to a terminal state, but it did not complete successfully.",
+    "next_step": "Check Activity → Jobs or the automation engine for details, or contact a system engineer.",
+}
+
+
+def build_terminal_join_outcome(raw_outcome: str) -> dict[str, object]:
+    """Resolve a terminal-outcome join record's own `outcome=` field
+    (`_audit_watch_terminal`'s compound `<state>[:<l3_outcome>]` token)
+    into the SAME outcome-dict shape `build_outcome` produces — this is
+    what `list_audit_events` substitutes onto a dispatch row once a join
+    record exists for it, in place of that row's own dispatch-time
+    `build_outcome` result.
+    """
+    state_token, _, l3_part = raw_outcome.partition(":")
+    result = _TERMINAL_STATE_RESULT.get(state_token, "unknown")
+    if result == "unknown":
+        return {
+            "state": "unknown",
+            "headline": _UNKNOWN_OUTCOME_COPY["headline"],
+            "meaning": _UNKNOWN_OUTCOME_COPY["meaning"],
+            "next_step": _UNKNOWN_OUTCOME_COPY["next_step"],
+            "detail": "",  # shape uniformity, same convention as build_outcome's own unknown branch
+        }
+    if result == "succeeded":
+        return {"state": "succeeded", "detail": state_token}
+    return {
+        "state": "failed",
+        "headline": _JOB_TERMINAL_FAILURE_COPY["headline"],
+        "meaning": _JOB_TERMINAL_FAILURE_COPY["meaning"],
+        "next_step": _JOB_TERMINAL_FAILURE_COPY["next_step"],
+        # The launcher-side marker when one was fetched, else the bare
+        # state token — expert-level detail only, same convention as
+        # build_outcome's own failed branch.
+        "detail": l3_part or state_token,
+    }
+
+
+# ----------------------------------------------------------------------
 # Orchestration.
 # ----------------------------------------------------------------------
 
@@ -935,6 +1032,25 @@ def list_audit_events(
         if fields.get("workload") and fields.get("request_id")
     }
 
+    # dmfdeploy/dmfdeploy#419/#554: the terminal-outcome join, same
+    # structured-field-only discipline as workload_by_request_id above —
+    # never a raw-text search. Keyed by `linked_request_id` (the ORIGINAL
+    # dispatch's own request_id), sourced from `system:job-watch` records
+    # only (classify_record already drops these from `events` itself; this
+    # is the ONE place their content is actually used). `rows` is already
+    # sorted newest-first, so "first seen for this key wins" keeps the
+    # most recent terminal write should more than one ever exist for the
+    # same dispatch (not expected in practice — a watcher runs once per
+    # op — but cheap to make correct rather than assumed).
+    terminal_by_request_id: dict[str, dict[str, str]] = {}
+    for _ts, fields in rows:
+        if fields.get("actor") != _JOB_WATCH_ACTOR:
+            continue
+        linked = fields.get("linked_request_id", "")
+        if not linked or linked in terminal_by_request_id:
+            continue
+        terminal_by_request_id[linked] = fields
+
     events: list[dict[str, object]] = []
     for ts_ns_str, fields in rows:
         action = fields.get("action", "")
@@ -950,6 +1066,19 @@ def list_audit_events(
             # Display-only join (plan §4.3): degrades the label, never the
             # row's presence. A missing/blank parent leaves this blank.
             workload = workload_by_request_id.get(fields.get("linked_request_id", ""), "")
+
+        # dmfdeploy/dmfdeploy#419/#554: resolve a confirmed terminal
+        # outcome onto the dispatch row it belongs to, in place of that
+        # row's own dispatch-time acceptance token — the same record on
+        # both Workspace and Activity → History (one derivation, not two;
+        # see ActivityPanel.tsx). No join found for this row's request_id
+        # -> unchanged from before: its own dispatch-time outcome, honest
+        # about not yet being confirmed.
+        outcome = build_outcome(action, fields.get("outcome", ""))
+        if cls in ("deploy", "teardown"):
+            terminal_fields = terminal_by_request_id.get(fields.get("request_id", ""))
+            if terminal_fields is not None:
+                outcome = build_terminal_join_outcome(terminal_fields.get("outcome", ""))
 
         events.append({
             "request_id": fields.get("request_id", ""),
@@ -973,7 +1102,7 @@ def list_audit_events(
             # real, source-of-truth per-log identity the frontend keys
             # rows on, never used for display itself.
             "at_ns": ts_ns_str,
-            "outcome": build_outcome(action, fields.get("outcome", "")),
+            "outcome": outcome,
         })
 
     return {

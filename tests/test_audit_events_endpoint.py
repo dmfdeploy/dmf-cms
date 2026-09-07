@@ -122,10 +122,47 @@ DEPLOY_BLANK_OUTCOME = _line(
     target="wl-c", reason="outcome field lost upstream", outcome="",
 )
 
+# dmfdeploy/dmfdeploy#419/#554: the terminal-outcome join — a dispatch row
+# plus a SEPARATE system:job-watch record correlating back to it via
+# linked_request_id, exactly the auto-rollback join's own shape (see
+# AUTO_ROLLBACK above), reused for a second (action, actor) pair.
+DEPLOY_TERMINAL_SUCCEEDED = _line(
+    action="deploy", actor="frank", role="operator", request_id="rid-deploy-term-1",
+    target="wl-d", reason="demo deploy with a confirmed outcome", outcome="dispatched", workload="wl-d",
+)
+DEPLOY_TERMINAL_SUCCEEDED_JOIN = _line(
+    action="deploy", actor="system:job-watch", role="system", request_id="rid-deploy-term-1-watch",
+    target="wl-d", reason="job watch: deploy on wl-d reached terminal state run_complete",
+    outcome="run_complete", linked_request_id="rid-deploy-term-1",
+)
+TEARDOWN_TERMINAL_FAILED = _line(
+    action="teardown", actor="frank", role="operator", request_id="rid-teardown-term-1",
+    target="wl-e", reason="demo teardown with a confirmed failure", outcome="dispatched",
+)
+TEARDOWN_TERMINAL_FAILED_JOIN = _line(
+    action="teardown", actor="system:job-watch", role="system", request_id="rid-teardown-term-1-watch",
+    target="wl-e", reason="job watch: teardown on wl-e reached terminal state run_failed",
+    outcome="run_failed:pre-mutation-refused", linked_request_id="rid-teardown-term-1",
+)
+# The watcher's own give-up path (TTL/lost/crash) — no confirmed job read,
+# so the join's own outcome is run_status_unknown, never a guessed verdict.
+DEPLOY_TERMINAL_WATCHER_GAVE_UP = _line(
+    action="deploy", actor="frank", role="operator", request_id="rid-deploy-term-2",
+    target="wl-f", reason="demo deploy whose watcher gave up", outcome="dispatched",
+)
+DEPLOY_TERMINAL_WATCHER_GAVE_UP_JOIN = _line(
+    action="deploy", actor="system:job-watch", role="system", request_id="rid-deploy-term-2-watch",
+    target="wl-f", reason="job watch: deploy on wl-f reached terminal state run_status_unknown",
+    outcome="run_status_unknown", linked_request_id="rid-deploy-term-2",
+)
+
 FIXTURE_LINES = [
     DEPLOY, DEPLOY_REFUSED, TEARDOWN, SWITCH_SOURCE, AUTO_ROLLBACK, AUTO_ROLLBACK_ORPHAN,
     FINALISE_PURGE, LAUNCH, VERIFY_DRAIN, OPERATOR_ROLLBACK, UNRECOGNISED_ACTION, UNPARSEABLE,
     DEPLOY_BLANK_OUTCOME,
+    DEPLOY_TERMINAL_SUCCEEDED, DEPLOY_TERMINAL_SUCCEEDED_JOIN,
+    TEARDOWN_TERMINAL_FAILED, TEARDOWN_TERMINAL_FAILED_JOIN,
+    DEPLOY_TERMINAL_WATCHER_GAVE_UP, DEPLOY_TERMINAL_WATCHER_GAVE_UP_JOIN,
 ]
 
 _VALID_RETENTION_CONFIG = """
@@ -169,6 +206,7 @@ def test_operator_not_in_media_engineers_sees_deploy_teardown_rollback_not_switc
     assert _event_ids(payload) == {
         "rid-deploy-1", "rid-deploy-2", "rid-teardown-1", "rid-autorb-1", "rid-autorb-2",
         "rid-deploy-corrupted",
+        "rid-deploy-term-1", "rid-teardown-term-1", "rid-deploy-term-2",
     }
 
 
@@ -184,6 +222,7 @@ def test_operator_in_media_engineers_sees_every_covered_row():
     assert _event_ids(payload) == {
         "rid-deploy-1", "rid-deploy-2", "rid-teardown-1", "rid-autorb-1", "rid-autorb-2", "rid-switch-1",
         "rid-deploy-corrupted",
+        "rid-deploy-term-1", "rid-teardown-term-1", "rid-deploy-term-2",
     }
 
 
@@ -228,6 +267,63 @@ def test_auto_rollback_still_renders_with_no_workload_when_the_parent_does_not_r
     payload = client.get("/api/audit/events").json()
     row = next(e for e in payload["events"] if e["request_id"] == "rid-autorb-2")
     assert row["workload"] is None  # degraded label, NOT a dropped row
+
+
+# ----------------------------------------------------------------------
+# Terminal-outcome join (dmfdeploy/dmfdeploy#419/#554) — the deploy/
+# teardown "Deploy dispatched for X" -> "Deploy succeeded/failed for X"
+# resolution, end to end.
+# ----------------------------------------------------------------------
+
+def test_a_deploy_with_a_terminal_join_renders_succeeded_not_in_flight():
+    client = _client(OPERATOR_ONLY)
+    payload = client.get("/api/audit/events").json()
+    row = next(e for e in payload["events"] if e["request_id"] == "rid-deploy-term-1")
+    assert row["outcome"] == {"state": "succeeded", "detail": "run_complete"}
+
+
+def test_a_teardown_with_a_terminal_join_renders_failed_with_the_launcher_marker_as_detail():
+    client = _client(OPERATOR_ONLY)
+    payload = client.get("/api/audit/events").json()
+    row = next(e for e in payload["events"] if e["request_id"] == "rid-teardown-term-1")
+    assert row["outcome"]["state"] == "failed"
+    assert row["outcome"]["detail"] == "pre-mutation-refused"
+    for key in ("headline", "meaning", "next_step"):
+        assert row["outcome"][key]
+
+
+def test_the_job_watch_join_record_never_renders_as_its_own_row():
+    client = _client(OPERATOR_ONLY)
+    payload = client.get("/api/audit/events").json()
+    request_ids = {e["request_id"] for e in payload["events"]}
+    assert "rid-deploy-term-1-watch" not in request_ids
+    assert "rid-teardown-term-1-watch" not in request_ids
+    assert "rid-deploy-term-2-watch" not in request_ids
+
+
+def test_a_watcher_give_up_join_renders_unknown_never_a_silent_dispatched_or_success():
+    # The watcher's own give-up path (TTL timeout / lost get_job calls /
+    # an unexpected crash) — carries no confirmed job read, so the join
+    # itself is run_status_unknown. Must render as the lane's honest
+    # 'unknown', never a guessed success or failure.
+    client = _client(OPERATOR_ONLY)
+    payload = client.get("/api/audit/events").json()
+    row = next(e for e in payload["events"] if e["request_id"] == "rid-deploy-term-2")
+    assert row["outcome"]["state"] == "unknown"
+    assert row["outcome"]["state"] not in ("succeeded", "in_flight")
+
+
+def test_a_dispatch_row_with_no_terminal_join_at_all_stays_in_flight_never_a_guessed_success():
+    # dmfdeploy/dmfdeploy#419's documented residual gap: the watcher runs
+    # in-process on a single replica, so a console restart mid-job loses
+    # the watch and that row NEVER receives a terminal join — DEPLOY's own
+    # fixture row above carries no join. The honesty requirement this
+    # whole feature exists for: this must never render as succeeded.
+    client = _client(OPERATOR_ONLY)
+    payload = client.get("/api/audit/events").json()
+    row = next(e for e in payload["events"] if e["request_id"] == "rid-deploy-1")
+    assert row["outcome"]["state"] == "in_flight"
+    assert row["outcome"]["state"] != "succeeded"
 
 
 # ----------------------------------------------------------------------
