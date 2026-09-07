@@ -2,13 +2,24 @@
 // and the tile grid render the SAME facts with the SAME colours: requested is
 // INTENT (never shown as running), observed is probe-proven runtime truth.
 
-export const requestedBadge: Record<string, string> = {
+/** Own-property lookup for state→value maps: an untrusted state such as
+ *  "constructor" or "__proto__" must fall back to `unknown`, never resolve an
+ *  inherited Object property (review finding on PR #144). */
+export function lookupState<T>(map: Record<string, T> & { unknown: T }, state: string | null | undefined): T {
+  return typeof state === 'string' && Object.prototype.hasOwnProperty.call(map, state) ? map[state] : map.unknown
+}
+
+// The `& { unknown: string }` intersection (not a bare Record<string, string>)
+// is what lets lookupState's signature guarantee a fallback exists at compile
+// time — dropping it would let a map missing `unknown` type-check and defeat
+// the guard silently.
+export const requestedBadge: Record<string, string> & { unknown: string } = {
   active: 'bg-sky-900/30 text-sky-300',
   bootstrapped: 'bg-gray-900/30 text-gray-300',
   unknown: 'bg-gray-900/30 text-gray-400',
 }
 
-export const observedBadge: Record<string, string> = {
+export const observedBadge: Record<string, string> & { unknown: string } = {
   running: 'bg-green-900/30 text-green-300',
   failing: 'bg-red-900/30 text-red-300',
   unknown: 'bg-gray-900/30 text-gray-400',
@@ -36,10 +47,13 @@ export const OBSERVED_TITLE = 'Observed state — proven by live monitoring prob
  *   anything else → "unknown"       — the backend declined to place it and
  *                                     this layer does not improve on that.
  *
- * Callers fall back with `requestedLabel[state] ?? requestedLabel.unknown`,
- * the same shape requestedBadge's colour lookup already uses.
+ * Callers look up with `lookupState(requestedLabel, state)` — an own-property
+ * check, not `requestedLabel[state] ?? requestedLabel.unknown` (that shape
+ * resolves inherited Object properties like `constructor` instead of falling
+ * back; see the review finding on PR #144) — the same lookup requestedBadge's
+ * colour lookup and the Provision icon map now use too.
  */
-export const requestedLabel: Record<string, string> = {
+export const requestedLabel: Record<string, string> & { unknown: string } = {
   bootstrapped: 'planned',
   active: 'cleared to run',
   unknown: 'unknown',

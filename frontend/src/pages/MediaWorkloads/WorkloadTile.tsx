@@ -1,5 +1,6 @@
 import type { MediaWorkloadInstance } from '../../api/types'
 import {
+  lookupState,
   observedBadge,
   OBSERVED_TITLE,
   requestedBadge,
@@ -93,13 +94,13 @@ export default function WorkloadTile({
 
         <div className="flex flex-wrap items-center gap-2">
           <span
-            className={`badge text-xs ${requestedBadge[instance.requested_state] ?? requestedBadge.unknown}`}
+            className={`badge text-xs ${lookupState(requestedBadge, instance.requested_state)}`}
             title={REQUESTED_TITLE}
           >
             {instance.requested_state}
           </span>
           <span
-            className={`badge text-xs ${observedBadge[instance.observed_state] ?? observedBadge.unknown}`}
+            className={`badge text-xs ${lookupState(observedBadge, instance.observed_state)}`}
             title={OBSERVED_TITLE}
           >
             {instance.observed_state}
