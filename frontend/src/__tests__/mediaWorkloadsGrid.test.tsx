@@ -24,6 +24,7 @@ import MediaWorkloads, { degradedReasonCopy } from '../pages/MediaWorkloads'
 import WorkloadSetup from '../pages/MediaWorkloads/WorkloadSetup'
 import WorkloadHome from '../pages/MediaWorkloads/WorkloadHome'
 import HeaderSlotProbe from './testUtils/HeaderSlotProbe'
+import { PATTERN_FRAMES } from '../pages/MediaWorkloads/patternFrames.generated'
 import { assertNoInteractiveDescendant } from './testUtils/domAssertions'
 import {
   LIVE_TILE_CAP,
@@ -1052,9 +1053,11 @@ describe('representativeInstance (umbrella #452): prefers the non-source viewer'
     await screen.findByText('STATIC')
     // Deterministic order sorts by `instance` name — 'mxl-source-a' sorts
     // before 'mxl-source-b' — so the ORIGINAL rule's "first qualifying
-    // instance" is source-a: 8 rects (7 SMPTE bars + 1 lower band), never
-    // checkers-8's 64-cell grid.
-    expect(document.querySelectorAll('svg rect').length).toBe(8)
+    // instance" is source-a: its committed `smpte` frame, never
+    // source-b's `checkers-8` one.
+    const img = document.querySelector('img')
+    expect(img?.getAttribute('src')).toBe(PATTERN_FRAMES.smpte)
+    expect(img?.getAttribute('src')).not.toBe(PATTERN_FRAMES['checkers-8'])
   })
 })
 

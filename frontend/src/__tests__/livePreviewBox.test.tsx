@@ -175,7 +175,7 @@ function renderTileWithInstance(overrides: Partial<MediaWorkloadInstance>) {
 }
 
 describe('WorkloadTile live preview — the static pattern card (umbrella #452)', () => {
-  it('a known pattern with no preview shows the static illustration: no live dot, the exact caption, no <img>', async () => {
+  it('a known pattern with no preview shows the static illustration: no live dot, the exact caption, no network-fetchable <img>', async () => {
     // The static caption is true even on the FIRST render (pattern known,
     // hasPreview trivially false before any fetch resolves) — fake timers +
     // an explicit settle is what proves `available` has actually turned
@@ -195,7 +195,12 @@ describe('WorkloadTile live preview — the static pattern card (umbrella #452)'
     })
     expect(screen.getByText('Emits the smpte pattern · static illustration')).toBeTruthy()
     expect(container.querySelector('.bg-green-400')).toBeNull()
-    expect(container.querySelector('img')).toBeNull()
+    // umbrella #566: the static card now draws the CANONICAL videotestsrc
+    // frame via an <img>, not a hand-drawn inline <svg> — but that frame is
+    // always a base64 data: URI (patternFrames.generated.ts), never a URL,
+    // so it is still true that this makes zero network requests.
+    const img = container.querySelector('img')
+    expect(img?.getAttribute('src')).toMatch(/^data:image\/png;base64,/)
     expect(screen.getByText('STATIC')).toBeTruthy()
     // No Refresh affordance either — this is not a held live frame.
     expect(screen.queryByRole('button', { name: 'Refresh' })).toBeNull()
