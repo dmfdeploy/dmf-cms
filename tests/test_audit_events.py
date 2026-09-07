@@ -232,6 +232,31 @@ def test_a_linked_request_id_on_a_non_qualifying_action_actor_pair_is_rejected()
     assert audit_events.parse_awx_write_line(line) is None
 
 
+def test_gate_round_1_codex_p1_a_reserved_actor_with_a_real_user_role_still_rejects_the_trailing_field():
+    # THE fix for codex's P1 finding, at the parser layer: actor alone
+    # used to be sufficient to permit the trailing field -- a real user
+    # whose subject collides with a reserved literal (role != "system",
+    # since a real user's role can never be "system") must still fail the
+    # SAME way an ordinary unqualified actor does. This is the negative
+    # half of test_property_a_genuine_job_watch_linked_request_id_still_
+    # parses above, which pins the SAME actor with role="system" DOES
+    # parse -- the discriminator is role, nothing else about the line.
+    for role in ("operator", "viewer", "engineer", "admin"):
+        line = _new_line(
+            action="deploy", actor="system:job-watch", role=role,
+            request_id="rid-1", target="wl-a", reason="demo", outcome="dispatched",
+            linked_request_id="rid-somewhere-else",
+        )
+        assert audit_events.parse_awx_write_line(line) is None, role
+    for role in ("operator", "viewer", "engineer", "admin"):
+        line = _new_line(
+            action="rollback", actor="system:auto-rollback", role=role,
+            request_id="rid-1", target="run-1", reason="demo", outcome="dispatched",
+            linked_request_id="rid-somewhere-else",
+        )
+        assert audit_events.parse_awx_write_line(line) is None, role
+
+
 def test_property_a_legitimate_reason_mentioning_marker_like_text_still_parses():
     # Regression guard carried forward from the legacy-era version of this
     # test: an honest reason that happens to mention marker-shaped text in
@@ -591,34 +616,56 @@ limits_config:
 # ----------------------------------------------------------------------
 
 def test_classify_covered_classes():
-    assert audit_events.classify_record("deploy", "alice") == "deploy"
-    assert audit_events.classify_record("teardown", "alice") == "teardown"
-    assert audit_events.classify_record("switch-source", "bob") == "switch-source"
+    assert audit_events.classify_record("deploy", "alice", "operator") == "deploy"
+    assert audit_events.classify_record("teardown", "alice", "operator") == "teardown"
+    assert audit_events.classify_record("switch-source", "bob", "engineer") == "switch-source"
 
 
-def test_classify_splits_rollback_by_actor():
-    assert audit_events.classify_record("rollback", "system:auto-rollback") == "auto-rollback"
-    assert audit_events.classify_record("rollback", "alice") == "rollback"
+def test_classify_splits_rollback_by_actor_and_role():
+    assert audit_events.classify_record("rollback", "system:auto-rollback", "system") == "auto-rollback"
+    assert audit_events.classify_record("rollback", "alice", "operator") == "rollback"
 
 
 def test_classify_excluded_classes_are_named_not_dropped_from_the_table():
     for action in ("finalise-purge", "launch", "verify-drain"):
-        cls = audit_events.classify_record(action, "alice")
+        cls = audit_events.classify_record(action, "alice", "operator")
         assert cls == action
         assert audit_events._CLASS_INFO[cls]["status"] != audit_events.COVERED
 
 
 def test_classify_unrecognised_action_fails_closed():
-    assert audit_events.classify_record("mystery-action", "alice") is None
+    assert audit_events.classify_record("mystery-action", "alice", "operator") is None
 
 
 def test_classify_job_watch_actor_never_gets_its_own_row():
-    # dmfdeploy/dmfdeploy#419: checked by actor alone, before the rollback
+    # dmfdeploy/dmfdeploy#419: checked by actor+role, before the rollback
     # split and the table lookup — a terminal-outcome join record is
     # join-only for every action it could plausibly carry, not just
     # deploy/teardown (the two _audit_watch_terminal actually emits).
     for action in ("deploy", "teardown", "rollback", "mystery-action"):
-        assert audit_events.classify_record(action, "system:job-watch") is None
+        assert audit_events.classify_record(action, "system:job-watch", "system") is None
+
+
+def test_gate_round_1_codex_p1_a_colliding_actor_with_a_real_user_role_is_never_suppressed():
+    # THE fix for codex's P1 finding: actor alone used to be sufficient,
+    # so a real user whose IdP subject happened to equal a reserved
+    # literal would have their own genuine row silently dropped (job-watch)
+    # or reclassified into a wider audience (auto-rollback). A real user's
+    # role can never be "system" (security.current_role()'s own closed
+    # ROLE_ORDER) -- requiring role == "system" alongside the actor
+    # literal is what makes the row survive, correctly classified as the
+    # ACTION it actually was.
+    assert audit_events.classify_record("deploy", "system:job-watch", "operator") == "deploy"
+    assert audit_events.classify_record("teardown", "system:job-watch", "viewer") == "teardown"
+    assert audit_events.classify_record("rollback", "system:auto-rollback", "operator") == "rollback"
+    assert audit_events.classify_record("rollback", "system:auto-rollback", "admin") == "rollback"
+
+
+def test_gate_round_1_codex_p1_genuine_system_authored_rows_still_classify_as_before():
+    # Control: the fix does not regress the genuine case -- role=="system"
+    # is exactly what main.py's two hand-assembled emitters always write.
+    assert audit_events.classify_record("deploy", "system:job-watch", "system") is None
+    assert audit_events.classify_record("rollback", "system:auto-rollback", "system") == "auto-rollback"
 
 
 def test_gate_operator_role_passes_operator_classes_not_media_workloads():
@@ -827,3 +874,46 @@ def test_an_unrecognised_terminal_state_token_fails_closed_to_unknown_never_a_gu
     # extended for must never render as a silent success OR failure.
     result = audit_events.build_terminal_join_outcome("some-future-state-nobody-mapped-yet")
     assert result["state"] == "unknown"
+
+
+# ----------------------------------------------------------------------
+# _age_stale_in_flight -- dmfdeploy/dmfdeploy#419, gate round 1, codex P2:
+# a dispatch row with no terminal join at all must not claim in_flight
+# forever once it has provably outlived any watcher.
+# ----------------------------------------------------------------------
+
+_IN_FLIGHT = {"state": "in_flight", "detail": "dispatched"}
+_ONE_HOUR = 3600
+
+
+def test_a_row_older_than_the_bound_ages_from_in_flight_into_unknown():
+    old_ts_ns = "0"  # epoch
+    now_ns = (_ONE_HOUR + 1) * 1_000_000_000  # one second past the bound
+    result = audit_events._age_stale_in_flight(_IN_FLIGHT, old_ts_ns, now_ns, _ONE_HOUR)
+    assert result["state"] == "unknown"
+    assert result == audit_events._unknown_outcome()
+
+
+def test_a_row_inside_the_bound_stays_in_flight_unchanged():
+    old_ts_ns = "0"
+    now_ns = (_ONE_HOUR - 1) * 1_000_000_000  # one second inside the bound
+    result = audit_events._age_stale_in_flight(_IN_FLIGHT, old_ts_ns, now_ns, _ONE_HOUR)
+    assert result is _IN_FLIGHT  # untouched, not just equal
+
+
+def test_a_non_in_flight_outcome_is_never_aged_regardless_of_staleness():
+    failed = {"state": "failed", "headline": "x", "meaning": "y", "next_step": "z", "detail": "facility-busy"}
+    result = audit_events._age_stale_in_flight(failed, "0", 10_000 * 1_000_000_000, _ONE_HOUR)
+    assert result is failed
+
+
+def test_no_bound_configured_never_ages_anything():
+    result = audit_events._age_stale_in_flight(_IN_FLIGHT, "0", 10_000 * 1_000_000_000, None)
+    assert result is _IN_FLIGHT
+
+
+def test_an_unparseable_row_timestamp_is_never_aged_rather_than_guessed_stale():
+    # Cannot prove staleness it cannot measure -- fails closed to "leave it
+    # alone", not to "assume the worst".
+    result = audit_events._age_stale_in_flight(_IN_FLIGHT, "not-a-number", 10_000 * 1_000_000_000, _ONE_HOUR)
+    assert result is _IN_FLIGHT

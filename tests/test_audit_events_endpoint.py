@@ -34,7 +34,17 @@ def _client(groups, *, loki_configured=True) -> TestClient:
         dev_groups=groups,
         loki=LokiSettings(url="http://loki.test") if loki_configured else LokiSettings(),
     )
-    client = TestClient(create_app(settings=settings))
+    # gate round 1 (codex P2): /api/audit/events now reads
+    # app.state.operations.ttl_seconds, which the app's lifespan (not
+    # __init__) populates — TestClient only runs lifespan startup as a
+    # context manager. Every caller here uses the returned client for the
+    # rest of its own test body (never within a nested `with` of its own,
+    # unlike test_autoscale_operations.py's per-test pattern), so entering
+    # the context manager manually and never exiting it is the one way to
+    # get real startup behavior without restructuring every call site in
+    # this file — same live app.state.operations instance either way, and
+    # a test process that exits at suite end has nothing to clean up.
+    client = TestClient(create_app(settings=settings)).__enter__()
     client.get("/auth/login", follow_redirects=False)  # dev login -> session
     return client
 
@@ -156,6 +166,18 @@ DEPLOY_TERMINAL_WATCHER_GAVE_UP_JOIN = _line(
     outcome="run_status_unknown", linked_request_id="rid-deploy-term-2",
 )
 
+# gate round 1 (codex P1): a real, authenticated user whose IdP subject
+# HAPPENS to collide with the reserved system:job-watch actor literal,
+# doing an ordinary deploy of their own -- role=operator, never "system"
+# (a real user's role can never be that value; see classify_record's own
+# docstring). Proves the fix is role-gated, not actor-gated: this row
+# must survive, classified as a normal deploy, never dropped.
+COLLIDING_ACTOR_REAL_USER_DEPLOY = _line(
+    action="deploy", actor="system:job-watch", role="operator", request_id="rid-collision-1",
+    target="wl-g", reason="a real user whose subject collides with the reserved actor", outcome="dispatched",
+    workload="wl-g",
+)
+
 FIXTURE_LINES = [
     DEPLOY, DEPLOY_REFUSED, TEARDOWN, SWITCH_SOURCE, AUTO_ROLLBACK, AUTO_ROLLBACK_ORPHAN,
     FINALISE_PURGE, LAUNCH, VERIFY_DRAIN, OPERATOR_ROLLBACK, UNRECOGNISED_ACTION, UNPARSEABLE,
@@ -163,6 +185,7 @@ FIXTURE_LINES = [
     DEPLOY_TERMINAL_SUCCEEDED, DEPLOY_TERMINAL_SUCCEEDED_JOIN,
     TEARDOWN_TERMINAL_FAILED, TEARDOWN_TERMINAL_FAILED_JOIN,
     DEPLOY_TERMINAL_WATCHER_GAVE_UP, DEPLOY_TERMINAL_WATCHER_GAVE_UP_JOIN,
+    COLLIDING_ACTOR_REAL_USER_DEPLOY,
 ]
 
 _VALID_RETENTION_CONFIG = """
@@ -192,6 +215,23 @@ def _loki(monkeypatch):
     monkeypatch.setattr(audit_events.loki, "raw_runtime_config", _fake_raw_runtime_config)
 
 
+# gate round 1 (codex P2): list_audit_events now ages a stale, never-joined
+# in_flight row using REAL wall-clock time by default (`now_ns=None` ->
+# `time.time_ns()`) against `app.state.operations.ttl_seconds` (3600s).
+# FIXTURE_LINES' own `ts_ns_str` values are `str(i)` -- i.e. a handful of
+# NANOSECONDS after the Unix epoch -- so left unpinned, every existing
+# in_flight fixture row would already read as ~decades stale against any
+# real "now" and every pre-existing in_flight assertion in this file would
+# start failing regardless of what day it is. Freezing "now" here to a
+# small, fixed offset (5s -- far inside the 3600s bound) keeps every
+# EXISTING test's behavior exactly what it was before this round; the two
+# dedicated aging tests below override this per-test to push a row's own
+# age past the bound on purpose.
+@pytest.fixture(autouse=True)
+def _frozen_now(monkeypatch):
+    monkeypatch.setattr(audit_events.time, "time_ns", lambda: 5_000_000_000)
+
+
 def _event_ids(payload) -> set[str]:
     return {e["request_id"] for e in payload["events"]}
 
@@ -207,6 +247,7 @@ def test_operator_not_in_media_engineers_sees_deploy_teardown_rollback_not_switc
         "rid-deploy-1", "rid-deploy-2", "rid-teardown-1", "rid-autorb-1", "rid-autorb-2",
         "rid-deploy-corrupted",
         "rid-deploy-term-1", "rid-teardown-term-1", "rid-deploy-term-2",
+        "rid-collision-1",
     }
 
 
@@ -223,6 +264,7 @@ def test_operator_in_media_engineers_sees_every_covered_row():
         "rid-deploy-1", "rid-deploy-2", "rid-teardown-1", "rid-autorb-1", "rid-autorb-2", "rid-switch-1",
         "rid-deploy-corrupted",
         "rid-deploy-term-1", "rid-teardown-term-1", "rid-deploy-term-2",
+        "rid-collision-1",
     }
 
 
@@ -324,6 +366,60 @@ def test_a_dispatch_row_with_no_terminal_join_at_all_stays_in_flight_never_a_gue
     row = next(e for e in payload["events"] if e["request_id"] == "rid-deploy-1")
     assert row["outcome"]["state"] == "in_flight"
     assert row["outcome"]["state"] != "succeeded"
+
+
+def test_gate_round_1_codex_p1_a_real_user_colliding_with_the_reserved_actor_still_gets_their_row():
+    # codex P1: a genuine user's deploy row, whose actor happens to equal
+    # the reserved system:job-watch literal (role=operator -- a real
+    # user's role can never be "system"), must survive end to end,
+    # classified as an ordinary deploy -- never dropped, never folded into
+    # the join-only machinery.
+    client = _client(OPERATOR_ONLY)
+    payload = client.get("/api/audit/events").json()
+    row = next(e for e in payload["events"] if e["request_id"] == "rid-collision-1")
+    assert row["class"] == "deploy"
+    assert row["actor"] == "system:job-watch"
+    assert row["outcome"]["state"] == "in_flight"
+
+
+def test_gate_round_1_codex_p2_a_stale_never_joined_row_ages_into_the_honest_unknown(monkeypatch):
+    # codex P2: a dispatch row that NEVER receives a terminal join (a
+    # console restart mid-watch, a crashed/cancelled watcher -- from this
+    # read path they are indistinguishable, see _age_stale_in_flight's own
+    # docstring) must stop claiming to still be in flight once it has
+    # provably outlived any watcher that could still be attached to it.
+    # "now" pushed well past ttl_seconds=3600 relative to the fixture
+    # rows' own near-epoch ts_ns -- rid-deploy-1 (DEPLOY, no join) is the
+    # discriminator here.
+    monkeypatch.setattr(audit_events.time, "time_ns", lambda: 10_000 * 1_000_000_000)
+    client = _client(OPERATOR_ONLY)
+    payload = client.get("/api/audit/events").json()
+    row = next(e for e in payload["events"] if e["request_id"] == "rid-deploy-1")
+    assert row["outcome"]["state"] == "unknown"
+    assert row["outcome"]["state"] not in ("in_flight", "succeeded")
+
+
+def test_gate_round_1_codex_p2_inside_the_bound_still_reads_in_flight(monkeypatch):
+    # The other half of the discriminating pair -- proves the aging fix
+    # does not lie in the OTHER direction by making the bound fire
+    # unconditionally. A row still comfortably inside ttl_seconds=3600
+    # (here: 60s old) must keep reading in_flight, unchanged.
+    monkeypatch.setattr(audit_events.time, "time_ns", lambda: 60 * 1_000_000_000)
+    client = _client(OPERATOR_ONLY)
+    payload = client.get("/api/audit/events").json()
+    row = next(e for e in payload["events"] if e["request_id"] == "rid-deploy-1")
+    assert row["outcome"]["state"] == "in_flight"
+
+
+def test_gate_round_1_codex_p2_a_join_resolved_row_is_never_aged_regardless_of_now(monkeypatch):
+    # A row a terminal join already resolved must never be reconsidered by
+    # the age check, no matter how stale it looks -- aging only ever
+    # applies to the "we genuinely don't have an answer" case.
+    monkeypatch.setattr(audit_events.time, "time_ns", lambda: 10_000 * 1_000_000_000)
+    client = _client(OPERATOR_ONLY)
+    payload = client.get("/api/audit/events").json()
+    row = next(e for e in payload["events"] if e["request_id"] == "rid-deploy-term-1")
+    assert row["outcome"] == {"state": "succeeded", "detail": "run_complete"}
 
 
 # ----------------------------------------------------------------------
