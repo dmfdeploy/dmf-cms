@@ -229,7 +229,29 @@ export default function ActivityPanel({ title, explainer = 'inline' }: ActivityP
           narrower, still-real in-process limitation named explicitly
           below (a console restart mid-watch), per the operator ruling
           above: state it, don't just fix the common case and stay
-          silent about the one that isn't. */}
+          silent about the one that isn't.
+          Gate round 3 (codex, tail gate on #419): the staleness check
+          itself (a stuck in_flight row ageing into "outcome unknown"
+          once nothing could plausibly still be watching it — audit_
+          events.py's own _age_stale_in_flight) depends on console-side
+          state that could itself be unavailable (app.state.operations
+          not populated), and that failure mode fails OPEN — skips aging
+          rather than guessing — deliberately, but silently from this
+          surface's own point of view; it was only ever logged
+          server-side. A reader of THIS panel must be able to learn the
+          limitation exists without reading a log — the same standard
+          the sentences above it already meet — so it is named here too,
+          as a standing caveat (this text does not vary per read; the
+          console-restart caveat right before it is stated the identical
+          way, for the identical reason). No new response field: the
+          existing `reason`/`capped` fields either travel only with an
+          empty-events failure shape (`reason`) or already mean something
+          else entirely (`capped` -- the read may be truncated, a
+          different claim), so extending either would either not fit or
+          would misuse a field for a second, unrelated meaning; adding a
+          third would be inventing a new seam this round was told not to
+          build when an existing pattern (an always-present caveat
+          sentence) already says the same thing. */}
       <p className="text-xs text-muted mt-1">
         For deploy and teardown, this lane records the request and any
         refusal after the role and reason checks, and now also
@@ -240,7 +262,11 @@ export default function ActivityPanel({ title, explainer = 'inline' }: ActivityP
         restarts while a job is still being watched, the watch is lost
         and that row can keep reading "dispatched" indefinitely; if
         the watcher gives up without a clean read instead, the row
-        reads "outcome unknown" — never a false success. Switch source
+        reads "outcome unknown" — never a false success. That
+        staleness check itself depends on the console's own internal
+        operation tracking being available; when it isn't, a row can
+        keep reading "dispatched" past the point it would otherwise
+        have aged into "outcome unknown" too. Switch source
         carries a real succeeded or failed outcome immediately at
         dispatch, unlike deploy and teardown, but is subject to the
         same outcome-unknown case as any other record when its outcome
