@@ -553,6 +553,9 @@ describe('clear-for-deployment on the Provision stage (C5)', () => {
     })
     renderSetupPage()
 
+    // dmfdeploy/dmfdeploy#556: the control sits behind the collapsed
+    // "Desired state (expert)" disclosure — open it first, as an operator must.
+    fireEvent.click(await screen.findByText('Desired state (expert)'))
     fireEvent.click(await screen.findByRole('button', { name: 'Clear for deployment' }))
     // Armed; nothing sent yet.
     const textbox = await screen.findByRole('textbox')

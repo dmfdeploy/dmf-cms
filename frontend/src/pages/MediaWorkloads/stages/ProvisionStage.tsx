@@ -1,4 +1,5 @@
 import { useEffect, useLayoutEffect, useState } from 'react'
+import { CalendarCheck, CheckCircle2, HelpCircle, type LucideIcon } from 'lucide-react'
 import { useQueryClient } from '@tanstack/react-query'
 import {
   isOperation,
@@ -13,6 +14,7 @@ import { isValidWorkloadSlug } from '../../../lib/workloadSlug'
 import type { CatalogEntry, ClearForDeploymentResult, MediaWorkload } from '../../../api/types'
 import type { StageActionId, StageState } from '../../../lib/workloadLifecycle'
 import ClearForDeployment from '../ClearForDeployment'
+import { requestedBadge, requestedLabel, REQUESTED_TITLE } from '../stateBadges'
 import StageCard from './StageCard'
 import { JobStatusLine, OperationStatusLine } from './JobProgress'
 import { settleQuery } from '../../../lib/queryState'
@@ -37,6 +39,15 @@ interface EntryTrack {
 }
 
 const EMPTY_TRACK: EntryTrack = { jobId: null, opId: null }
+
+// dmfdeploy/dmfdeploy#556: one icon per REQUESTED-state vocabulary word
+// (stateBadges.ts's requestedLabel) for the default-level Members list.
+// Decorative only (aria-hidden) — the label text is the accessible content.
+const REQUESTED_ICON: Record<string, LucideIcon> = {
+  bootstrapped: CalendarCheck,
+  active: CheckCircle2,
+  unknown: HelpCircle,
+}
 
 export default function ProvisionStage({
   workload,
@@ -197,6 +208,18 @@ export default function ProvisionStage({
   const needsClearing = [...workload.instances]
     .filter((i) => !i.reconcile_pending && i.requested_state === 'bootstrapped')
     .sort((a, b) => a.instance.localeCompare(b.instance))
+  // dmfdeploy/dmfdeploy#556: every member, by REQUESTED state (intent, ADR-0037
+  // — observed state is deliberately NOT shown here, so intent is never read
+  // as running). This is the default-level answer to "where does each member
+  // stand"; the clear control below it moved to the expert tier.
+  const members = [...workload.instances].sort((a, b) => a.instance.localeCompare(b.instance))
+  // The "Desired state" block unmounts while any write is in flight (`!busy`
+  // below) and remounts when it settles, so an uncontrolled <details> would
+  // come back CLOSED after every clear — hiding the very failure/success
+  // lines the block exists to keep visible (GATE-S1-RV3 P2). The stage,
+  // which outlives that gate, owns the open flag instead: closed by default,
+  // and it stays wherever the operator last put it across the remount.
+  const [desiredStateOpen, setDesiredStateOpen] = useState(false)
 
   // umbrella #386 / WP-3 spec B2: THROWS on failure now, deliberately — it
   // used to swallow the rejection here (console.error and nothing else),
@@ -314,39 +337,78 @@ export default function ProvisionStage({
           ))}
         </div>
       )}
-      {mayClear && !busy && needsClearing.length > 0 && (
+      {workload.instances.length > 0 && (
         <div className="mt-4 border-t border-white/5 pt-3">
-          <h3 className="text-xs uppercase tracking-wide text-muted">Desired state</h3>
-          <div className="mt-2 space-y-2">
-            {needsClearing.map((inst) => (
-              <div key={inst.instance} className="flex items-center justify-between gap-3">
-                <span className="font-mono text-xs text-muted">{inst.instance}</span>
-                <ClearForDeployment
-                  instance={inst.instance}
-                  onConfirm={onClearConfirm}
-                  pending={clearMutation.isPending}
-                  failed={clearMutation.isError}
-                />
-              </div>
-            ))}
-          </div>
-          {/* Failure is rendered by the STAGE, so it stays visible after the
-              confirm panel closes. Inside the armed branch it vanished with
-              the panel, which meant a failed write looked like nothing had
-              happened at all (GATE-S1-RV3 P2, item 16). */}
-          {clearMutation.isError && (
-            <p className="mt-2 text-xs text-red-300">
-              The desired state was not recorded — nothing changed. Check your
-              access, then retry.
-            </p>
-          )}
-          {lastClearResult && (
-            <p className="mt-2 text-xs text-green-300">
-              {lastClearResult.instance}: requested state is now {lastClearResult.requested_state} (was{' '}
-              {lastClearResult.previous_state}).
-            </p>
-          )}
+          <h3 className="text-xs uppercase tracking-wide text-muted">Members</h3>
+          <ul className="mt-2 space-y-2">
+            {members.map((inst) => {
+              const Icon = REQUESTED_ICON[inst.requested_state] ?? REQUESTED_ICON.unknown
+              return (
+                <li key={inst.instance} className="flex items-center justify-between gap-3">
+                  <span className="font-mono text-xs text-muted">{inst.instance}</span>
+                  <span
+                    className={`badge text-xs inline-flex items-center gap-1 ${requestedBadge[inst.requested_state] ?? requestedBadge.unknown}`}
+                    title={REQUESTED_TITLE}
+                  >
+                    <Icon className="w-3 h-3" aria-hidden="true" />
+                    {requestedLabel[inst.requested_state] ?? requestedLabel.unknown}
+                  </span>
+                </li>
+              )
+            })}
+          </ul>
         </div>
+      )}
+      {mayClear && !busy && needsClearing.length > 0 && (
+        // dmfdeploy/dmfdeploy#556: the clear-for-deployment control is a
+        // NetBox-intent write that 503s on every deployed env today (#487)
+        // and answers a question the demo path never asks, so the whole
+        // block sits behind a collapsed expert-tier disclosure — the same
+        // <details> convention FinaliseStage's "System details" uses — until
+        // a runtime default/expert toggle exists (#244). The block's inside
+        // is untouched: mutation ownership stays in this stage (GATE-S1-RV2
+        // P1), failure and success lines stay where they were.
+        <details
+          className="mt-4 border-t border-white/5 pt-3 text-muted/70"
+          open={desiredStateOpen}
+          onToggle={(e) => setDesiredStateOpen(e.currentTarget.open)}
+        >
+          <summary className="text-xs cursor-pointer select-none opacity-80 hover:opacity-100">
+            Desired state (expert)
+          </summary>
+          <div className="mt-2">
+            <h3 className="text-xs uppercase tracking-wide text-muted">Desired state</h3>
+            <div className="mt-2 space-y-2">
+              {needsClearing.map((inst) => (
+                <div key={inst.instance} className="flex items-center justify-between gap-3">
+                  <span className="font-mono text-xs text-muted">{inst.instance}</span>
+                  <ClearForDeployment
+                    instance={inst.instance}
+                    onConfirm={onClearConfirm}
+                    pending={clearMutation.isPending}
+                    failed={clearMutation.isError}
+                  />
+                </div>
+              ))}
+            </div>
+            {/* Failure is rendered by the STAGE, so it stays visible after the
+                confirm panel closes. Inside the armed branch it vanished with
+                the panel, which meant a failed write looked like nothing had
+                happened at all (GATE-S1-RV3 P2, item 16). */}
+            {clearMutation.isError && (
+              <p className="mt-2 text-xs text-red-300">
+                The desired state was not recorded — nothing changed. Check your
+                access, then retry.
+              </p>
+            )}
+            {lastClearResult && (
+              <p className="mt-2 text-xs text-green-300">
+                {lastClearResult.instance}: requested state is now {lastClearResult.requested_state} (was{' '}
+                {lastClearResult.previous_state}).
+              </p>
+            )}
+          </div>
+        </details>
       )}
     </StageCard>
   )

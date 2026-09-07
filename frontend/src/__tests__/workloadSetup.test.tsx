@@ -369,6 +369,15 @@ function stageSection(label: string): HTMLElement {
   return heading.closest('[data-step-state]') as HTMLElement
 }
 
+/** dmfdeploy/dmfdeploy#556: the clear-for-deployment control sits behind the
+ *  collapsed "Desired state (expert)" disclosure now, so a test that reaches
+ *  it opens that first — the same act an operator has to perform. (jsdom
+ *  would find the button through a closed <details> anyway; opening it keeps
+ *  these tests honest about the real-browser path.) */
+async function openDesiredState(section: HTMLElement) {
+  fireEvent.click(await within(section).findByText('Desired state (expert)'))
+}
+
 /** Clicks the rail chip for `label` and returns the newly-mounted section.
  *
  *  dmfdeploy#405 FIX ROUND: the parenthetical this docstring used to carry
@@ -763,6 +772,7 @@ describe('a locked step is reachable and explains itself, but a stage control ne
     renderDetail()
     const strip = await findRail()
 
+    await openDesiredState(stageSection('Provision'))
     expect(
       await within(stageSection('Provision')).findByRole('button', { name: 'Clear for deployment' }),
     ).toBeTruthy()
@@ -1825,6 +1835,7 @@ describe('a clear in flight owns the rail like any other write', () => {
     await findRail()
 
     const provision = stageSection('Provision')
+    await openDesiredState(provision)
     const clears = within(provision).getAllByRole('button', { name: 'Clear for deployment' })
     expect(clears).toHaveLength(2)
 
@@ -1867,6 +1878,7 @@ describe('a successful clear closes its own loop', () => {
 
     const before = h.calls.grouped
     const provision = stageSection('Provision')
+    await openDesiredState(provision)
     fireEvent.click(within(provision).getByRole('button', { name: 'Clear for deployment' }))
     fireEvent.change(within(provision).getByRole('textbox'), { target: { value: 'go' } })
     fireEvent.click(within(provision).getByRole('button', { name: 'Confirm' }))
@@ -1911,6 +1923,7 @@ describe("clearing one sibling never strands the other (GATE-S1-RV3 P1)", () => 
     })
     renderDetail()
     await findRail()
+    await openDesiredState(stageSection('Provision'))
     expect(
       within(stageSection('Provision')).getAllByRole('button', { name: 'Clear for deployment' }),
     ).toHaveLength(2)
@@ -1954,6 +1967,7 @@ describe('failure and loop-closure are visible and atomic', () => {
     await findRail()
 
     const provision = stageSection('Provision')
+    await openDesiredState(provision)
     fireEvent.click(within(provision).getByRole('button', { name: 'Clear for deployment' }))
     fireEvent.change(within(provision).getByRole('textbox'), { target: { value: 'go' } })
     fireEvent.click(within(provision).getByRole('button', { name: 'Confirm' }))
@@ -1983,6 +1997,7 @@ describe('failure and loop-closure are visible and atomic', () => {
     await findRail()
 
     const provision = stageSection('Provision')
+    await openDesiredState(provision)
     fireEvent.click(within(provision).getByRole('button', { name: 'Clear for deployment' }))
     fireEvent.change(within(provision).getByRole('textbox'), { target: { value: 'go' } })
     fireEvent.click(within(provision).getByRole('button', { name: 'Confirm' }))
