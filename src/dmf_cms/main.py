@@ -4653,6 +4653,14 @@ def create_app(settings: Settings | None = None, contract: AppContract | None = 
                 loki_configured=settings.loki.configured,
                 role=user.role,
                 groups=user.groups,
+                # gate round 1 (codex P2): the SAME bound the watcher itself
+                # gives up at (_watch_job_operation's own TTL check) — read
+                # off the live store, never a second hardcoded copy of the
+                # same number. No watcher can still be attached to a row
+                # older than this, regardless of why its own terminal write
+                # never arrived (process restart, crash, or cancellation
+                # alike — see _age_stale_in_flight's own docstring).
+                max_in_flight_age_seconds=request.app.state.operations.ttl_seconds,
             )
         except Exception as exc:
             # A bug here must not turn an audit surface into a 500 (Art. 1)

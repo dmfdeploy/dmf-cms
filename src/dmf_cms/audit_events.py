@@ -431,14 +431,35 @@ def _parse_new_format_line(tail: str) -> dict[str, str] | None:
         tail[trailing_marker + len(f"{_TRAILING_FIELD}="):].strip() if trailing_marker is not None else ""
     )
 
+    # dmfdeploy/dmfdeploy#419, gate round 1 (codex P1): `actor` alone is
+    # NOT proof a line is console-authored — main.py's _audit_awx_write
+    # writes actor=%r straight from user.subject, an unvalidated IdP
+    # claim (see that function's own %r-quoting comment). A real user
+    # whose subject happens to equal a reserved actor literal would
+    # otherwise satisfy this check on their own genuine deploy/teardown/
+    # rollback line. `role`, in contrast, genuinely cannot be forged this
+    # way: main.py's security.current_role() maps IdP/dev-login group
+    # membership to exactly one of "viewer"/"operator"/"engineer"/"admin"
+    # (ROLE_ORDER) for EVERY UserIdentity a real request can carry —
+    # "system" is not in that set, and every _audit_awx_write-routed line
+    # carries user.role, never a caller-chosen string. Only the two
+    # hand-assembled emitters (_maybe_auto_trigger_rollback,
+    # _audit_watch_terminal) ever write role=system, both with the actor
+    # literal fixed in the same source line — never user input. Requiring
+    # BOTH fields together is what makes this an unforgeable pairing,
+    # not a second forgeable heuristic layered over the first.
     if values[_TRAILING_FIELD] and not (
-        (values["action"] == "rollback" and values["actor"] == _AUTO_ROLLBACK_ACTOR)
+        (values["action"] == "rollback" and values["actor"] == _AUTO_ROLLBACK_ACTOR and values["role"] == "system")
         # dmfdeploy/dmfdeploy#419: the job-watch terminal-outcome join
         # record extends this same trailing field to a second, narrowly-
         # scoped case — same mechanism, not a second grammar. See
         # main.py's _audit_watch_terminal and this module's own
         # _JOB_WATCH_ACTOR/classify_record.
-        or (values["action"] in ("deploy", "teardown") and values["actor"] == _JOB_WATCH_ACTOR)
+        or (
+            values["action"] in ("deploy", "teardown")
+            and values["actor"] == _JOB_WATCH_ACTOR
+            and values["role"] == "system"
+        )
     ):
         return None
 
@@ -642,25 +663,37 @@ EXCLUDED_DISCLOSURE = (
 )
 
 
-def classify_record(action: str, actor: str) -> str | None:
-    """Map a parsed row's (action, actor) to a closed class key, or None if
-    the action is unrecognised. `rollback` splits by actor BEFORE the table
-    lookup — auto-rollback answers to its parent deploy's gate; an
-    operator-initiated rollback is excluded regardless of who ran it.
+def classify_record(action: str, actor: str, role: str) -> str | None:
+    """Map a parsed row's (action, actor, role) to a closed class key, or
+    None if the action is unrecognised. `rollback` splits by actor+role
+    BEFORE the table lookup — auto-rollback answers to its parent
+    deploy's gate; an operator-initiated rollback is excluded regardless
+    of who ran it.
 
     dmfdeploy/dmfdeploy#419: a job-watch terminal-outcome join record
-    (actor == _JOB_WATCH_ACTOR) is checked first, before either the
-    rollback split or the table lookup, and always returns None — it is
-    never its own row (see this module's own comment on
-    `_JOB_WATCH_ACTOR` and `list_audit_events`' `terminal_by_request_id`
-    join). Checked by actor alone, regardless of action, the same way the
-    rollback split below is checked by actor alone regardless of anything
-    else about the record.
+    (actor == _JOB_WATCH_ACTOR AND role == "system") is checked first,
+    before either the rollback split or the table lookup, and always
+    returns None — it is never its own row (see this module's own
+    comment on `_JOB_WATCH_ACTOR` and `list_audit_events`'
+    `terminal_by_request_id` join).
+
+    gate round 1 (codex P1): `actor` ALONE used to be enough for both
+    checks below — but `actor` is main.py's `_audit_awx_write` writing
+    `user.subject` (an unvalidated IdP claim) verbatim, so a real user
+    whose subject happens to collide with a reserved literal would
+    otherwise have their own genuine row silently reclassified (dropped
+    outright, for job-watch; misclassified into `auto-rollback`'s wider
+    audience, for rollback). `role` closes that: `user.role` can never be
+    "system" for any request-driven line (security.current_role() only
+    ever returns viewer/operator/engineer/admin — see that function's own
+    ROLE_ORDER), so requiring role == "system" alongside the actor
+    literal is what actually makes the pairing unforgeable, not a second
+    heuristic layered on top of the first.
     """
-    if actor == _JOB_WATCH_ACTOR:
+    if actor == _JOB_WATCH_ACTOR and role == "system":
         return None
     if action == "rollback":
-        return "auto-rollback" if actor == _AUTO_ROLLBACK_ACTOR else "rollback"
+        return "auto-rollback" if actor == _AUTO_ROLLBACK_ACTOR and role == "system" else "rollback"
     if action in _CLASS_INFO:
         return action
     return None
@@ -897,6 +930,22 @@ _JOB_TERMINAL_FAILURE_COPY = {
 }
 
 
+def _unknown_outcome() -> dict[str, object]:
+    """The shared 'unknown' outcome-dict shape — factored out so every
+    caller that reaches this verdict (a blank dispatch outcome in
+    `build_outcome`, an unresolved/unrecognised terminal join in
+    `build_terminal_join_outcome`, and a stale never-joined dispatch row
+    in `_age_stale_in_flight` below) renders byte-identical copy, never
+    three independently-drifting near-duplicates of the same sentence."""
+    return {
+        "state": "unknown",
+        "headline": _UNKNOWN_OUTCOME_COPY["headline"],
+        "meaning": _UNKNOWN_OUTCOME_COPY["meaning"],
+        "next_step": _UNKNOWN_OUTCOME_COPY["next_step"],
+        "detail": "",  # shape uniformity, same convention as build_outcome's own unknown branch
+    }
+
+
 def build_terminal_join_outcome(raw_outcome: str) -> dict[str, object]:
     """Resolve a terminal-outcome join record's own `outcome=` field
     (`_audit_watch_terminal`'s compound `<state>[:<l3_outcome>]` token)
@@ -908,13 +957,7 @@ def build_terminal_join_outcome(raw_outcome: str) -> dict[str, object]:
     state_token, _, l3_part = raw_outcome.partition(":")
     result = _TERMINAL_STATE_RESULT.get(state_token, "unknown")
     if result == "unknown":
-        return {
-            "state": "unknown",
-            "headline": _UNKNOWN_OUTCOME_COPY["headline"],
-            "meaning": _UNKNOWN_OUTCOME_COPY["meaning"],
-            "next_step": _UNKNOWN_OUTCOME_COPY["next_step"],
-            "detail": "",  # shape uniformity, same convention as build_outcome's own unknown branch
-        }
+        return _unknown_outcome()
     if result == "succeeded":
         return {"state": "succeeded", "detail": state_token}
     return {
@@ -927,6 +970,49 @@ def build_terminal_join_outcome(raw_outcome: str) -> dict[str, object]:
         # build_outcome's own failed branch.
         "detail": l3_part or state_token,
     }
+
+
+# ----------------------------------------------------------------------
+# Staleness bound (dmfdeploy/dmfdeploy#419, gate round 1, codex P2): a
+# dispatch row with NO terminal join at all is not always the console-
+# restart-lost-the-watch gap the panel's explainer discloses — most of
+# the time it just means the watcher hasn't finished yet. Left unbounded,
+# though, `resolve_outcome_state` returns 'in_flight' FOREVER once no
+# join ever arrives (a lost/crashed/cancelled watcher included — from
+# this read path's point of view those are indistinguishable from a
+# genuinely still-running job, and none of them ever writes a join
+# record), which is exactly the "never silently keep reading dispatched
+# as though that were an ending" failure the work order named.
+#
+# The bound reused here is `OperationStore.ttl_seconds` — main.py's own
+# watcher gives up (TTL timeout) once an op has run this long, so NO
+# watcher can still be genuinely attached to a row older than that,
+# regardless of why its own terminal write never arrived. Passed in by
+# the caller (main.py reads it off the live `app.state.operations`
+# instance, never a second hardcoded copy of the same number) rather than
+# hardcoded here, so this module never needs its own idea of what that
+# bound is.
+def _age_stale_in_flight(
+    outcome: dict[str, object], ts_ns_str: str, now_ns: int, max_in_flight_age_seconds: int | None,
+) -> dict[str, object]:
+    """Downgrade an 'in_flight' outcome to the honest 'unknown' shape once
+    its own row is older than `max_in_flight_age_seconds` — every other
+    outcome (including a join-resolved one) passes through unchanged.
+    `max_in_flight_age_seconds=None` (or an unparseable row timestamp,
+    which should never happen for a row that already parsed successfully
+    but is not trusted to age anything it cannot prove) disables aging
+    entirely, never ages a row it cannot actually measure.
+    """
+    if outcome.get("state") != "in_flight" or max_in_flight_age_seconds is None:
+        return outcome
+    try:
+        row_ns = int(ts_ns_str)
+    except (TypeError, ValueError):
+        return outcome
+    age_seconds = (now_ns - row_ns) / 1_000_000_000
+    if age_seconds <= max_in_flight_age_seconds:
+        return outcome
+    return _unknown_outcome()
 
 
 # ----------------------------------------------------------------------
@@ -948,6 +1034,7 @@ def list_audit_events(
     groups: tuple[str, ...],
     now_ns: int | None = None,
     timeout: float = _DEFAULT_TIMEOUT_SECONDS,
+    max_in_flight_age_seconds: int | None = None,
 ) -> dict[str, object]:
     """The full read: retention window, bounded query, parse, gate, shape.
 
@@ -955,6 +1042,14 @@ def list_audit_events(
     caller (main.py's endpoint) wraps this directly. `reason` distinguishes
     a genuine empty history from "we could not ask" (plan AC 7); `window`
     is a separate, independently-failing axis (plan condition 2).
+
+    `max_in_flight_age_seconds` (dmfdeploy/dmfdeploy#419, gate round 1,
+    codex P2): the caller's own watcher-give-up bound (main.py reads
+    `app.state.operations.ttl_seconds`) — a deploy/teardown row with no
+    terminal join, older than this, ages from 'in_flight' into the honest
+    'unknown' rather than claiming to still be watched forever. See
+    `_age_stale_in_flight`. `None` (the default) disables aging — every
+    existing caller/test that doesn't pass it keeps today's behavior.
     """
     if now_ns is None:
         now_ns = time.time_ns()
@@ -1042,9 +1137,17 @@ def list_audit_events(
     # most recent terminal write should more than one ever exist for the
     # same dispatch (not expected in practice — a watcher runs once per
     # op — but cheap to make correct rather than assumed).
+    #
+    # gate round 1 (codex P1): actor alone is a forgeable field (main.py's
+    # _audit_awx_write writes it straight from user.subject) — a real
+    # user's own genuine deploy/teardown row could otherwise get pulled
+    # into this join source. role == "system" is the unforgeable half of
+    # the pairing (see classify_record's own docstring for why); requiring
+    # both here is what keeps a user-authored row out of this map, not
+    # just out of `events` directly.
     terminal_by_request_id: dict[str, dict[str, str]] = {}
     for _ts, fields in rows:
-        if fields.get("actor") != _JOB_WATCH_ACTOR:
+        if fields.get("actor") != _JOB_WATCH_ACTOR or fields.get("role") != "system":
             continue
         linked = fields.get("linked_request_id", "")
         if not linked or linked in terminal_by_request_id:
@@ -1055,7 +1158,15 @@ def list_audit_events(
     for ts_ns_str, fields in rows:
         action = fields.get("action", "")
         actor = fields.get("actor", "")
-        cls = classify_record(action, actor)
+        # `record_role` (this ROW's own parsed role= field) — deliberately
+        # NOT named `role`, which already means this FUNCTION's own
+        # requesting-user role parameter two lines below (user_passes_gate).
+        # gate round 1 (codex P1): classify_record needs the record's role
+        # too now, to distinguish a genuine system-authored line from a
+        # user-authored one whose actor merely collides with a reserved
+        # literal.
+        record_role = fields.get("role", "")
+        cls = classify_record(action, actor, record_role)
         if cls is None or _CLASS_INFO[cls]["status"] != COVERED:
             continue
         if not user_passes_gate(cls, role=role, groups=groups):
@@ -1074,11 +1185,36 @@ def list_audit_events(
         # see ActivityPanel.tsx). No join found for this row's request_id
         # -> unchanged from before: its own dispatch-time outcome, honest
         # about not yet being confirmed.
+        #
+        # gate round 1 (codex, tightening item): keyed by request_id
+        # alone, this substitutes onto EVERY covered row sharing that
+        # request_id, not just the literal "outcome=dispatched" line —
+        # e.g. an L3 preflight's own capacity-skipped/capacity-override
+        # acceptance row (see the request_id-is-not-a-per-row-identity
+        # comment on `events.append` below). Deliberate, not an oversight:
+        # every row sharing a request_id is a facet of the SAME underlying
+        # operation's progression toward the ONE terminal state the
+        # watcher observes — there is no meaningful sense in which a
+        # preflight's own acceptance row is "still in flight" while the
+        # dispatch row it led to has already succeeded or failed. A
+        # refusal row never reaches here at all (its own outcome already
+        # resolves to 'failed' in build_outcome, and no watcher is ever
+        # attached to a refusal — nothing to join against even if one
+        # existed), so this can never turn a real refusal into a false
+        # success.
         outcome = build_outcome(action, fields.get("outcome", ""))
         if cls in ("deploy", "teardown"):
             terminal_fields = terminal_by_request_id.get(fields.get("request_id", ""))
             if terminal_fields is not None:
                 outcome = build_terminal_join_outcome(terminal_fields.get("outcome", ""))
+            else:
+                # gate round 1 (codex P2): STILL no join for this row —
+                # age it into 'unknown' once it's provably outlived any
+                # watcher that could still be attached to it. A no-op
+                # (returns `outcome` unchanged) whenever state isn't
+                # 'in_flight', the bound wasn't passed, or the row hasn't
+                # aged out yet.
+                outcome = _age_stale_in_flight(outcome, ts_ns_str, now_ns, max_in_flight_age_seconds)
 
         events.append({
             "request_id": fields.get("request_id", ""),
