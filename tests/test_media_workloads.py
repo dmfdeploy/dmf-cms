@@ -730,3 +730,103 @@ def test_list_instances_live_view_uses_configured_allowlists(monkeypatch):
     body = client.get("/api/media-workloads").json()
     inst = {i["instance"]: i for i in body["instances"]}["mxl-x"]
     assert inst["live_view"] is True  # would be False under the default {mxl}
+
+
+# ---------------------------------------------------------------------------
+# umbrella #452 — topology_source_pattern: the declared test pattern a
+# topology-spawned source instance emits, resolved via the SAME loader
+# switch_source.resolve_topology_for_receiver uses (catalog.load_topology_instance).
+# Unit-level against _resolve_topology_source_pattern directly (same convention
+# as _workload_assignment/_derive_workload_lifecycle above): a real tmp_path
+# catalog dir, not a mock, matching test_switch_source.py's own J1_INSTANCE shape.
+# ---------------------------------------------------------------------------
+from pathlib import Path  # noqa: E402
+
+from dmf_cms.media_workloads import _resolve_topology_source_pattern  # noqa: E402
+
+
+def _write_parent_entry(tmp_path: Path, *, key: str = "mxl-videotest-view", topology_ref: str | None = "topology-params.j1.yaml") -> None:
+    lines = [
+        f"key: {key}",
+        'display_name: "Viewer"',
+        'summary: "x"',
+        "ebu:",
+        "  layer: 5",
+        "  media_function_type: view",
+    ]
+    if topology_ref:
+        lines.append(f"topology_ref: {topology_ref}")
+    (tmp_path / f"{key}.yaml").write_text("\n".join(lines) + "\n")
+
+
+_TOPOLOGY_J1 = """\
+topology_params:
+  schema_version: 1
+  target_facility: dmf-example-site
+  sources:
+    - id: source-a
+      flow_id: "5fbec3b1-1b0f-417d-9059-8b94a47197ed"
+      pattern: smpte
+    - id: source-b
+      flow_id: "b0ae9cba-a989-4568-ac96-8bd19272c966"
+      pattern: checkers-8
+  viewer:
+    id: viewer-a
+    source_selection: source-a
+"""
+
+
+def test_topology_source_pattern_resolves_known_id(tmp_path: Path):
+    _write_parent_entry(tmp_path)
+    (tmp_path / "topology-params.j1.yaml").write_text(_TOPOLOGY_J1)
+    assert (
+        _resolve_topology_source_pattern("mxl-videotest-view", "source-a", str(tmp_path))
+        == "smpte"
+    )
+    # Mutation: a DIFFERENT sources[].id resolves its OWN pattern, not a
+    # copy-pasted constant — proves the lookup actually keys on the id.
+    assert (
+        _resolve_topology_source_pattern("mxl-videotest-view", "source-b", str(tmp_path))
+        == "checkers-8"
+    )
+
+
+def test_topology_source_pattern_none_when_parent_key_unmatched(tmp_path: Path):
+    _write_parent_entry(tmp_path)
+    (tmp_path / "topology-params.j1.yaml").write_text(_TOPOLOGY_J1)
+    # No catalog entry named "does-not-exist" — genuinely unresolvable.
+    assert _resolve_topology_source_pattern("does-not-exist", "source-a", str(tmp_path)) is None
+    # Mutation: the SAME source id under the REAL parent key resolves —
+    # proves the None above is the parent-key miss, not a broken source lookup.
+    assert (
+        _resolve_topology_source_pattern("mxl-videotest-view", "source-a", str(tmp_path))
+        == "smpte"
+    )
+
+
+def test_topology_source_pattern_none_when_source_id_unmatched(tmp_path: Path):
+    _write_parent_entry(tmp_path)
+    (tmp_path / "topology-params.j1.yaml").write_text(_TOPOLOGY_J1)
+    # "source-z" is not a sources[].id in this topology instance.
+    assert _resolve_topology_source_pattern("mxl-videotest-view", "source-z", str(tmp_path)) is None
+    # Mutation: a real sources[].id under the SAME parent resolves — proves
+    # the None above is the id mismatch, not a broken parent/topology load.
+    assert (
+        _resolve_topology_source_pattern("mxl-videotest-view", "source-a", str(tmp_path))
+        == "smpte"
+    )
+
+
+def test_topology_source_pattern_none_when_parent_has_no_topology_ref(tmp_path: Path):
+    _write_parent_entry(tmp_path, topology_ref=None)
+    (tmp_path / "topology-params.j1.yaml").write_text(_TOPOLOGY_J1)
+    # The catalog entry exists but carries no topology_ref at all.
+    assert _resolve_topology_source_pattern("mxl-videotest-view", "source-a", str(tmp_path)) is None
+    # Mutation: adding topology_ref back (same entry, same source id) now
+    # resolves — proves the None above is the missing-topology_ref case,
+    # not e.g. a typo'd key that would ALSO fail the earlier test.
+    _write_parent_entry(tmp_path, topology_ref="topology-params.j1.yaml")
+    assert (
+        _resolve_topology_source_pattern("mxl-videotest-view", "source-a", str(tmp_path))
+        == "smpte"
+    )
