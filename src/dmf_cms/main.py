@@ -2142,6 +2142,42 @@ def _audit_watch_terminal(
     )
 
 
+def _resolve_in_flight_age_bound(request: Request) -> int | None:
+    """dmfdeploy/dmfdeploy#419, gate round 2 (codex F2): the /api/audit/
+    events endpoint's own `max_in_flight_age_seconds` bound, resolved HERE
+    — outside that endpoint's broad `except Exception` — so a missing
+    `app.state.operations` can never fall into it. That store only exists
+    once the app's ASGI lifespan has actually run (see test_audit_events_
+    endpoint.py's own `_client()` helper for the one place that wasn't
+    already true); a TestClient invoked without it, or a genuinely failed/
+    partial startup, would otherwise raise AttributeError reading
+    `.ttl_seconds` mid-request, and the endpoint's generic handler would
+    mislabel that as ``reason="loki-unreachable"`` — a real, working Loki
+    read reported to the operator as if Loki itself were down, the exact
+    "surface stating something untrue about why it cannot show you
+    something" failure this whole issue exists to remove.
+
+    Fails OPEN (returns None, disabling staleness aging for this one
+    read) rather than closed (aging every in_flight row unconditionally):
+    fail-closed would actively mislabel a fresh, genuinely-still-running
+    dispatch as "outcome unknown" — a STRONGER false claim than simply
+    not aging a stale one this one time. Never silent either way: logged
+    at ERROR, distinctly NOT as a Loki fault. The events themselves are
+    still read and returned completely normally regardless — only the
+    staleness-aging refinement degrades.
+    """
+    operations = getattr(request.app.state, "operations", None)
+    if operations is None:
+        logger.error(
+            "audit events: app.state.operations is unavailable (lifespan "
+            "never ran, or startup failed/incomplete) — in-flight "
+            "staleness aging is skipped for this read; this is NOT a "
+            "Loki fault, and real audit rows are still read normally"
+        )
+        return None
+    return operations.ttl_seconds
+
+
 async def _watch_job_operation(app: FastAPI, operation_id: str, job_id: int, action: str, key: str) -> None:
     """Poll an AWX job to its terminal state and resolve the operation (umbrella #202 WP2).
 
@@ -4646,6 +4682,17 @@ def create_app(settings: Settings | None = None, contract: AppContract | None = 
         user = effective_user(request.session)
         if user is None:
             return JSONResponse({"error": "unauthorized"}, status_code=401)
+        # gate round 1 (codex P2): the SAME bound the watcher itself gives
+        # up at (_watch_job_operation's own TTL check) — read off the live
+        # store, never a second hardcoded copy of the same number. No
+        # watcher can still be attached to a row older than this,
+        # regardless of why its own terminal write never arrived (process
+        # restart, crash, or cancellation alike — see _age_stale_in_flight's
+        # own docstring). gate round 2 (codex F2): resolved BEFORE the
+        # try/except below, via its own dedicated helper — see
+        # _resolve_in_flight_age_bound's own docstring for why a missing
+        # app.state.operations must never fall into that handler.
+        max_in_flight_age_seconds = _resolve_in_flight_age_bound(request)
         try:
             payload = await run_in_threadpool(
                 audit_events.list_audit_events,
@@ -4653,14 +4700,7 @@ def create_app(settings: Settings | None = None, contract: AppContract | None = 
                 loki_configured=settings.loki.configured,
                 role=user.role,
                 groups=user.groups,
-                # gate round 1 (codex P2): the SAME bound the watcher itself
-                # gives up at (_watch_job_operation's own TTL check) — read
-                # off the live store, never a second hardcoded copy of the
-                # same number. No watcher can still be attached to a row
-                # older than this, regardless of why its own terminal write
-                # never arrived (process restart, crash, or cancellation
-                # alike — see _age_stale_in_flight's own docstring).
-                max_in_flight_age_seconds=request.app.state.operations.ttl_seconds,
+                max_in_flight_age_seconds=max_in_flight_age_seconds,
             )
         except Exception as exc:
             # A bug here must not turn an audit surface into a 500 (Art. 1)

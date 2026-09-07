@@ -446,8 +446,15 @@ def _parse_new_format_line(tail: str) -> dict[str, str] | None:
     # hand-assembled emitters (_maybe_auto_trigger_rollback,
     # _audit_watch_terminal) ever write role=system, both with the actor
     # literal fixed in the same source line — never user input. Requiring
-    # BOTH fields together is what makes this an unforgeable pairing,
-    # not a second forgeable heuristic layered over the first.
+    # BOTH fields together closes the specific gap an ordinary user's own
+    # unvalidated IdP claim could otherwise reach — a stronger property
+    # than actor alone, not a second forgeable heuristic layered over the
+    # first. Not an unconditional guarantee, though (gate round 2, codex
+    # F1): `role` reaches this reader only via the session cookie
+    # Starlette signs — genuinely tamper-evident to an ordinary user, but
+    # only for as long as session integrity actually holds end to end.
+    # That is a platform-level property this module has no way to verify
+    # from here, and it is not this fix's job to audit it.
     if values[_TRAILING_FIELD] and not (
         (values["action"] == "rollback" and values["actor"] == _AUTO_ROLLBACK_ACTOR and values["role"] == "system")
         # dmfdeploy/dmfdeploy#419: the job-watch terminal-outcome join
@@ -687,8 +694,14 @@ def classify_record(action: str, actor: str, role: str) -> str | None:
     "system" for any request-driven line (security.current_role() only
     ever returns viewer/operator/engineer/admin — see that function's own
     ROLE_ORDER), so requiring role == "system" alongside the actor
-    literal is what actually makes the pairing unforgeable, not a second
-    heuristic layered on top of the first.
+    literal closes that specific gap rather than layering a second
+    heuristic on top of the first.
+
+    gate round 2 (codex F1): this still depends on the session cookie's
+    own integrity — `role` reaches here only via whatever Starlette's
+    signed session carried, so the property above holds only for as long
+    as that signing actually resists tampering end to end. Not this
+    function's concern to verify, and not this fix's to harden further.
     """
     if actor == _JOB_WATCH_ACTOR and role == "system":
         return None
@@ -1141,10 +1154,11 @@ def list_audit_events(
     # gate round 1 (codex P1): actor alone is a forgeable field (main.py's
     # _audit_awx_write writes it straight from user.subject) — a real
     # user's own genuine deploy/teardown row could otherwise get pulled
-    # into this join source. role == "system" is the unforgeable half of
-    # the pairing (see classify_record's own docstring for why); requiring
-    # both here is what keeps a user-authored row out of this map, not
-    # just out of `events` directly.
+    # into this join source. role == "system" is what closes that gap
+    # (see classify_record's own docstring for why, and its gate round 2
+    # caveat on what this still depends on); requiring both here is what
+    # keeps a user-authored row out of this map, not just out of `events`
+    # directly.
     terminal_by_request_id: dict[str, dict[str, str]] = {}
     for _ts, fields in rows:
         if fields.get("actor") != _JOB_WATCH_ACTOR or fields.get("role") != "system":
