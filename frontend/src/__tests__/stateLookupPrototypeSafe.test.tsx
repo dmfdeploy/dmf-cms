@@ -73,6 +73,7 @@ describe('review finding PR #144: state-map lookups must be own-property, never 
       name: 'studio-a',
       lifecycle: 'provision',
       health: 'ok',
+      progress: { designed: 1, provisioned: 0, total: 1 },
       instances: [member({ instance: 'mxl-a', requested_state: 'constructor' })],
       functions: [{ function_key: 'crosspoint', count: 1, running: 0, reconcile_pending: 0 }],
     }

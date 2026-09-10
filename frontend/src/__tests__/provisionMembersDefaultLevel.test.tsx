@@ -52,9 +52,13 @@ function member(overrides: Partial<Member>): Member {
 const WORKLOAD: MediaWorkload = {
   slug: 'studio-a',
   name: 'studio-a',
-  lifecycle: 'provision',
-  health: 'ok',
-  instances: [
+    lifecycle: 'provision',
+    health: 'ok',
+    // These values deliberately disagree with the two local rows.  The
+    // heading must render the NetBox-backed API progress, never reconstruct
+    // it from requested_state in the browser.
+    progress: { designed: 9, provisioned: 5, total: 9 },
+    instances: [
     member({ instance: 'mxl-b', requested_state: 'active', observed_state: 'running' }),
     member({ instance: 'mxl-a', requested_state: 'bootstrapped', observed_state: 'unknown' }),
   ],
@@ -99,7 +103,7 @@ describe('dmfdeploy/dmfdeploy#556: Provision default surface shows requested-sta
 
     const list = screen.getByRole('heading', {
       level: 3,
-      name: /^Media Function Instances — \d+ of \d+ provisioned$/,
+      name: 'Media Function Instances — 5 of 9 provisioned',
     }).nextElementSibling as HTMLElement
     const rows = within(list).getAllByRole('listitem')
     expect(rows.map((r) => r.textContent)).toEqual(['mxl-aplanned', 'mxl-bcleared to run'])

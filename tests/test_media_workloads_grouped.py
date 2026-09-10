@@ -160,6 +160,7 @@ def test_grouped_basic_workload_grouping(monkeypatch):
     assert "unassigned" in slugs
 
     videotest = next(w for w in result["workloads"] if w["slug"] == "videotest")
+    assert videotest["progress"] == {"designed": 2, "provisioned": 2, "total": 2}
     assert len(videotest["instances"]) == 2
     instance_names = {i["instance"] for i in videotest["instances"]}
     assert instance_names == {"mxl-videotestsrc", "mxl-videotest-view"}

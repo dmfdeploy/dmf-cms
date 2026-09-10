@@ -69,7 +69,9 @@ export default function DesignStage({
       <div className="space-y-4">
         <div>
           <h3 className="text-xs uppercase tracking-wide text-muted">
-            {workload.instances.length} element{workload.instances.length === 1 ? '' : 's'} designed
+            {workload.progress
+              ? `${workload.progress.designed} element${workload.progress.designed === 1 ? '' : 's'} designed`
+              : 'Design progress unavailable'}
           </h3>
           {/* fix-round 5: named ONCE at the section level — a failed catalog
               read misses EVERY join below, so accusing each function
