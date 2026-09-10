@@ -202,6 +202,27 @@ class Operation:
     # an API response body (that disclosure IS the vulnerability this
     # field closes).
     purge_tenant_scope: tuple[str, ...] | None = None
+    # dmfdeploy/dmfdeploy#560, round 4 (lkirc): a TRUSTED, dispatch-time-only
+    # record of "this rollback op was actually auto-dispatched by
+    # ``_maybe_auto_trigger_rollback``" — never re-derived from
+    # ``initiator``. The prior code compared ``initiator ==
+    # "system:auto-rollback"`` to decide whether a rollback's terminal
+    # outcome belongs in Activity; ``initiator`` is user-supplied on a
+    # MANUAL rollback (main.py's ``api_run_rollback`` sets it to
+    # ``user.subject``), and subjects are not a reserved namespace — an
+    # operator subject that happens to collide with the system literal
+    # would get its own manual rollback misread as automatic. Boolean, not
+    # a string/enum: exactly one audited capability, fail-closed default
+    # (False) so anything that constructs an ``Operation`` without
+    # explicitly asserting it is correctly untrusted. Set ONLY on the one
+    # call that creates the automatic rollback Operation (main.py
+    # ``_maybe_auto_trigger_rollback``'s ``get_or_create`` call, ``created``
+    # branch) — never on a reattach, and never flipped after creation, so
+    # it rides with whichever dispatch actually created the op. Internal
+    # only: deliberately excluded from ``to_dict()`` below, the same
+    # posture as ``purge_tenant_scope`` above — nothing about how an
+    # operation is presented to an operator should depend on this bit.
+    auto_rollback_dispatch: bool = False
     # dmfdeploy/dmfdeploy#390 (Phase 1, "the throbber"): the latest DMF_L3_
     # MILESTONE token observed for this op, RAW (main.py's
     # _L3_MILESTONE_ORDER/_fetch_l3_milestone_from_events) — a best-effort,
@@ -272,6 +293,7 @@ class OperationStore:
         initial_state: OperationState = OperationState.WAKING,
         request_id: str | None = None,
         initiator: str | None = None,
+        auto_rollback_dispatch: bool = False,
     ) -> Operation:
         """Create a new operation.
 
@@ -281,6 +303,8 @@ class OperationStore:
             initial_state: Initial state (default: WAKING)
             request_id: C5 request_id minted at dispatch (#202 WP2)
             initiator: Dispatching user's subject (#202 WP2)
+            auto_rollback_dispatch: trusted auto-dispatch provenance
+                (#560 round 4) — see ``Operation.auto_rollback_dispatch``
 
         Returns:
             Newly created Operation
@@ -296,6 +320,7 @@ class OperationStore:
                 state=initial_state,
                 request_id=request_id,
                 initiator=initiator,
+                auto_rollback_dispatch=auto_rollback_dispatch,
                 created_at=now,
                 updated_at=now,
             )
@@ -345,13 +370,15 @@ class OperationStore:
         initial_state: OperationState = OperationState.WAKING,
         request_id: str | None = None,
         initiator: str | None = None,
+        auto_rollback_dispatch: bool = False,
     ) -> tuple[Operation, bool]:
         """Atomically find an active operation or create a new one.
 
         This is the atomic dedupe primitive: under a single lock, check if
         a non-terminal operation exists for (action, target). If yes, return
-        it (request_id/initiator are NOT overwritten — they belong to the
-        original dispatch). If no, create a new one and return it.
+        it (request_id/initiator/auto_rollback_dispatch are NOT overwritten
+        — they belong to the original dispatch). If no, create a new one
+        and return it.
 
         Args:
             action: Operation type (launch|deploy|teardown|rollback)
@@ -359,6 +386,9 @@ class OperationStore:
             initial_state: Initial state for new operation (default: WAKING)
             request_id: C5 request_id, set only if a new op is created
             initiator: Dispatching user's subject, set only if created
+            auto_rollback_dispatch: trusted auto-dispatch provenance
+                (#560 round 4), set only if a new op is created — see
+                ``Operation.auto_rollback_dispatch``
 
         Returns:
             Tuple of (operation, created) where created is True if a new
@@ -384,6 +414,7 @@ class OperationStore:
                 state=initial_state,
                 request_id=request_id,
                 initiator=initiator,
+                auto_rollback_dispatch=auto_rollback_dispatch,
                 created_at=now,
                 updated_at=now,
             )
@@ -399,6 +430,7 @@ class OperationStore:
         request_id: str | None = None,
         initiator: str | None = None,
         purge_tenant_scope: tuple[str, ...] | None = None,
+        auto_rollback_dispatch: bool = False,
     ) -> tuple[Operation | None, bool, Operation | None]:
         """Atomically find/create an operation, exclusive of conflicting actions.
 
@@ -419,6 +451,9 @@ class OperationStore:
             purge_tenant_scope: umbrella #347, FIX-A2b.8 — the finalise-purge
                 caller's tenant scope, set only if a new op is created (never
                 on reattach); see ``Operation.purge_tenant_scope``
+            auto_rollback_dispatch: trusted auto-dispatch provenance
+                (#560 round 4), set only if a new op is created — see
+                ``Operation.auto_rollback_dispatch``
 
         Returns:
             Tuple of (operation, created, conflict):
@@ -452,6 +487,7 @@ class OperationStore:
                 request_id=request_id,
                 initiator=initiator,
                 purge_tenant_scope=purge_tenant_scope,
+                auto_rollback_dispatch=auto_rollback_dispatch,
                 created_at=now,
                 updated_at=now,
             )

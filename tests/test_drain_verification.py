@@ -137,8 +137,11 @@ def _catalog(monkeypatch):
 def test_A1_eligible_auto_rollback_drained_upgrades_to_run_complete_and_replaces_its_audit_outcome(monkeypatch, caplog):
     app, ops_store = _fake_app()
     _seed_run(ops_store)
+    # #560 round 4: auto_rollback_dispatch=True — the trusted flag, not
+    # just the "system:auto-rollback" initiator string.
     op = ops_store.create(
         "rollback", RUN_ID, request_id="rid-auto-rollback", initiator="system:auto-rollback",
+        auto_rollback_dispatch=True,
     )
 
     monkeypatch.setattr(main, "get_job", lambda **k: {"status": "successful", "started": "t0", "finished": "t1"})

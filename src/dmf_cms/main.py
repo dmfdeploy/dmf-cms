@@ -2084,7 +2084,7 @@ async def _verify_drain_and_finalize(app: FastAPI, operation_id: str, run_id: st
                         _audit_watch_terminal(
                             "rollback", completed_op.target, completed_op.request_id,
                             OperationState.RUN_COMPLETE, "rollback_complete",
-                            is_auto_rollback=completed_op.initiator == "system:auto-rollback",
+                            is_auto_rollback=completed_op.auto_rollback_dispatch,
                         )
                     logger.info(
                         "drain: monitoring surface confirmed drained for operation %s (run %s)",
@@ -2383,7 +2383,7 @@ async def _watch_job_operation(app: FastAPI, operation_id: str, job_id: int, act
                 # argument here.
                 _audit_watch_terminal(
                     action, key, op.request_id, OperationState.RUN_STATUS_UNKNOWN, None,
-                    is_auto_rollback=op.initiator == "system:auto-rollback",
+                    is_auto_rollback=op.auto_rollback_dispatch,
                 )
                 return
 
@@ -2440,7 +2440,7 @@ async def _watch_job_operation(app: FastAPI, operation_id: str, job_id: int, act
                     # a DIFFERENT one for what gets asserted to a reader.
                     _audit_watch_terminal(
                         action, key, op.request_id, OperationState.RUN_STATUS_UNKNOWN, None,
-                        is_auto_rollback=op.initiator == "system:auto-rollback",
+                        is_auto_rollback=op.auto_rollback_dispatch,
                     )
                     return
                 await asyncio.sleep(poll_interval)
@@ -2557,7 +2557,7 @@ async def _watch_job_operation(app: FastAPI, operation_id: str, job_id: int, act
                             _spawn_drain_verification(app, operation_id, key)
                     _audit_watch_terminal(
                         action, key, op.request_id, ops_store.get(operation_id).state, outcome_token,
-                        is_auto_rollback=op.initiator == "system:auto-rollback",
+                        is_auto_rollback=op.auto_rollback_dispatch,
                     )
                     return
 
@@ -2689,7 +2689,7 @@ async def _watch_job_operation(app: FastAPI, operation_id: str, job_id: int, act
         # unconditionally RUN_STATUS_UNKNOWN regardless of `give_up_state`.
         _audit_watch_terminal(
             action, key, op.request_id, OperationState.RUN_STATUS_UNKNOWN, None,
-            is_auto_rollback=op.initiator == "system:auto-rollback",
+            is_auto_rollback=op.auto_rollback_dispatch,
         )
 
 
@@ -2763,6 +2763,7 @@ async def _maybe_auto_trigger_rollback(app: FastAPI, operation_id: str, key: str
     rollback_op, created = ops_store.get_or_create(
         action="rollback", target=run_id,
         request_id=fresh_request_id, initiator="system:auto-rollback",
+        auto_rollback_dispatch=True,
     )
 
     # umbrella dmf-cms#108 fix-round 2: run_id's provenance was checked, not
