@@ -102,6 +102,11 @@ AUTO_ROLLBACK_TERMINAL = _line(
     target="run-123", reason="job watch: rollback on run-123 reached terminal state run_complete",
     outcome="run_complete:rollback_complete", linked_request_id="rid-autorb-1",
 )
+AUTO_ROLLBACK_INITIAL_TERMINAL = _line(
+    action="rollback", actor="system:job-watch", role="system", request_id="rid-autorb-1-initial-watch",
+    target="run-123", reason="job watch: rollback on run-123 reached terminal state rollback_incomplete",
+    outcome="rollback_incomplete:rollback_incomplete", linked_request_id="rid-autorb-1",
+)
 AUTO_ROLLBACK_UNKNOWN = _line(
     action="rollback", actor="system:auto-rollback", role="system", request_id="rid-autorb-3",
     target="run-456", reason="auto: deploy wl-c failed after start (failed_rollback_required)",
@@ -294,7 +299,8 @@ TEARDOWN_RUN_4_TERMINAL_JOIN = _line(
 
 FIXTURE_LINES = [
     DEPLOY, DEPLOY_REFUSED, TEARDOWN, SWITCH_SOURCE, AUTO_ROLLBACK, AUTO_ROLLBACK_ORPHAN,
-    AUTO_ROLLBACK_TERMINAL, AUTO_ROLLBACK_UNKNOWN, AUTO_ROLLBACK_UNKNOWN_TERMINAL,
+    AUTO_ROLLBACK_INITIAL_TERMINAL, AUTO_ROLLBACK_TERMINAL,
+    AUTO_ROLLBACK_UNKNOWN, AUTO_ROLLBACK_UNKNOWN_TERMINAL,
     FINALISE_PURGE, LAUNCH, VERIFY_DRAIN, OPERATOR_ROLLBACK, UNRECOGNISED_ACTION, UNPARSEABLE,
     DEPLOY_BLANK_OUTCOME,
     DEPLOY_TERMINAL_SUCCEEDED, DEPLOY_TERMINAL_SUCCEEDED_JOIN,

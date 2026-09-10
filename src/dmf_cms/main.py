@@ -2079,6 +2079,13 @@ async def _verify_drain_and_finalize(app: FastAPI, operation_id: str, run_id: st
                 # A forged line does not need to originate from an audit
                 # call site to read as one once it is on the same stream.
                 if _mark_drain_verified(ops_store, operation_id, run_id):
+                    completed_op = ops_store.get(operation_id)
+                    if completed_op is not None:
+                        _audit_watch_terminal(
+                            "rollback", completed_op.target, completed_op.request_id,
+                            OperationState.RUN_COMPLETE, "rollback_complete",
+                            is_auto_rollback=completed_op.initiator == "system:auto-rollback",
+                        )
                     logger.info(
                         "drain: monitoring surface confirmed drained for operation %s (run %s)",
                         operation_id, _sanitize_audit_field(run_id),
