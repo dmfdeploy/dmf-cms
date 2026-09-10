@@ -91,6 +91,7 @@ from __future__ import annotations
 
 import functools
 import hashlib
+import importlib.metadata
 import json
 import logging
 import re
@@ -3464,6 +3465,10 @@ def create_app(settings: Settings | None = None, contract: AppContract | None = 
                 "auth_mode": "oidc" if settings.oidc.configured else "dev-login",
             }
         )
+
+    @app.get("/api/version", include_in_schema=False)
+    async def version() -> JSONResponse:
+        return JSONResponse({"version": importlib.metadata.version("dmf-cms")})
 
     @app.get("/auth/login", response_class=HTMLResponse, name="login")
     async def login(request: Request):
