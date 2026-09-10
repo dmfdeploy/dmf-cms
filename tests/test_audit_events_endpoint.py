@@ -107,6 +107,16 @@ AUTO_ROLLBACK_INITIAL_TERMINAL = _line(
     target="run-123", reason="job watch: rollback on run-123 reached terminal state rollback_incomplete",
     outcome="rollback_incomplete:rollback_incomplete", linked_request_id="rid-autorb-1",
 )
+AUTO_ROLLBACK_ALREADY_IN_PROGRESS = _line(
+    action="rollback", actor="system:auto-rollback", role="system", request_id="rid-autorb-existing",
+    target="run-existing", reason="auto: rollback already in progress", outcome="already-in-progress",
+    linked_request_id="rid-deploy-1",
+)
+AUTO_ROLLBACK_ALREADY_IN_PROGRESS_TERMINAL = _line(
+    action="rollback", actor="system:job-watch", role="system", request_id="rid-autorb-existing-watch",
+    target="run-existing", reason="job watch: rollback on run-existing reached terminal state run_complete",
+    outcome="run_complete:rollback_complete", linked_request_id="rid-autorb-existing",
+)
 AUTO_ROLLBACK_UNKNOWN = _line(
     action="rollback", actor="system:auto-rollback", role="system", request_id="rid-autorb-3",
     target="run-456", reason="auto: deploy wl-c failed after start (failed_rollback_required)",
@@ -300,6 +310,7 @@ TEARDOWN_RUN_4_TERMINAL_JOIN = _line(
 FIXTURE_LINES = [
     DEPLOY, DEPLOY_REFUSED, TEARDOWN, SWITCH_SOURCE, AUTO_ROLLBACK, AUTO_ROLLBACK_ORPHAN,
     AUTO_ROLLBACK_INITIAL_TERMINAL, AUTO_ROLLBACK_TERMINAL,
+    AUTO_ROLLBACK_ALREADY_IN_PROGRESS, AUTO_ROLLBACK_ALREADY_IN_PROGRESS_TERMINAL,
     AUTO_ROLLBACK_UNKNOWN, AUTO_ROLLBACK_UNKNOWN_TERMINAL,
     FINALISE_PURGE, LAUNCH, VERIFY_DRAIN, OPERATOR_ROLLBACK, UNRECOGNISED_ACTION, UNPARSEABLE,
     DEPLOY_BLANK_OUTCOME,
@@ -373,7 +384,7 @@ def test_operator_not_in_media_engineers_sees_deploy_teardown_rollback_not_switc
     payload = client.get("/api/audit/events").json()
     assert _event_ids(payload) == {
         "rid-deploy-1", "rid-deploy-2", "rid-teardown-1", "rid-autorb-1", "rid-autorb-2",
-        "rid-autorb-3",
+        "rid-autorb-3", "rid-autorb-existing",
         "rid-deploy-corrupted",
         "rid-deploy-term-1", "rid-teardown-term-1", "rid-deploy-term-2",
         "rid-collision-1", "rid-preflight-1",
@@ -395,7 +406,7 @@ def test_operator_in_media_engineers_sees_every_covered_row():
     payload = client.get("/api/audit/events").json()
     assert _event_ids(payload) == {
         "rid-deploy-1", "rid-deploy-2", "rid-teardown-1", "rid-autorb-1", "rid-autorb-2", "rid-switch-1",
-        "rid-autorb-3",
+        "rid-autorb-3", "rid-autorb-existing",
         "rid-deploy-corrupted",
         "rid-deploy-term-1", "rid-teardown-term-1", "rid-deploy-term-2",
         "rid-collision-1", "rid-preflight-1",
@@ -454,6 +465,14 @@ def test_auto_rollback_terminal_join_renders_the_rollback_outcome():
     row = next(e for e in payload["events"] if e["request_id"] == "rid-autorb-1")
     assert row["outcome"] == {"state": "succeeded", "detail": "run_complete"}
     assert "rid-autorb-1-watch" not in _event_ids(payload)
+
+
+def test_auto_rollback_already_in_progress_joins_the_existing_operations_terminal_outcome():
+    client = _client(OPERATOR_ONLY)
+    payload = client.get("/api/audit/events").json()
+    row = next(e for e in payload["events"] if e["request_id"] == "rid-autorb-existing")
+    assert row["outcome"] == {"state": "succeeded", "detail": "run_complete"}
+    assert "rid-autorb-existing-watch" not in _event_ids(payload)
 
 
 def test_auto_rollback_with_unobserved_terminal_outcome_reads_unknown():
