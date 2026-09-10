@@ -11,7 +11,7 @@
  * `lookupState` (stateBadges.ts, own-property guard) is the fix. This file
  * pins (a) the helper's behaviour directly against every poisonous key, and
  * (b) that a member whose `requested_state` IS `'constructor'` still renders
- * the `unknown` label in ProvisionStage's default Members list — no React
+ * the `unknown` label in ProvisionStage's default instance list — no React
  * error/warning about rendering a function.
  */
 import { afterEach, describe, expect, it, vi } from 'vitest'
@@ -91,7 +91,10 @@ describe('review finding PR #144: state-map lookups must be own-property, never 
       </QueryClientProvider>,
     )
 
-    const list = screen.getByRole('heading', { level: 3, name: 'Members' }).nextElementSibling as HTMLElement
+    const list = screen.getByRole('heading', {
+      level: 3,
+      name: /^Media Function Instances — \d+ of \d+ provisioned$/,
+    }).nextElementSibling as HTMLElement
     expect(within(list).getByText('unknown')).toBeTruthy()
 
     // The exact failure mode this fix closes: a function value (Object.prototype.constructor)
