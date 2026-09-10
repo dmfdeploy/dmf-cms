@@ -486,7 +486,9 @@ describe('Facility Detail page states', () => {
   it('loaded renders the capacity table with the committed/allocatable wording, never used/free', async () => {
     renderDetail('dmf-lab', { '/api/facility/dmf-lab/detail': detailPayload() })
     expect(await screen.findByText('Allocatable')).toBeTruthy()
-    expect(screen.getByText('Requests committed')).toBeTruthy()
+    const committedHeading = screen.getByRole('columnheader', { name: 'Requests committed' })
+    expect(committedHeading).toBeTruthy()
+    expect(committedHeading.className).toContain('leading-tight')
     expect(screen.queryByText(/\bUsed\b/)).toBeNull()
     expect(screen.queryByText(/\bFree\b/)).toBeNull()
     // The formatted figures themselves.
