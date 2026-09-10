@@ -186,6 +186,7 @@ export default function InstanceLiveModal({
       role="dialog"
       aria-modal="true"
       aria-labelledby="live-modal-title"
+      data-testid="instance-live-modal"
     >
       <div
         ref={panelRef}

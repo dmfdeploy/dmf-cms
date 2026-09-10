@@ -696,6 +696,7 @@ function TemplatePicker({
                   type="button"
                   className="btn btn-secondary btn-sm shrink-0"
                   onClick={() => onSelect(entry.key)}
+                  data-testid={`catalog-tile-${entry.key}`}
                 >
                   Use this template
                 </button>
@@ -984,6 +985,7 @@ function ProvisionSection({
               pending={pending}
               onConfirm={onConfirm}
               onCancel={onCancel}
+              confirmTestId="confirm-deploy"
             />
           </div>
         )}

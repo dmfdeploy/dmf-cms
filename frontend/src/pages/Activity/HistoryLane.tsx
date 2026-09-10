@@ -86,7 +86,7 @@ export default function HistoryLane() {
   const isLoading = jobs.isLoading || commits.isLoading || pulls.isLoading
 
   return (
-    <div>
+    <div data-testid="activity-history-lane">
       {/* Facility activity (dmfdeploy/dmfdeploy#496) — server-side, over
           Loki, gated per record class. The durable answer to "what
           happened" the rest of this page is built around: every operator

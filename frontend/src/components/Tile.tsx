@@ -97,6 +97,7 @@ export default function Tile({
   ariaLabel,
   children,
   actions,
+  testId,
 }: {
   to: string
   ariaLabel: string
@@ -109,9 +110,13 @@ export default function Tile({
    *  inside it. Omit (or leave undefined) to render nothing — the "introduce
    *  it empty" state this package ships. */
   actions?: React.ReactNode
+  /** umbrella #571: stable selector for this tile's root, on the demo click
+   *  path. Optional — existing callers that don't need a hook here are
+   *  unaffected. */
+  testId?: string
 }) {
   return (
-    <div className="group relative flex aspect-square flex-col">
+    <div className="group relative flex aspect-square flex-col" data-testid={testId}>
       <Link
         to={to}
         aria-label={ariaLabel}

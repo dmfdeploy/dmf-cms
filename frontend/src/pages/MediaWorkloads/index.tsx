@@ -305,7 +305,7 @@ export default function MediaWorkloads() {
           ) : healthyEmpty ? (
             <EmptyWorkloadsCanvas />
           ) : (
-            <CanvasGrid itemCount={workloads.length}>
+            <CanvasGrid itemCount={workloads.length} testId="workload-grid">
               {workloads.map((wl) => (
                 <WorkloadEntryTile
                   key={wl.slug}
@@ -449,6 +449,7 @@ function WorkloadEntryTile({
     <Tile
       to={workloadHomePath(workload.slug)}
       ariaLabel={`Open ${workload.name} workload detail`}
+      testId={`workload-tile-${workload.slug}`}
     >
       {rep ? (
         <LivePreviewBox

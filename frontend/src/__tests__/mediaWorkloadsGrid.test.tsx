@@ -335,6 +335,20 @@ describe('grid: deterministic order + display-name join', () => {
   })
 })
 
+// umbrella #571: the demo click path needs a stable selector contract,
+// independent of visible text/role. Two of its stops are the list page's
+// grid and per-workload tile.
+describe('stable data-testid contract (umbrella #571)', () => {
+  it('carries data-testid on the workload grid and each workload tile, keyed by slug', async () => {
+    mkFetch({})
+    renderListPage()
+
+    await screen.findByText('test')
+    expect(screen.getByTestId('workload-grid')).toBeTruthy()
+    expect(screen.getByTestId('workload-tile-test')).toBeTruthy()
+  })
+})
+
 // The Grid|Table toggle and its localStorage persistence were REMOVED by the
 // S1 IA cut (umbrella #285), not relocated: the workload detail page shows one
 // surface, and a view switcher on it would be a preference with nothing to
@@ -532,6 +546,18 @@ describe('live modal', () => {
     // not just the preview image, ticks at 200ms while the modal is open.
     expect((h.statusCalls['mxl-a'] ?? 0) - base).toBeGreaterThanOrEqual(4)
   })
+
+  // umbrella #571: the viewer tile and the modal it opens both need a
+  // stable selector, independent of the "MXL Video Test View" display text.
+  it('carries data-testid on the viewer tile and the modal it opens', async () => {
+    mkFetch({})
+    renderHomePage()
+    const tile = (await screen.findByText('MXL Video Test View')).closest('[role="button"]')!
+    expect(tile.getAttribute('data-testid')).toBe('viewer-tile-mxl-a')
+
+    fireEvent.click(tile)
+    expect(await screen.findByTestId('instance-live-modal')).toBeTruthy()
+  })
 })
 
 describe('clear-for-deployment on the Provision stage (C5)', () => {
@@ -634,6 +660,24 @@ describe('switch source on the Configure stage (umbrella #201 WP5)', () => {
     const optionValues = Array.from(select.options).map((o) => o.value)
     expect(optionValues).toContain('source-b')
     expect(optionValues).not.toContain('source-a') // the active source is never a switch target
+  })
+
+  // umbrella #571: the demo click path needs a stable selector, independent
+  // of the "Switch source"/"Confirm switch" visible text.
+  it('carries data-testid on the Switch source button and, once armed, on its Confirm', async () => {
+    mkFetch({ topology: topologyMxlA() })
+    renderSetupPage()
+    await screen.findByRole('navigation', { name: 'Media workload lifecycle' })
+    openStep('Configure')
+    await screen.findByText('source-a')
+
+    const armButton = screen.getByTestId('switch-source-button')
+    expect(armButton).toBe(screen.getByRole('button', { name: 'Switch source' }))
+    fireEvent.click(armButton)
+
+    expect(screen.getByTestId('confirm-switch-source')).toBe(
+      screen.getByRole('button', { name: 'Confirm switch' }),
+    )
   })
 
   it('shows the OBSERVED source (not a stale catalog value) and offers only the other sources', async () => {

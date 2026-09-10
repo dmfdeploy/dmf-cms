@@ -43,6 +43,19 @@ describe('Tile', () => {
     expect(screen.getByText('tile face content')).toBeTruthy()
   })
 
+  // umbrella #571: the demo click path needs a stable selector on the
+  // tile's root — optional, so a caller that omits it is unaffected.
+  it('carries data-testid on its own root when testId is passed', () => {
+    render(
+      <MemoryRouter>
+        <Tile to="/somewhere" ariaLabel="Open Somewhere detail" testId="workload-tile-studio-a">
+          <p>tile face content</p>
+        </Tile>
+      </MemoryRouter>,
+    )
+    expect(screen.getByTestId('workload-tile-studio-a')).toBeTruthy()
+  })
+
   it('renders nothing extra when actions is omitted — the "introduce it empty" state', () => {
     const { container } = renderTile()
     expect(screen.queryByRole('button')).toBeNull()

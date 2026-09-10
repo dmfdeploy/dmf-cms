@@ -85,6 +85,7 @@ export default function ReasonConfirm({
   onCancel,
   extraField,
   variant = 'warning',
+  confirmTestId,
 }: {
   title: string
   description: string
@@ -99,6 +100,10 @@ export default function ReasonConfirm({
   // disables Confirm alongside the existing empty-reason guard.
   extraField?: ReasonConfirmExtraField
   variant?: 'warning' | 'danger'
+  // umbrella #571: stable selector for the Confirm button on the demo click
+  // path. Optional so existing callers that don't need a stable hook here
+  // (teardown/delete/launch-workflow/clear-for-deployment) are unaffected.
+  confirmTestId?: string
 }) {
   const [reason, setReason] = useState('')
   const extraInvalid = extraField?.invalid ?? false
@@ -126,6 +131,7 @@ export default function ReasonConfirm({
         value={reason}
         onChange={(e) => setReason(e.target.value)}
         rows={2}
+        data-testid="reason-input"
       />
       {extraField && (
         <div className="mt-3">
@@ -178,6 +184,7 @@ export default function ReasonConfirm({
           className={`btn btn-sm ${danger ? 'btn-danger' : 'btn-primary'}`}
           disabled={!reason.trim() || pending || extraInvalid}
           onClick={() => onConfirm(reason.trim())}
+          {...(confirmTestId ? { 'data-testid': confirmTestId } : {})}
         >
           {pending ? pendingLabel : confirmLabel}
         </button>

@@ -78,9 +78,14 @@ function findScrollAncestor(el: Element): Element {
 export default function CanvasGrid({
   itemCount,
   children,
+  testId,
 }: {
   itemCount: number
   children: ReactNode
+  /** umbrella #571: stable selector for the grid itself, on the demo click
+   *  path. Optional — existing callers that don't need a hook here are
+   *  unaffected. */
+  testId?: string
 }) {
   const gridRef = useRef<HTMLDivElement>(null)
   const [ghostCount, setGhostCount] = useState(0)
@@ -158,7 +163,7 @@ export default function CanvasGrid({
   ))
 
   return (
-    <div ref={gridRef} className={CANVAS_GRID_CLASSNAME}>
+    <div ref={gridRef} className={CANVAS_GRID_CLASSNAME} data-testid={testId}>
       {children}
       {ghosts}
     </div>

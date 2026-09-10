@@ -243,6 +243,7 @@ function InstanceSwitchControl({
               switchMutation.reset()
               setArming(true)
             }}
+            data-testid="switch-source-button"
           >
             Switch source
           </button>
@@ -277,6 +278,7 @@ function InstanceSwitchControl({
               setArming(false)
               setTarget('')
             }}
+            confirmTestId="confirm-switch-source"
             extraField={{
               label: 'Target source',
               placeholder: 'Select a source…',

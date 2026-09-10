@@ -70,6 +70,28 @@ describe('ReasonConfirm component', () => {
     expect(screen.getByText('nope')).toBeTruthy()
   })
 
+  // umbrella #571: the reason field always carries a stable selector; the
+  // Confirm button carries one only when a caller opts in via confirmTestId
+  // — every existing caller that doesn't pass it is unaffected.
+  it('carries data-testid on the reason field, and on Confirm only when confirmTestId is passed', () => {
+    render(<ReasonConfirm title="T" description="D" onConfirm={vi.fn()} onCancel={() => {}} />)
+    expect(screen.getByTestId('reason-input')).toBeTruthy()
+    expect(screen.getByRole('button', { name: 'Confirm' }).getAttribute('data-testid')).toBeNull()
+  })
+
+  it('applies confirmTestId to the Confirm button when provided', () => {
+    render(
+      <ReasonConfirm
+        title="T"
+        description="D"
+        onConfirm={vi.fn()}
+        onCancel={() => {}}
+        confirmTestId="confirm-deploy"
+      />,
+    )
+    expect(screen.getByTestId('confirm-deploy')).toBe(screen.getByRole('button', { name: 'Confirm' }))
+  })
+
   it('extraField: a valid (or absent) value leaves Confirm gated on reason alone', () => {
     render(
       <ReasonConfirm
