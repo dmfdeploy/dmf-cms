@@ -463,7 +463,7 @@ def _parse_new_format_line(tail: str) -> dict[str, str] | None:
         # main.py's _audit_watch_terminal and this module's own
         # _JOB_WATCH_ACTOR/classify_record.
         or (
-            values["action"] in ("deploy", "teardown")
+            values["action"] in ("deploy", "teardown", "rollback")
             and values["actor"] == _JOB_WATCH_ACTOR
             and values["role"] == "system"
         )
@@ -1265,7 +1265,7 @@ def list_audit_events(
         # a watcher attached to begin with — belt and suspenders, not a
         # behavior change.
         outcome = build_outcome(action, fields.get("outcome", ""))
-        if cls in ("deploy", "teardown"):
+        if cls in ("deploy", "teardown", "auto-rollback"):
             # gate round 5 (lkirc): request_id identifies the HTTP REQUEST
             # that wrote a given row, not the RUN the row concerns — a
             # reattach row is written by a fresh request (its own,
@@ -1282,7 +1282,15 @@ def list_audit_events(
             # reattach row's terminal outcome at all — before this, a
             # reattach could never match, since its own request_id never
             # equalled anything the join map was ever keyed by.
-            run_id = fields.get("linked_request_id") or fields.get("request_id", "")
+            # An auto-rollback's link points to its failed deploy solely to
+            # recover the display label. Its own watcher joins by the
+            # rollback dispatch request id, unlike deploy/teardown reattach
+            # rows whose link is the stable run identity.
+            run_id = (
+                fields.get("request_id", "")
+                if cls == "auto-rollback"
+                else fields.get("linked_request_id") or fields.get("request_id", "")
+            )
             terminal_fields = terminal_by_request_id.get(run_id)
             # gate round 4 (lkirc B1): is_dispatch_row still gates on THIS
             # row's own outcome token, unchanged — resolving run_id above
@@ -1292,7 +1300,11 @@ def list_audit_events(
             # still never in _DISPATCH_OUTCOME_TOKENS, so it is still never
             # eligible regardless of what run_id it resolves to — the r4
             # fix stays intact.
-            is_dispatch_row = fields.get("outcome") in _DISPATCH_OUTCOME_TOKENS
+            is_dispatch_row = (
+                fields.get("outcome") == "auto-triggered"
+                if cls == "auto-rollback"
+                else fields.get("outcome") in _DISPATCH_OUTCOME_TOKENS
+            )
             if terminal_fields is not None and is_dispatch_row:
                 outcome = build_terminal_join_outcome(terminal_fields.get("outcome", ""))
             else:

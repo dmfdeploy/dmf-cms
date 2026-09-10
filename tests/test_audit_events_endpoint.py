@@ -97,6 +97,21 @@ AUTO_ROLLBACK_ORPHAN = _line(
     target="run-999", reason="auto: deploy wl-z failed after start (failed_rollback_required)",
     outcome="auto-triggered", linked_request_id="rid-nonexistent-parent",
 )
+AUTO_ROLLBACK_TERMINAL = _line(
+    action="rollback", actor="system:job-watch", role="system", request_id="rid-autorb-1-watch",
+    target="run-123", reason="job watch: rollback on run-123 reached terminal state run_complete",
+    outcome="run_complete:rollback_complete", linked_request_id="rid-autorb-1",
+)
+AUTO_ROLLBACK_UNKNOWN = _line(
+    action="rollback", actor="system:auto-rollback", role="system", request_id="rid-autorb-3",
+    target="run-456", reason="auto: deploy wl-c failed after start (failed_rollback_required)",
+    outcome="auto-triggered", linked_request_id="rid-deploy-1",
+)
+AUTO_ROLLBACK_UNKNOWN_TERMINAL = _line(
+    action="rollback", actor="system:job-watch", role="system", request_id="rid-autorb-3-watch",
+    target="run-456", reason="job watch: rollback on run-456 reached terminal state run_status_unknown",
+    outcome="run_status_unknown", linked_request_id="rid-autorb-3",
+)
 FINALISE_PURGE = _line(
     action="finalise-purge", actor="carol", role="operator", request_id="rid-purge-1",
     target="slug-x", reason="demo purge", outcome="dispatched",
@@ -279,6 +294,7 @@ TEARDOWN_RUN_4_TERMINAL_JOIN = _line(
 
 FIXTURE_LINES = [
     DEPLOY, DEPLOY_REFUSED, TEARDOWN, SWITCH_SOURCE, AUTO_ROLLBACK, AUTO_ROLLBACK_ORPHAN,
+    AUTO_ROLLBACK_TERMINAL, AUTO_ROLLBACK_UNKNOWN, AUTO_ROLLBACK_UNKNOWN_TERMINAL,
     FINALISE_PURGE, LAUNCH, VERIFY_DRAIN, OPERATOR_ROLLBACK, UNRECOGNISED_ACTION, UNPARSEABLE,
     DEPLOY_BLANK_OUTCOME,
     DEPLOY_TERMINAL_SUCCEEDED, DEPLOY_TERMINAL_SUCCEEDED_JOIN,
@@ -351,6 +367,7 @@ def test_operator_not_in_media_engineers_sees_deploy_teardown_rollback_not_switc
     payload = client.get("/api/audit/events").json()
     assert _event_ids(payload) == {
         "rid-deploy-1", "rid-deploy-2", "rid-teardown-1", "rid-autorb-1", "rid-autorb-2",
+        "rid-autorb-3",
         "rid-deploy-corrupted",
         "rid-deploy-term-1", "rid-teardown-term-1", "rid-deploy-term-2",
         "rid-collision-1", "rid-preflight-1",
@@ -372,6 +389,7 @@ def test_operator_in_media_engineers_sees_every_covered_row():
     payload = client.get("/api/audit/events").json()
     assert _event_ids(payload) == {
         "rid-deploy-1", "rid-deploy-2", "rid-teardown-1", "rid-autorb-1", "rid-autorb-2", "rid-switch-1",
+        "rid-autorb-3",
         "rid-deploy-corrupted",
         "rid-deploy-term-1", "rid-teardown-term-1", "rid-deploy-term-2",
         "rid-collision-1", "rid-preflight-1",
@@ -415,7 +433,6 @@ def test_auto_rollback_carries_its_parents_workload_when_the_parent_resolves():
     payload = client.get("/api/audit/events").json()
     row = next(e for e in payload["events"] if e["request_id"] == "rid-autorb-1")
     assert row["workload"] == "wl-a"
-    assert row["outcome"]["state"] == "in_flight"
 
 
 def test_auto_rollback_still_renders_with_no_workload_when_the_parent_does_not_resolve():
@@ -423,6 +440,21 @@ def test_auto_rollback_still_renders_with_no_workload_when_the_parent_does_not_r
     payload = client.get("/api/audit/events").json()
     row = next(e for e in payload["events"] if e["request_id"] == "rid-autorb-2")
     assert row["workload"] is None  # degraded label, NOT a dropped row
+
+
+def test_auto_rollback_terminal_join_renders_the_rollback_outcome():
+    client = _client(OPERATOR_ONLY)
+    payload = client.get("/api/audit/events").json()
+    row = next(e for e in payload["events"] if e["request_id"] == "rid-autorb-1")
+    assert row["outcome"] == {"state": "succeeded", "detail": "run_complete"}
+    assert "rid-autorb-1-watch" not in _event_ids(payload)
+
+
+def test_auto_rollback_with_unobserved_terminal_outcome_reads_unknown():
+    client = _client(OPERATOR_ONLY)
+    payload = client.get("/api/audit/events").json()
+    row = next(e for e in payload["events"] if e["request_id"] == "rid-autorb-3")
+    assert row["outcome"]["state"] == "unknown"
 
 
 # ----------------------------------------------------------------------

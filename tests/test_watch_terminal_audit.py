@@ -85,7 +85,7 @@ def test_a_target_forged_to_look_like_a_complete_line_survives_as_literal_conten
     assert fields["linked_request_id"] == "rid-parent-3"  # the REAL correlation, never "hijacked"
 
 
-def test_no_op_for_an_action_this_round_does_not_cover(caplog):
+def test_no_op_for_a_manual_rollback_or_an_uncovered_action(caplog):
     with caplog.at_level(logging.INFO, logger="dmf_cms.audit"):
         main._audit_watch_terminal("rollback", "run-1", "rid-x", OperationState.ROLLBACK_INCOMPLETE, None)
         main._audit_watch_terminal("finalise-purge", "slug-1", "rid-y", OperationState.RUN_COMPLETE, None)
@@ -283,12 +283,8 @@ def test_watcher_three_failed_get_job_reads_reports_unknown_never_a_confirmed_fa
     assert fields["outcome"] == "run_status_unknown"  # audit claim: honest, not a confirmed failure
 
 
-def test_watcher_rollback_terminal_never_writes_a_job_watch_join(monkeypatch, caplog):
-    # _audit_watch_terminal's own no-op guard, proven through the real
-    # call sites rather than only the direct-call test above -- a
-    # rollback op reaching RUN_COMPLETE must never produce a
-    # system:job-watch line (rollback's own terminal confirmation is not
-    # this round's scope).
+def test_watcher_manual_rollback_never_writes_an_activity_join(monkeypatch, caplog):
+    # Manual rollbacks are deliberately excluded from Activity History.
     app, ops_store = _fake_app()
     op = ops_store.create("rollback", "run-1", request_id="rid-dispatch-7")
     monkeypatch.setattr(
@@ -297,6 +293,43 @@ def test_watcher_rollback_terminal_never_writes_a_job_watch_join(monkeypatch, ca
     with caplog.at_level(logging.INFO, logger="dmf_cms.audit"):
         _run_watcher(app, op.operation_id, 111, "rollback", "run-1")
     assert _audit_lines(caplog) == []
+
+
+def test_watcher_auto_rollback_writes_a_terminal_join(monkeypatch, caplog):
+    # Discriminating producer proof for #560: deleting the rollback branch's
+    # _audit_watch_terminal call leaves the operation state intact but makes
+    # this endpoint-consumable terminal record disappear.
+    app, ops_store = _fake_app()
+    op = ops_store.create(
+        "rollback", "run-1", request_id="rid-auto-rollback", initiator="system:auto-rollback",
+    )
+    monkeypatch.setattr(
+        main, "get_job", lambda **k: {"status": "successful", "started": "t0", "finished": "t1"},
+    )
+    monkeypatch.setattr(main, "get_job_events_for_task", lambda **k: [])
+    with caplog.at_level(logging.INFO, logger="dmf_cms.audit"):
+        _run_watcher(app, op.operation_id, 111, "rollback", "run-1")
+    fields = audit_events.parse_awx_write_line(_audit_lines(caplog)[0])
+    assert fields["action"] == "rollback"
+    assert fields["outcome"] == "rollback_incomplete"
+    assert fields["linked_request_id"] == "rid-auto-rollback"
+
+
+def test_watcher_lost_auto_rollback_writes_an_unknown_join(monkeypatch, caplog):
+    app, ops_store = _fake_app()
+    op = ops_store.create(
+        "rollback", "run-1", request_id="rid-auto-rollback-lost", initiator="system:auto-rollback",
+    )
+
+    def _always_fails(**_kwargs):
+        raise RuntimeError("AWX unreachable")
+
+    monkeypatch.setattr(main, "get_job", _always_fails)
+    with caplog.at_level(logging.INFO, logger="dmf_cms.audit"):
+        _run_watcher(app, op.operation_id, 111, "rollback", "run-1")
+    fields = audit_events.parse_awx_write_line(_audit_lines(caplog)[0])
+    assert fields["outcome"] == "run_status_unknown"
+    assert fields["linked_request_id"] == "rid-auto-rollback-lost"
 
 
 def test_watcher_never_writes_a_join_when_the_dispatch_op_has_no_request_id(monkeypatch, caplog):
