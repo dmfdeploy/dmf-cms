@@ -2147,18 +2147,20 @@ _JOB_WATCH_ACTOR = "system:job-watch"
 
 def _audit_watch_terminal(
     action: str, key: str, request_id: str | None, state: OperationState, l3_outcome: str | None,
+    *, is_auto_rollback: bool = False,
 ) -> None:
-    """Emit the terminal-outcome join record for a watched deploy/teardown
-    operation (dmfdeploy/dmfdeploy#419/#554), from inside
+    """Emit the terminal-outcome join record for a watched deploy, teardown,
+    or automatic rollback operation (dmfdeploy/dmfdeploy#419/#554/#560), from inside
     ``_watch_job_operation`` at every point it resolves such an op to a
     final state — including its give-up paths (TTL timeout, 3 lost
     ``get_job`` calls, an unexpected crash), which map to the lane's
     honest 'unknown' outcome rather than leaving the row to silently keep
     reading its dispatch-time "dispatched" forever.
 
-    No-op for any action other than deploy/teardown (auto-rollback's own
-    terminal confirmation is not this round's scope) — callers do not need
-    to guard the call themselves.
+    Manual rollback stays outside the Activity scope. A rollback emits only
+    when its operation was dispatched by ``system:auto-rollback``; callers
+    supply that fact rather than inferring it from an audit field. Other
+    actions remain no-ops, so callers do not need their own action guard.
 
     Follows ``_maybe_auto_trigger_rollback``'s exact precedent, quoted from
     its own docstring: "Runs from inside the watcher (a background task, no
@@ -2203,7 +2205,9 @@ def _audit_watch_terminal(
     what the internal state machine needs, a different one for what gets
     asserted to a reader.
     """
-    if action not in ("deploy", "teardown"):
+    if action not in ("deploy", "teardown", "rollback"):
+        return
+    if action == "rollback" and not is_auto_rollback:
         return
     if request_id is None:
         return
@@ -2370,7 +2374,10 @@ async def _watch_job_operation(app: FastAPI, operation_id: str, job_id: int, act
                 # internal ops-store state — see the comment on the next
                 # give-up site below for why these must never be the same
                 # argument here.
-                _audit_watch_terminal(action, key, op.request_id, OperationState.RUN_STATUS_UNKNOWN, None)
+                _audit_watch_terminal(
+                    action, key, op.request_id, OperationState.RUN_STATUS_UNKNOWN, None,
+                    is_auto_rollback=op.initiator == "system:auto-rollback",
+                )
                 return
 
             try:
@@ -2424,7 +2431,10 @@ async def _watch_job_operation(app: FastAPI, operation_id: str, job_id: int, act
                     # `auto_rollback` and `l3_outcome` on the deploy op —
                     # one field for what the internal state machine needs,
                     # a DIFFERENT one for what gets asserted to a reader.
-                    _audit_watch_terminal(action, key, op.request_id, OperationState.RUN_STATUS_UNKNOWN, None)
+                    _audit_watch_terminal(
+                        action, key, op.request_id, OperationState.RUN_STATUS_UNKNOWN, None,
+                        is_auto_rollback=op.initiator == "system:auto-rollback",
+                    )
                     return
                 await asyncio.sleep(poll_interval)
                 continue
@@ -2538,6 +2548,10 @@ async def _watch_job_operation(app: FastAPI, operation_id: str, job_id: int, act
                             status=status, outcome_token=outcome_token, outcome_kv=outcome_kv,
                         ):
                             _spawn_drain_verification(app, operation_id, key)
+                    _audit_watch_terminal(
+                        action, key, op.request_id, ops_store.get(operation_id).state, outcome_token,
+                        is_auto_rollback=op.initiator == "system:auto-rollback",
+                    )
                     return
 
                 # dmfdeploy/dmfdeploy#419/#554: every branch below is the
@@ -2666,7 +2680,10 @@ async def _watch_job_operation(app: FastAPI, operation_id: str, job_id: int, act
         # sites above — see the get_job-failure site's own comment. No
         # clean job read happened here either, so the audit claim is
         # unconditionally RUN_STATUS_UNKNOWN regardless of `give_up_state`.
-        _audit_watch_terminal(action, key, op.request_id, OperationState.RUN_STATUS_UNKNOWN, None)
+        _audit_watch_terminal(
+            action, key, op.request_id, OperationState.RUN_STATUS_UNKNOWN, None,
+            is_auto_rollback=op.initiator == "system:auto-rollback",
+        )
 
 
 async def _maybe_auto_trigger_rollback(app: FastAPI, operation_id: str, key: str) -> None:
