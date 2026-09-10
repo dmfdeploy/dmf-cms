@@ -145,6 +145,54 @@ def test_reattach_does_not_overwrite_request_id_or_initiator():
     assert op2.initiator == "alice"
 
 
+# ---------------------------------------------------------------------------
+# operations.py — auto_rollback_dispatch (#560 round 4, lkirc): trusted,
+# dispatch-time-only provenance — never re-derived from initiator, never
+# exposed in to_dict(), never overwritten on reattach.
+# ---------------------------------------------------------------------------
+
+
+def test_auto_rollback_dispatch_defaults_false_and_is_excluded_from_to_dict():
+    store = OperationStore(ttl_seconds=3600)
+    op = store.create("deploy", "key1")
+    assert op.auto_rollback_dispatch is False
+    assert "auto_rollback_dispatch" not in op.to_dict()
+
+
+def test_create_can_set_auto_rollback_dispatch_true():
+    store = OperationStore(ttl_seconds=3600)
+    op = store.create("rollback", "run-1", auto_rollback_dispatch=True)
+    assert op.auto_rollback_dispatch is True
+    assert "auto_rollback_dispatch" not in op.to_dict()
+
+
+def test_get_or_create_reattach_does_not_overwrite_auto_rollback_dispatch():
+    store = OperationStore(ttl_seconds=3600)
+    op1, created1 = store.get_or_create("rollback", "run-1", auto_rollback_dispatch=True)
+    assert created1 is True
+    assert op1.auto_rollback_dispatch is True
+    # A second caller reattaching cannot flip it either direction — it
+    # rides with the ORIGINAL dispatch, full stop.
+    op2, created2 = store.get_or_create("rollback", "run-1", auto_rollback_dispatch=False)
+    assert created2 is False
+    assert op2.operation_id == op1.operation_id
+    assert op2.auto_rollback_dispatch is True
+
+
+def test_get_or_create_exclusive_reattach_does_not_overwrite_auto_rollback_dispatch():
+    store = OperationStore(ttl_seconds=3600)
+    op1, created1, conflict1 = store.get_or_create_exclusive(
+        "rollback", "run-1", conflicts=(), auto_rollback_dispatch=True,
+    )
+    assert created1 is True and conflict1 is None
+    op2, created2, conflict2 = store.get_or_create_exclusive(
+        "rollback", "run-1", conflicts=(), auto_rollback_dispatch=False,
+    )
+    assert created2 is False and conflict2 is None
+    assert op2.operation_id == op1.operation_id
+    assert op2.auto_rollback_dispatch is True
+
+
 def test_update_sets_l3_outcome():
     store = OperationStore(ttl_seconds=3600)
     op = store.create("deploy", "key1")
@@ -2378,6 +2426,9 @@ def test_auto_trigger_dispatches_rollback_when_enabled(monkeypatch):
     assert rollback_op.action == "rollback"
     assert rollback_op.target == "a" * 32
     assert rollback_op.initiator == "system:auto-rollback"
+    # #560 round 4 (lkirc): the TRUSTED flag — this is the one call site
+    # allowed to set it, and it must actually do so.
+    assert rollback_op.auto_rollback_dispatch is True
 
     updated_deploy = ops_store.get(deploy_op.operation_id)
     assert updated_deploy.auto_rollback == "triggered"
@@ -2428,6 +2479,66 @@ def test_auto_trigger_dedupes_against_concurrent_manual_rollback(monkeypatch):
     # codex R2-8: reattached (not a fresh dispatch) — the deploy op's
     # auto_rollback field reflects that distinct outcome.
     assert ops_store.get(deploy_op.operation_id).auto_rollback == "already-in-progress"
+
+
+def test_auto_trigger_reattach_to_existing_auto_rollback_keeps_the_flag_and_joins_the_terminal_outcome(
+    monkeypatch, caplog,
+):
+    # #560 round 4 (lkirc), required test (c): the OTHER already-in-progress
+    # case — the existing rollback op is itself a GENUINE prior auto-trigger
+    # (round 3's own eligible case, dmfdeploy/dmf-cms#154 75d2a3e), not a
+    # manual one (that's the sibling test above). A concurrent second
+    # deploy failing for the same run_id must reattach without a second
+    # dispatch, the reattached op's auto_rollback_dispatch must still read
+    # True (never re-inferred/overwritten on reattach — it rode in with the
+    # FIRST dispatch), and the terminal join this whole flag exists to gate
+    # must still resolve once that reattached op's own watcher completes.
+    app, ops_store = _fake_app(auto_rollback=True)
+    run_id = "d" * 32
+
+    # The FIRST deploy's own auto-trigger already dispatched this rollback.
+    existing_rollback, first_created = ops_store.get_or_create(
+        action="rollback", target=run_id,
+        request_id="rid-first-auto-rollback", initiator="system:auto-rollback",
+        auto_rollback_dispatch=True,
+    )
+    assert first_created is True
+
+    # A SECOND deploy op (a different target — a concurrent failure that
+    # happens to hydrate the same run_id) reaches auto-trigger while that
+    # rollback is still non-terminal.
+    second_deploy_op = ops_store.create("deploy", "key2", request_id="rid-second-deploy")
+    ops_store.update(
+        second_deploy_op.operation_id, state=OperationState.FAILED_ROLLBACK_REQUIRED, job_id=2, run_id=run_id,
+    )
+
+    def boom(*a, **k):
+        raise AssertionError("must not spawn a second rollback when an auto one already exists for this run_id")
+
+    monkeypatch.setattr(main, "_spawn_rollback_task", boom)
+    asyncio.run(main._maybe_auto_trigger_rollback(app, second_deploy_op.operation_id, "key2"))
+
+    rollback_ops = [op for op in ops_store.list_all() if op.action == "rollback" and op.target == run_id]
+    assert len(rollback_ops) == 1
+    assert rollback_ops[0].operation_id == existing_rollback.operation_id
+    # Not re-inferred, not overwritten — rides with the original dispatch.
+    assert rollback_ops[0].auto_rollback_dispatch is True
+    assert ops_store.get(second_deploy_op.operation_id).auto_rollback == "already-in-progress"
+
+    # The terminal join still resolves for the reattached op once ITS watcher
+    # completes — the whole point of persisting the flag through a reattach.
+    import logging
+
+    monkeypatch.setattr(
+        main, "get_job", lambda **k: {"status": "successful", "started": "t0", "finished": "t1"},
+    )
+    monkeypatch.setattr(main, "get_job_events_for_task", lambda **k: [])
+    with caplog.at_level(logging.INFO, logger="dmf_cms.audit"):
+        _run_watcher(app, existing_rollback.operation_id, 333, "rollback", run_id)
+    lines = [r.getMessage() for r in caplog.records if r.getMessage().startswith("awx write: fmt=2 action=rollback")]
+    join_lines = [line for line in lines if "actor='system:job-watch'" in line]
+    assert len(join_lines) == 1
+    assert "linked_request_id=rid-first-auto-rollback" in join_lines[0]
 
 
 def test_auto_trigger_identity_unknown_when_deploy_op_has_no_run_id(monkeypatch):

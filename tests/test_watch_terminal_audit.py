@@ -295,13 +295,45 @@ def test_watcher_manual_rollback_never_writes_an_activity_join(monkeypatch, capl
     assert _audit_lines(caplog) == []
 
 
+def test_watcher_manual_rollback_with_colliding_subject_never_writes_an_activity_join(monkeypatch, caplog):
+    # #560 round 4 (lkirc): the actual collision — a MANUAL rollback whose
+    # dispatching subject happens to be literally "system:auto-rollback"
+    # (api_run_rollback sets initiator=user.subject with no reserved-
+    # namespace check on it). Before this fix, is_auto_rollback compared
+    # op.initiator to that exact string, so this op would have been
+    # misread as automatic and joined into Activity History despite never
+    # being dispatched by _maybe_auto_trigger_rollback — the exact
+    # provenance-vs-string-match confusion #560 round 4 exists to close.
+    # auto_rollback_dispatch is never set here (defaults False, as a real
+    # manual dispatch through api_run_rollback never sets it either), so
+    # this must resolve identically to any other manual rollback: no join.
+    app, ops_store = _fake_app()
+    op = ops_store.create(
+        "rollback", "run-1", request_id="rid-dispatch-collide", initiator="system:auto-rollback",
+    )
+    assert op.auto_rollback_dispatch is False
+    monkeypatch.setattr(
+        main, "get_job", lambda **k: {"status": "successful", "started": "t0", "finished": "t1"},
+    )
+    with caplog.at_level(logging.INFO, logger="dmf_cms.audit"):
+        _run_watcher(app, op.operation_id, 111, "rollback", "run-1")
+    assert _audit_lines(caplog) == []
+
+
 def test_watcher_auto_rollback_writes_a_terminal_join(monkeypatch, caplog):
     # Discriminating producer proof for #560: deleting the rollback branch's
     # _audit_watch_terminal call leaves the operation state intact but makes
     # this endpoint-consumable terminal record disappear.
+    #
+    # round 4 (lkirc): auto_rollback_dispatch=True, not just a
+    # "system:auto-rollback" initiator — that string alone is no longer
+    # trusted (see test_watcher_manual_rollback_with_colliding_subject_
+    # never_writes_an_activity_join below for the discriminating case this
+    # protects against).
     app, ops_store = _fake_app()
     op = ops_store.create(
         "rollback", "run-1", request_id="rid-auto-rollback", initiator="system:auto-rollback",
+        auto_rollback_dispatch=True,
     )
     monkeypatch.setattr(
         main, "get_job", lambda **k: {"status": "successful", "started": "t0", "finished": "t1"},
@@ -319,6 +351,7 @@ def test_watcher_lost_auto_rollback_writes_an_unknown_join(monkeypatch, caplog):
     app, ops_store = _fake_app()
     op = ops_store.create(
         "rollback", "run-1", request_id="rid-auto-rollback-lost", initiator="system:auto-rollback",
+        auto_rollback_dispatch=True,
     )
 
     def _always_fails(**_kwargs):
