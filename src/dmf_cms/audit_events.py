@@ -967,18 +967,28 @@ def build_outcome(action: str, outcome: str) -> dict[str, object]:
 # `outcome=` on this record carries the OperationState value the watcher
 # actually reached, optionally suffixed `:<l3_outcome>` — see
 # `_audit_watch_terminal`'s own docstring for why the compound token stays
-# safe as a plain field. Only the states the deploy/teardown branches of
-# `_watch_job_operation` can ever actually reach are mapped: RUN_COMPLETE,
-# RUN_FAILED, FAILED_ROLLBACK_REQUIRED (deploy's own confirmed-mutation-
-# failure state), and RUN_STATUS_UNKNOWN (a give-up path). Any OTHER token
-# — a future state this mapping hasn't been extended for, or a malformed/
-# empty one — resolves to 'unknown', the same fail-closed-to-honest-doubt
-# posture as a blank dispatch outcome (never a guessed success or a
-# guessed failure).
+# safe as a plain field. Every state the deploy/teardown/(auto-)rollback
+# branches of `_watch_job_operation` can actually reach is mapped:
+# RUN_COMPLETE, RUN_FAILED, FAILED_ROLLBACK_REQUIRED (deploy's own
+# confirmed-mutation-failure state), ROLLBACK_INCOMPLETE (#560 round 5 —
+# a ROLLBACK op's own fail-closed dirty terminal, operations.py's
+# OperationState docstring puts it in the SAME "confirmed, not merely
+# unobserved" category FAILED_ROLLBACK_REQUIRED is already in here — the
+# AWX job terminalized and the console has a definite, if unwelcome,
+# answer; WP4's drain-verification follow-up may later REPLACE this join
+# with a newer run_complete one if it confirms the surfaces actually
+# drained, but absent that promotion the original failed reading must
+# stick, never soften to 'unknown'), and RUN_STATUS_UNKNOWN (a give-up
+# path — genuinely never observed, the one case that IS honestly
+# 'unknown'). Any OTHER token — a future state this mapping hasn't been
+# extended for, or a malformed/empty one — resolves to 'unknown', the
+# same fail-closed-to-honest-doubt posture as a blank dispatch outcome
+# (never a guessed success or a guessed failure).
 _TERMINAL_STATE_RESULT: dict[str, str] = {
     "run_complete": "succeeded",
     "run_failed": "failed",
     "failed_rollback_required": "failed",
+    "rollback_incomplete": "failed",
     "run_status_unknown": "unknown",
 }
 

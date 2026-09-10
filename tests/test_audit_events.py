@@ -900,6 +900,22 @@ def test_failed_rollback_required_is_a_failed_verdict_not_a_dirty_third_state():
     assert result["state"] == "failed"
 
 
+def test_rollback_incomplete_is_a_failed_verdict_not_the_honest_unknown_shape():
+    # #560 round 5 (lkirc): a CONFIRMED-incomplete automatic rollback (the
+    # AWX job terminalized, but never earned a clean rollback_complete
+    # marker — and, absent WP4 drain-verification's later promotion, that
+    # reading is final) used to fall through this mapping's default and
+    # render as "unknown" — the same "we genuinely never observed
+    # anything" claim RUN_STATUS_UNKNOWN's give-up paths earn honestly.
+    # operations.py's own OperationState docstring puts ROLLBACK_INCOMPLETE
+    # in the SAME "confirmed, not merely unobserved" category
+    # FAILED_ROLLBACK_REQUIRED already is (both DIRTY_STATES, both reached
+    # only once the watcher has a definite terminal read) — same sibling
+    # test immediately above pins that one; this is its rollback-side twin.
+    result = audit_events.build_terminal_join_outcome("rollback_incomplete")
+    assert result["state"] == "failed"
+
+
 def test_run_status_unknown_is_the_honest_unknown_shape_never_a_verdict():
     # The watcher's own give-up path (TTL/lost/crash) -- this is what
     # keeps a row from silently reading "dispatched" forever once the
