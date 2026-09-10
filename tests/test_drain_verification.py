@@ -9,11 +9,13 @@ F2-F5 fail-closed boundaries) lives in test_drain.py.
 
 import asyncio
 from contextlib import contextmanager
+import logging
 from types import SimpleNamespace
 
 import pytest
 from fastapi.testclient import TestClient
 
+import dmf_cms.audit_events as audit_events
 import dmf_cms.main as main
 import dmf_cms.netbox as netbox_module
 import dmf_cms.promsd as promsd_module
@@ -118,6 +120,17 @@ def _outcome_event(msg, *, task=None, counter=1):
         "task": task if task is not None else main._L3_OUTCOME_TASK_NAME,
         "event_data": {"res": {"msg": msg}},
     }
+
+
+def _formatted_line(record: logging.LogRecord) -> str:
+    # Same reproduction test_audit_events_endpoint.py's/test_watch_terminal_
+    # audit.py's own round-trip tests use — caplog's record.getMessage() is
+    # just the %s/%r substitution result, not the asctime/levelname/name-
+    # prefixed line the real reader requires structurally (dmfdeploy/dmf-
+    # cms#140, eighth round). Local copy, deliberately not shared via
+    # import — this file's own established convention (see this module's
+    # own docstring / _fake_app/_run_watcher's precedent).
+    return logging.Formatter("%(asctime)s %(levelname)s %(name)s: %(message)s").format(record)
 
 
 @pytest.fixture(autouse=True)
@@ -227,6 +240,70 @@ def test_A3_surfaces_superset_never_enters_drain_verification(monkeypatch):
     assert "surfaces=netbox,monitoring" in updated.error
     assert drain.DRAIN_PENDING_DETAIL not in updated.error
     assert drain.DRAIN_VERIFIED_DETAIL not in updated.error
+
+
+# ---------------------------------------------------------------------------
+# A4 — #560 round 5 (lkirc): the counterpart to A1 above. A1 proves the
+# eligible-and-later-PROMOTED-to-RUN_COMPLETE path (a newer run_complete
+# join wins). This proves the other branch: an automatic rollback that
+# NEVER gets promoted — here, because it never earns any outcome marker at
+# all, so it's never even eligible for drain verification in the first
+# place (main.py's own "no marker at all" branch, never reaches
+# `drain.is_eligible_for_drain_verification`) — must keep reading as its
+# original CONFIRMED reading: failed, never "unknown". Before this round's
+# fix, audit_events.py's _TERMINAL_STATE_RESULT had no entry for
+# "rollback_incomplete" at all, so `build_terminal_join_outcome` fell
+# through its own default and this exact join read as "unknown" instead.
+# ---------------------------------------------------------------------------
+
+
+def test_A4_ineligible_auto_rollback_incomplete_reads_as_failed_never_unknown(monkeypatch, caplog):
+    app, ops_store = _fake_app()
+    _seed_run(ops_store)
+    # #560 round 4: the TRUSTED flag, not just the "system:auto-rollback"
+    # initiator string — see test_operations_lifecycle.py/
+    # test_watch_terminal_audit.py's own coverage of that trust boundary.
+    op = ops_store.create(
+        "rollback", RUN_ID, request_id="rid-auto-rollback-incomplete", initiator="system:auto-rollback",
+        auto_rollback_dispatch=True,
+    )
+
+    monkeypatch.setattr(main, "get_job", lambda **k: {"status": "successful", "started": "t0", "finished": "t1"})
+    # No DMF_L3_OUTCOME event at all -> outcome_token is None -> main.py's
+    # "no marker at all" branch -> ROLLBACK_INCOMPLETE, and
+    # _spawn_drain_verification is never even reached (that call sits
+    # behind the OTHER branch, guarded by `elif outcome_token is None`
+    # short-circuiting first) -- the simplest way to fabricate "never
+    # promoted", genuinely never eligible rather than merely un-promoted.
+    monkeypatch.setattr(main, "get_job_events_for_task", lambda **k: [])
+
+    with caplog.at_level(logging.INFO, logger="dmf_cms.audit"):
+        _run_watcher_and_drain(app, op.operation_id, 111, "rollback", RUN_ID)
+
+    updated = ops_store.get(op.operation_id)
+    assert updated.state == OperationState.ROLLBACK_INCOMPLETE
+    assert updated.error == "rollback-outcome-unverified"
+
+    # Exactly one audit line -- the initial terminal join. No second
+    # "watcher"/promotion row ever appears (nothing was spawned to write
+    # one), so there is nothing here for a later join to overwrite.
+    audit_lines = [r.getMessage() for r in caplog.records if r.getMessage().startswith("awx write:")]
+    assert len(audit_lines) == 1
+
+    # The actual bug lived in the READER, not the writer: the write side
+    # already correctly carried the ROLLBACK_INCOMPLETE state token before
+    # this fix. Round-trip the REAL emitted line through the real parser
+    # and the real resolver -- proving the full pipeline, not a synthetic
+    # fixture -- and assert it now reads FAILED, not unknown.
+    audit_record = next(r for r in caplog.records if r.getMessage().startswith("awx write:"))
+    fields = audit_events.parse_awx_write_line(_formatted_line(audit_record))
+    assert fields is not None
+    # No launcher marker was ever fetched here (outcome_token is None) ->
+    # _audit_watch_terminal's own compound-token rule leaves the bare
+    # state, no ":<l3_outcome>" suffix.
+    assert fields["outcome"] == "rollback_incomplete"
+    outcome = audit_events.build_terminal_join_outcome(fields["outcome"])
+    assert outcome["state"] == "failed"
 
 
 def test_F2_duplicate_surfaces_key_never_enters_drain_verification(monkeypatch):
