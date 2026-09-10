@@ -213,6 +213,7 @@ export default function ProvisionStage({
   // as running). This is the default-level answer to "where does each member
   // stand"; the clear control below it moved to the expert tier.
   const members = [...workload.instances].sort((a, b) => a.instance.localeCompare(b.instance))
+  const provisionedCount = members.filter((instance) => instance.requested_state === 'active').length
   // The "Desired state" block unmounts while any write is in flight (`!busy`
   // below) and remounts when it settles, so an uncontrolled <details> would
   // come back CLOSED after every clear — hiding the very failure/success
@@ -339,7 +340,9 @@ export default function ProvisionStage({
       )}
       {workload.instances.length > 0 && (
         <div className="mt-4 border-t border-white/5 pt-3">
-          <h3 className="text-xs uppercase tracking-wide text-muted">Members</h3>
+          <h3 className="text-xs uppercase tracking-wide text-muted">
+            Media Function Instances — {provisionedCount} of {members.length} provisioned
+          </h3>
           <ul className="mt-2 space-y-2">
             {members.map((inst) => {
               const Icon = lookupState(REQUESTED_ICON, inst.requested_state)
