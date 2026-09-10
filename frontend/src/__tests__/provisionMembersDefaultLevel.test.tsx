@@ -97,7 +97,10 @@ describe('dmfdeploy/dmfdeploy#556: Provision default surface shows requested-sta
   it('(a) lists one row per member — "planned" / "cleared to run" — and keeps every Clear control inside a CLOSED <details>', () => {
     renderProvision()
 
-    const list = screen.getByRole('heading', { level: 3, name: 'Members' }).nextElementSibling as HTMLElement
+    const list = screen.getByRole('heading', {
+      level: 3,
+      name: /^Media Function Instances — \d+ of \d+ provisioned$/,
+    }).nextElementSibling as HTMLElement
     const rows = within(list).getAllByRole('listitem')
     expect(rows.map((r) => r.textContent)).toEqual(['mxl-aplanned', 'mxl-bcleared to run'])
     // The requested-state badge carries the shared intent-not-proof title.
