@@ -1,3 +1,5 @@
+import importlib.metadata
+
 from fastapi.testclient import TestClient
 import pytest
 
@@ -15,6 +17,16 @@ def test_health_endpoint_reports_release_zero_mode():
     payload = response.json()
     assert payload["status"] == "ok"
     assert payload["product"] == "DMF Console"
+
+
+def test_version_endpoint_reports_installed_package_version():
+    app = create_app()
+    client = TestClient(app)
+
+    response = client.get("/api/version")
+
+    assert response.status_code == 200
+    assert response.json()["version"] == importlib.metadata.version("dmf-cms")
 
 
 def test_login_and_overview_shell_render():
