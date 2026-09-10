@@ -89,6 +89,13 @@ afterEach(() => {
 })
 
 describe('DesignStage — catalog-read-failure honesty', () => {
+  it('renders the NetBox-backed design progress rather than counting local instance rows', async () => {
+    vi.stubGlobal('fetch', vi.fn(async () => json({})))
+    const queryClient = new QueryClient({ defaultOptions: { queries: { retry: false } } })
+    renderStage(queryClient, { workload: workload({ progress: { designed: 7, provisioned: 5, total: 9 } }) })
+    expect(await screen.findByRole('heading', { level: 3, name: '7 elements designed' })).toBeTruthy()
+  })
+
   it('a healthy catalog read never shows the removed-function warning for a known key', async () => {
     vi.stubGlobal('fetch', vi.fn(async () => json({})))
     const queryClient = new QueryClient({ defaultOptions: { queries: { retry: false } } })

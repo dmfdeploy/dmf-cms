@@ -689,6 +689,14 @@ def list_workloads_grouped(
             "name": "Unassigned" if slug == "unassigned" else slug,
             "lifecycle": lifecycle,
             "health": "ok",
+            # Progress is derived once at the NetBox read boundary. The
+            # console renders these facts directly rather than rebuilding
+            # lifecycle counts from the instance list.
+            "progress": {
+                "designed": len(members_sorted),
+                "provisioned": sum(inst["requested_state"] == "active" for inst in members_sorted),
+                "total": len(members_sorted),
+            },
             "instances": members_sorted,
             "functions": sorted(functions.values(), key=lambda f: f["function_key"]),
         })

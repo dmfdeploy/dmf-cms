@@ -737,6 +737,13 @@ export interface MediaWorkload {
   name: string
   lifecycle: 'provision' | 'configure' | 'operate' | 'unknown'
   health: 'ok' | 'degraded'
+  // Server-derived NetBox progress. These values deliberately travel with
+  // the workload rather than being recomputed from its rendered instances.
+  progress?: {
+    designed: number
+    provisioned: number
+    total: number
+  }
   instances: (MediaWorkloadInstance & { workload_assignment: string })[]
   functions: MediaWorkloadFunction[]
 }
