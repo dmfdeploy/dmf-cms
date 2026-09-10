@@ -471,7 +471,9 @@ function CapacityPanel({ data }: { data: FacilityDetailResponse }) {
               <tr>
                 <th></th>
                 <th>Allocatable</th>
-                <th>Requests committed</th>
+                <th aria-label="Requests committed" className="leading-tight">
+                  Requests<br />committed
+                </th>
               </tr>
             </thead>
             <tbody>
