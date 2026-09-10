@@ -134,10 +134,12 @@ def _catalog(monkeypatch):
 # ---------------------------------------------------------------------------
 
 
-def test_A1_eligible_rollback_drained_upgrades_to_run_complete(monkeypatch):
+def test_A1_eligible_auto_rollback_drained_upgrades_to_run_complete_and_replaces_its_audit_outcome(monkeypatch, caplog):
     app, ops_store = _fake_app()
     _seed_run(ops_store)
-    op = ops_store.create("rollback", RUN_ID)
+    op = ops_store.create(
+        "rollback", RUN_ID, request_id="rid-auto-rollback", initiator="system:auto-rollback",
+    )
 
     monkeypatch.setattr(main, "get_job", lambda **k: {"status": "successful", "started": "t0", "finished": "t1"})
     monkeypatch.setattr(
@@ -146,12 +148,19 @@ def test_A1_eligible_rollback_drained_upgrades_to_run_complete(monkeypatch):
     )
     _mock_drained(monkeypatch)  # ABSENT NetBox record -> drain-expected, both seams clean
 
-    _run_watcher_and_drain(app, op.operation_id, 111, "rollback", RUN_ID)
+    with caplog.at_level("INFO", logger="dmf_cms.audit"):
+        _run_watcher_and_drain(app, op.operation_id, 111, "rollback", RUN_ID)
 
     updated = ops_store.get(op.operation_id)
     assert updated.state == OperationState.RUN_COMPLETE
     assert updated.l3_outcome == "rollback_complete"
     assert drain.DRAIN_VERIFIED_DETAIL in updated.error
+
+    # The initial marker says incomplete; the later monitoring proof appends
+    # a newer join that Activity resolves onto the same automatic rollback.
+    audit_lines = [r.getMessage() for r in caplog.records if r.getMessage().startswith("awx write:")]
+    assert any("outcome=rollback_incomplete:rollback_incomplete" in line for line in audit_lines)
+    assert any("outcome=run_complete:rollback_complete" in line for line in audit_lines)
 
     # facility check passes afterward — RUN_COMPLETE is not a DIRTY_STATE.
     assert updated.state not in DIRTY_STATES
