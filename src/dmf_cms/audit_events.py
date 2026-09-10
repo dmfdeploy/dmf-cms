@@ -1301,7 +1301,7 @@ def list_audit_events(
             # eligible regardless of what run_id it resolves to — the r4
             # fix stays intact.
             is_dispatch_row = (
-                fields.get("outcome") == "auto-triggered"
+                fields.get("outcome") in {"auto-triggered", "already-in-progress"}
                 if cls == "auto-rollback"
                 else fields.get("outcome") in _DISPATCH_OUTCOME_TOKENS
             )
