@@ -124,7 +124,7 @@ describe('F4: the default/expert split is a real DOM boundary, not just CSS muti
     mkFetch(response)
     renderHistory()
     await screen.findByText('dispatched')
-    expect(document.querySelector('details')).toBeNull()
+    expect(Array.from(document.querySelectorAll('details')).find((details) => details.textContent?.includes('System details'))).toBeUndefined()
   })
 })
 
@@ -168,7 +168,7 @@ describe('R496-C P1-2: a lost outcome renders as an honest unknown, never a forg
     // 'failed' is fine here — the meaning honestly lists it as ONE of
     // several possibilities, not an assertion. The <details> disclosure
     // itself is what must not exist, since there's no raw token to gate.
-    expect(document.querySelector('details')).toBeNull()
+    expect(Array.from(document.querySelectorAll('details')).find((details) => details.textContent?.includes('System details'))).toBeUndefined()
   })
 })
 
@@ -411,6 +411,10 @@ describe('F8: the local panel never claims completion for a dispatch-time record
 
     renderHistory()
     const localPanel = (await screen.findByText("This browser's own actions")).closest('.panel') as HTMLElement
+    const disclosure = localPanel.querySelector('details')
+    expect(disclosure).not.toBeNull()
+    expect((disclosure as HTMLDetailsElement).open).toBe(false)
+    expect(disclosure?.querySelector('summary')?.textContent?.trim()).toBe('About this browser record')
     expect(within(localPanel).getByText('Requested permanent deletion of wl-z')).toBeTruthy()
     expect(within(localPanel).getByText('Requested workflow launch: some-jt')).toBeTruthy()
     expect(within(localPanel).queryByText(/^Deleted wl-z permanently$/)).toBeNull()

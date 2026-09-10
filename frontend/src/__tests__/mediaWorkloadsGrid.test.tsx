@@ -1201,9 +1201,13 @@ describe('Unassigned group disposal explanation (umbrella #285 addendum)', () =>
     ])
     renderListPage()
 
-    expect(await screen.findByText('About the Unassigned group')).toBeTruthy()
+    const heading = await screen.findByRole('heading', { name: 'About the Unassigned group', level: 2 })
+    const disclosure = heading.closest('.border-b')?.querySelector('details')
+    expect(disclosure).not.toBeNull()
+    expect((disclosure as HTMLDetailsElement).open).toBe(false)
+    expect(disclosure?.querySelector('summary')?.textContent?.trim()).toBe('About the Unassigned group')
     // (a) what these entries are
-    expect(screen.getByText(/recorded in the facility source of truth/)).toBeTruthy()
+    expect(screen.getByText(/recorded in the facility source of truth/).closest('details')).toBe(disclosure)
     // (b) the console cannot dispose, and why
     expect(screen.getByText(/cannot remove one of these records/)).toBeTruthy()
     expect(screen.getByText(/holds no seam to/)).toBeTruthy()

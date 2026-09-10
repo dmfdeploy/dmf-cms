@@ -1,5 +1,5 @@
 import { useChangesJobs, useChangesCommits, useChangesPulls } from '@/api/hooks'
-import { GitCommit, GitPullRequest, MousePointerClick, Zap, ExternalLink } from 'lucide-react'
+import { GitCommit, GitPullRequest, MousePointerClick, Zap, ExternalLink, Info } from 'lucide-react'
 import { useActivityStore, type ConsoleActionType } from '../../store/activity'
 import { describeJob, jobOutcome } from '../../lib/labels'
 import { classifyChanges, changesEmptyCopy, classifyForgejo, forgejoEmptyCopy } from '../../lib/changesState'
@@ -110,15 +110,21 @@ export default function HistoryLane() {
             <MousePointerClick className="w-5 h-5 text-accent" />
             This browser&apos;s own actions
           </h2>
-          <p className="text-xs text-muted mt-1">
-            Not a facility record — recorded locally, in this browser only,
-            and only for what the facility activity above doesn&apos;t
-            carry: clearing a workload for deployment (a separate record
-            entirely), permanently deleting a workload, and launching a
-            workflow directly (the same two exclusions disclosed above, for
-            the same reasons). No other operator, and no other browser of
-            your own, sees these.
-          </p>
+          <details className="mt-1">
+            <summary className="inline-flex h-7 w-7 items-center justify-center rounded align-top text-muted hover:text-text cursor-pointer select-none list-none [&::-webkit-details-marker]:hidden focus-visible:outline focus-visible:outline-2 focus-visible:outline-accent">
+              <Info className="w-4 h-4" aria-hidden="true" />
+              <span className="sr-only">About this browser record</span>
+            </summary>
+            <p className="text-xs text-muted pt-1">
+              Not a facility record — recorded locally, in this browser only,
+              and only for what the facility activity above doesn&apos;t
+              carry: clearing a workload for deployment (a separate record
+              entirely), permanently deleting a workload, and launching a
+              workflow directly (the same two exclusions disclosed above, for
+              the same reasons). No other operator, and no other browser of
+              your own, sees these.
+            </p>
+          </details>
         </div>
         <div className="divide-y divide-panel">
           {localOnlyActions.length === 0 ? (

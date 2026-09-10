@@ -1,6 +1,6 @@
 import { useMemo } from 'react'
 import { Link } from 'react-router-dom'
-import { AlertCircle, AlertTriangle, CheckCircle2, HelpCircle, RefreshCw, type LucideIcon } from 'lucide-react'
+import { AlertCircle, AlertTriangle, CheckCircle2, HelpCircle, Info, RefreshCw, type LucideIcon } from 'lucide-react'
 import { useMediaWorkloadsGrouped } from '../../api/hooks'
 import type { MediaWorkload, MediaWorkloadInstance } from '../../api/types'
 import { lifecycleBadge, type LifecycleBadge } from '../../lib/workloadFlow'
@@ -538,37 +538,40 @@ function UnassignedDisposalNote({ workload }: { workload: MediaWorkload }) {
   return (
     <div className="panel mt-4 border border-white/10 bg-white/5">
       <div className="border-b border-white/10 px-4 py-3">
-        <h2 className="text-lg font-semibold">About the Unassigned group</h2>
-      </div>
-      <div className="space-y-2 p-4 text-sm text-muted">
-        <p>
-          {count === 1 ? 'This instance is' : `These ${count} instances are`} recorded
-          in the facility source of truth without a workload assignment — no{' '}
-          <span className="font-mono">workload:</span> tag naming which workload{' '}
-          {count === 1 ? 'it belongs' : 'they belong'} to. That is the only thing this
-          group means.
-        </p>
-        {/* Runtime is a SEPARATE question from assignment, and the two must not
-            be welded together (GATE-B). An unassigned member can be running
-            perfectly well — it is missing a tag, not a deployment — so the
-            has-nothing-running clause is stated only when the members actually
-            observe that way, and never as the definition of the group. */}
-        <p>
-          {noneRunning
-            ? `Nothing is observed running for ${count === 1 ? 'it' : 'them'} right now — normal for a while after a teardown, and a leftover if nothing ever ran against ${count === 1 ? 'it' : 'them'} at all.`
-            : `Some of what is recorded here is observed running. An unassigned instance is one the source of truth has not filed under a workload; it is not necessarily idle.`}
-        </p>
-        <p>
-          This console cannot remove one of these records. It holds no seam to
-          delete a service record from the facility source of truth — by
-          design, the console changes what is recorded and what runs against a
-          record, never the record's existence.
-        </p>
-        <p>
-          What does remove one: deleting the service record in the facility
-          source of truth directly. A teardown will not do this — teardown
-          returns a record to recorded-but-not-running, it does not remove it.
-        </p>
+        <div className="float-left mr-2">
+          <h2 className="text-lg font-semibold">About the Unassigned group</h2>
+        </div>
+        <details>
+          <summary className="inline-flex h-7 w-7 items-center justify-center rounded align-top text-muted hover:text-text cursor-pointer select-none list-none [&::-webkit-details-marker]:hidden focus-visible:outline focus-visible:outline-2 focus-visible:outline-accent">
+            <Info className="w-4 h-4" aria-hidden="true" />
+            <span className="sr-only">About the Unassigned group</span>
+          </summary>
+          <div className="clear-both space-y-2 pt-2 text-sm text-muted">
+            <p>
+              {count === 1 ? 'This instance is' : `These ${count} instances are`} recorded
+              in the facility source of truth without a workload assignment — no{' '}
+              <span className="font-mono">workload:</span> tag naming which workload{' '}
+              {count === 1 ? 'it belongs' : 'they belong'} to. That is the only thing this
+              group means.
+            </p>
+            <p>
+              {noneRunning
+                ? `Nothing is observed running for ${count === 1 ? 'it' : 'them'} right now — normal for a while after a teardown, and a leftover if nothing ever ran against ${count === 1 ? 'it' : 'them'} at all.`
+                : `Some of what is recorded here is observed running. An unassigned instance is one the source of truth has not filed under a workload; it is not necessarily idle.`}
+            </p>
+            <p>
+              This console cannot remove one of these records. It holds no seam to
+              delete a service record from the facility source of truth — by
+              design, the console changes what is recorded and what runs against a
+              record, never the record's existence.
+            </p>
+            <p>
+              What does remove one: deleting the service record in the facility
+              source of truth directly. A teardown will not do this — teardown
+              returns a record to recorded-but-not-running, it does not remove it.
+            </p>
+          </div>
+        </details>
       </div>
     </div>
   )
