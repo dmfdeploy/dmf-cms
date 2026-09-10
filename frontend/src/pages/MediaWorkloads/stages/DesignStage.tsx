@@ -68,7 +68,9 @@ export default function DesignStage({
     <StageCard label="Design" state={state}>
       <div className="space-y-4">
         <div>
-          <h3 className="text-xs uppercase tracking-wide text-muted">Templates</h3>
+          <h3 className="text-xs uppercase tracking-wide text-muted">
+            {workload.instances.length} element{workload.instances.length === 1 ? '' : 's'} designed
+          </h3>
           {/* fix-round 5: named ONCE at the section level — a failed catalog
               read misses EVERY join below, so accusing each function
               individually of having been "removed" would repeat a false
