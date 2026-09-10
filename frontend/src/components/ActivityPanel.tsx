@@ -284,7 +284,7 @@ export default function ActivityPanel({ title, explainer = 'inline' }: ActivityP
   )
 
   return (
-    <div className="panel mb-6">
+    <div className="panel mb-6" data-testid="activity-panel">
       <div className="px-6 py-4 border-b border-panel flow-root">
         {explainer === 'disclosure' ? (
           <>

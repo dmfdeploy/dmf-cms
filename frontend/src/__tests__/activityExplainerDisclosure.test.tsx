@@ -163,4 +163,21 @@ describe('dmfdeploy/dmfdeploy#555: the Activity explainer is a disclosure on Wor
     const onHistory = (await screen.findByText(STOPGAP)).textContent
     expect(onWorkspace).toBe(onHistory)
   })
+
+  // umbrella #571: the demo click path needs a stable selector for the
+  // Activity panel regardless of which title ("Activity" vs "Facility
+  // activity") the call site passes — that variation is exactly why a
+  // testid, not text, is the contract here.
+  it('carries data-testid="activity-panel" at both call sites', async () => {
+    renderWithQuery(<Workspace />)
+    expect(await screen.findByTestId('activity-panel')).toBeTruthy()
+    cleanup()
+    renderWithQuery(<HistoryLane />)
+    expect(await screen.findByTestId('activity-panel')).toBeTruthy()
+  })
+
+  it('carries data-testid="activity-history-lane" on the History lane root', async () => {
+    renderWithQuery(<HistoryLane />)
+    expect(await screen.findByTestId('activity-history-lane')).toBeTruthy()
+  })
 })

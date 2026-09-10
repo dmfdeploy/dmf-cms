@@ -68,6 +68,7 @@ export default function WorkloadTile({
             ? 'Open the live preview + flow detail'
             : undefined
         }
+        data-testid={`viewer-tile-${instance.instance}`}
       >
         <LivePreviewFrame
           instance={instance}

@@ -660,6 +660,29 @@ async function reachProvision() {
   return stepSection('Provision')
 }
 
+// umbrella #571: the demo click path needs a stable selector contract,
+// independent of visible text/role.
+describe('stable data-testid contract (umbrella #571)', () => {
+  it('keys the Design template tile by its catalog key', async () => {
+    mkFetch()
+    renderCreate()
+    await screen.findByRole('heading', { name: 'Identity' })
+    const design = await reachDesign()
+    expect(within(design).getByTestId(`catalog-tile-${catalogEntry().key}`)).toBeTruthy()
+  })
+
+  it('carries data-testid="confirm-deploy" on the Provision step\'s Confirm button', async () => {
+    mkFetch()
+    renderCreate()
+    await screen.findByRole('heading', { name: 'Identity' })
+    const provision = await reachProvision()
+    fireEvent.click(within(provision).getByRole('button', { name: '▶ Provision now' }))
+    expect(within(provision).getByTestId('confirm-deploy')).toBe(
+      within(provision).getByRole('button', { name: 'Confirm provision' }),
+    )
+  })
+})
+
 describe('Provision: the deploy POST', () => {
   it('carries both the mandatory reason and the workload slug, then navigates to the real workload route', async () => {
     const { deploy } = mkFetch()

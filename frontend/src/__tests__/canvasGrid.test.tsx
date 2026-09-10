@@ -33,6 +33,25 @@ describe('CanvasGrid — under real jsdom (no layout engine)', () => {
     expect(screen.getByTestId('tile-2')).toBeTruthy()
     expect(screen.queryAllByTestId('canvas-grid-ghost')).toHaveLength(0)
   })
+
+  // umbrella #571: the demo click path needs a stable selector on the grid
+  // itself — optional, so a caller that omits it (like this file's other
+  // fixtures) is unaffected.
+  it('carries data-testid on its own root when testId is passed, and none when omitted', () => {
+    const { rerender } = render(
+      <CanvasGrid itemCount={1} testId="workload-grid">
+        <div />
+      </CanvasGrid>,
+    )
+    expect(screen.getByTestId('workload-grid')).toBeTruthy()
+
+    rerender(
+      <CanvasGrid itemCount={1}>
+        <div />
+      </CanvasGrid>,
+    )
+    expect(screen.queryByTestId('workload-grid')).toBeNull()
+  })
 })
 
 /**
