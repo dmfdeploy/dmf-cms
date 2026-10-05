@@ -1,5 +1,7 @@
 # dmf-cms
 
+[![CI](https://github.com/dmfdeploy/dmf-cms/actions/workflows/ci.yml/badge.svg)](https://github.com/dmfdeploy/dmf-cms/actions/workflows/ci.yml)
+
 **DMF Console** — the operator-facing surface of the
 [DMF Platform](https://github.com/dmfdeploy/dmfdeploy), an open prototype of the
 [EBU](https://tech.ebu.ch/) *Dynamic Media Facility* Reference Architecture V2.0.
