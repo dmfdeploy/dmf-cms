@@ -10,6 +10,11 @@ It is where an operator sees facility inventory, launches and watches
 automation, takes a media workload through its lifecycle, and reads what the
 platform observed — with provenance on the state it shows.
 
+![The Media Workloads page of the DMF Console, showing one deployed workload tile with a test-pattern picture and the status "configured".](docs/images/media-workloads.png)
+
+*The Media Workloads page in dmf-cms 0.39.0, with one test workload deployed.
+The picture on the tile is an illustration, not a live preview of the stream.*
+
 ## Status
 
 **Running, and deployed on the project's own environments.** `VERSION` is the
