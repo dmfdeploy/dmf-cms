@@ -1,0 +1,43 @@
+{
+  "product_name": "DMF Console",
+  "facility_name": "Studio Facility",
+  "catalog_source": "dmf-media",
+  "apps": [
+    {
+      "key": "netbox",
+      "display_name": "NetBox",
+      "lane": "private",
+      "summary": "Facility source of truth",
+      "links": [
+        {
+          "name": "Open",
+          "url": "https://netbox.dmf.example.com"
+        }
+      ]
+    },
+    {
+      "key": "awx",
+      "display_name": "AWX",
+      "lane": "private",
+      "summary": "Automation controller",
+      "links": [
+        {
+          "name": "Open",
+          "url": "https://awx.dmf.example.com"
+        }
+      ]
+    },
+    {
+      "key": "grafana",
+      "display_name": "Grafana",
+      "lane": "public",
+      "summary": "Dashboards",
+      "links": [
+        {
+          "name": "Open",
+          "url": "https://grafana.dmf.example.com"
+        }
+      ]
+    }
+  ]
+}

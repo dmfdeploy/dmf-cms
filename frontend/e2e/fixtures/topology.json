@@ -1,0 +1,20 @@
+{
+  "studio-a-signal-receiver": {
+    "receiver_instance": "studio-a-signal-receiver",
+    "sources": [
+      {
+        "id": "source-a",
+        "flow_id": "flow-1",
+        "pattern": "smpte"
+      },
+      {
+        "id": "source-b",
+        "flow_id": "flow-2",
+        "pattern": "ball"
+      }
+    ],
+    "active_source": "source-a",
+    "provenance": "observed-flow",
+    "observed_at": "2026-01-15T10:20:00Z"
+  }
+}

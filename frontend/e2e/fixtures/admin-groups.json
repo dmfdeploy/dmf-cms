@@ -1,0 +1,30 @@
+{
+  "groups": [
+    {
+      "pk": "g-1",
+      "name": "media-engineers",
+      "user_count": 2,
+      "users": [
+        {
+          "username": "operator-one",
+          "display_name": "Operator One"
+        },
+        {
+          "username": "operator-two",
+          "display_name": "Operator Two"
+        }
+      ]
+    },
+    {
+      "pk": "g-2",
+      "name": "viewers",
+      "user_count": 1,
+      "users": [
+        {
+          "username": "viewer-one",
+          "display_name": "Viewer One"
+        }
+      ]
+    }
+  ]
+}

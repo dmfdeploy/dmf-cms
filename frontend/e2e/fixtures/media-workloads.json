@@ -1,0 +1,107 @@
+{
+  "configured": true,
+  "degraded": false,
+  "scope": "all",
+  "instances": [
+    {
+      "instance": "studio-a-signal-sender",
+      "netbox_id": 1376,
+      "function_key": "signal-sender",
+      "live_view": true,
+      "requested_state": "active",
+      "observed_state": "running",
+      "reconcile_pending": false,
+      "placement": {
+        "node": "node-a",
+        "ports": [
+          8080
+        ],
+        "protocol": "tcp"
+      }
+    },
+    {
+      "instance": "studio-a-signal-receiver",
+      "netbox_id": 2528,
+      "function_key": "signal-receiver",
+      "live_view": true,
+      "requested_state": "active",
+      "observed_state": "running",
+      "reconcile_pending": false,
+      "placement": {
+        "node": "node-b",
+        "ports": [
+          8081
+        ],
+        "protocol": "tcp"
+      }
+    },
+    {
+      "instance": "studio-b-signal-sender",
+      "netbox_id": 5632,
+      "function_key": "signal-sender",
+      "live_view": false,
+      "requested_state": "bootstrapped",
+      "observed_state": "unknown",
+      "reconcile_pending": false,
+      "placement": {
+        "node": "node-a",
+        "ports": [
+          8080
+        ],
+        "protocol": "tcp"
+      }
+    },
+    {
+      "instance": "studio-b-signal-receiver",
+      "netbox_id": 6136,
+      "function_key": "signal-receiver",
+      "live_view": false,
+      "requested_state": "bootstrapped",
+      "observed_state": "unknown",
+      "reconcile_pending": false,
+      "placement": {
+        "node": "node-a",
+        "ports": [
+          8080
+        ],
+        "protocol": "tcp"
+      }
+    },
+    {
+      "instance": "studio-c-test-pattern",
+      "netbox_id": 2352,
+      "function_key": "test-pattern",
+      "live_view": false,
+      "requested_state": "bootstrapped",
+      "observed_state": "unknown",
+      "reconcile_pending": true,
+      "placement": {
+        "node": "node-a",
+        "ports": [
+          8080
+        ],
+        "protocol": "tcp"
+      }
+    }
+  ],
+  "functions": [
+    {
+      "function_key": "signal-sender",
+      "count": 2,
+      "running": 1,
+      "reconcile_pending": 0
+    },
+    {
+      "function_key": "signal-receiver",
+      "count": 2,
+      "running": 1,
+      "reconcile_pending": 0
+    },
+    {
+      "function_key": "test-pattern",
+      "count": 1,
+      "running": 0,
+      "reconcile_pending": 1
+    }
+  ]
+}

@@ -1,0 +1,22 @@
+{
+  "templates": [
+    {
+      "id": 11,
+      "name": "Refresh inventory",
+      "description": "Re-read the facility inventory",
+      "type": "job_template"
+    },
+    {
+      "id": 12,
+      "name": "Rotate certificates",
+      "description": "Renew service certificates",
+      "type": "job_template"
+    },
+    {
+      "id": 13,
+      "name": "Backup configuration",
+      "description": "Save platform configuration",
+      "type": "job_template"
+    }
+  ]
+}

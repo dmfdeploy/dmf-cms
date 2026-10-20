@@ -1,0 +1,13 @@
+{
+  "subject": "operator-one",
+  "display_name": "Operator One",
+  "email": "operator-one@dmf.example.com",
+  "role": "admin",
+  "real_role": "admin",
+  "view_as_active": false,
+  "groups": [
+    "media-engineers"
+  ],
+  "awx_configured": true,
+  "authentik_configured": true
+}

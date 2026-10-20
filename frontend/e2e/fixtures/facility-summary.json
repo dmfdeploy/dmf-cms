@@ -1,0 +1,12 @@
+{
+  "reason": "",
+  "site_count": 1,
+  "device_count": 4,
+  "sites": [
+    {
+      "name": "Studio Site",
+      "slug": "studio-site",
+      "device_count": 4
+    }
+  ]
+}

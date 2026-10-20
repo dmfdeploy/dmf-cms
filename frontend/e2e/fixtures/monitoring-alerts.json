@@ -1,0 +1,20 @@
+{
+  "alerts": [
+    {
+      "name": "HighMemoryUsage",
+      "state": "firing",
+      "severity": "warning",
+      "summary": "Memory use is high on node-a",
+      "description": "Memory use above 85 percent for 10 minutes",
+      "activeAt": "2026-01-15T09:30:00Z"
+    },
+    {
+      "name": "DiskFillingUp",
+      "state": "pending",
+      "severity": "info",
+      "summary": "Disk on node-b is filling",
+      "description": "Projected full in 6 days",
+      "activeAt": "2026-01-15T10:05:00Z"
+    }
+  ]
+}

@@ -1,0 +1,63 @@
+{
+  "reason": "",
+  "window": {
+    "known": true,
+    "seconds": 604800,
+    "reason": ""
+  },
+  "capped": false,
+  "excluded": [],
+  "events": [
+    {
+      "request_id": "req-0001",
+      "class": "deploy",
+      "action": "deploy",
+      "target": "studio-a-signal-sender",
+      "workload": "studio-a",
+      "actor": "operator-one",
+      "role": "admin",
+      "reason": "Bring up Studio A",
+      "at": "2026-01-15T09:00:00Z",
+      "at_ns": "1768467600000000000",
+      "outcome": {
+        "state": "succeeded",
+        "detail": "launched"
+      }
+    },
+    {
+      "request_id": "req-0002",
+      "class": "switch-source",
+      "action": "switch-source",
+      "target": "studio-a-signal-receiver",
+      "workload": "studio-a",
+      "actor": "operator-two",
+      "role": "engineer",
+      "reason": "Cut to backup source",
+      "at": "2026-01-15T09:30:00Z",
+      "at_ns": "1768469400000000000",
+      "outcome": {
+        "state": "in_flight",
+        "detail": ""
+      }
+    },
+    {
+      "request_id": "req-0003",
+      "class": "teardown",
+      "action": "teardown",
+      "target": "studio-c-signal-sender",
+      "workload": "studio-c",
+      "actor": "operator-one",
+      "role": "admin",
+      "reason": "Retire Studio C",
+      "at": "2026-01-14T18:00:00Z",
+      "at_ns": "1768413600000000000",
+      "outcome": {
+        "state": "failed",
+        "detail": "run_failed",
+        "headline": "Teardown did not finish",
+        "meaning": "The automation job reported a failure.",
+        "next_step": "Review the job output, then try again."
+      }
+    }
+  ]
+}

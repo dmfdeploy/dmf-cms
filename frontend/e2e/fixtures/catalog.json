@@ -1,0 +1,85 @@
+{
+  "entries": [
+    {
+      "key": "signal-sender",
+      "display_name": "Signal Sender",
+      "summary": "Signal Sender for the media pipeline",
+      "ebu_layer": 3,
+      "ebu_vertical": "media",
+      "ebu_media_function_type": "processing",
+      "ebu_lifecycle_owner": "dmf",
+      "lifecycle": "active",
+      "provision_image": "registry.dmf.example.com/signal-sender:1.0.0",
+      "provision_netbox_service": "signal-sender",
+      "configure_awx_job_template": "configure-signal-sender",
+      "finalise_awx_job_template": "finalise-signal-sender",
+      "dependencies": [],
+      "ingress_url": null,
+      "provision_demand": {
+        "cpu_m": 500,
+        "mem_b": 536870912
+      },
+      "topology_source_noun": null
+    },
+    {
+      "key": "signal-receiver",
+      "display_name": "Signal Receiver",
+      "summary": "Signal Receiver for the media pipeline",
+      "ebu_layer": 3,
+      "ebu_vertical": "media",
+      "ebu_media_function_type": "processing",
+      "ebu_lifecycle_owner": "dmf",
+      "lifecycle": "active",
+      "provision_image": "registry.dmf.example.com/signal-receiver:1.0.0",
+      "provision_netbox_service": "signal-receiver",
+      "configure_awx_job_template": "configure-signal-receiver",
+      "finalise_awx_job_template": "finalise-signal-receiver",
+      "dependencies": [
+        "signal-sender"
+      ],
+      "ingress_url": "https://receiver.dmf.example.com",
+      "provision_demand": {
+        "cpu_m": 500,
+        "mem_b": 536870912
+      },
+      "topology_source_noun": "camera"
+    },
+    {
+      "key": "test-pattern",
+      "display_name": "Test Pattern Generator",
+      "summary": "Test Pattern Generator for the media pipeline",
+      "ebu_layer": 3,
+      "ebu_vertical": "media",
+      "ebu_media_function_type": "processing",
+      "ebu_lifecycle_owner": "dmf",
+      "lifecycle": "bootstrapped",
+      "provision_image": "registry.dmf.example.com/test-pattern:1.0.0",
+      "provision_netbox_service": "test-pattern",
+      "configure_awx_job_template": "configure-test-pattern",
+      "finalise_awx_job_template": "finalise-test-pattern",
+      "dependencies": [],
+      "ingress_url": null,
+      "provision_demand": {
+        "cpu_m": 500,
+        "mem_b": 536870912
+      }
+    },
+    {
+      "key": "nmos-registry",
+      "display_name": "NMOS Registry",
+      "summary": "NMOS Registry for the media pipeline",
+      "ebu_layer": 2,
+      "ebu_vertical": "media",
+      "ebu_media_function_type": "processing",
+      "ebu_lifecycle_owner": "dmf",
+      "lifecycle": "active",
+      "provision_image": "registry.dmf.example.com/nmos-registry:1.0.0",
+      "provision_netbox_service": "nmos-registry",
+      "configure_awx_job_template": "configure-nmos-registry",
+      "finalise_awx_job_template": "finalise-nmos-registry",
+      "dependencies": [],
+      "ingress_url": null,
+      "provision_demand": null
+    }
+  ]
+}

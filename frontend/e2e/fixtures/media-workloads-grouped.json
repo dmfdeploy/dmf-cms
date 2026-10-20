@@ -1,0 +1,168 @@
+{
+  "configured": true,
+  "degraded": false,
+  "scope": "all",
+  "invalid_instances": [],
+  "workloads": [
+    {
+      "slug": "studio-a",
+      "name": "Studio A",
+      "lifecycle": "operate",
+      "health": "ok",
+      "progress": {
+        "designed": 2,
+        "provisioned": 2,
+        "total": 2
+      },
+      "instances": [
+        {
+          "instance": "studio-a-signal-sender",
+          "netbox_id": 1376,
+          "function_key": "signal-sender",
+          "live_view": true,
+          "requested_state": "active",
+          "observed_state": "running",
+          "reconcile_pending": false,
+          "placement": {
+            "node": "node-a",
+            "ports": [
+              8080
+            ],
+            "protocol": "tcp"
+          },
+          "workload_assignment": "studio-a"
+        },
+        {
+          "instance": "studio-a-signal-receiver",
+          "netbox_id": 2528,
+          "function_key": "signal-receiver",
+          "live_view": true,
+          "requested_state": "active",
+          "observed_state": "running",
+          "reconcile_pending": false,
+          "placement": {
+            "node": "node-b",
+            "ports": [
+              8081
+            ],
+            "protocol": "tcp"
+          },
+          "workload_assignment": "studio-a"
+        }
+      ],
+      "functions": [
+        {
+          "function_key": "signal-sender",
+          "count": 1,
+          "running": 1,
+          "reconcile_pending": 0
+        },
+        {
+          "function_key": "signal-receiver",
+          "count": 1,
+          "running": 1,
+          "reconcile_pending": 0
+        }
+      ]
+    },
+    {
+      "slug": "studio-b",
+      "name": "Studio B",
+      "lifecycle": "configure",
+      "health": "ok",
+      "progress": {
+        "designed": 2,
+        "provisioned": 2,
+        "total": 2
+      },
+      "instances": [
+        {
+          "instance": "studio-b-signal-sender",
+          "netbox_id": 5632,
+          "function_key": "signal-sender",
+          "live_view": false,
+          "requested_state": "bootstrapped",
+          "observed_state": "unknown",
+          "reconcile_pending": false,
+          "placement": {
+            "node": "node-a",
+            "ports": [
+              8080
+            ],
+            "protocol": "tcp"
+          },
+          "workload_assignment": "studio-b"
+        },
+        {
+          "instance": "studio-b-signal-receiver",
+          "netbox_id": 6136,
+          "function_key": "signal-receiver",
+          "live_view": false,
+          "requested_state": "bootstrapped",
+          "observed_state": "unknown",
+          "reconcile_pending": false,
+          "placement": {
+            "node": "node-a",
+            "ports": [
+              8080
+            ],
+            "protocol": "tcp"
+          },
+          "workload_assignment": "studio-b"
+        }
+      ],
+      "functions": [
+        {
+          "function_key": "signal-sender",
+          "count": 1,
+          "running": 0,
+          "reconcile_pending": 0
+        },
+        {
+          "function_key": "signal-receiver",
+          "count": 1,
+          "running": 0,
+          "reconcile_pending": 0
+        }
+      ]
+    },
+    {
+      "slug": "studio-c",
+      "name": "Studio C",
+      "lifecycle": "provision",
+      "health": "degraded",
+      "progress": {
+        "designed": 1,
+        "provisioned": 0,
+        "total": 1
+      },
+      "instances": [
+        {
+          "instance": "studio-c-test-pattern",
+          "netbox_id": 2352,
+          "function_key": "test-pattern",
+          "live_view": false,
+          "requested_state": "bootstrapped",
+          "observed_state": "unknown",
+          "reconcile_pending": true,
+          "placement": {
+            "node": "node-a",
+            "ports": [
+              8080
+            ],
+            "protocol": "tcp"
+          },
+          "workload_assignment": "studio-c"
+        }
+      ],
+      "functions": [
+        {
+          "function_key": "test-pattern",
+          "count": 1,
+          "running": 0,
+          "reconcile_pending": 1
+        }
+      ]
+    }
+  ]
+}
