@@ -1,3 +1,6 @@
+import { expect } from 'vitest'
+import * as axeMatchers from 'vitest-axe/matchers'
+
 // Under vitest 4 / Node 22+, Node's experimental webstorage shadows the
 // jsdom Storage and is non-functional without --localstorage-file (its
 // methods are missing). Install a real in-memory Storage so code under
@@ -23,3 +26,7 @@ if (typeof window !== 'undefined' && typeof window.localStorage?.clear !== 'func
   Object.defineProperty(window, 'localStorage', { value: storage, configurable: true })
   Object.defineProperty(globalThis, 'localStorage', { value: storage, configurable: true })
 }
+
+// Register the axe accessibility matcher (`toHaveNoViolations`) for the
+// component checks in src/__tests__/a11yAxe.test.tsx.
+expect.extend(axeMatchers)
