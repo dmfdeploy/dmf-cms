@@ -86,3 +86,8 @@ vault_pass
 secret_id
 secret_id.*
 .gstack/
+
+# Playwright output
+frontend/test-results/
+frontend/playwright-report/
+frontend/blob-report/
