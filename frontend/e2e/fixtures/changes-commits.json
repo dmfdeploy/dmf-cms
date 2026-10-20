@@ -1,0 +1,24 @@
+{
+  "reason": "",
+  "repos": [
+    {
+      "name": "platform-config",
+      "commits": [
+        {
+          "sha_short": "a1b2c3d",
+          "message": "Update monitoring targets",
+          "author": "operator-one",
+          "date": "2026-01-15T07:00:00Z",
+          "url": "https://git.dmf.example.com/platform-config/commit/a1b2c3d"
+        },
+        {
+          "sha_short": "e4f5a6b",
+          "message": "Add Studio B workload",
+          "author": "operator-two",
+          "date": "2026-01-14T16:30:00Z",
+          "url": "https://git.dmf.example.com/platform-config/commit/e4f5a6b"
+        }
+      ]
+    }
+  ]
+}

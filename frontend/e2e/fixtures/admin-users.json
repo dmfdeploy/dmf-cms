@@ -1,0 +1,54 @@
+{
+  "users": [
+    {
+      "username": "operator-one",
+      "display_name": "Operator One",
+      "email": "operator-one@dmf.example.com",
+      "role": "admin",
+      "last_login": "2026-01-15T08:00:00Z",
+      "is_active": true,
+      "user_type": "human",
+      "is_break_glass": false
+    },
+    {
+      "username": "operator-two",
+      "display_name": "Operator Two",
+      "email": "operator-two@dmf.example.com",
+      "role": "engineer",
+      "last_login": "2026-01-14T17:00:00Z",
+      "is_active": true,
+      "user_type": "human",
+      "is_break_glass": false
+    },
+    {
+      "username": "viewer-one",
+      "display_name": "Viewer One",
+      "email": "viewer-one@dmf.example.com",
+      "role": "viewer",
+      "last_login": null,
+      "is_active": true,
+      "user_type": "human",
+      "is_break_glass": false
+    },
+    {
+      "username": "emergency-access",
+      "display_name": "Emergency Access",
+      "email": "emergency@dmf.example.com",
+      "role": "admin",
+      "last_login": null,
+      "is_active": true,
+      "user_type": "human",
+      "is_break_glass": true
+    },
+    {
+      "username": "svc-automation",
+      "display_name": "Automation Service",
+      "email": "svc@dmf.example.com",
+      "role": "operator",
+      "last_login": "2026-01-15T10:00:00Z",
+      "is_active": true,
+      "user_type": "machine",
+      "is_break_glass": false
+    }
+  ]
+}

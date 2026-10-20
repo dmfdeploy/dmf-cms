@@ -1,0 +1,6 @@
+{
+  "cpu_percent": 37,
+  "memory_percent": 62,
+  "pod_restarts_24h": 2,
+  "pvc_usage_percent": 48
+}

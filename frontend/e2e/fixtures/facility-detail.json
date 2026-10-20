@@ -1,0 +1,83 @@
+{
+  "requested_site": "studio-site",
+  "prometheus_configured": true,
+  "netbox_configured": true,
+  "site": {
+    "slug": "studio-site",
+    "name": "Studio Site",
+    "architecture": "arm64",
+    "reason": ""
+  },
+  "nodes": {
+    "reason": "",
+    "items": [
+      {
+        "name": "node-a",
+        "kubelet_version": "v1.31.0",
+        "arch": "arm64",
+        "arch_source": "node"
+      },
+      {
+        "name": "node-b",
+        "kubelet_version": "v1.31.0",
+        "arch": "arm64",
+        "arch_source": "node"
+      }
+    ]
+  },
+  "platform_services": {
+    "reason": "",
+    "items": [
+      {
+        "key": "netbox",
+        "display_name": "NetBox",
+        "namespace": "netbox",
+        "image_repositories": [
+          "registry.dmf.example.com/netbox"
+        ],
+        "url": "https://netbox.dmf.example.com",
+        "images": [
+          "registry.dmf.example.com/netbox:4.0.0"
+        ]
+      },
+      {
+        "key": "awx",
+        "display_name": "AWX",
+        "namespace": "awx",
+        "image_repositories": [
+          "registry.dmf.example.com/awx"
+        ],
+        "url": null,
+        "images": [
+          "registry.dmf.example.com/awx:24.0.0"
+        ]
+      }
+    ]
+  },
+  "storage": {
+    "reason": "",
+    "items": [
+      {
+        "namespace": "netbox",
+        "name": "netbox-data",
+        "storageclass": "local-path",
+        "requested_bytes": 10737418240
+      },
+      {
+        "namespace": "awx",
+        "name": "awx-projects",
+        "storageclass": "local-path",
+        "requested_bytes": 5368709120
+      }
+    ]
+  },
+  "capacity": {
+    "reason": "",
+    "node_name": "node-a",
+    "allocatable_cpu_m": 4000,
+    "allocatable_mem_b": 8589934592,
+    "requests_committed_cpu_m": 1800,
+    "requests_committed_mem_b": 3221225472,
+    "pod_count": 42
+  }
+}

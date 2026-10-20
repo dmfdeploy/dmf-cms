@@ -1,0 +1,20 @@
+{
+  "authentik": {
+    "connected": true,
+    "latency_ms": 12,
+    "user_count": 3
+  },
+  "awx": {
+    "connected": true,
+    "latency_ms": 30,
+    "template_count": 3
+  },
+  "netbox": {
+    "connected": true,
+    "latency_ms": 25
+  },
+  "prometheus": {
+    "connected": true,
+    "latency_ms": 8
+  }
+}

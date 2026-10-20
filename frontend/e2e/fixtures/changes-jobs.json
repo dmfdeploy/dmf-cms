@@ -1,0 +1,32 @@
+{
+  "reason": "",
+  "jobs": [
+    {
+      "id": 101,
+      "name": "Refresh inventory",
+      "status": "successful",
+      "started": "2026-01-15T08:00:00Z",
+      "finished": "2026-01-15T08:02:10Z",
+      "elapsed": 130,
+      "failed": false
+    },
+    {
+      "id": 102,
+      "name": "Rotate certificates",
+      "status": "failed",
+      "started": "2026-01-14T22:00:00Z",
+      "finished": "2026-01-14T22:01:00Z",
+      "elapsed": 60,
+      "failed": true
+    },
+    {
+      "id": 103,
+      "name": "Backup configuration",
+      "status": "running",
+      "started": "2026-01-15T10:00:00Z",
+      "finished": null,
+      "elapsed": 600,
+      "failed": false
+    }
+  ]
+}

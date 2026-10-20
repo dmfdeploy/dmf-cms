@@ -1,0 +1,14 @@
+{
+  "reason": "",
+  "pulls": [
+    {
+      "repo": "platform-config",
+      "number": 12,
+      "title": "Tune alert thresholds",
+      "state": "open",
+      "author": "operator-two",
+      "created": "2026-01-14T12:00:00Z",
+      "url": "https://git.dmf.example.com/platform-config/pulls/12"
+    }
+  ]
+}

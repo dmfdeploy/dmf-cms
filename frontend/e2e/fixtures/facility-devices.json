@@ -1,0 +1,41 @@
+{
+  "reason": "",
+  "devices": [
+    {
+      "id": 1,
+      "name": "node-a",
+      "type": "Compute node",
+      "site": "Studio Site",
+      "status": "active",
+      "ip": null,
+      "role": "control-plane"
+    },
+    {
+      "id": 2,
+      "name": "node-b",
+      "type": "Compute node",
+      "site": "Studio Site",
+      "status": "active",
+      "ip": null,
+      "role": "worker"
+    },
+    {
+      "id": 3,
+      "name": "switch-1",
+      "type": "Switch",
+      "site": "Studio Site",
+      "status": "active",
+      "ip": null,
+      "role": "access-switch"
+    },
+    {
+      "id": 4,
+      "name": "node-c",
+      "type": "Compute node",
+      "site": "Studio Site",
+      "status": "planned",
+      "ip": null,
+      "role": "worker"
+    }
+  ]
+}

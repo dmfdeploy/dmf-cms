@@ -1,0 +1,48 @@
+{
+  "configured": true,
+  "reachable": true,
+  "nodes": [
+    {
+      "role": "producer",
+      "provider": "example",
+      "online": true,
+      "node": "node-a",
+      "host": {
+        "os": "linux",
+        "kernel": "6.8",
+        "arch": "arm64"
+      },
+      "mxl_version": "1.0.0",
+      "flow": {}
+    },
+    {
+      "role": "receiver",
+      "provider": "example",
+      "online": true,
+      "node": "node-b",
+      "host": {
+        "os": "linux",
+        "kernel": "6.8",
+        "arch": "arm64"
+      },
+      "mxl_version": "1.0.0",
+      "flow": {}
+    }
+  ],
+  "flow": {
+    "id": "flow-1",
+    "format": "video/raw",
+    "grain_rate": "50/1",
+    "active": true,
+    "head_index": 1000,
+    "latency_grains": 2,
+    "latency_ms": 40,
+    "mxl_version": "1.0.0"
+  },
+  "transport": {
+    "library": "libfabric",
+    "provider": "tcp",
+    "service": "1234",
+    "interface": null
+  }
+}
