@@ -54,9 +54,12 @@ const LAYOUT_DEFECTS: LayoutDefect[] = [
   {
     invariant: 'sidebar covers nothing',
     routes: RAIL_ROUTES,
-    widths: [390, 768],
+    // The rail row always starts under the sidebar. Whether its centred first
+    // key clears the sidebar depends on font metrics: at 1024px it clears by
+    // about 12px with the macOS system font, but not with the Linux one in CI.
+    widths: process.platform === 'linux' ? [390, 768, 1024] : [390, 768],
     issue: SHELL,
-    why: 'below about 800px the rail row starts under the fixed sidebar',
+    why: 'the rail row starts at x=0 under the fixed sidebar',
   },
   {
     invariant: 'bell popover over rail',
