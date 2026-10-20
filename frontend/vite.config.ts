@@ -1,4 +1,4 @@
-import { defineConfig } from 'vitest/config'
+import { configDefaults, defineConfig } from 'vitest/config'
 import react from '@vitejs/plugin-react'
 import path from 'path'
 import { APP_BASE } from './vite-base.config'
@@ -9,6 +9,8 @@ export default defineConfig({
   test: {
     environment: 'jsdom',
     setupFiles: ['./vitest.setup.ts'],
+    // The Playwright suite under e2e/ runs in a real browser, not jsdom.
+    exclude: [...configDefaults.exclude, 'e2e/**'],
     // umbrella #432 §C: without this, Vitest stubs every `.css` import to an
     // empty string regardless of query suffix — formFieldPrimitive.test.tsx
     // reads index.css via `?raw` specifically so its contrast assertion is

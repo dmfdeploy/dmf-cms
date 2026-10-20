@@ -6,7 +6,9 @@
     "dev": "vite",
     "build": "tsc && vite build",
     "preview": "vite preview",
-    "test": "vitest run"
+    "test": "vitest run",
+    "lint": "eslint .",
+    "test:e2e": "playwright test"
   },
   "dependencies": {
     "@tailwindcss/postcss": "^4.2.4",
@@ -20,17 +22,25 @@
     "zustand": "^4.4.0"
   },
   "devDependencies": {
+    "@axe-core/playwright": "^4.14.0",
+    "@eslint/js": "^10.0.1",
+    "@playwright/test": "^1.64.1",
     "@testing-library/dom": "^10.4.1",
     "@testing-library/react": "^16.3.2",
     "@types/react": "^19.0.0",
     "@types/react-dom": "^19.0.0",
     "@vitejs/plugin-react": "^4.2.0",
     "autoprefixer": "^10.4.0",
+    "eslint": "^10.13.0",
+    "eslint-plugin-jsx-a11y": "^6.10.2",
+    "globals": "^17.13.0",
     "jsdom": "^29.1.1",
     "tailwindcss": "^4.0.0",
     "typescript": "^5.3.0",
+    "typescript-eslint": "^8.72.0",
     "vite": "^5.0.0",
-    "vitest": "^4.1.9"
+    "vitest": "^4.1.9",
+    "vitest-axe": "^0.1.0"
   },
   "overrides": {
     "postcss": "^8.5.18"
