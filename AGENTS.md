@@ -2,8 +2,9 @@
 
 dmf-cms is the operator console of the dmfdeploy platform: a React 19 and
 Tailwind SPA (`frontend/`) on a FastAPI backend (`src/dmf_cms/`). Umbrella repo:
-https://github.com/dmfdeploy/dmfdeploy. Before you start, run its
-`bin/generate-status.sh` and read `STATUS.digest.local.md`. Post shared notes to
+https://github.com/dmfdeploy/dmfdeploy. Before you start, go to your umbrella
+checkout (a sibling clone), run `git pull` and `bin/generate-status.sh` there,
+then read `STATUS.digest.local.md`. Post shared notes to
 https://github.com/dmfdeploy/dmfdeploy/issues/618. Before secrets, cluster work
 or a release, read section 0 of the matching umbrella skill.
 
