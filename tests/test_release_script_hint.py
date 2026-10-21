@@ -156,3 +156,61 @@ def test_numbered_procedure_rebuilds_before_publishing() -> None:
         before = "\n".join(lines[:publish])
         assert "scripts/build-image.sh" in before, "publish step has no earlier build-image.sh"
         assert "git rev-parse" in before, "publish step has no earlier git rev-parse label check"
+
+
+PUBLISH_RECIPE_LINE = "1. Publish to GHCR:"
+
+
+def _use_real_build_image(repo: Path) -> dict:
+    """Swap in the real build-image.sh and a fake `docker` that always succeeds."""
+    shutil.copy2(REPO_ROOT / "scripts" / "build-image.sh", repo / "scripts" / "build-image.sh")
+    # --check passes; any other call bumps like the stub release.sh needs.
+    (repo / "scripts" / "sync-version.sh").write_text(
+        '#!/usr/bin/env bash\n[[ "${1:-}" == "--check" ]] && exit 0\n' + STUB_SYNC.split("\n", 1)[1]
+    )
+    _git(repo, "add", "-A")
+    _git(repo, "commit", "-q", "-m", "real build script")
+    bindir = repo.parent / "fakebin"
+    bindir.mkdir()
+    (bindir / "docker").write_text("#!/usr/bin/env bash\nexit 0\n")
+    (bindir / "docker").chmod(0o755)
+    return {**os.environ, **GIT_ENV, "PATH": f"{bindir}{os.pathsep}{os.environ['PATH']}"}
+
+
+def test_release_path_prints_no_direct_publish_recipe(tmp_path) -> None:
+    """The real build-image.sh runs before the release PR merges.
+
+    Its own publish recipe would send the operator to publish the image that
+    carries the pre-rebase commit, so release.sh must suppress it and print only
+    its own post-merge steps.
+    """
+    repo = make_scratch_repo(tmp_path)
+    env = _use_real_build_image(repo)
+    r = subprocess.run(
+        ["bash", str(repo / "scripts" / "release.sh"), "patch"],
+        cwd=repo, capture_output=True, text=True, env=env,
+    )
+    assert r.returncode == 0, r.stdout + r.stderr
+    assert "BUILD COMPLETE" in r.stdout  # the real build-image.sh did run
+    assert PUBLISH_RECIPE_LINE not in r.stdout
+    assert "RELEASE v0.1.1 BUILT LOCALLY" in r.stdout
+
+
+def test_plain_build_image_keeps_its_hint(tmp_path) -> None:
+    repo = make_scratch_repo(tmp_path)
+    env = _use_real_build_image(repo)
+
+    def run(*args: str) -> subprocess.CompletedProcess:
+        return subprocess.run(
+            ["bash", str(repo / "scripts" / "build-image.sh"), *args],
+            cwd=repo, capture_output=True, text=True, env=env,
+        )
+
+    plain = run("--no-push")
+    assert plain.returncode == 0, plain.stdout + plain.stderr
+    assert PUBLISH_RECIPE_LINE in plain.stdout
+    assert "rebuilt from the release tag" in plain.stdout
+    quiet = run("--no-push", "--no-hint")
+    assert quiet.returncode == 0, quiet.stdout + quiet.stderr
+    assert "BUILD COMPLETE" in quiet.stdout
+    assert PUBLISH_RECIPE_LINE not in quiet.stdout

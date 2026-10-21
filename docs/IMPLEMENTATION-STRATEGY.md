@@ -289,7 +289,11 @@ ssh k3s-admin@<control-node-public-ip> 'sudo k3s kubectl -n dmf-cms logs deploy/
 ```bash
 cd <repos>/dmf-cms
 
-# Build locally (the only operator-side build step post-ADR-0025)
+# Build locally (the only operator-side build step post-ADR-0025).
+# Release from a fresh release branch, never a feature branch
+# (DEVELOPMENT-AND-BUILD-RULES.md §4, step 4):
+git fetch origin
+git switch -c release/<NEW> origin/main
 scripts/release.sh patch    # or minor / X.Y.Z — bumps VERSION + builds
 
 # Tag, rebuild from the tag, publish + deploy: see
@@ -412,12 +416,14 @@ If continuing from context loss, prioritize in this order:
 6. **Build Docker image:**
    ```bash
    cd <repos>/dmf-cms
+   git fetch origin
+   git switch -c release/<NEW> origin/main   # never release from a feature branch
    scripts/release.sh patch   # bumps VERSION, builds (local only)
    ```
 
 7. **Publish + mirror + deploy** (post-ADR-0025 flow). Before you publish,
    tag the merged commit and rebuild the image from it
-   (DEVELOPMENT-AND-BUILD-RULES.md §4, steps 5–7); the image that
+   (DEVELOPMENT-AND-BUILD-RULES.md §4, steps 5–7, after the release PR merges); the image that
    `release.sh` built carries a pre-rebase revision label.
    ```bash
    # Publish to GHCR (canonical public source)

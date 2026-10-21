@@ -170,7 +170,7 @@ fi
 # 6. Build (local only — no push; publish happens via scripts/publish-to-ghcr.sh)
 echo ""
 echo "[4/4] Building image locally..."
-"$REPO_ROOT/scripts/build-image.sh" --no-push
+"$REPO_ROOT/scripts/build-image.sh" --no-push --no-hint
 
 if [[ $SHOW_DEPLOY_HINT -eq 1 ]]; then
     # The delimiter is unquoted on purpose: $NEW, $CMS_HINT and $ENV_HINT must

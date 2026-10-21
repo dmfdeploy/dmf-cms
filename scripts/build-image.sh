@@ -13,6 +13,7 @@
 #   scripts/build-image.sh           # build (no push)
 #   scripts/build-image.sh --no-push # synonym, kept for callers that still pass it
 #   scripts/build-image.sh --check   # verify versions in sync, no build
+#   scripts/build-image.sh --no-hint # build, but print no publish/deploy next steps
 #
 # Refuses to run if:
 #   - VERSION is not in semver MAJOR.MINOR.PATCH form
@@ -30,14 +31,17 @@ DOCKERFILE="${DMF_CMS_DOCKERFILE:-Dockerfile}"
 
 ALLOW_DIRTY=0
 CHECK_ONLY=0
+PRINT_HINT=1
 
 usage() {
     cat <<EOF
-Usage: $0 [--no-push] [--dirty] [--check]
+Usage: $0 [--no-push] [--dirty] [--check] [--no-hint]
 
   --no-push    No-op, accepted for compatibility (this script never pushes)
   --dirty      Allow build with uncommitted changes (NOT for cluster deployment)
   --check      Verify version sync and git state, do not build
+  --no-hint    Do not print the publish/deploy next steps (release.sh passes this
+               and prints its own post-merge steps)
 
 Environment:
   DMF_CMS_REGISTRY     default: registry.dmf.example.com (local tag prefix only;
@@ -53,6 +57,7 @@ for arg in "$@"; do
         --no-push)  ;;  # accepted for compatibility; no-op
         --dirty)    ALLOW_DIRTY=1 ;;
         --check)    CHECK_ONLY=1 ;;
+        --no-hint)  PRINT_HINT=0 ;;
         -h|--help)  usage ;;
         *)          echo "Unknown arg: $arg" >&2; usage ;;
     esac
@@ -125,6 +130,9 @@ echo ""
 echo "═══════════════════════════════════════════════════"
 echo "  BUILD COMPLETE: $IMAGE_TAG"
 echo "═══════════════════════════════════════════════════"
+if [[ $PRINT_HINT -eq 0 ]]; then
+    exit 0
+fi
 echo ""
 # Next-steps hint paths — see scripts/lib/hint-paths.sh for the contract and
 # for why this is shared rather than inlined in each script (dmfdeploy#338).
@@ -133,6 +141,7 @@ source "$REPO_ROOT/scripts/lib/hint-paths.sh"
 dmf_hint_paths "$REPO_ROOT"
 
 echo "The image is local only. To publish + deploy (ADR-0025 GHCR-canonical flow)."
+echo "A release image must be rebuilt from the release tag first: DEVELOPMENT-AND-BUILD-RULES.md section 4."
 echo "Substitute <env-name> with the current Hetzner test env id — see STATUS.md."
 echo "  1. Publish to GHCR:"
 echo "       cd $CMS_HINT"
