@@ -680,6 +680,9 @@ export interface MediaWorkloadInstance {
   requested_state: 'bootstrapped' | 'active' | 'unknown' | string
   observed_state: 'running' | 'failing' | 'unknown'
   reconcile_pending: boolean
+  // Which way intent and observation disagree: 'start' = requested active, not
+  // yet running; 'stop' = stood down, still answering probes (dmfdeploy#494).
+  reconcile_direction?: 'start' | 'stop' | null
   placement: {
     node: string | null
     ports: number[]

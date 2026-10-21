@@ -350,12 +350,19 @@ export default function ProvisionStage({
               return (
                 <li key={inst.instance} className="flex items-center justify-between gap-3">
                   <span className="font-mono text-xs text-muted">{inst.instance}</span>
-                  <span
-                    className={`badge text-xs inline-flex items-center gap-1 ${lookupState(requestedBadge, inst.requested_state)}`}
-                    title={REQUESTED_TITLE}
-                  >
-                    <Icon className="w-3 h-3" aria-hidden="true" />
-                    {lookupState(requestedLabel, inst.requested_state)}
+                  <span className="flex items-center gap-2">
+                    {inst.reconcile_direction === 'stop' && (
+                      <span className="text-xs text-amber-300">
+                        Stood down but still answers probes — clearing is withheld until it stops.
+                      </span>
+                    )}
+                    <span
+                      className={`badge text-xs inline-flex items-center gap-1 ${lookupState(requestedBadge, inst.requested_state)}`}
+                      title={REQUESTED_TITLE}
+                    >
+                      <Icon className="w-3 h-3" aria-hidden="true" />
+                      {lookupState(requestedLabel, inst.requested_state)}
+                    </span>
                   </span>
                 </li>
               )
