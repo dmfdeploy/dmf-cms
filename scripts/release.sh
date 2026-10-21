@@ -173,6 +173,9 @@ echo "[4/4] Building image locally..."
 "$REPO_ROOT/scripts/build-image.sh" --no-push
 
 if [[ $SHOW_DEPLOY_HINT -eq 1 ]]; then
+    # The delimiter is unquoted on purpose: $NEW, $CMS_HINT and $ENV_HINT must
+    # expand. That also makes every backtick and $(...) below live, so escape
+    # any backtick used as markdown formatting (\`like this\`). See #538.
     cat <<EOF
 
 ═══════════════════════════════════════════════════
@@ -194,7 +197,7 @@ see STATUS.md in the umbrella repo.
        #   Refs dmfdeploy/dmfdeploy#<N>
 
      ...then, after the merge, tag origin/main DIRECTLY. Do not
-     `git checkout main && git pull` first: this script committed the bump on
+     \`git checkout main && git pull\` first: this script committed the bump on
      whatever branch you were on (usually main), so local main still holds the
      PRE-rebase commit while origin/main holds its rewritten twin. Those
      histories have diverged — pull either refuses, or under a merge policy
