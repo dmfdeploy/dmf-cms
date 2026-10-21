@@ -2261,7 +2261,19 @@ def _resolve_in_flight_age_bound(request: Request) -> int | None:
             "Loki fault, and real audit rows are still read normally"
         )
         return None
-    return operations.ttl_seconds
+    # The store is present but reading its bound can still raise (a partly
+    # initialised or misbehaving store). Same fail-open answer, same
+    # distinct log: a console-side fault, never a Loki one.
+    try:
+        return operations.ttl_seconds
+    except Exception:
+        logger.exception(
+            "audit events: app.state.operations.ttl_seconds could not be "
+            "read — in-flight staleness aging is skipped for this read; "
+            "this is NOT a Loki fault, and real audit rows are still read "
+            "normally"
+        )
+        return None
 
 
 async def _watch_job_operation(app: FastAPI, operation_id: str, job_id: int, action: str, key: str) -> None:

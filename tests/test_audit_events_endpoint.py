@@ -650,6 +650,36 @@ def test_gate_round_2_codex_f2_a_missing_operations_store_never_masquerades_as_a
     assert not any("audit events: read failed" in m for m in messages)
 
 
+def test_a_present_store_whose_ttl_access_raises_never_masquerades_as_a_loki_outage(monkeypatch, caplog):
+    # dmfdeploy/dmfdeploy#561: the sibling of the missing-store case above.
+    # The store EXISTS but reading `.ttl_seconds` raises (a partly
+    # initialised or misbehaving store). That is a console-side fault, not
+    # a Loki fault: the real read must still succeed, aging must fail open,
+    # and the log must say the console's own state is the problem.
+    monkeypatch.setattr(audit_events.time, "time_ns", lambda: 10_000 * 1_000_000_000)  # would age, if aging ran
+
+    class _BrokenStore:
+        @property
+        def ttl_seconds(self):
+            raise RuntimeError("store half-initialised")
+
+    client = _client(OPERATOR_ONLY)
+    client.app.state.operations = _BrokenStore()
+
+    with caplog.at_level(logging.ERROR, logger="dmf_cms.main"):
+        response = client.get("/api/audit/events")
+
+    assert response.status_code == 200
+    payload = response.json()
+    assert payload["reason"] == ""
+    row = next(e for e in payload["events"] if e["request_id"] == "rid-deploy-1")
+    assert row["outcome"]["state"] == "in_flight"
+
+    messages = [r.getMessage() for r in caplog.records]
+    assert any("ttl_seconds" in m and "NOT a Loki fault" in m for m in messages)
+    assert not any("audit events: read failed" in m for m in messages)
+
+
 def test_gate_round_1_codex_p2_a_stale_never_joined_row_ages_into_the_honest_unknown(monkeypatch):
     # codex P2: a dispatch row that NEVER receives a terminal join (a
     # console restart mid-watch, a crashed/cancelled watcher -- from this
