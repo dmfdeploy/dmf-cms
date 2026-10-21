@@ -230,7 +230,9 @@ it pulls from OpenBao. Playbook 650 only HEAD-checks Zot and Helm-deploys.
 
 ### Publishing to GHCR (the operator path)
 
-Use `scripts/publish-to-ghcr.sh`. It delegates to the umbrella helper which:
+Run this only after you rebuild from the tagged commit and check the revision
+label, as step 6 and 7 of [the release procedure](#4-the-release-procedure)
+describe. Use `scripts/publish-to-ghcr.sh`. It delegates to the umbrella helper which:
 
 - Sets up an isolated `DOCKER_CONFIG` (not `~/.docker/config.json`)
 - Reads the GHCR token **from stdin** — never argv (no shell history / `ps` leak)
@@ -302,18 +304,27 @@ For every change that needs to land in the cluster:
     git fetch origin
     git tag -a v<NEW> -m "Release v<NEW>" origin/main
     git push origin v<NEW>                    (one-shot: v* tags cannot be moved)
-6.  scripts/publish-to-ghcr.sh                (push image to GHCR)
-7.  cd $DMFDEPLOY_UMBRELLA/dmf-env
+6.  Rebuild the image from the tagged commit (the image from step 4 carries
+    the pre-rebase commit in its revision label):
+    git fetch origin
+    git switch --detach v<NEW>                (clean tree; builds the tagged commit)
+    scripts/build-image.sh --no-push
+7.  Confirm the revision label names the tag:
+    docker inspect --format '{{ index .Config.Labels "org.opencontainers.image.revision" }}' \
+      registry.dmf.example.com/dmf-cms:<NEW>  (must equal the next line)
+    git rev-parse --short v<NEW>^{commit}
+8.  scripts/publish-to-ghcr.sh                (push image to GHCR; same checkout)
+9.  cd $DMFDEPLOY_UMBRELLA/dmf-env
     bin/run-playbook.sh <env-name> \
         ../dmf-infra/k3s-lab-bootstrap/playbooks/630-zot-seed-platform.yml
     bin/run-playbook.sh <env-name> \
         ../dmf-infra/k3s-lab-bootstrap/playbooks/650-dmf-cms.yml
-8.  scripts/verify-cluster.sh
-9.  curl -sk https://console.dmf.example.com/healthz
+10. scripts/verify-cluster.sh
+11. curl -sk https://console.dmf.example.com/healthz
 ```
 
-Steps 4–8 are not optional. Skipping any of them produces the drift this
-document exists to prevent. Step 6 (publish) is the new step introduced by
+Steps 4–10 are not optional. Skipping any of them produces the drift this
+document exists to prevent. Step 8 (publish) is the step introduced by
 the 2026-05-19 ADR-0025 convergence; pre-pivot drafts of this doc that
 combined push + deploy into a single playbook are stale.
 
@@ -325,7 +336,7 @@ combined push + deploy into a single playbook are stale.
 | `npm ci` fails in Docker build | `package-lock.json` not committed | Commit it; never `.gitignore` it |
 | React app 404s; Jinja shell renders | `static/app/` missing or main.py routes shadow | Confirm `Dockerfile` `COPY --from=frontend-builder` line and main.py catch-all is last |
 | Playbook re-run downgrades image | Hardcoded `cms_image_tag` in role | Use the `lookup('file', ...)` default that reads `dmf-cms/VERSION` |
-| Playbook 650 fails on "image not in Zot" HEAD check | Step 6 or 7-mirror skipped | Re-run 630 (or `bootstrap-provision-post-seed.yml --tags zot-seed`) |
+| Playbook 650 fails on "image not in Zot" HEAD check | Step 8 or the step 9 mirror skipped | Re-run 630 (or `bootstrap-provision-post-seed.yml --tags zot-seed`) |
 | Local `kubectl` disagrees with reality | Wrong context | Use control node `ssh k3s-admin@<control-node-public-ip>` as canonical |
 
 ---
@@ -492,7 +503,8 @@ Currently the workflow is a placeholder; wiring this up is the next CI task.
    - **Image missing from Zot** → re-run `630-zot-seed-platform.yml` (or
      `bootstrap-provision-post-seed.yml --tags zot-seed`).
    - **Image in Zot but pod on old tag** → re-run `650-dmf-cms.yml`.
-   - **Image not on GHCR either** → re-run `scripts/publish-to-ghcr.sh` first.
+   - **Image not on GHCR either** → re-run `scripts/publish-to-ghcr.sh` first,
+     from the detached `v<VERSION>` checkout with the rebuilt image (§4, steps 6–8).
 
    All three are idempotent and read `cms_image_tag` from `dmf-cms/VERSION`.
 
