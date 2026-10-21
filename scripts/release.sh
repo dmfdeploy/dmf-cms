@@ -191,7 +191,11 @@ see STATUS.md in the umbrella repo.
      points at a commit that never reaches main:
        git tag -d v$NEW                       # ONLY if you passed --tag;
                                               # by default no tag exists yet
-       git checkout -b release/$NEW && git push -u origin release/$NEW
+       git branch --show-current              # expect release/$NEW, cut from
+                                              # origin/main BEFORE this script ran:
+                                              #   git fetch origin
+                                              #   git switch -c release/$NEW origin/main
+       git push -u origin release/$NEW
        gh pr create --title "chore(release): v$NEW" --body "..."
        # the PR body needs a qualified backlog ref, e.g.
        #   Refs dmfdeploy/dmfdeploy#<N>

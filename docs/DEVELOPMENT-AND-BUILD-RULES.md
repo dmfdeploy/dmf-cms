@@ -109,10 +109,17 @@ protected and merges are rebase-only, so a tag cut before the merge points at a
 commit that never reaches `main`.
 
 To complete the release, land the bump through a pull request, then tag the
-merged commit:
+merged commit. Cut the release branch from `origin/main` before you run
+`release.sh`. After the previous feature PR is rebase-merged, you are usually
+still on its pre-rebase branch, and `release.sh` commits on whatever branch is
+checked out. The release PR would then carry that stale feature commit, or
+conflict with `main`.
 
 ```bash
-git checkout -b release/0.4.0 && git push -u origin release/0.4.0
+git fetch origin
+git switch -c release/0.4.0 origin/main
+scripts/release.sh 0.4.0
+git push -u origin release/0.4.0
 gh pr create --title "chore(release): v0.4.0" --body "Refs dmfdeploy/dmfdeploy#<N>"
 # ...wait for the required checks and the merge, then:
 git fetch origin
@@ -264,8 +271,13 @@ For every change that needs to land in the cluster:
 1.  Develop on a feature branch.
 2.  Run scripts/sync-version.sh --check       (must pass before PR)
 3.  Open PR. Merge to main.
-4.  scripts/release.sh patch                  (or minor / major / X.Y.Z)
-5.  Land the bump through a PR (branch release/<NEW>), then tag the merged commit:
+4.  git fetch origin
+    git switch -c release/<NEW> origin/main   (never release from a feature branch)
+    scripts/release.sh patch                  (or minor / major / X.Y.Z)
+5.  Push the branch and open the PR:
+    git push -u origin release/<NEW>
+    gh pr create --title "chore(release): v<NEW>" --body "Refs dmfdeploy/dmfdeploy#<N>"
+    After the merge, tag the merged commit:
     git fetch origin
     git tag -a v<NEW> -m "Release v<NEW>" origin/main
     git push origin v<NEW>                    (one-shot: v* tags cannot be moved)
