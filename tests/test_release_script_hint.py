@@ -95,3 +95,26 @@ def test_hint_block_prints_the_git_commands_without_running_them(tmp_path) -> No
     # The deliberate interpolations still work.
     assert "RELEASE v0.1.1 BUILT LOCALLY" in r.stdout
     assert 'git tag -a v0.1.1 -m "Release v0.1.1" origin/main' in r.stdout
+
+
+def test_build_check_does_not_advise_a_pre_merge_tag_push(tmp_path) -> None:
+    """dmfdeploy/dmfdeploy#179: build-image.sh must not point at the retired flow.
+
+    The untagged-HEAD warning used to advise `git tag ... && git push --tags`.
+    main is protected and merges are rebase-only, so a tag cut before the merge
+    points at a commit that never reaches main, and v* tags cannot be moved once
+    pushed. The warning now names the supported order.
+    """
+    repo = make_scratch_repo(tmp_path)
+    shutil.copy2(REPO_ROOT / "scripts" / "build-image.sh", repo / "scripts" / "build-image.sh")
+    (repo / "scripts" / "sync-version.sh").write_text("#!/usr/bin/env bash\nexit 0\n")
+    _git(repo, "add", "-A")
+    _git(repo, "commit", "-q", "-m", "stubs")
+    r = subprocess.run(
+        ["bash", str(repo / "scripts" / "build-image.sh"), "--check"],
+        cwd=repo, capture_output=True, text=True, env={**os.environ, **GIT_ENV},
+    )
+    assert r.returncode == 0, r.stdout + r.stderr
+    assert "HEAD is not tagged" in r.stdout
+    assert "push --tags" not in r.stdout
+    assert "origin/main" in r.stdout
