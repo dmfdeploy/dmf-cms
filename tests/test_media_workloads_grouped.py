@@ -424,3 +424,76 @@ def test_grouped_endpoint_does_not_affect_flat(monkeypatch):
     grouped = client.get("/api/media-workloads/grouped").json()
     assert "workloads" in grouped
     assert "instances" not in grouped
+
+
+def _stood_down_but_answering(monkeypatch, tags):
+    """One service whose intent and probe disagree, plus the probe row."""
+    def fake_netbox(*args, **kwargs):
+        return {
+            "results": [
+                _service("mxl-videotestsrc", tags, svc_id=1,
+                         custom_fields={"cluster_service": "mxl-videotestsrc",
+                                        "cluster_namespace": "mxl", "cluster_port": 9000}),
+            ]
+        }
+
+    def fake_prometheus(*args, **kwargs):
+        return [
+            {"metric": {"instance": "mxl-videotestsrc.mxl.svc.cluster.local:9000/status",
+                        "app": "mxl-videotestsrc", "job": "netbox-probe"},
+             "value": [0, "1"]},
+        ]
+
+    monkeypatch.setattr(netbox_module, "_request", fake_netbox)
+    monkeypatch.setattr(prometheus_module, "query", fake_prometheus)
+
+
+def test_grouped_stood_down_but_running_is_reconcile_pending_stop(monkeypatch):
+    """A bootstrapped service that still answers probes is flagged, as a stop."""
+    _stood_down_but_answering(
+        monkeypatch, ["dmf-catalog", "app:mxl-videotestsrc", "lifecycle:bootstrapped", "workload:videotest"]
+    )
+    result = list_workloads_grouped("http://nb", "tok", True, None, prometheus_url="http://prom")
+    wl = result["workloads"][0]
+    inst = wl["instances"][0]
+    assert inst["requested_state"] == "bootstrapped"
+    assert inst["observed_state"] == "running"
+    assert inst["reconcile_pending"] is True
+    assert inst["reconcile_direction"] == "stop"
+    assert wl["functions"][0]["reconcile_pending"] == 1
+
+
+def test_grouped_active_not_running_keeps_start_direction(monkeypatch):
+    """The existing direction stays flagged and is told apart from a stop."""
+    _stood_down_but_answering(
+        monkeypatch, ["dmf-catalog", "app:mxl-videotestsrc", "lifecycle:active", "workload:videotest"]
+    )
+    monkeypatch.setattr(prometheus_module, "query", lambda *a, **k: [])
+    result = list_workloads_grouped("http://nb", "tok", True, None, prometheus_url="http://prom")
+    inst = result["workloads"][0]["instances"][0]
+    assert inst["reconcile_pending"] is True
+    assert inst["reconcile_direction"] == "start"
+
+
+def test_grouped_agreeing_states_are_not_flagged(monkeypatch):
+    _stood_down_but_answering(
+        monkeypatch, ["dmf-catalog", "app:mxl-videotestsrc", "lifecycle:active", "workload:videotest"]
+    )
+    result = list_workloads_grouped("http://nb", "tok", True, None, prometheus_url="http://prom")
+    inst = result["workloads"][0]["instances"][0]
+    assert inst["reconcile_pending"] is False
+    assert inst["reconcile_direction"] is None
+
+
+def test_flat_stood_down_but_running_is_reconcile_pending_stop(monkeypatch):
+    from dmf_cms.media_workloads import list_instances
+
+    _stood_down_but_answering(
+        monkeypatch, ["dmf-catalog", "app:mxl-videotestsrc", "lifecycle:bootstrapped"]
+    )
+    result = list_instances("http://nb", "tok", True, None, prometheus_url="http://prom")
+    inst = result["instances"][0]
+    assert inst["observed_state"] == "running"
+    assert inst["reconcile_pending"] is True
+    assert inst["reconcile_direction"] == "stop"
+    assert result["functions"][0]["reconcile_pending"] == 1
