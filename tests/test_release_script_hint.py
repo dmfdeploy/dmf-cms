@@ -118,3 +118,22 @@ def test_build_check_does_not_advise_a_pre_merge_tag_push(tmp_path) -> None:
     assert "HEAD is not tagged" in r.stdout
     assert "push --tags" not in r.stdout
     assert "origin/main" in r.stdout
+
+
+def test_hint_rebuilds_from_the_tagged_commit_before_publishing(tmp_path) -> None:
+    """The image built before the rebase merge carries an orphan revision label.
+
+    publish-to-ghcr.sh only re-tags the local image, so the hint must send the
+    operator to build from the tagged commit first, and must print the label
+    check literally.
+    """
+    repo = make_scratch_repo(tmp_path)
+    r = run_release(repo, "patch")
+    assert r.returncode == 0, r.stderr
+    out = r.stdout
+    detach = out.index("git switch --detach v0.1.1")
+    build = out.index("scripts/build-image.sh --no-push", detach)
+    label = out.index('"org.opencontainers.image.revision"', build)
+    publish = out.index("scripts/publish-to-ghcr.sh", label)
+    assert detach < build < label < publish
+    assert "git rev-parse --short v0.1.1^{commit}" in out

@@ -104,6 +104,9 @@ The script will:
 2. Commit the bump as `chore(release): v<NEW>` (signed off)
 3. Build the Docker image locally as `registry.dmf.example.com/dmf-cms:<NEW>`
 
+That image is a pre-merge build. Rebuild it from the tagged commit after the
+release PR merges (see below) before you publish.
+
 `--tag` creates the `v<NEW>` tag at that point. Leave it off. `main` is
 protected and merges are rebase-only, so a tag cut before the merge points at a
 commit that never reaches `main`.
@@ -138,10 +141,28 @@ tag once it exists. You cannot correct a wrong tag. You can only cut a new
 version. Before you push, confirm that `origin/main` is the merged commit you
 mean.
 
+**Rebuild the image from the tagged commit before you publish.** The image
+that `release.sh` built carries the pre-rebase commit of the bump in its
+`org.opencontainers.image.revision` label, and that commit never reaches
+`origin/main`. `publish-to-ghcr.sh` only re-tags and pushes the image that
+already exists locally, so publishing it would label the release with a commit
+that `v<NEW>` does not name. Check out the tag, build there, and confirm the
+label before you publish:
+
+```bash
+git fetch origin
+git switch --detach v0.4.0              # clean tree; builds the tagged commit
+scripts/build-image.sh --no-push
+docker inspect --format '{{ index .Config.Labels "org.opencontainers.image.revision" }}' \
+  registry.dmf.example.com/dmf-cms:0.4.0   # must equal:
+git rev-parse --short v0.4.0^{commit}
+```
+
 Then publish and deploy:
 
 ```bash
-# 1. Publish to GHCR (the canonical public source)
+# 1. Publish to GHCR (the canonical public source). Run it from the same
+#    detached checkout, so the image you just built is the one it pushes.
 gh auth token | GHCR_USER="<github-username>" scripts/publish-to-ghcr.sh
 
 # 2. Mirror GHCR → cluster-internal Zot
