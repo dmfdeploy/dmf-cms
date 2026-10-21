@@ -98,7 +98,8 @@ GIT_SHA="$(git rev-parse --short HEAD)"
 GIT_TAG_EXACT="$(git describe --tags --exact-match 2>/dev/null || echo "")"
 if [[ "$GIT_TAG_EXACT" != "v$VERSION" && "$GIT_TAG_EXACT" != "$VERSION" ]]; then
     echo "  ⚠ HEAD is not tagged as v$VERSION or $VERSION (got: '${GIT_TAG_EXACT:-none}')"
-    echo "    For released images, run: git tag -a v$VERSION -m \"v$VERSION\" && git push --tags"
+    echo "    Expected before the bump merges. Tag origin/main AFTER the merge, not local HEAD:"
+    echo "    git tag -a v$VERSION -m \"Release v$VERSION\" origin/main && git push origin v$VERSION"
 fi
 
 if [[ $CHECK_ONLY -eq 1 ]]; then
