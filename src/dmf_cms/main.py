@@ -4967,6 +4967,26 @@ def create_app(settings: Settings | None = None, contract: AppContract | None = 
         # itself fail-closed end to end, so a malformed catalog entry degrades
         # this one field to null, never the whole /api/catalog response.
         demand, _demand_refusal_reason = capacity.read_entry_demand(provision)
+        if demand is not None and entry.topology_ref:
+            # dmfdeploy/dmfdeploy#350: a topology-backed entry's real demand
+            # is its own (viewer) profile plus N copies of the topology's
+            # shared source_profile, the same aggregate the capacity gate
+            # computes. Reporting the viewer alone would understate it. If
+            # the topology or its source_profile cannot be read, report null
+            # rather than that understatement.
+            topology_params, topology_err = load_topology_instance(CATALOG_DIR, entry.topology_ref)
+            source_demand, _source_reason = (
+                (None, None) if topology_err is not None
+                else capacity.read_topology_source_profile_demand(topology_params)
+            )
+            if source_demand is None:
+                demand = None
+            else:
+                multiplier = capacity.topology_source_count(topology_params)
+                demand = (
+                    demand[0] + source_demand[0] * multiplier,
+                    demand[1] + source_demand[1] * multiplier,
+                )
         provision_demand = {"cpu_m": demand[0], "mem_b": demand[1]} if demand else None
         return {
             "key": entry.key,

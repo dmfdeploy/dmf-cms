@@ -152,3 +152,54 @@ def test_malformed_memory_quantity_is_also_null(monkeypatch):
     assert resp.status_code == 200, resp.text
     body = next(e for e in resp.json()["entries"] if e["key"] == "malformed-mem")
     assert body["provision_demand"] is None
+
+
+# dmfdeploy/dmfdeploy#350: a topology-backed entry's real demand is its own
+# (viewer) profile plus N copies of the shared source_profile -- the same
+# aggregate the capacity gate computes. Reporting the viewer alone would be a
+# confident understatement.
+_TOPOLOGY_PARAMS = {
+    "source_profile": {"resources": {"requests": {"cpu": "1200m", "memory": "200Mi"}}},
+    "sources": [{"id": "source-a"}, {"id": "source-b"}],
+}
+
+
+def _topology_entry() -> CatalogEntry:
+    return CatalogEntry(
+        key="mxl-videotestsrc",
+        display_name="MXL video test source",
+        summary="Topology-backed entry.",
+        provision={"resources": {"requests": {"cpu": "200m", "memory": "64Mi"}}},
+        topology_ref="topology-params.j1.yaml",
+    )
+
+
+def test_topology_entry_demand_is_viewer_plus_n_times_source_profile(monkeypatch):
+    monkeypatch.setattr("dmf_cms.main.load_catalog_entries", _entries(_topology_entry()))
+    monkeypatch.setattr(
+        "dmf_cms.main.load_topology_instance", lambda catalog_dir, ref: (dict(_TOPOLOGY_PARAMS), None)
+    )
+    resp = _client().get("/api/catalog")
+    assert resp.status_code == 200, resp.text
+    body = next(e for e in resp.json()["entries"] if e["key"] == "mxl-videotestsrc")
+    # 200m + 2 x 1200m, and 64Mi + 2 x 200Mi -- not the viewer alone.
+    assert body["provision_demand"] == {"cpu_m": 2600, "mem_b": (64 + 2 * 200) * MI}
+
+
+def test_topology_entry_without_source_profile_is_null_not_viewer_only(monkeypatch):
+    params = {"sources": list(_TOPOLOGY_PARAMS["sources"])}
+    monkeypatch.setattr("dmf_cms.main.load_catalog_entries", _entries(_topology_entry()))
+    monkeypatch.setattr("dmf_cms.main.load_topology_instance", lambda catalog_dir, ref: (params, None))
+    resp = _client().get("/api/catalog")
+    assert resp.status_code == 200, resp.text
+    body = next(e for e in resp.json()["entries"] if e["key"] == "mxl-videotestsrc")
+    assert body["provision_demand"] is None
+
+
+def test_topology_entry_that_fails_to_load_is_null_not_viewer_only(monkeypatch):
+    monkeypatch.setattr("dmf_cms.main.load_catalog_entries", _entries(_topology_entry()))
+    monkeypatch.setattr("dmf_cms.main.load_topology_instance", lambda catalog_dir, ref: (None, "unreadable"))
+    resp = _client().get("/api/catalog")
+    assert resp.status_code == 200, resp.text
+    body = next(e for e in resp.json()["entries"] if e["key"] == "mxl-videotestsrc")
+    assert body["provision_demand"] is None
