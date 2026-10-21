@@ -41,6 +41,7 @@ class AWXTransportError(AWXAPIError):
     * ``decode`` — a 2xx whose body is not JSON (a proxy error page, a
       truncated write).
     * ``schema`` — valid JSON that is not a JSON object.
+    * ``oversize`` — a body larger than ``_MAX_JSON_BYTES`` (#264).
 
     Subclasses ``AWXAPIError`` with a synthetic 502 deliberately: every
     caller that already sanitizes ``AWXAPIError`` into a structured console
@@ -84,6 +85,13 @@ class AWXJobInfo:
 
 DEFAULT_REQUEST_TIMEOUT = 30.0
 
+# #264: ``_request`` serves schema-bounded AWX JSON (template lookups,
+# launches, job detail), so a generous fixed cap is safe. A larger body is a
+# failed response, not something to hold in memory. Error bodies keep only a
+# short prefix, the same shape ``_request_text`` uses.
+_MAX_JSON_BYTES = 8 * 1024 * 1024
+_MAX_ERROR_BODY_BYTES = 8 * 1024
+
 
 def _request(
     api_url: str,
@@ -125,13 +133,20 @@ def _request(
             # a bare OSError (ConnectionResetError) or http.client
             # IncompleteRead out of read() — neither is a URLError.
             try:
-                raw = resp.read()
+                raw = resp.read(_MAX_JSON_BYTES + 1)
             except (OSError, http.client.HTTPException) as exc:
                 raise AWXTransportError(f"{method} {path}: {exc}", phase="read") from exc
     except urllib.error.HTTPError as exc:
-        error_body = exc.read().decode() if exc.fp else str(exc)
+        error_body = (
+            exc.read(_MAX_ERROR_BODY_BYTES).decode(errors="replace") if exc.fp else str(exc)
+        )
         raise AWXAPIError(exc.code, error_body) from exc
 
+    if len(raw) > _MAX_JSON_BYTES:
+        raise AWXTransportError(
+            f"{method} {path}: response body exceeds {_MAX_JSON_BYTES} bytes",
+            phase="oversize",
+        )
     if not raw:
         raise AWXTransportError(f"{method} {path}: empty response body", phase="empty")
     try:
