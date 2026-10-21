@@ -86,7 +86,13 @@ export default function WorkloadTile({
           {instance.reconcile_pending && (
             <span
               className="badge shrink-0 bg-amber-900/30 text-xs text-amber-300"
-              title="Requested and observed state disagree — waiting to converge"
+              title={
+                instance.reconcile_direction === 'start'
+                  ? 'Requested active, not yet running'
+                  : instance.reconcile_direction === 'stop'
+                    ? 'Stood down, still running'
+                    : 'Requested and observed state disagree — waiting to converge'
+              }
             >
               reconciling
             </span>
