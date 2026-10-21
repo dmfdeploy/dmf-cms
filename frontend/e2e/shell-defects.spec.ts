@@ -155,7 +155,42 @@ test.describe('seeded shell defects', () => {
     })
     expect(portalled, 'the modal must not live inside <main>').toBe(true)
   })
+
+  // The rail registers after the workload loads. Hold that response so the
+  // reserved band can be measured, then release it and measure again. The
+  // stacked tier (below 390px), the 30vh cap and one desktop width.
+  for (const [width, height] of [[375, 800], [375, 400], [1280, 800]] as const) {
+    test(`R1 [${width}x${height}] /media-workloads/studio-a: main does not move when the rail registers`, async ({ page }) => {
+      await page.setViewportSize({ width, height })
+      let release!: () => void
+      const held = new Promise<void>((resolve) => (release = resolve))
+      await page.route((url) => url.pathname === '/api/media-workloads/grouped', async (route) => {
+        await held
+        await route.fallback()
+      })
+      await openWithoutIdle(page, '/media-workloads/studio-a')
+      await expect(page.getByTestId('header-slot-reserve')).toHaveCount(1)
+      const mainTop = () => page.locator('main').first().evaluate((main) => main.getBoundingClientRect().top)
+      const before = await mainTop()
+      release()
+      await expect(railRow(page)).toHaveCount(1)
+      await expect(page.getByTestId('header-slot-reserve')).toHaveCount(0)
+      expect(await mainTop(), 'main top after the rail registers').toBe(before)
+    })
+  }
 })
+
+// gotoRoute waits for network idle, which never comes while a response is
+// held. Same deep-link serving, without that wait.
+async function openWithoutIdle(page: Page, path: string) {
+  await page.route((url) => url.pathname === path, async (route) => {
+    if (route.request().resourceType() !== 'document') return route.fallback()
+    const base = new URL(route.request().url())
+    await route.fulfill({ response: await route.fetch({ url: `${base.origin}/static/app/` }) })
+  })
+  await page.goto(path)
+  await page.locator('main').first().waitFor()
+}
 
 // The shared fixtures carry no MXL instance, and only MXL tiles open the live
 // modal. Rename the function keys for this test so a tile is openable.

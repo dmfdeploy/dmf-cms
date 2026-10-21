@@ -806,6 +806,27 @@ export function contentOffsetStyle(position: 'first' | 'middle' | 'last', shapeI
   return { transform: `translateX(${CONTENT_OFFSET_PX}px)` }
 }
 
+// The rail's list geometry (see the comment on the <ol> below). Shared with
+// LifecycleStripPlaceholder so the two stack at the same breakpoint.
+const RAIL_LIST_CLASS = "grid w-max shrink-0 grid-cols-5 items-center gap-[3px] max-[390px]:w-full max-[390px]:grid-cols-1 max-[390px]:gap-2"
+
+/**
+ * A blank stand-in for the rail (#610): one empty h-10 cell per step, in the
+ * rail's own grid, so whatever holds it before the rail registers is as tall
+ * as the rail will be, at every width.
+ */
+export function LifecycleStripPlaceholder() {
+  return (
+    <div aria-hidden="true" className="flex w-full">
+      <ol className={RAIL_LIST_CLASS}>
+        {FLOW_STEPS.map((id) => (
+          <li key={id} className="h-10" />
+        ))}
+      </ol>
+    </div>
+  )
+}
+
 export default function LifecycleStrip({
   steps,
   activeChip,
@@ -886,7 +907,7 @@ export default function LifecycleStrip({
         docstring, "NARROW-WIDTH FIX ROUND", for why a rail this narrow
         stacks vertically instead of continuing to scroll.
       */}
-      <ol className="grid w-max shrink-0 grid-cols-5 items-center gap-[3px] max-[390px]:w-full max-[390px]:grid-cols-1 max-[390px]:gap-2">
+      <ol className={RAIL_LIST_CLASS}>
         {FLOW_STEPS.map((id, index) => {
           const state = steps[id]
           const locked = state === 'locked'
