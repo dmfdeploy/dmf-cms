@@ -158,8 +158,10 @@ test.describe('seeded shell defects', () => {
 
   // The rail registers after the workload loads. Hold that response so the
   // reserved band can be measured, then release it and measure again. The
-  // stacked tier (below 390px), the 30vh cap and one desktop width.
-  for (const [width, height] of [[375, 800], [375, 400], [1280, 800]] as const) {
+  // stacked tier (below 390px), the 30vh cap, the band where the one-line
+  // rail is wider than the row and scrolls sideways (768), and one desktop
+  // width.
+  for (const [width, height] of [[375, 800], [375, 400], [768, 800], [1280, 800]] as const) {
     test(`R1 [${width}x${height}] /media-workloads/studio-a: main does not move when the rail registers`, async ({ page }) => {
       await page.setViewportSize({ width, height })
       let release!: () => void
