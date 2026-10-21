@@ -949,6 +949,26 @@ def _facility_busy_check(
 # touching. See log_safety.sanitize_audit_field for the full reasoning.
 _sanitize_audit_field = sanitize_audit_field
 
+# #430: the client-facing text for an upstream (AWX / Authentik) HTTP error.
+# The upstream body is untrusted and may carry internal detail, so it goes to
+# the server log only.
+_UPSTREAM_ERROR_MESSAGE = "upstream request failed"
+
+
+def _upstream_error_response(
+    exc: Exception, *, source: str, request_id: str | None = None
+) -> JSONResponse:
+    """Return a stable error body for an upstream ``*APIError``; log the detail."""
+    status = int(getattr(exc, "status", 502))
+    logger.error(
+        "%s API error (status %s): %s",
+        source, status, _sanitize_audit_field(str(getattr(exc, "body", ""))),
+    )
+    payload: dict[str, object] = {"error": _UPSTREAM_ERROR_MESSAGE, "upstream": source}
+    if request_id is not None:
+        payload["request_id"] = request_id
+    return JSONResponse(payload, status_code=status)
+
 
 def _audit_awx_write(
     request: Request,
@@ -3729,7 +3749,7 @@ def create_app(settings: Settings | None = None, contract: AppContract | None = 
                 ]
             })
         except AWXAPIError as exc:
-            return JSONResponse({"error": f"AWX API error: {exc.body}"}, status_code=exc.status)
+            return _upstream_error_response(exc, source="AWX")
 
     @app.post("/api/workflows/{workflow_name}/launch")
     async def api_workflow_launch(request: Request, workflow_name: str):
@@ -3845,7 +3865,7 @@ def create_app(settings: Settings | None = None, contract: AppContract | None = 
             return JSONResponse({"job_id": job_id, "status": "launched", "request_id": request_id})
         except AWXAPIError as exc:
             _audit_awx_write(request, user, action="launch", target=workflow_name, request_id=request_id, reason=reason, outcome=f"awx-error:{exc.status}")
-            return JSONResponse({"error": f"AWX API error: {exc.body}", "request_id": request_id}, status_code=exc.status)
+            return _upstream_error_response(exc, source="AWX", request_id=request_id)
 
     @app.get("/api/workflows/jobs/{job_id}")
     async def api_workflow_job_status(request: Request, job_id: int):
@@ -3869,7 +3889,7 @@ def create_app(settings: Settings | None = None, contract: AppContract | None = 
                 "failed": info.failed,
             })
         except AWXAPIError as exc:
-            return JSONResponse({"error": f"AWX API error: {exc.body}"}, status_code=exc.status)
+            return _upstream_error_response(exc, source="AWX")
 
     # ------------------------------------------------------------------
     # User and contract API endpoints (for React frontend)
@@ -4193,10 +4213,7 @@ def create_app(settings: Settings | None = None, contract: AppContract | None = 
                 })
             return JSONResponse({"groups": groups})
         except AuthentikAPIError as exc:
-            return JSONResponse(
-                {"error": f"Authentik API error: {exc.body}"},
-                status_code=exc.status,
-            )
+            return _upstream_error_response(exc, source="Authentik")
 
     # ------------------------------------------------------------------
     # Monitoring endpoints
@@ -5327,7 +5344,7 @@ def create_app(settings: Settings | None = None, contract: AppContract | None = 
             return JSONResponse(response_body)
         except AWXAPIError as exc:
             _audit_awx_write(request, user, action="deploy", target=key, request_id=request_id, reason=reason, outcome=f"awx-error:{exc.status}")
-            return JSONResponse({"error": f"AWX API error: {exc.body}", "request_id": request_id}, status_code=exc.status)
+            return _upstream_error_response(exc, source="AWX", request_id=request_id)
 
     @app.post("/api/catalog/{key}/teardown")
     async def api_catalog_teardown(request: Request, key: str):
@@ -5550,7 +5567,7 @@ def create_app(settings: Settings | None = None, contract: AppContract | None = 
             return JSONResponse(response_body)
         except AWXAPIError as exc:
             _audit_awx_write(request, user, action="teardown", target=key, request_id=request_id, reason=reason, outcome=f"awx-error:{exc.status}")
-            return JSONResponse({"error": f"AWX API error: {exc.body}", "request_id": request_id}, status_code=exc.status)
+            return _upstream_error_response(exc, source="AWX", request_id=request_id)
 
     @app.post("/api/runs/{run_id}/rollback")
     async def api_run_rollback(request: Request, run_id: str):
@@ -5733,7 +5750,7 @@ def create_app(settings: Settings | None = None, contract: AppContract | None = 
             return JSONResponse(response_body)
         except AWXAPIError as exc:
             _audit_awx_write(request, user, action="rollback", target=run_id, request_id=request_id, reason=reason, outcome=f"awx-error:{exc.status}")
-            return JSONResponse({"error": f"AWX API error: {exc.body}", "request_id": request_id}, status_code=exc.status)
+            return _upstream_error_response(exc, source="AWX", request_id=request_id)
 
     @app.post("/api/runs/{run_id}/verify-drain")
     async def api_run_verify_drain(request: Request, run_id: str):
@@ -5833,13 +5850,18 @@ def create_app(settings: Settings | None = None, contract: AppContract | None = 
                 "is_running": info.is_running,
             })
         except AWXAPIError as exc:
-            # Return status info even if AWX reports an error for the job
+            # Return status info even if AWX reports an error for the job.
+            # #430: the upstream body goes to the log, not the client.
+            logger.error(
+                "AWX job status error for job %s (status %s): %s",
+                job_id, exc.status, _sanitize_audit_field(exc.body),
+            )
             return JSONResponse({
                 "job_id": job_id,
                 "status": "error",
                 "is_done": True,
                 "is_running": False,
-                "awx_error": exc.body,
+                "awx_error": _UPSTREAM_ERROR_MESSAGE,
             })
 
     # ------------------------------------------------------------------
