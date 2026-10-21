@@ -39,6 +39,9 @@ export interface WorkflowTemplate {
 
 export interface WorkflowsListResponse {
   templates: WorkflowTemplate[]
+  // Fail-soft state token from /api/workflows (#292): set when AWX did not
+  // answer. An empty list with a reason means "unknown", not "none".
+  reason?: '' | 'awx-not-running' | 'awx-unreachable'
 }
 
 export interface WorkflowLaunchResponse {

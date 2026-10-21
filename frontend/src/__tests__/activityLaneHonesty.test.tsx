@@ -105,6 +105,43 @@ describe('Jobs lane: a failed read is not "No workflows available"', () => {
 
     expect(await screen.findByText('No workflows available')).toBeTruthy()
   })
+
+  // #292: the backend answers 200 with a reason token when AWX does not
+  // answer. That is "unknown", not an empty inventory and not a load error.
+  function mkWorkflows(body: unknown) {
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(async (input: RequestInfo | URL) => {
+        const url = (typeof input === 'string' ? input : (input as Request).url).toString()
+        if (url.endsWith('/api/me')) return json(identity())
+        if (url.endsWith('/api/workflows')) return json(body)
+        return json({})
+      }),
+    )
+  }
+
+  it.each([
+    ['awx-not-running', /AWX is not running; workflows are unknown until it wakes\./],
+    ['awx-unreachable', /AWX is unreachable; workflows are unknown/],
+  ])('says workflows are unknown when the reason is %s', async (reason, copy) => {
+    mkWorkflows({ templates: [], reason })
+    renderWithQuery(<JobsLane />)
+
+    expect(await screen.findByText(copy)).toBeTruthy()
+    expect(screen.queryByText('No workflows available')).toBeNull()
+    expect(screen.queryByText(/could not be loaded/)).toBeNull()
+  })
+
+  it('renders cards for a non-empty list', async () => {
+    mkWorkflows({
+      templates: [{ id: 1, name: 'media-launch-demo', description: 'Launch demo', type: 'job_template' }],
+      reason: '',
+    })
+    renderWithQuery(<JobsLane />)
+
+    expect(await screen.findByText('media-launch-demo')).toBeTruthy()
+    expect(screen.queryByText('No workflows available')).toBeNull()
+  })
 })
 
 describe('History lane: Forgejo commits/pulls degraded-read honesty', () => {

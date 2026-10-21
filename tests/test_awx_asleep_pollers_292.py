@@ -59,6 +59,8 @@ def test_workflows_list_degrades(monkeypatch, exc, reason):
     resp = _client().get("/api/workflows")
     assert resp.status_code == 200
     assert resp.json() == {"templates": [], "reason": reason}
+    # The frontend (JobsLane) keys its "workflows unknown" panel on this token.
+    assert resp.json()["reason"] in {"awx-not-running", "awx-unreachable"}
 
 
 @pytest.mark.parametrize("exc,reason", FAILURES)
