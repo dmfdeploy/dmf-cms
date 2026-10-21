@@ -218,7 +218,24 @@ def _service_to_instance(
         # Observed state is overlaid by list_instances(); default honest-unknown.
         "observed_state": "unknown",
         "reconcile_pending": False,
+        "reconcile_direction": None,
     }
+
+
+def _reconcile_direction(requested_state: str, observed_state: str) -> Optional[str]:
+    """Name how intent and observation disagree, or None when they agree.
+
+    "start": intent is active but runtime proof is absent or failing.
+    "stop": intent is bootstrapped (workload not running, ADR-0013) but the
+    probe still succeeds, which is what a failed teardown leaves behind.
+    A failing or unknown probe on a bootstrapped service is expected, so it
+    is not flagged.
+    """
+    if requested_state == "active" and observed_state != "running":
+        return "start"
+    if requested_state == "bootstrapped" and observed_state == "running":
+        return "stop"
+    return None
 
 
 def _fetch_services(
@@ -356,9 +373,10 @@ def list_instances(
         # Intent says active but runtime proof is absent/failing — the two
         # disagree. This flags that gap; it does not name, or claim exists,
         # anything that closes it automatically (dmfdeploy#411).
-        inst["reconcile_pending"] = (
-            inst["requested_state"] == "active" and inst["observed_state"] != "running"
+        inst["reconcile_direction"] = _reconcile_direction(
+            inst["requested_state"], inst["observed_state"]
         )
+        inst["reconcile_pending"] = inst["reconcile_direction"] is not None
 
     functions: dict[str, dict[str, Any]] = {}
     for inst in instances:
@@ -631,9 +649,10 @@ def list_workloads_grouped(
         cs = svc_cluster_service.get(inst["instance"], inst["instance"])
         if cs in observed:
             inst["observed_state"] = "running" if observed[cs] >= 1.0 else "failing"
-        inst["reconcile_pending"] = (
-            inst["requested_state"] == "active" and inst["observed_state"] != "running"
+        inst["reconcile_direction"] = _reconcile_direction(
+            inst["requested_state"], inst["observed_state"]
         )
+        inst["reconcile_pending"] = inst["reconcile_direction"] is not None
 
     # Build a name→tags lookup from the raw service records for grouping.
     svc_tags_by_name: dict[str, list[str]] = {
