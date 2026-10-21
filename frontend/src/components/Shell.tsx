@@ -1,4 +1,5 @@
-import { Outlet } from 'react-router-dom'
+import { useEffect, useRef } from 'react'
+import { Outlet, useLocation } from 'react-router-dom'
 import Topbar from './Topbar'
 import Sidebar from './Sidebar'
 
@@ -37,12 +38,66 @@ import Sidebar from './Sidebar'
  * Shell/Topbar timing question the previous version had to reason about,
  * rather than answering it.
  */
+/**
+ * dmfdeploy/dmfdeploy#610. `<main>` is the one scroll container, so it is
+ * also the containing block for anything absolutely positioned inside a page
+ * (`relative`, `min-h-0`): a descendant such as HistoryLane's visually hidden
+ * span can no longer extend the document and let a wheel over the sidebar
+ * scroll the window.
+ *
+ * On a route change `<main>` scrolls back to the top and focus moves to the
+ * page heading (visually hidden on purpose) or, when the page has none yet,
+ * to `<main>` itself. The first render is skipped: a page load keeps the
+ * browser's own focus. The skip link is the first Tab stop and goes to the
+ * same target.
+ */
+const MAIN_ID = 'main-content'
+
+function focusMain(main: HTMLElement | null) {
+  if (!main) return
+  const heading = main.querySelector<HTMLElement>('h1')
+  const target = heading ?? main
+  if (!target.hasAttribute('tabindex')) target.setAttribute('tabindex', '-1')
+  target.focus({ preventScroll: true })
+}
+
 export default function Shell() {
+  const { pathname } = useLocation()
+  const mainRef = useRef<HTMLElement>(null)
+  // The path the page was last settled on. Comparing paths, not counting
+  // renders, keeps the first load (and a StrictMode effect replay) quiet.
+  const settledPath = useRef(pathname)
+
+  useEffect(() => {
+    if (settledPath.current === pathname) return
+    settledPath.current = pathname
+    const main = mainRef.current
+    if (!main) return
+    // scroll-smooth would animate a reset; a route change should land at the top.
+    if (typeof main.scrollTo === 'function') main.scrollTo({ top: 0, behavior: 'instant' })
+    else main.scrollTop = 0
+    focusMain(main)
+  }, [pathname])
+
   return (
     <div className="bg-bg text-text h-full flex flex-col overflow-hidden">
+      <a
+        href={`#${MAIN_ID}`}
+        onClick={(e) => {
+          e.preventDefault()
+          focusMain(mainRef.current)
+        }}
+        className="sr-only focus:not-sr-only focus:fixed focus:left-2 focus:top-2 focus:z-50 focus:rounded focus:bg-panel focus:px-3 focus:py-2 focus:text-sm focus:text-text"
+      >
+        Skip to main content
+      </a>
       <Topbar />
       <Sidebar />
-      <main className="flex-1 overflow-y-auto scroll-smooth pl-16">
+      <main
+        ref={mainRef}
+        id={MAIN_ID}
+        className="relative min-h-0 flex-1 overflow-y-auto scroll-smooth pl-16 outline-none"
+      >
         <Outlet />
       </main>
     </div>

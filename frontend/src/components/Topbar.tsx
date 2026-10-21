@@ -203,6 +203,7 @@ export default function Topbar() {
   // style preference). Every hook this component calls lives before the
   // early return for that reason; this one is no exception.
   const showSlotRow = useShowHeaderSlotRow()
+  const workloadRoute = deriveWorkloadSlugFromPath(pathname) !== ''
 
   if (!user) return null
 
@@ -226,7 +227,11 @@ export default function Topbar() {
     // arrive as two children of one wrapper or two top-level elements from
     // this component).
     <>
-    <header className="bg-bg z-20 shrink-0 flex flex-col">
+    {/* z-40 (#610): the header is the stacking context that holds the bell and
+        avatar popovers (z-50 inside it). At z-20 it tied with the rail row
+        below it, and the later sibling painted over the popovers. 40 clears
+        the row (20) and the sidebar (30) and stays under the live modal. */}
+    <header className="bg-bg relative z-40 shrink-0 flex flex-col">
       <div className="h-14 border-b border-border flex items-center justify-between px-4">
         {/* Brand */}
         <div className="flex items-center gap-3">
@@ -407,6 +412,13 @@ export default function Topbar() {
           has on first deploy (CreateWorkload.tsx) — see ProvisionStage.tsx's
           own comment for why. Both files above are deleted, not left
           unused; this row now hosts only the rail. */}
+      {/* Reserved space (#610): on a workload-detail route the row's slot
+          registers after data loads. Until then this empty band holds the
+          row's single-line height (h-10 key + py-2) so <main> does not jump
+          down when the rail arrives. */}
+      {workloadRoute && !(showSlotRow && slotContent) && (
+        <div aria-hidden="true" data-testid="header-slot-reserve" className="shrink-0 min-h-14 bg-sidebar" />
+      )}
       {showSlotRow && slotContent && (
         <div
           data-testid="header-slot-row"
@@ -447,9 +459,13 @@ export default function Topbar() {
           // read as one surface where they visually meet — unaffected by
           // the positioning change above, still true, still why this token
           // and not another.
-          className="relative z-20 flex flex-nowrap shrink-0 items-center gap-3 bg-sidebar px-4 py-2"
+          className="relative z-20 flex flex-nowrap shrink-0 items-center gap-3 bg-sidebar pl-20 pr-4 py-2"
         >
-          <div className="min-w-0 flex-1 overflow-x-auto">
+          {/* pl-20 (#610): the fixed sidebar is w-16 and spans this row, so
+              the row clears it by the sidebar's width plus the usual px-4.
+              max-h-[30vh] keeps a wrapped rail from taking the whole screen
+              on a short viewport; the strip scrolls inside the cap. */}
+          <div className="min-w-0 flex-1 max-h-[30vh] overflow-auto">
             <LifecycleStrip {...slotContent.rail} />
           </div>
         </div>

@@ -7,18 +7,6 @@
 // - A listed case that starts passing fails the suite too. If you fix a
 //   defect, remove its entry in the same change.
 
-const RAIL_ROUTES = [
-  '/media-workloads/studio-a',
-  '/media-workloads/studio-a/setup',
-  '/media-workloads/studio-a/operate',
-  '/media-workloads/studio-b',
-  '/media-workloads/studio-b/setup',
-  '/media-workloads/studio-c',
-]
-
-const ALL_WIDTHS = [390, 768, 1024, 1280]
-
-const SHELL = 'dmfdeploy/dmfdeploy#610'
 const A11Y = 'dmfdeploy/dmfdeploy#614'
 
 export type Invariant =
@@ -36,46 +24,9 @@ interface LayoutDefect {
   why: string
 }
 
-const LAYOUT_DEFECTS: LayoutDefect[] = [
-  {
-    invariant: 'only main scrolls',
-    routes: ['/activity/history'],
-    widths: ALL_WIDTHS,
-    issue: SHELL,
-    why: '<main> is unpositioned, so an absolute span in HistoryLane extends the document',
-  },
-  {
-    invariant: 'top bar stays',
-    routes: ['/activity/history'],
-    widths: ALL_WIDTHS,
-    issue: SHELL,
-    why: 'the document scrolls, so a wheel over the sidebar moves the top bar',
-  },
-  {
-    invariant: 'sidebar covers nothing',
-    routes: RAIL_ROUTES,
-    // The rail row always starts under the sidebar. Whether its centred first
-    // key clears the sidebar depends on font metrics: at 1024px it clears by
-    // about 12px with the macOS system font, but not with the Linux one in CI.
-    widths: process.platform === 'linux' ? [390, 768, 1024] : [390, 768],
-    issue: SHELL,
-    why: 'the rail row starts at x=0 under the fixed sidebar',
-  },
-  {
-    invariant: 'bell popover over rail',
-    routes: RAIL_ROUTES,
-    widths: ALL_WIDTHS,
-    issue: SHELL,
-    why: 'the header and the rail row each create a z-20 stacking context',
-  },
-  {
-    invariant: 'avatar popover over rail',
-    routes: RAIL_ROUTES,
-    widths: ALL_WIDTHS,
-    issue: SHELL,
-    why: 'the header and the rail row each create a z-20 stacking context',
-  },
-]
+// Empty since the shell fix (dmfdeploy/dmfdeploy#610). Add an entry here only
+// for a defect that has an open issue, and remove it in the change that fixes it.
+const LAYOUT_DEFECTS: LayoutDefect[] = []
 
 /** Returns "<issue>: <why>" when this case is a known failure. */
 export function knownLayoutDefect(
