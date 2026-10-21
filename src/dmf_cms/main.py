@@ -3688,6 +3688,13 @@ def create_app(settings: Settings | None = None, contract: AppContract | None = 
         op = request.app.state.operations.get(operation_id)
         if op is None:
             return JSONResponse({"error": "operation not found"}, status_code=404)
+        # Knowing an operation_id must not confer authorization: apply the
+        # same scoped-disclosure guard the finalise-purge paths use. A hidden
+        # op answers exactly like an unknown id, so existence is not confirmed.
+        user = session_user(request.session)
+        tenant_slugs = settings.media_tenancy.tenants_for(user.groups)
+        if not purge_op_visible_to_scope(op, tenant_slugs):
+            return JSONResponse({"error": "operation not found"}, status_code=404)
         return JSONResponse(op.to_dict())
 
     # ------------------------------------------------------------------
