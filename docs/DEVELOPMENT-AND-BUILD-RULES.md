@@ -41,8 +41,11 @@ Strict [SemVer](https://semver.org/) on a release-0 console:
 - **MAJOR** — breaking change to API contract, OIDC config, or runtime env shape.
   Example: 0.x.x → 1.0.0. Reserved until release-1.
 
-Until release-1 ships, MAJOR stays at 0. Anything visible to the operator that
-changes UI behavior is MINOR; everything else is PATCH.
+Until release-1 ships, MAJOR stays at 0. "UI behavior" means what the operator
+can *do*, not what they see. A change that adds a capability or alters a flow is
+MINOR. A fix that only corrects how an existing state looks is PATCH, even
+though the operator can see it. Example: a button that was already disabled but
+looked enabled.
 
 ---
 
@@ -85,8 +88,9 @@ for traceability.
 
 ### `release.sh`
 
-End-to-end release: bump → sync → commit → tag → build (local only). Refuses
-dirty trees. Does **not** push — that's `publish-to-ghcr.sh`.
+End-to-end release: bump → sync → commit → build (local only). Refuses
+dirty trees. Does **not** push, and does not tag unless you pass `--tag`.
+Publishing the image is `publish-to-ghcr.sh`.
 
 ```bash
 scripts/release.sh patch                # 0.2.2 → 0.2.3
@@ -97,14 +101,39 @@ scripts/release.sh 0.4.0                # explicit version
 
 The script will:
 1. Bump VERSION and propagate to all derived files
-2. Commit version bump with tag `v<NEW>`
+2. Commit the bump as `chore(release): v<NEW>` (signed off)
 3. Build the Docker image locally as `registry.dmf.example.com/dmf-cms:<NEW>`
 
-To complete the release:
+`--tag` creates the `v<NEW>` tag at that point. Leave it off. `main` is
+protected and merges are rebase-only, so a tag cut before the merge points at a
+commit that never reaches `main`.
+
+To complete the release, land the bump through a pull request, then tag the
+merged commit:
 
 ```bash
-git push origin HEAD && git push origin v0.4.0
+git checkout -b release/0.4.0 && git push -u origin release/0.4.0
+gh pr create --title "chore(release): v0.4.0" --body "Refs dmfdeploy/dmfdeploy#<N>"
+# ...wait for the required checks and the merge, then:
+git fetch origin
+git tag -a v0.4.0 -m "Release v0.4.0" origin/main   # origin/main, never local main
+git push origin v0.4.0
+git merge-base --is-ancestor v0.4.0^{commit} origin/main   # prove it landed
+```
 
+Tag `origin/main`, not local `main`. Local `main` still holds the commit from
+before the rebase, so the two have diverged.
+
+**The tag push is one-shot.** Two rulesets guard tags on this repo:
+`tags-nonrelease-block` blocks creating, updating or deleting any tag that does
+not match `v*`, and `tags-release-protect` blocks updating or deleting a `v*`
+tag once it exists. You cannot correct a wrong tag. You can only cut a new
+version. Before you push, confirm that `origin/main` is the merged commit you
+mean.
+
+Then publish and deploy:
+
+```bash
 # 1. Publish to GHCR (the canonical public source)
 gh auth token | GHCR_USER="<github-username>" scripts/publish-to-ghcr.sh
 
@@ -236,7 +265,10 @@ For every change that needs to land in the cluster:
 2.  Run scripts/sync-version.sh --check       (must pass before PR)
 3.  Open PR. Merge to main.
 4.  scripts/release.sh patch                  (or minor / major / X.Y.Z)
-5.  git push origin HEAD && git push origin v<NEW>
+5.  Land the bump through a PR (branch release/<NEW>), then tag the merged commit:
+    git fetch origin
+    git tag -a v<NEW> -m "Release v<NEW>" origin/main
+    git push origin v<NEW>                    (one-shot: v* tags cannot be moved)
 6.  scripts/publish-to-ghcr.sh                (push image to GHCR)
 7.  cd $DMFDEPLOY_UMBRELLA/dmf-env
     bin/run-playbook.sh <env-name> \
