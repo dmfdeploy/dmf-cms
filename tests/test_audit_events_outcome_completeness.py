@@ -55,10 +55,15 @@ _KNOWN_TERMINAL_OUTCOMES: dict[str, frozenset[str]] = {
         # are genuine acceptances (see audit_events.py's own comment).
         "capacity-denied", "invalid-override", "topology-invalid",
         "topology-facility-ambiguous", "topology-facility-error", "topology-facility-unavailable",
+        # api_workflow_launch refuses a catalog lifecycle JT launched via
+        # the generic endpoint (409 use-catalog-endpoint). Emitted with a
+        # dynamic action (deploy or teardown), so it sits in both sets.
+        "lifecycle-jt-refused",
     }),
     "teardown": frozenset({
         "awx-not-configured", "entry-not-found", "no-job-template", "autoscale-misconfigured",
         "conflict-active-operation", "template-not-found", "conflict-active-job", "facility-busy",
+        "lifecycle-jt-refused",
     }),
     "rollback": frozenset({
         "invalid-run-id", "awx-not-configured", "autoscale-misconfigured", "facility-busy",
@@ -143,6 +148,47 @@ def _sweep_outcome_tokens() -> tuple[dict[str, set[str]], dict[str, bool]]:
     return _sweep_outcome_tokens_from_source(source)
 
 
+# Dynamic action= names the sweep knows how to resolve, and the function
+# whose literals define each one's domain.
+_DYNAMIC_ACTION_SOURCES = {"mapped_action": "_catalog_jt_lifecycle_map"}
+
+
+def _resolve_dynamic_action_domain(tree: ast.AST, action_node: ast.AST | None, lineno: int) -> set[str]:
+    """The set of literal actions a non-literal ``action=`` can take.
+
+    ``mapped_action`` comes from ``_catalog_jt_lifecycle_map``, which builds
+    ``(catalog_key, action, opposite_jt)`` tuples; the domain is the set of
+    string literals in the action slot of those tuples. Any other dynamic
+    shape raises, so a new one cannot be skipped unseen.
+    """
+    name = action_node.id if isinstance(action_node, ast.Name) else None
+    mapper = _DYNAMIC_ACTION_SOURCES.get(name or "")
+    if mapper is None:
+        raise AssertionError(
+            f"main.py:{lineno}: _audit_awx_write has a non-literal action= "
+            f"({ast.unparse(action_node) if action_node is not None else 'missing'}; "
+            f"name {name!r}) this guard cannot resolve — use a literal action, or teach "
+            "_DYNAMIC_ACTION_SOURCES where its values come from."
+        )
+    domain: set[str] = set()
+    for fn in ast.walk(tree):
+        if isinstance(fn, ast.FunctionDef) and fn.name == mapper:
+            for tup in ast.walk(fn):
+                if (
+                    isinstance(tup, ast.Tuple)
+                    and len(tup.elts) == 3
+                    and isinstance(tup.elts[1], ast.Constant)
+                    and isinstance(tup.elts[1].value, str)
+                ):
+                    domain.add(tup.elts[1].value)
+    if not domain:
+        raise AssertionError(
+            f"main.py:{lineno}: found no action literals in {mapper}() to resolve "
+            f"{name!r} — the mapper's shape changed; update this guard."
+        )
+    return domain
+
+
 def _sweep_outcome_tokens_from_source(source: str) -> tuple[dict[str, set[str]], dict[str, bool]]:
     """The actual AST walk, over arbitrary SOURCE TEXT rather than always
     reading main.py from disk — split out so the mutation-verification
@@ -163,15 +209,23 @@ def _sweep_outcome_tokens_from_source(source: str) -> tuple[dict[str, set[str]],
             kwargs = {kw.arg: kw.value for kw in node.keywords}
             action_node = kwargs.get("action")
             outcome_node = kwargs.get("outcome")
-            if not isinstance(action_node, ast.Constant) or not isinstance(action_node.value, str):
-                continue
-            action = action_node.value
-            if action not in _COVERED_WATCHED_ACTIONS:
+            if isinstance(action_node, ast.Constant) and isinstance(action_node.value, str):
+                actions = {action_node.value}
+            else:
+                # dmfdeploy/dmfdeploy#549: a dynamic action= is resolved to
+                # its domain, or the sweep fails. It is never skipped.
+                actions = _resolve_dynamic_action_domain(tree, action_node, node.lineno)
+            actions &= _COVERED_WATCHED_ACTIONS
+            if not actions:
                 continue
 
             if isinstance(outcome_node, ast.Constant) and isinstance(outcome_node.value, str):
-                found[action].add(outcome_node.value)
+                for action in actions:
+                    found[action].add(outcome_node.value)
                 continue
+
+            # The awx-error: shape is only ever emitted under literal actions.
+            action = next(iter(actions))
 
             # Known dynamic shape: f"awx-error:{exc.status}" (a JoinedStr
             # whose first, static part is the awx-error: prefix). Anything
@@ -337,3 +391,35 @@ def test_capacity_skipped_and_capacity_override_are_acceptance_not_terminal():
     assert "capacity-override" in audit_events._ACCEPTANCE_OUTCOMES["deploy"]
     assert audit_events.resolve_outcome_state("deploy", "capacity-skipped") == "in_flight"
     assert audit_events.resolve_outcome_state("deploy", "capacity-override") == "in_flight"
+
+
+# dmfdeploy/dmfdeploy#549: the sweep used to `continue` past any
+# _audit_awx_write whose action= was not a string literal, so
+# api_workflow_launch's lifecycle-jt-refused (action=mapped_action) was
+# never examined and the guard's clean result said nothing about it.
+
+def test_the_sweep_sees_the_dynamic_action_lifecycle_refusal_for_both_actions():
+    found, _ = _sweep_outcome_tokens()
+    assert "lifecycle-jt-refused" in found["deploy"]
+    assert "lifecycle-jt-refused" in found["teardown"]
+    assert "lifecycle-jt-refused" not in found["rollback"]
+
+
+def test_the_lifecycle_refusal_is_classified_terminal_for_both_actions():
+    for action in ("deploy", "teardown"):
+        assert "lifecycle-jt-refused" in _KNOWN_TERMINAL_OUTCOMES[action]
+        assert "lifecycle-jt-refused" not in audit_events._ACCEPTANCE_OUTCOMES.get(action, frozenset())
+
+
+def test_an_unresolvable_dynamic_action_fails_the_sweep_instead_of_being_skipped():
+    snippet = (
+        "def _fake(request, user, some_action):\n"
+        "    _audit_awx_write(request, user, action=some_action, target='k',\n"
+        "                     request_id='r', reason='x', outcome='brand-new-refusal')\n"
+    )
+    try:
+        _sweep_outcome_tokens_from_source(snippet)
+    except AssertionError as exc:
+        assert "some_action" in str(exc)
+    else:
+        raise AssertionError("an unresolvable dynamic action= was silently skipped")
