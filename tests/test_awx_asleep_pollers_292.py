@@ -30,7 +30,7 @@ FAILURES = [
 ]
 
 
-def _client() -> TestClient:
+def _client(*, raise_server_exceptions: bool = True) -> TestClient:
     settings = Settings(
         runtime_mode="local",
         dev_login_enabled=True,
@@ -41,7 +41,9 @@ def _client() -> TestClient:
         ),
     )
     # raise_server_exceptions=True (default): an escaped exception fails the test.
-    client = TestClient(create_app(settings=settings))
+    client = TestClient(
+        create_app(settings=settings), raise_server_exceptions=raise_server_exceptions
+    )
     client.get("/auth/login", follow_redirects=False)
     return client
 
@@ -93,3 +95,20 @@ def test_admin_health_awx_http_error_omits_upstream_body(monkeypatch):
     assert resp.status_code == 200
     assert "SENTINEL-292" not in resp.text
     assert resp.json()["awx"]["connected"] is False
+
+
+def test_workflows_list_catalog_oserror_is_not_labelled_awx_state(monkeypatch):
+    # AWX answered; the local catalog read then failed. That is an internal
+    # failure, not AWX state: no awx-* reason, no detail in the body.
+    monkeypatch.setattr(main, "list_job_templates", lambda **_k: [{"id": 1, "name": "jt"}])
+
+    def boom():
+        raise OSError(5, "SENTINEL-CATALOG-READ")
+
+    monkeypatch.setattr(main, "load_catalog_entries", boom)
+    client = _client(raise_server_exceptions=False)
+    resp = client.get("/api/workflows")
+    assert resp.status_code == 500
+    assert "awx-unreachable" not in resp.text
+    assert "awx-not-running" not in resp.text
+    assert "SENTINEL-CATALOG-READ" not in resp.text

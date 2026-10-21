@@ -3739,27 +3739,15 @@ def create_app(settings: Settings | None = None, contract: AppContract | None = 
         want_all = request.query_params.get("all", "").strip().lower() in ("1", "true", "yes")
         user = effective_user(request.session)
         show_all = want_all and user is not None and role_at_least(user.role, "admin")
+        # Only the AWX call is guarded: an OSError from the catalog read below
+        # is a local failure after AWX replied, so it must not be labelled as
+        # AWX state. It takes the framework's generic 500 (no detail leaks).
         try:
             templates = list_job_templates(
                 api_url=settings.awx.api_url,
                 api_token=settings.awx.api_token,
                 ssl_verify=settings.awx.ssl_verify,
             )
-            if not show_all:
-                allowed = _catalog_launcher_jt_names()
-                templates = [t for t in templates if t.get("name") in allowed]
-            return JSONResponse({
-                "filtered": not show_all,
-                "templates": [
-                    {
-                        "id": t["id"],
-                        "name": t["name"],
-                        "description": t.get("description", ""),
-                        "type": t.get("type", "job_template"),
-                    }
-                    for t in templates
-                ]
-            })
         except AWXAPIError as exc:
             return _upstream_error_response(exc, source="AWX")
         except OSError as exc:
@@ -3768,6 +3756,21 @@ def create_app(settings: Settings | None = None, contract: AppContract | None = 
             reason = _awx_degraded_reason(exc, autoscale_enabled=settings.awx_autoscale.enabled)
             logger.warning("workflows list: AWX did not answer (%s): %s", reason, _sanitize_audit_field(str(exc)))
             return JSONResponse({"templates": [], "reason": reason})
+        if not show_all:
+            allowed = _catalog_launcher_jt_names()
+            templates = [t for t in templates if t.get("name") in allowed]
+        return JSONResponse({
+            "filtered": not show_all,
+            "templates": [
+                {
+                    "id": t["id"],
+                    "name": t["name"],
+                    "description": t.get("description", ""),
+                    "type": t.get("type", "job_template"),
+                }
+                for t in templates
+            ]
+        })
 
     @app.post("/api/workflows/{workflow_name}/launch")
     async def api_workflow_launch(request: Request, workflow_name: str):
