@@ -142,6 +142,54 @@ describe('Jobs lane: a failed read is not "No workflows available"', () => {
     expect(await screen.findByText('media-launch-demo')).toBeTruthy()
     expect(screen.queryByText('No workflows available')).toBeNull()
   })
+
+  // The degraded reply is a 200, so react-query counts it as a success and
+  // schedules nothing by default. The lane must poll while AWX does not
+  // answer, recover on its own once it does, and then stop polling.
+  it.each([['awx-not-running'], ['awx-unreachable']])(
+    'polls while the reason is %s and recovers without user action',
+    async (reason) => {
+      vi.useFakeTimers()
+      let calls = 0
+      vi.stubGlobal(
+        'fetch',
+        vi.fn(async (input: RequestInfo | URL) => {
+          const url = (typeof input === 'string' ? input : (input as Request).url).toString()
+          if (url.endsWith('/api/me')) return json(identity())
+          if (url.endsWith('/api/workflows')) {
+            calls += 1
+            if (calls === 1) return json({ templates: [], reason })
+            return json({
+              templates: [{ id: 1, name: 'media-launch-demo', description: 'Launch demo', type: 'job_template' }],
+              reason: '',
+            })
+          }
+          return json({})
+        }),
+      )
+      renderWithQuery(<JobsLane />)
+
+      // getBy*, never findBy* (findBy* waits on real timers and would hang).
+      await act(async () => {
+        await vi.advanceTimersByTimeAsync(60)
+      })
+      expect(screen.getByText(/workflows are unknown/)).toBeTruthy()
+      expect(calls).toBe(1)
+
+      await act(async () => {
+        await vi.advanceTimersByTimeAsync(30_100)
+      })
+      expect(screen.getByText('media-launch-demo')).toBeTruthy()
+      expect(screen.queryByText(/workflows are unknown/)).toBeNull()
+      expect(calls).toBe(2)
+
+      // AWX answered: no further polling.
+      await act(async () => {
+        await vi.advanceTimersByTimeAsync(90_000)
+      })
+      expect(calls).toBe(2)
+    },
+  )
 })
 
 describe('History lane: Forgejo commits/pulls degraded-read honesty', () => {

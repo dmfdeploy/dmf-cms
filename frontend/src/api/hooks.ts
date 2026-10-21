@@ -87,10 +87,15 @@ export function useAppContract() {
   })
 }
 
+// #292: when AWX does not answer, /api/workflows replies 200 with a reason
+// token, which react-query counts as a success and never refetches. Poll
+// only while that reason is set, at the jobs feed's cadence, so the lane
+// recovers on its own once AWX answers and goes quiet again after.
 export function useWorkflows() {
   return useQuery({
     queryKey: ['workflows'],
     queryFn: () => apiCall<WorkflowsListResponse>('/api/workflows'),
+    refetchInterval: (query) => (query.state.data?.reason ? 30_000 : false),
   })
 }
 
