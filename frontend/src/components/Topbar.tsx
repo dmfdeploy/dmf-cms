@@ -5,7 +5,7 @@ import { useTopbarMessageStore } from '../store/topbarMessage'
 import { useHeaderSlotContent, useShowHeaderSlotRow, deriveWorkloadSlugFromPath } from '../store/headerSlot'
 import { useSetViewAs, useClearViewAs, useFacilityDetail, useMediaWorkloadsGrouped } from '../api/hooks'
 import NotificationBell from './NotificationBell'
-import LifecycleStrip from '../pages/MediaWorkloads/LifecycleStrip'
+import LifecycleStrip, { LifecycleStripPlaceholder } from '../pages/MediaWorkloads/LifecycleStrip'
 import { workloadHomePath, workloadSetupPath } from '../lib/routes'
 import logoSvg from '../assets/dmfdeploy-icon-white.svg'
 
@@ -413,11 +413,18 @@ export default function Topbar() {
           own comment for why. Both files above are deleted, not left
           unused; this row now hosts only the rail. */}
       {/* Reserved space (#610): on a workload-detail route the row's slot
-          registers after data loads. Until then this empty band holds the
-          row's single-line height (h-10 key + py-2) so <main> does not jump
-          down when the rail arrives. */}
+          registers after data loads. Until then this band holds the row's
+          height so <main> does not jump down when the rail arrives. It uses
+          the row's own classes, with a blank rail in the same grid and cap,
+          so it matches at every width: one line on a wide screen, five
+          stacked keys (capped at 30vh) below 390px. Keep the two in step;
+          the R1 e2e case measures both. */}
       {workloadRoute && !(showSlotRow && slotContent) && (
-        <div aria-hidden="true" data-testid="header-slot-reserve" className="shrink-0 min-h-14 bg-sidebar" />
+        <div aria-hidden="true" data-testid="header-slot-reserve" className="relative z-20 flex flex-nowrap shrink-0 items-center gap-3 bg-sidebar pl-20 pr-4 py-2">
+          <div className="min-w-0 flex-1 max-h-[30vh] overflow-auto">
+            <LifecycleStripPlaceholder />
+          </div>
+        </div>
       )}
       {showSlotRow && slotContent && (
         <div
