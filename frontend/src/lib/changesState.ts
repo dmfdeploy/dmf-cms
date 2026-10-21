@@ -85,6 +85,21 @@ export function changesEmptyCopy(phase: ChangesPhase): string {
   }
 }
 
+// Workflows list (/api/workflows, #292): the same two AWX reason tokens as
+// the jobs feed, worded for the workflow inventory. Returns null when AWX
+// answered, so the caller falls through to its normal list/empty rendering.
+// Same "not running", never "asleep", rule as above.
+export function workflowsDegradedCopy(reason: string | undefined): string | null {
+  switch (reason) {
+    case 'awx-not-running':
+      return 'AWX is not running; workflows are unknown until it wakes.'
+    case 'awx-unreachable':
+      return 'AWX is unreachable; workflows are unknown. Retrying automatically.'
+    default:
+      return null
+  }
+}
+
 // ------------------------------------------------------------------
 // Forgejo (commits / pull requests) — same fail-soft shape as the jobs
 // classifier above, sharing it between the Activity → History lane's two

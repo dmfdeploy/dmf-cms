@@ -3,6 +3,7 @@ import { useWorkflows, useLaunchWorkflow, useWorkflowJobStatus, useCurrentUser, 
 import ReasonConfirm from '../../components/ReasonConfirm'
 import { useActivityStore } from '../../store/activity'
 import { settleQuery } from '../../lib/queryState'
+import { workflowsDegradedCopy } from '../../lib/changesState'
 
 interface ActiveJob {
   workflowName: string
@@ -80,6 +81,13 @@ export default function JobsLane() {
         // the same as "No workflows available".
         <div className="panel text-center py-12">
           <p className="text-muted">Workflows could not be loaded right now. Retrying automatically.</p>
+        </div>
+      ) : workflowsDegradedCopy(workflowsData?.reason) ? (
+        // #292: AWX did not answer (scaled to zero or unreachable). The
+        // list is unknown, so this must read as neither "No workflows
+        // available" nor a console load error.
+        <div className="panel text-center py-12">
+          <p className="text-muted">{workflowsDegradedCopy(workflowsData?.reason)}</p>
         </div>
       ) : !workflowsData?.templates || workflowsData.templates.length === 0 ? (
         <div className="panel text-center py-12">
