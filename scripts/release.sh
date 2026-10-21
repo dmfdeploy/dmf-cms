@@ -225,8 +225,18 @@ see STATUS.md in the umbrella repo.
        # work onto origin/main instead. A --ff-only merge is no help here —
        # the histories have genuinely diverged, so it always refuses.
 
-  2. Publish image to GHCR (canonical public source):
+  2. Rebuild the image from the tagged commit, then publish it to GHCR
+     (canonical public source). The image built above carries the PRE-rebase
+     commit in its org.opencontainers.image.revision label, and
+     publish-to-ghcr.sh only re-tags and pushes the local image, so publishing
+     it would label v$NEW with a commit that never reached origin/main:
        cd $CMS_HINT
+       git fetch origin
+       git switch --detach v$NEW              # requires a clean tree
+       scripts/build-image.sh --no-push
+       docker inspect --format '{{ index .Config.Labels "org.opencontainers.image.revision" }}' \\
+         registry.dmf.example.com/dmf-cms:$NEW    # must equal:
+       git rev-parse --short v$NEW^{commit}
        gh auth token | GHCR_USER="<github-username>" scripts/publish-to-ghcr.sh
        # needs write:packages — 'gh auth status' to check,
        # 'gh auth refresh -s write:packages' if absent.
