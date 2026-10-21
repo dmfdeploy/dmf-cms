@@ -90,7 +90,9 @@ for traceability.
 
 End-to-end release: bump → sync → commit → build (local only). Refuses
 dirty trees. Does **not** push, and does not tag unless you pass `--tag`.
-Publishing the image is `publish-to-ghcr.sh`.
+Run it on a release branch cut from `origin/main` (§4, step 4). Publishing the
+image is `publish-to-ghcr.sh`, and only after you rebuild from the release tag
+(§4, steps 6 to 8).
 
 ```bash
 scripts/release.sh patch                # 0.2.2 → 0.2.3
