@@ -292,7 +292,9 @@ cd <repos>/dmf-cms
 # Build locally (the only operator-side build step post-ADR-0025)
 scripts/release.sh patch    # or minor / X.Y.Z — bumps VERSION + builds
 
-# Publish + deploy: see DEVELOPMENT-AND-BUILD-RULES.md §4
+# Tag, rebuild from the tag, publish + deploy: see
+# DEVELOPMENT-AND-BUILD-RULES.md §4 (steps 5–9). Do not publish the image
+# that release.sh built; rebuild it from the tagged commit first.
 #   scripts/publish-to-ghcr.sh        (image → GHCR)
 #   playbook 630-zot-seed-platform    (GHCR → Zot mirror)
 #   playbook 650-dmf-cms              (Helm deploy)
@@ -413,7 +415,10 @@ If continuing from context loss, prioritize in this order:
    scripts/release.sh patch   # bumps VERSION, builds (local only)
    ```
 
-7. **Publish + mirror + deploy** (post-ADR-0025 flow):
+7. **Publish + mirror + deploy** (post-ADR-0025 flow). Before you publish,
+   tag the merged commit and rebuild the image from it
+   (DEVELOPMENT-AND-BUILD-RULES.md §4, steps 5–7); the image that
+   `release.sh` built carries a pre-rebase revision label.
    ```bash
    # Publish to GHCR (canonical public source)
    gh auth token | GHCR_USER="<github-username>" scripts/publish-to-ghcr.sh

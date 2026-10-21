@@ -137,3 +137,22 @@ def test_hint_rebuilds_from_the_tagged_commit_before_publishing(tmp_path) -> Non
     publish = out.index("scripts/publish-to-ghcr.sh", label)
     assert detach < build < label < publish
     assert "git rev-parse --short v0.1.1^{commit}" in out
+
+
+def test_numbered_procedure_rebuilds_before_publishing() -> None:
+    """The canonical numbered release procedure must rebuild from the tag first.
+
+    Anchored on the commands, not the prose: in the fenced block under the
+    "Release Procedure" heading, every line that runs publish-to-ghcr.sh needs an
+    earlier build-image.sh line and an earlier `git rev-parse` line in that block.
+    """
+    doc = (REPO_ROOT / "docs" / "DEVELOPMENT-AND-BUILD-RULES.md").read_text()
+    section = doc.split("## 4. The Release Procedure", 1)[1].split("\n## ", 1)[0]
+    blocks = section.split("```")[1::2]
+    publishing = [b.splitlines() for b in blocks if "publish-to-ghcr.sh" in b]
+    assert publishing, "no fenced block in the release procedure runs publish-to-ghcr.sh"
+    for lines in publishing:
+        publish = next(i for i, ln in enumerate(lines) if "publish-to-ghcr.sh" in ln)
+        before = "\n".join(lines[:publish])
+        assert "scripts/build-image.sh" in before, "publish step has no earlier build-image.sh"
+        assert "git rev-parse" in before, "publish step has no earlier git rev-parse label check"
