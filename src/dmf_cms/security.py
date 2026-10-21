@@ -6,10 +6,16 @@ import hashlib
 from urllib.error import HTTPError
 from urllib.parse import urlencode, urljoin, urlsplit, urlunsplit
 import json
+import logging
 import secrets
 import urllib.request
 
+from .log_safety import sanitize_audit_field
 from .settings import OIDCSettings, Settings
+
+logger = logging.getLogger(__name__)
+
+_MAX_ERROR_BODY_BYTES = 8 * 1024
 
 
 ROLE_ORDER = ("viewer", "operator", "engineer", "admin")
@@ -287,8 +293,13 @@ def exchange_code_for_token(
         with urllib.request.urlopen(request, timeout=10) as response:
             payload = response.read().decode("utf-8")
     except HTTPError as exc:
-        error_body = exc.read().decode("utf-8", errors="replace")
-        raise RuntimeError(f"OIDC token exchange failed: {exc.code} {error_body}") from exc
+        # #430: bound the read and keep the provider's body out of the
+        # exception text; it goes to the server log only.
+        error_body = exc.read(_MAX_ERROR_BODY_BYTES).decode("utf-8", errors="replace")
+        logger.error(
+            "OIDC token exchange failed: %s %s", exc.code, sanitize_audit_field(error_body)
+        )
+        raise RuntimeError(f"OIDC token exchange failed: {exc.code}") from exc
     data = json.loads(payload)
     if not isinstance(data, dict):
         raise ValueError("OIDC token response must be a JSON object")
