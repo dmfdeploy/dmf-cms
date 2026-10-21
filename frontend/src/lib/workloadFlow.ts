@@ -113,7 +113,7 @@ export type FlowStepState =
 
 /**
  * Per-stage completeness — the rail's dot grammar (umbrella dmfdeploy#449,
- * `docs/plans/DMF Console UI Round Plan 2026-08-21.md` §3.2).
+ * https://github.com/dmfdeploy/dmfdeploy/blob/45eb326e973b10e0b52deef290981ceac9bcf5bd/docs/plans/DMF%20Console%20UI%20Round%20Plan%202026-08-21.md §3.2).
  *
  * A DIFFERENT QUESTION FROM FlowStepState, deliberately kept separate rather
  * than folded into it. FlowStepState answers "may the operator open this, and
