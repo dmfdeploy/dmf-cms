@@ -1,4 +1,5 @@
 import { useEffect, useRef } from 'react'
+import { createPortal } from 'react-dom'
 import type { MediaWorkloadInstance } from '../../api/types'
 import MxlDetailPanel from './MxlDetailPanel'
 import { LivePreviewFrame, useLivePreview } from './LivePreviewBox'
@@ -124,6 +125,9 @@ export default function InstanceLiveModal({
   unavailable?: boolean
 }) {
   const panelRef = useRef<HTMLDivElement>(null)
+  // dmfdeploy/dmfdeploy#610: dismiss only on a click that STARTED on the
+  // backdrop, so a text-selection drag released over it keeps the modal open.
+  const pressStartedOnBackdrop = useRef(false)
 
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
@@ -179,10 +183,18 @@ export default function InstanceLiveModal({
 
   const live = instance.live_view ?? false
 
-  return (
+  // Portalled to <body> (#610): the modal then sits outside <main> and every
+  // shell stacking context, so nothing in the shell can paint over it.
+  return createPortal(
     <div
       className="fixed inset-0 z-50 flex items-center justify-center bg-black/70 p-4"
-      onClick={onClose}
+      onMouseDown={(e) => {
+        pressStartedOnBackdrop.current = e.target === e.currentTarget
+      }}
+      onClick={(e) => {
+        if (pressStartedOnBackdrop.current && e.target === e.currentTarget) onClose()
+        pressStartedOnBackdrop.current = false
+      }}
       role="dialog"
       aria-modal="true"
       aria-labelledby="live-modal-title"
@@ -191,8 +203,7 @@ export default function InstanceLiveModal({
       <div
         ref={panelRef}
         tabIndex={-1}
-        className="panel w-full max-w-2xl p-5 outline-none"
-        onClick={(e) => e.stopPropagation()}
+        className="panel max-h-full w-full max-w-2xl overflow-y-auto p-5 outline-none"
       >
         <header className="flex items-start justify-between gap-3">
           <div className="min-w-0">
@@ -220,6 +231,7 @@ export default function InstanceLiveModal({
           </div>
         )}
       </div>
-    </div>
+    </div>,
+    document.body,
   )
 }
