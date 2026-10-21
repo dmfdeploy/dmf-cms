@@ -955,6 +955,18 @@ _sanitize_audit_field = sanitize_audit_field
 _UPSTREAM_ERROR_MESSAGE = "upstream request failed"
 
 
+def _awx_degraded_reason(exc: BaseException, *, autoscale_enabled: bool) -> str:
+    """Reason token for an AWX that did not answer (#292).
+
+    Same vocabulary as ``/api/changes/jobs``: a refused connection under
+    autoscale is the scale-to-zero signature (``awx-not-running``); anything
+    else that never produced a response is ``awx-unreachable``.
+    """
+    if autoscale_enabled and is_connection_refused(exc):
+        return "awx-not-running"
+    return "awx-unreachable"
+
+
 def _upstream_error_response(
     exc: Exception, *, source: str, request_id: str | None = None
 ) -> JSONResponse:
@@ -3769,6 +3781,12 @@ def create_app(settings: Settings | None = None, contract: AppContract | None = 
             })
         except AWXAPIError as exc:
             return _upstream_error_response(exc, source="AWX")
+        except OSError as exc:
+            # #292: AWX asleep (connection refused) or unreachable is an
+            # expected state for this poller, not a 500.
+            reason = _awx_degraded_reason(exc, autoscale_enabled=settings.awx_autoscale.enabled)
+            logger.warning("workflows list: AWX did not answer (%s): %s", reason, _sanitize_audit_field(str(exc)))
+            return JSONResponse({"templates": [], "reason": reason})
 
     @app.post("/api/workflows/{workflow_name}/launch")
     async def api_workflow_launch(request: Request, workflow_name: str):
@@ -4059,7 +4077,15 @@ def create_app(settings: Settings | None = None, contract: AppContract | None = 
                 ms = round((time.monotonic() - t0) * 1000)
                 return {"connected": True, "latency_ms": ms, "template_count": len(templates)}
             except AWXAPIError as exc:
-                return {"connected": False, "error": str(exc)}
+                # #430: str(exc) embeds the upstream body; keep it in the log.
+                logger.warning("admin health: AWX API error (status %s): %s", exc.status, _sanitize_audit_field(exc.body))
+                return {"connected": False, "error": f"AWX API {exc.status}"}
+            except OSError as exc:
+                # #292: asleep or unreachable AWX is a state, not an error.
+                reason = _awx_degraded_reason(exc, autoscale_enabled=settings.awx_autoscale.enabled)
+                logger.warning("admin health: AWX did not answer (%s): %s", reason, _sanitize_audit_field(str(exc)))
+                note = "AWX is not running" if reason == "awx-not-running" else "AWX is unreachable"
+                return {"connected": False, "reason": reason, "note": note}
 
         def _ping_netbox() -> dict:
             if not settings.netbox.configured:
