@@ -11,7 +11,7 @@ or a release, read section 0 of the matching umbrella skill.
 
 ```bash
 scripts/sync-version.sh --check                  # must pass before any PR
-cd frontend && npm ci && npm run lint && npm test && npm run build
+( cd frontend && npm ci && npm run lint && npm test && npm run build )
 pip install -e '.[dev]' && rm -rf src/dmf_cms/static/app && pytest -q
 DMF_CONSOLE_DEV_LOGIN_ENABLED=true uvicorn src.dmf_cms.main:app --reload
 ```
