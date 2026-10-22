@@ -391,10 +391,11 @@ dmf-cms/
 
 ### Branch strategy
 
-- `main` — always shippable. No direct commits.
-- `feature/<name>` — short-lived, squash-merge into the integration branch.
-- `feature/dmf-console-release-0-bootstrap` — the current integration branch
-  for release-0 work; promotes to `main` at release-0 cut.
+- `main`: always shippable. No direct commits; every change lands through a
+  pull request.
+- Short-lived branches, one per pull request (for example `feature/<name>`, or
+  `release/<NEW>` for a release as described in §4). Each one is rebase-merged
+  into `main`.
 
 A merge to `main` requires the PR to pass `sync-version.sh --check`. A push of
 a `vX.Y.Z` tag triggers (manually, today) the deploy playbook run.
