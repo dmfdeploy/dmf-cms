@@ -576,7 +576,7 @@ def _read_node_supply(prom_url: str) -> NodeSupply:
         # run alongside the app containers and their requests SHOULD stack.
         # KSM's kube_pod_init_container_resource_requests does not distinguish
         # them here, so this max-model under-counts a pod that uses a native
-        # sidecar. No current DMF platform chart does; revisit if one adopts
+        # sidecar. No current dmfdeploy platform chart does; revisit if one adopts
         # `restartPolicy: Always` init containers.
         pod_cpu = max(app_cpu.get(key, 0.0), init_cpu.get(key, 0.0)) + overhead_cpu.get(key, 0.0)
         pod_mem = max(app_mem.get(key, 0.0), init_mem.get(key, 0.0)) + overhead_mem.get(key, 0.0)

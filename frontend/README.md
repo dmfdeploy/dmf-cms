@@ -1,6 +1,6 @@
 # DMF Console Frontend
 
-React 19 + Vite + TypeScript frontend for the DMF Platform console.
+React 19 + Vite + TypeScript frontend for the dmfdeploy platform console.
 
 ## Development Setup
 
