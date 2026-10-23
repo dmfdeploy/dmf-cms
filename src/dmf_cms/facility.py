@@ -102,7 +102,7 @@ from . import netbox
 from . import prometheus
 from .contracts import ImageRepository
 
-# Kubernetes' own bookkeeping namespaces are never "the DMF platform" under
+# Kubernetes' own bookkeeping namespaces are never "the dmfdeploy platform" under
 # any reading of that phrase — excluded from storage listings so the page
 # isn't dominated by kube-system PVCs (there usually are none, but the
 # convention costs nothing and matches the same three names main.py's own
