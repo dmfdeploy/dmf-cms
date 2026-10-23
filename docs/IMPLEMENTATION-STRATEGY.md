@@ -6,6 +6,8 @@ type: project
 
 # DMF Console Frontend Implementation Strategy
 
+> **Status: historical record.** This document is a snapshot from 2026-05-01. It is kept for the reasoning behind the framework choice and the architecture. It is not maintained, so check the code for current behavior.
+
 **Status:** Piece 4 (React prototype) complete. Pieces 2 & 3 (Ansible playbooks) in-progress fixes.
 
 **Owner:** Development team  
@@ -17,7 +19,7 @@ type: project
 > convergence. Any reference below to `docker push registry.dmf.example.com/...`
 > from a workstation is **superseded** — that path was removed. For the current
 > release flow see `dmf-cms/docs/DEVELOPMENT-AND-BUILD-RULES.md` (the canonical
-> doc) and the `dmf-cms-build-and-release` skill. The strategic content
+> doc). The strategic content
 > (framework choice, BFF architecture, decision log) is still relevant.
 
 ---
