@@ -384,7 +384,7 @@ export default function Topbar() {
           page used to render inline. Reshaping that component's own layout
           to fit a single row is WP-3's job, not this one's.
 
-          FIX ROUND (orchestrator/codex gate, dmfdeploy#481): moved from
+          Moved (dmfdeploy#481): from
           <header>'s own row 2 to a SIBLING of <header>, not merely a
           cosmetic reshuffle. `<header>` here is a direct child of a plain
           `<div>` (Shell.tsx) — no article/aside/main/nav/section ancestor —

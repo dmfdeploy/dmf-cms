@@ -198,7 +198,7 @@ export default function ActivityPanel({ title, explainer = 'inline' }: ActivityP
           demo path, so it costs nothing to state plainly. STATE, don't
           apologise, and be specific about the two limits that actually
           bite rather than a disclaimer that says nothing checkable.
-          codex (residual, orchestrator's own miss): the switch-source
+          The switch-source
           exemption below is qualified, not unconditional — a record
           whose outcome field itself is blank resolves outcome=''
           before the switch-source branch even runs, same as
@@ -230,7 +230,7 @@ export default function ActivityPanel({ title, explainer = 'inline' }: ActivityP
           below (a console restart mid-watch), per the operator ruling
           above: state it, don't just fix the common case and stay
           silent about the one that isn't.
-          Gate round 3 (codex, tail gate on #419): the staleness check
+          The staleness check
           itself (a stuck in_flight row ageing into "outcome unknown"
           once nothing could plausibly still be watching it — audit_
           events.py's own _age_stale_in_flight) depends on console-side

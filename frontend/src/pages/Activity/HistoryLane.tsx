@@ -179,7 +179,7 @@ export default function HistoryLane() {
                   refetch ('error' phase) retains TanStack Query's last-good
                   `jobs` — the length===0 branch below never fires when rows
                   are retained, so this used to render them with no notice
-                  at all, exactly the History-lane defect fix-round 3 closed
+                  at all, exactly the History-lane defect already closed
                   for the commits/pulls panels. Same fix: a notice
                   independent of emptiness; retained rows stay visible
                   (Art. 5). Every OTHER phase here (not-running/unreachable/

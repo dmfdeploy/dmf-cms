@@ -206,7 +206,7 @@ function Loaded({ data }: { data: FacilityDetailResponse }) {
 
       {/* WP-4 (umbrella #347 Arc 4): the four DATA-TABLE panels regroup from
           a vertical stack into a 2-row x 2-col grid at THIS wrapper/layout
-          level only. Precisely (codex round-2 P3-2 — an earlier version of
+          level only. Precisely (an earlier version of
           this comment said "every panel function below is byte-for-byte
           unchanged", which the diff contradicts): NodesPanel and
           StoragePanel have zero edits, full stop; PlatformServicesPanel and
@@ -222,7 +222,7 @@ function Loaded({ data }: { data: FacilityDetailResponse }) {
           the grid in its unchanged full-width position rather than being
           folded into the layout the grid exists to organise.
 
-          SPACING (lkirc round-5 finding): each of the four panels' own
+          SPACING: each of the four panels' own
           outer div carries `mb-6` — a leftover from when they were a
           vertical stack and each needed its own bottom margin to space
           from the next. That's a WRAPPER spacing utility, not "internal"

@@ -255,7 +255,7 @@ export default function WorkloadMaterializing({
         {/* dmfdeploy#414 point 3: the setup exit, present here too — the
             SAME shared ViewLiveExit component WorkloadSetup.tsx's own
             loading-safe branches use, not a second implementation (see that
-            component's own docstring for the fix-round finding: leaving
+            component's own docstring for why: leaving
             here does not cancel the launch job server-side, but while it is
             still running the workload does not exist in NetBox yet, so an
             always-active exit would send the operator straight into home's
