@@ -78,7 +78,7 @@ def test_find_active_reattaches_to_a_running_deploy_op():
 
 
 def test_find_active_reattaches_to_a_launched_deploy_op():
-    # codex #202 WP2: LAUNCHED means "handed to AWX, watcher attached" for
+    # LAUNCHED means "handed to AWX, watcher attached" for
     # deploy — still active, a re-click during job execution reattaches
     # instead of spawning a duplicate.
     store = OperationStore(ttl_seconds=3600)
@@ -146,7 +146,7 @@ def test_reattach_does_not_overwrite_request_id_or_initiator():
 
 
 # ---------------------------------------------------------------------------
-# operations.py — auto_rollback_dispatch (#560 round 4, lkirc): trusted,
+# operations.py — auto_rollback_dispatch (#560): trusted,
 # dispatch-time-only provenance — never re-derived from initiator, never
 # exposed in to_dict(), never overwritten on reattach.
 # ---------------------------------------------------------------------------
@@ -298,7 +298,7 @@ def test_watcher_teardown_failed_after_started_is_run_failed_not_rollback(monkey
     # teardown is itself an idempotent cleanup action — an operator retry is
     # the recovery path, not an auto-rollback of a cleanup. Rollback's own
     # failed-after-started handling is entirely different (marker-driven,
-    # codex R2-1) — see test_watcher_rollback_no_marker_and_job_failed_is_
+    # not job status alone) — see test_watcher_rollback_no_marker_and_job_failed_is_
     # rollback_incomplete below, split out of this test (rollback no longer
     # shares teardown's plain job-status-driven classification at all).
     app, ops_store = _fake_app()
@@ -363,9 +363,9 @@ def test_watcher_gives_up_after_three_consecutive_failures(monkeypatch):
 
 
 def test_watcher_get_job_failure_line_sanitizes_key(monkeypatch, caplog):
-    # umbrella dmf-cms#108 fix-round 4: `key` is externally influenced —
+    # `key` is externally influenced —
     # for action="launch" specifically it's the raw, unvalidated
-    # workflow_name path parameter, the SAME value fix-round 1 first
+    # workflow_name path parameter, the SAME value that was first
     # caught unsanitized in the audit line — threaded through to this
     # watcher regardless of whether it corresponds to anything real in
     # AWX. This is the "job watch: get_job failed" line; the sibling
@@ -409,16 +409,16 @@ def test_watcher_gives_up_on_timeout_without_calling_get_job(monkeypatch):
 
 
 # ---------------------------------------------------------------------------
-# main.py — watcher robustness (codex R2-4: started-evidence, fail-closed
+# main.py — watcher robustness (started-evidence, fail-closed
 # outer boundary, malformed-response validation)
 # ---------------------------------------------------------------------------
 
 
 def test_watcher_started_then_deploy_lost_after_three_failures_is_run_status_unknown(monkeypatch):
-    # codex R2-4a (remapped by R3-2): seen_started is remembered ACROSS
+    # seen_started is remembered ACROSS
     # polls, not just read fresh at a terminal poll — the give-up path (3
     # consecutive failures) has no fresh job dict to read `started` from at
-    # all, so it must rely on that memory. codex R3-2: a watch-loss NEVER
+    # all, so it must rely on that memory. A watch-loss NEVER
     # claims FAILED_ROLLBACK_REQUIRED (that's reserved for a CONFIRMED AWX
     # failure, where the auto-trigger contract actually runs) — a deploy
     # whose watch was lost after starting is RUN_STATUS_UNKNOWN instead:
@@ -457,7 +457,7 @@ def test_watcher_never_started_then_lost_after_three_failures_is_run_failed(monk
 
 
 def test_watcher_started_then_teardown_lost_is_run_status_unknown(monkeypatch):
-    # codex R3-2: teardown is NOT special-cased away from RUN_STATUS_UNKNOWN
+    # Teardown is NOT special-cased away from RUN_STATUS_UNKNOWN
     # the way it is from FAILED_ROLLBACK_REQUIRED — a lost watch is a "we
     # don't know" outcome for ANY non-rollback watched action, and must
     # still block the facility until an operator resolves it.
@@ -479,9 +479,9 @@ def test_watcher_started_then_teardown_lost_is_run_status_unknown(monkeypatch):
 
 
 def test_watcher_started_then_rollback_lost_after_three_failures_is_rollback_incomplete(monkeypatch):
-    # codex R3-2: for action=="rollback" specifically, a lost watch after
+    # For action=="rollback" specifically, a lost watch after
     # starting maps to ROLLBACK_INCOMPLETE (its OWN existing dirty
-    # terminal, R2-1), not the new RUN_STATUS_UNKNOWN — consistent with
+    # terminal), not the new RUN_STATUS_UNKNOWN — consistent with
     # rollback's marker-driven "never assume clean" posture; a lost watch
     # is just one more way to fail to confirm completion.
     app, ops_store = _fake_app()
@@ -510,7 +510,7 @@ def test_watcher_started_then_rollback_lost_after_three_failures_is_rollback_inc
     ("rollback", False, OperationState.RUN_FAILED),
 ])
 def test_watch_lost_terminal_state_is_conservative(action, seen_started, expected):
-    # codex R2-4a/R3-2: _watch_lost_terminal_state is the single shared
+    # _watch_lost_terminal_state is the single shared
     # decision point for EVERY give-up path (3 consecutive failures, TTL
     # timeout, and the fail-closed outer crash handler) — unit-tested
     # directly here since the TTL-timeout path specifically can't be driven
@@ -523,7 +523,7 @@ def test_watch_lost_terminal_state_is_conservative(action, seen_started, expecte
 
 
 def test_watcher_started_then_deploy_ttl_timeout_is_run_status_unknown_no_auto_trigger(monkeypatch):
-    # codex R3-2's explicit named case: a started-then-TTL-timed-out deploy
+    # A started-then-TTL-timed-out deploy
     # -> RUN_STATUS_UNKNOWN, auto_rollback stays None, and
     # _maybe_auto_trigger_rollback is NEVER called from a give-up path
     # (only the CONFIRMED-terminal branch inside the main loop body calls
@@ -584,7 +584,7 @@ def test_watcher_started_deploy_lost_dirty_state_then_blocks_facility(monkeypatc
 
 
 def test_watcher_started_rollback_lost_dirty_state_then_blocks_facility(monkeypatch):
-    # codex R3-2's explicit named case: started-rollback-3-failures ->
+    # Started-rollback-3-failures ->
     # ROLLBACK_INCOMPLETE, and it still blocks the facility.
     app, ops_store = _fake_app()
     op = ops_store.create("rollback", "a" * 32)
@@ -605,10 +605,10 @@ def test_watcher_started_rollback_lost_dirty_state_then_blocks_facility(monkeypa
 
 
 def test_watcher_malformed_get_job_response_is_terminalized_not_stranded(monkeypatch):
-    # codex R2-4b/c: get_job returning a shape that isn't {"status": str,
+    # get_job returning a shape that isn't {"status": str,
     # ...} (here: a bare list) must terminalize via the fail-closed outer
     # try/except, not strand the op mid-flight or propagate the crash.
-    # codex R3-7: op.error carries only the STABLE token, never the
+    # op.error carries only the STABLE token, never the
     # exception's own repr (that goes to the server-side logger only).
     app, ops_store = _fake_app()
     op = ops_store.create("deploy", "key1")
@@ -620,7 +620,7 @@ def test_watcher_malformed_get_job_response_is_terminalized_not_stranded(monkeyp
 
 
 def test_watcher_crash_line_sanitizes_key(monkeypatch, caplog):
-    # umbrella dmf-cms#108 fix-round 4: same key, the other logger call
+    # Same key, the other logger call
     # this outer except block owns.
     import logging
 
@@ -657,8 +657,8 @@ def test_watcher_missing_operation_returns_without_error(monkeypatch):
 
 
 # ---------------------------------------------------------------------------
-# main.py — _extract_run_id_from_job (codex R3-3: reattach identity
-# hydration; made ACTION-AWARE + hex32-validated by R4-2/R4-4)
+# main.py — _extract_run_id_from_job (reattach identity
+# hydration; made ACTION-AWARE + hex32-validated)
 # ---------------------------------------------------------------------------
 
 
@@ -675,7 +675,7 @@ def test_extract_run_id_from_job_teardown_parses_l3_request_id():
 
 
 def test_extract_run_id_from_job_rollback_parses_l3_run_id_not_l3_request_id():
-    # codex R4-2a: for a ROLLBACK job, the identity is l3_run_id (the
+    # For a ROLLBACK job, the identity is l3_run_id (the
     # snapshot target), NOT l3_request_id (that launch attempt's own
     # dispatch correlator) — the two are deliberately different values on
     # a real rollback job.
@@ -723,7 +723,7 @@ def test_extract_run_id_from_job_l3_request_id_empty_string():
 
 
 def test_extract_run_id_from_job_value_must_be_hex32(monkeypatch):
-    # codex R4-4: the extracted value must fullmatch the SAME lowercase
+    # The extracted value must fullmatch the SAME lowercase
     # hex-32 shape the manual rollback endpoint validates run_id against
     # (main._RUN_ID_RE) — anything else is treated as absent, not passed
     # through verbatim.
@@ -735,7 +735,6 @@ def test_extract_run_id_from_job_value_must_be_hex32(monkeypatch):
 
 # ---------------------------------------------------------------------------
 # main.py — async reattach hydrates run_id from the AWX job's own extra_vars
-# (codex R3-3)
 # ---------------------------------------------------------------------------
 
 
@@ -763,7 +762,7 @@ def test_run_deploy_operation_reattach_hydrates_run_id_from_job_extra_vars(monke
 
 
 def test_run_deploy_operation_reattach_tolerates_get_job_failure(monkeypatch):
-    # codex R3-3: a failure fetching the reattached job's own detail must
+    # A failure fetching the reattached job's own detail must
     # never crash the reattach — run_id just stays None (identity unknown).
     app, ops_store = _fake_app()
     op = ops_store.create("deploy", "key1", request_id="d" * 32)
@@ -788,7 +787,7 @@ def test_run_deploy_operation_reattach_tolerates_get_job_failure(monkeypatch):
 
 # ---------------------------------------------------------------------------
 # main.py — _track_sync_reattach / _track_sync_rollback_reattach idempotency
-# (codex R4-3): a SECOND already-active discovery for a target already
+# A SECOND already-active discovery for a target already
 # tracked must reattach, not retarget or double-watch.
 # ---------------------------------------------------------------------------
 
@@ -863,7 +862,7 @@ def test_reattached_deploy_with_invalid_extra_vars_uuid_is_identity_unknown_on_a
     monkeypatch.setattr(main, "get_job_events_for_task", lambda **k: [])
 
     asyncio.run(main._run_deploy_operation(app, op.operation_id, "key1", "dmf-configure"))
-    assert ops_store.get(op.operation_id).run_id is None  # codex R4-4: rejected, not passed through
+    assert ops_store.get(op.operation_id).run_id is None  # rejected, not passed through
 
     def boom(*a, **k):
         raise AssertionError("must not dispatch when the run identity is unknown")
@@ -1030,7 +1029,7 @@ class _FakeHTTPResponse:
 
 
 def test_get_job_stdout_truncates_to_tail_bound(monkeypatch):
-    # codex R2-9/R3-6: only the last _STDOUT_TAIL_BYTES survive — the
+    # Only the last _STDOUT_TAIL_BYTES survive — the
     # outcome marker is always the LAST matching line, so the tail is
     # sufficient, and a job's full raw log must never ride further than
     # that fixed cap. Mocked at the urlopen transport layer (not
@@ -1065,7 +1064,7 @@ def test_get_job_stdout_under_bound_is_unchanged(monkeypatch):
 
 
 def test_request_text_streams_in_bounded_chunks_never_full_body_read(monkeypatch):
-    # codex R3-6 TEST-CRITICAL: discriminates at the read boundary — the
+    # Discriminates at the read boundary — the
     # fake response's read() raises if ever called unbounded (size=None or
     # negative, the "read everything" convention), which is exactly what a
     # naive `resp.read()` full-body fetch would do. Every recorded call
@@ -1085,7 +1084,7 @@ def test_request_text_streams_in_bounded_chunks_never_full_body_read(monkeypatch
 
 
 def test_request_text_error_path_bounds_the_read_too(monkeypatch):
-    # codex R4-5: the HTTPError path must ALSO never call an unbounded
+    # The HTTPError path must ALSO never call an unbounded
     # exc.read() — same read-boundary discrimination as the success path,
     # applied to the error body.
     huge_error_body = ("e" * (awx._TEXT_READ_CHUNK_BYTES * 5)).encode()
@@ -1155,7 +1154,7 @@ def test_facility_busy_check_blocks_on_cross_target_launched_teardown():
 
 
 def test_facility_busy_check_same_target_non_terminal_blocks_when_called_directly():
-    # codex R3-1: the blanket same-target skip is GONE — called directly
+    # The blanket same-target skip is GONE — called directly
     # (bypassing the real dispatch flow), a same-target non-terminal op now
     # returns as blocking, not exempted. In the REAL flow this exact
     # scenario can't arise: the per-entry dedupe
@@ -1171,7 +1170,7 @@ def test_facility_busy_check_same_target_non_terminal_blocks_when_called_directl
 
 
 def test_facility_busy_check_current_operation_id_exempts_self():
-    # codex R3-1: this is the mechanism the async deploy/teardown flow
+    # This is the mechanism the async deploy/teardown flow
     # relies on in place of the old same-target skip — the JUST-CREATED op
     # for THIS dispatch must never block itself when the facility check
     # runs AFTER creation (get_or_create_exclusive's atomicity requirement
@@ -1185,7 +1184,7 @@ def test_facility_busy_check_current_operation_id_exempts_self():
 
 
 def test_facility_busy_check_dirty_same_target_blocks_a_new_deploy_of_that_target():
-    # codex R3-1's headline behavior change: a FAILED_ROLLBACK_REQUIRED
+    # A FAILED_ROLLBACK_REQUIRED
     # deploy of catalog key K now blocks a NEW deploy of K too (not just
     # OTHER targets) — plan §4.5 is "one run at a time, full stop". This is
     # what actually happens end-to-end: get_or_create_exclusive treats the
@@ -1222,7 +1221,7 @@ def test_facility_busy_check_ignores_launch_action():
 
 
 # ---------------------------------------------------------------------------
-# main.py — _facility_busy_check dirty-state model (codex R2-6)
+# main.py — _facility_busy_check dirty-state model
 # ---------------------------------------------------------------------------
 
 
@@ -1230,7 +1229,7 @@ def test_facility_busy_check_ignores_launch_action():
     OperationState.FAILED_ROLLBACK_REQUIRED, OperationState.ROLLBACK_INCOMPLETE, OperationState.RUN_STATUS_UNKNOWN,
 ])
 def test_facility_busy_check_blocks_on_dirty_terminal_states(state):
-    # codex R2-6: a run that STOPPED but may have left surfaces dirty must
+    # A run that STOPPED but may have left surfaces dirty must
     # still block a new dispatch to a DIFFERENT target, even though the
     # blocking op's own state is terminal for dedupe/GC purposes.
     store = OperationStore(ttl_seconds=3600)
@@ -1241,7 +1240,7 @@ def test_facility_busy_check_blocks_on_dirty_terminal_states(state):
 
 
 def test_facility_busy_check_dirty_state_blocks_teardown_too():
-    # codex R2-6: teardown dispatch now also gets the facility check, and a
+    # Teardown dispatch now also gets the facility check, and a
     # dirty run must block it just like a new deploy/rollback.
     store = OperationStore(ttl_seconds=3600)
     op = store.create("deploy", "key-a", request_id="f" * 32)
@@ -1251,7 +1250,7 @@ def test_facility_busy_check_dirty_state_blocks_teardown_too():
 
 
 def test_facility_busy_check_teardown_vs_teardown_cross_target_now_blocks():
-    # codex R3-5: the R2-6(c) teardown-vs-teardown cross-target exemption
+    # The teardown-vs-teardown cross-target exemption
     # is REMOVED — plan §4.5 is "one run at a time, full stop", verbatim;
     # the AWX Container Group cap is execution serialization, not a
     # substitute for the advisory refusal.
@@ -1273,7 +1272,7 @@ def test_facility_busy_check_teardown_vs_deploy_cross_target_still_blocks():
 
 
 def test_facility_busy_check_rollback_of_dirty_run_is_not_blocked_by_itself():
-    # codex R2-6(d), corrected by R4-1: a rollback dispatch for run_id R
+    # A rollback dispatch for run_id R
     # must never be blocked by the very deploy op that run_id is rolling
     # back — that op's run_id (HYDRATED identity, not request_id) IS R, and
     # the plan §4.5 retry guarantee requires this exception (excluded even
@@ -1288,7 +1287,7 @@ def test_facility_busy_check_rollback_of_dirty_run_is_not_blocked_by_itself():
 
 
 def test_facility_busy_check_rollback_matches_on_run_id_not_request_id():
-    # codex R4-1 P1-1: codex's exact probe — a REATTACHED op whose
+    # A REATTACHED op whose
     # request_id (this dispatch attempt's own bookkeeping id) differs from
     # its run_id (the hydrated AWX-job identity). A rollback of the run_id
     # must pass; a prior draft compared against request_id instead and
@@ -1313,12 +1312,12 @@ def test_facility_busy_check_rollback_matches_on_run_id_not_request_id():
 # main.py — R5: the matching-rollback exemption is scoped to a DIRTY-
 # RECOVERABLE DEPLOY only (action=="deploy" AND state in
 # {FAILED_ROLLBACK_REQUIRED, RUN_STATUS_UNKNOWN}), not a bare run_id match —
-# codex's three named probes.
+# the three cases below.
 # ---------------------------------------------------------------------------
 
 
 def test_facility_busy_check_running_deploy_blocks_rollback_of_its_own_run_id():
-    # codex R5 probe 1: a deploy that's still LIVE (RUNNING, not yet dirty)
+    # A deploy that's still LIVE (RUNNING, not yet dirty)
     # must NOT be exempted just because its run_id matches the rollback
     # target — a rollback of a run that hasn't even finished must wait for
     # it to reach a terminal (dirty) state, not race it. One run at a time.
@@ -1331,7 +1330,7 @@ def test_facility_busy_check_running_deploy_blocks_rollback_of_its_own_run_id():
 
 
 def test_facility_busy_check_rollback_incomplete_op_own_run_id_collision_does_not_exempt():
-    # codex R5 probe 2: a ROLLBACK_INCOMPLETE op (action=="rollback")
+    # A ROLLBACK_INCOMPLETE op (action=="rollback")
     # rolling back run A has its OWN run_id set to ITS dispatch correlator
     # (an arbitrary hex32 — see _run_rollback_operation), which can
     # coincidentally equal some UNRELATED run_id B. That coincidence must
@@ -1348,7 +1347,7 @@ def test_facility_busy_check_rollback_incomplete_op_own_run_id_collision_does_no
 
 
 def test_facility_busy_check_run_status_unknown_teardown_own_run_id_collision_does_not_exempt():
-    # codex R5 probe 3: same collision, for a RUN_STATUS_UNKNOWN teardown.
+    # Same collision, for a RUN_STATUS_UNKNOWN teardown.
     store = OperationStore(ttl_seconds=3600)
     coincidental_target = "c" * 32
     teardown_op = store.create("teardown", "some-key", request_id=coincidental_target)
@@ -1360,7 +1359,7 @@ def test_facility_busy_check_run_status_unknown_teardown_own_run_id_collision_do
 
 
 def test_facility_busy_check_rollback_retry_of_same_run_passes():
-    # codex R2-6(d): a prior ROLLBACK_INCOMPLETE attempt for the SAME run_id
+    # A prior ROLLBACK_INCOMPLETE attempt for the SAME run_id
     # must not block a retry of that same run's rollback — already covered
     # by the plain same-target skip (op.target == current_target == run_id),
     # confirmed explicitly here since it's one of the two named R2-6(d) cases.
@@ -1449,7 +1448,7 @@ def test_fetch_l3_outcome_from_events_queries_the_named_task(monkeypatch):
 
 
 def test_fetch_l3_outcome_from_events_wrong_task_name_is_invisible(monkeypatch):
-    # THE anchor test (codex's own demand): an event carrying an
+    # THE anchor test: an event carrying an
     # IDENTICALLY-FORMATTED marker string, but on a DIFFERENTLY-named
     # task, must never match — even though get_job_events_for_task
     # already filters server-side, this proves the defense-in-depth
@@ -1595,7 +1594,7 @@ def test_fetch_l3_milestone_from_events_last_event_wins(monkeypatch):
 
 
 def test_fetch_l3_milestone_from_events_selects_by_max_counter_not_list_order(monkeypatch):
-    # codex adversarial review (T4): "latest" must be decided by comparing
+    # "latest" must be decided by comparing
     # counter values, never by trusting the order AWX's own response
     # arrived in. This list is DELIBERATELY in DESCENDING counter order —
     # the opposite of what order_by=counter asks for — proving the
@@ -1897,7 +1896,7 @@ def test_watcher_milestone_fetch_never_touches_outcome_fields(monkeypatch):
 
 
 def test_watcher_milestone_write_failure_never_reaches_outer_classification(monkeypatch):
-    # codex adversarial review (feat/390-throbber, T1/P1): the test above
+    # The test above
     # does NOT exercise a real milestone token (get_job_events_for_task
     # returns []), so it would still pass even if the milestone block's
     # ops_store.update(...) call sat unguarded inside the watcher's OUTER
@@ -1955,7 +1954,7 @@ def test_watcher_milestone_write_failure_never_reaches_outer_classification(monk
 
 
 # ---------------------------------------------------------------------------
-# main.py — _sanitize_kv (codex R2-9/R3-7 §6 public-safety: allow-list with
+# main.py — _sanitize_kv (§6 public-safety: allow-list with
 # STRICT PER-KEY value rules for the outcome marker's kv detail before it
 # can reach `error`/an API response — no shared generic charset, no
 # free-text key at all)
@@ -1968,7 +1967,7 @@ def test_sanitize_kv_keeps_surfaces_with_valid_subset():
 
 
 def test_sanitize_kv_drops_surfaces_with_unknown_member():
-    # codex R3-7: only netbox/helm/monitoring are valid surface names —
+    # Only netbox/helm/monitoring are valid surface names —
     # anything else in the comma list fails the WHOLE value, not just that
     # member (no partial survival within one value).
     assert main._sanitize_kv("surfaces=netbox,unknown") is None
@@ -1979,7 +1978,7 @@ def test_sanitize_kv_run_id_and_request_id_must_be_bare_hex32():
     hex32 = "a" * 32
     assert main._sanitize_kv(f"run_id={hex32}") == f"run_id={hex32}"
     assert main._sanitize_kv(f"request_id={hex32}") == f"request_id={hex32}"
-    # codex R3-7: kill the IP/dotted/colon-shaped leak — a prior draft's
+    # Kill the IP/dotted/colon-shaped leak — a prior draft's
     # broad charset let values like these through. RFC 5737 documentation
     # addresses: IP-shaped for the sanitizer, public-safe for the repo's own
     # dmf-private-network-literal gitleaks rule (which rightly flagged the
@@ -2000,8 +1999,7 @@ def test_sanitize_kv_detail_key_free_text_is_still_dropped_R3_7_posture_holds():
 
 
 def test_sanitize_kv_detail_key_enum_values_survive():
-    # R3b (the cross-repo gap R3a's own report flagged), re-enumerated R5b
-    # (umbrella #202 WP3 R5b, codex round-4 P2-2) from the ACTUAL staged
+    # Enumerated (umbrella #202 WP3) from the ACTUAL staged
     # dmf-runbooks tree's own emitted detail= values — every launcher
     # refusal-detail token must survive sanitization.
     for token in main._KV_DETAIL_TOKENS:
@@ -2071,7 +2069,7 @@ def test_watcher_rollback_complete_marker_is_run_complete(monkeypatch):
 
 
 def test_watcher_rollback_incomplete_marker_is_rollback_incomplete_even_when_job_successful(monkeypatch):
-    # codex R2-1 partial-failure posture: never false-green. The AWX JOB
+    # Partial-failure posture: never false-green. The AWX JOB
     # itself may report "successful" while the marker says the rollback
     # left surfaces dirty — the marker wins, and the DIRTY terminal state
     # is ROLLBACK_INCOMPLETE, not RUN_FAILED (R2-6's facility check treats
@@ -2091,8 +2089,7 @@ def test_watcher_rollback_incomplete_marker_is_rollback_incomplete_even_when_job
 
 
 def test_watcher_rollback_no_marker_but_job_successful_is_rollback_incomplete(monkeypatch):
-    # codex R2-1: this is the exact "flip the test that pinned missing-marker
-    # success" instruction — RUN_COMPLETE requires BOTH a successful status
+    # A missing marker is not success: RUN_COMPLETE requires BOTH a successful status
     # AND the exact rollback_complete marker. A successful job with NO
     # marker at all is unverified, not clean, and must fail closed.
     app, ops_store = _fake_app()
@@ -2119,7 +2116,7 @@ def test_watcher_rollback_no_marker_and_job_failed_is_rollback_incomplete(monkey
 
 
 def test_watcher_rollback_events_fetch_failure_is_rollback_incomplete(monkeypatch):
-    # codex R2-1's explicit "fetch failure" combination:
+    # The "fetch failure" combination:
     # _fetch_l3_outcome_from_events tolerates get_job_events_for_task
     # raising and returns (None, None) — the watcher must treat that
     # identically to "no marker found", never assume success just because
@@ -2139,7 +2136,7 @@ def test_watcher_rollback_events_fetch_failure_is_rollback_incomplete(monkeypatc
 
 
 def test_watcher_rollback_failed_job_with_rollback_complete_marker_is_rollback_incomplete(monkeypatch):
-    # codex R2-1's "failed+rollback_complete" combination: a job status that
+    # The "failed+rollback_complete" combination: a job status that
     # ISN'T successful never completes a rollback, even if (implausibly) the
     # marker claims rollback_complete — both conditions are required.
     app, ops_store = _fake_app()
@@ -2153,7 +2150,7 @@ def test_watcher_rollback_failed_job_with_rollback_complete_marker_is_rollback_i
 
 
 def test_watcher_rollback_successful_job_with_refusal_token_is_rollback_incomplete(monkeypatch):
-    # codex R2-1's "successful+refusal-token" combination: a successful job
+    # The "successful+refusal-token" combination: a successful job
     # status with some OTHER, non-rollback_complete token never completes.
     app, ops_store = _fake_app()
     op = ops_store.create("rollback", "a" * 32)
@@ -2167,12 +2164,12 @@ def test_watcher_rollback_successful_job_with_refusal_token_is_rollback_incomple
 
 # ---------------------------------------------------------------------------
 # main.py — _await_event_ingestion_finished (§4.6 event-ingestion readiness,
-# umbrella #202 WP3 R3b, codex round-2 P2-1)
+# umbrella #202 WP3)
 # ---------------------------------------------------------------------------
 
 
 def test_watcher_deploy_pre_mutation_refusal_waits_for_lagging_event_ingestion(monkeypatch):
-    # codex's exact scenario: AWX's job STATUS goes terminal before its
+    # Scenario: AWX's job STATUS goes terminal before its
     # EVENT ingestion catches up — fetching the marker immediately (0
     # extra polls) would see no events yet and misclassify a genuine
     # PRE-MUTATION refusal as FAILED_ROLLBACK_REQUIRED, dispatching a
@@ -2213,9 +2210,9 @@ def test_watcher_deploy_pre_mutation_refusal_waits_for_lagging_event_ingestion(m
 
 
 def test_watcher_transient_get_job_failure_during_ingestion_wait_continues_polling(monkeypatch):
-    # umbrella #202 WP3 R4b (codex round-3 P2-3): a transient get_job
+    # A transient get_job
     # exception during the ingestion-ready wait must NOT end the wait
-    # early — the R3b draft returned immediately on ANY exception, which
+    # early — an earlier draft returned immediately on ANY exception, which
     # can recreate the exact lagging-event misclassification this whole
     # wait exists to prevent. get_job RAISES on calls 2 and 3 (2
     # CONSECUTIVE transient failures, under the 3-consecutive give-up
@@ -2322,7 +2319,7 @@ def test_watcher_event_ingestion_already_finished_skips_the_wait_entirely(monkey
     ],
 )
 def test_watcher_deploy_pre_mutation_token_is_run_failed_no_auto_trigger(monkeypatch, token):
-    # codex R2-3: a PRE-MUTATION token means the launcher refused BEFORE
+    # A PRE-MUTATION token means the launcher refused BEFORE
     # mutating anything — "started" here just means the AWX job PROCESS
     # ran, not that the play got past its own preflight. Must never reach
     # FAILED_ROLLBACK_REQUIRED or call the auto-trigger. R2b extends this
@@ -2354,7 +2351,7 @@ def test_watcher_deploy_post_mutation_failed_token_is_dirty_terminal_auto_trigge
     # asserted-never-called, the opposite of the pre-mutation test above).
     app, ops_store = _fake_app(auto_rollback=True)
     op = ops_store.create("deploy", "key1", request_id="d" * 32)
-    ops_store.update(op.operation_id, run_id="d" * 32)  # codex R3-3: auto-trigger keys off run_id
+    ops_store.update(op.operation_id, run_id="d" * 32)  # auto-trigger keys off run_id
     monkeypatch.setattr(main, "get_job", lambda **k: {"status": "failed", "started": "t0", "finished": "t1"})
     monkeypatch.setattr(main, "get_job_events_for_task", lambda **k: [_outcome_event("DMF_L3_OUTCOME: post-mutation-failed")])
 
@@ -2375,14 +2372,14 @@ def test_watcher_deploy_failure_outcome_kv_is_appended_to_error(monkeypatch):
     # A non-pre-mutation token (an unrecognized/forward-compat one, or any
     # token outside _PRE_MUTATION_TOKENS) IS a genuine started-then-failed
     # deploy -> FAILED_ROLLBACK_REQUIRED + auto-trigger. l3_outcome keeps
-    # the RAW marker token (never overwritten, codex R2-3) while
+    # the RAW marker token (never overwritten) while
     # auto_rollback carries the SEPARATE auto-trigger status. The kv detail
     # is sanitized (R2-9) before landing in `error` — "surfaces" is
     # allow-listed, an arbitrary unlisted key would be dropped (see
     # test_sanitize_kv_drops_disallowed_key).
     app, ops_store = _fake_app(auto_rollback=False)
     op = ops_store.create("deploy", "key1", request_id="d" * 32)
-    ops_store.update(op.operation_id, run_id="d" * 32)  # codex R3-3: auto-trigger keys off run_id
+    ops_store.update(op.operation_id, run_id="d" * 32)  # auto-trigger keys off run_id
     monkeypatch.setattr(main, "get_job", lambda **k: {"status": "failed", "started": "t0", "finished": "t1"})
     monkeypatch.setattr(
         main, "get_job_events_for_task",
@@ -2426,13 +2423,13 @@ def test_auto_trigger_dispatches_rollback_when_enabled(monkeypatch):
     assert rollback_op.action == "rollback"
     assert rollback_op.target == "a" * 32
     assert rollback_op.initiator == "system:auto-rollback"
-    # #560 round 4 (lkirc): the TRUSTED flag — this is the one call site
+    # #560: the TRUSTED flag — this is the one call site
     # allowed to set it, and it must actually do so.
     assert rollback_op.auto_rollback_dispatch is True
 
     updated_deploy = ops_store.get(deploy_op.operation_id)
     assert updated_deploy.auto_rollback == "triggered"
-    assert updated_deploy.l3_outcome is None  # codex R2-3: never overwritten by auto-trigger bookkeeping
+    assert updated_deploy.l3_outcome is None  # never overwritten by auto-trigger bookkeeping
 
 
 def test_auto_trigger_disabled_sets_marker_without_dispatch(monkeypatch):
@@ -2450,7 +2447,7 @@ def test_auto_trigger_disabled_sets_marker_without_dispatch(monkeypatch):
 
     updated = ops_store.get(deploy_op.operation_id)
     assert updated.auto_rollback == "disabled"
-    assert updated.l3_outcome is None  # codex R2-3: never overwritten by auto-trigger bookkeeping
+    assert updated.l3_outcome is None  # never overwritten by auto-trigger bookkeeping
     assert updated.state == OperationState.FAILED_ROLLBACK_REQUIRED  # unchanged
 
 
@@ -2476,7 +2473,7 @@ def test_auto_trigger_dedupes_against_concurrent_manual_rollback(monkeypatch):
     assert len(rollback_ops) == 1
     assert rollback_ops[0].initiator == "alice"  # the manual dispatch, not overwritten
 
-    # codex R2-8: reattached (not a fresh dispatch) — the deploy op's
+    # Reattached (not a fresh dispatch) — the deploy op's
     # auto_rollback field reflects that distinct outcome.
     assert ops_store.get(deploy_op.operation_id).auto_rollback == "already-in-progress"
 
@@ -2484,9 +2481,9 @@ def test_auto_trigger_dedupes_against_concurrent_manual_rollback(monkeypatch):
 def test_auto_trigger_reattach_to_existing_auto_rollback_keeps_the_flag_and_joins_the_terminal_outcome(
     monkeypatch, caplog,
 ):
-    # #560 round 4 (lkirc), required test (c): the OTHER already-in-progress
+    # #560: the OTHER already-in-progress
     # case — the existing rollback op is itself a GENUINE prior auto-trigger
-    # (round 3's own eligible case, dmfdeploy/dmf-cms#154 75d2a3e), not a
+    # (an eligible case), not a
     # manual one (that's the sibling test above). A concurrent second
     # deploy failing for the same run_id must reattach without a second
     # dispatch, the reattached op's auto_rollback_dispatch must still read
@@ -2542,7 +2539,7 @@ def test_auto_trigger_reattach_to_existing_auto_rollback_keeps_the_flag_and_join
 
 
 def test_auto_trigger_identity_unknown_when_deploy_op_has_no_run_id(monkeypatch):
-    # codex R3-3: auto-trigger targets op.run_id, not op.request_id — a
+    # Auto-trigger targets op.run_id, not op.request_id — a
     # deploy op with no run_id (a REATTACH whose AWX job carried no
     # parseable l3_request_id, most realistically — but also covers the
     # defensive "no request_id at all" case, since a fresh dispatch would
@@ -2564,7 +2561,7 @@ def test_auto_trigger_identity_unknown_when_deploy_op_has_no_run_id(monkeypatch)
 
 
 def test_auto_trigger_dispatch_audit_line_sanitizes_run_id(monkeypatch, caplog):
-    # umbrella dmf-cms#108 fix-round 2: run_id lands in this hand-assembled
+    # run_id lands in this hand-assembled
     # "awx write: ..." line's target field. On a fresh dispatch it is this
     # console's own request_id (uuid4 hex), but on a REATTACH it is
     # hydrated from an AWX job's own extra_vars — a different job
@@ -2642,12 +2639,12 @@ def test_auto_trigger_reattach_audit_line_sanitizes_run_id(monkeypatch, caplog):
 
 
 def test_auto_trigger_dispatch_survives_the_real_reader_on_its_new_logger(monkeypatch, caplog):
-    # dmfdeploy/dmf-cms#140, eighth round: the "genuine records must still
-    # parse" half of the vector-8 fix, proven through the REAL function on
+    # The "genuine records must still
+    # parse" half of the audit-line fix, proven through the REAL function on
     # BOTH sides, not a hand-built fixture pretending to be what it
-    # emits -- same discipline as the writer-fix round's own round-trip
+    # emits -- same discipline as the writer fix's own round-trip
     # tests (test_audit_events_endpoint.py). The auto-rollback dispatch
-    # moved from the plain module logger onto audit_logger this round;
+    # moved from the plain module logger onto audit_logger;
     # this is the evidence that move didn't just avoid breaking, but that
     # the record it produces still reads as genuine to the real reader.
     import logging as _logging

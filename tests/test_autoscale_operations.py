@@ -253,7 +253,7 @@ def test_operation_error_sanitization(enabled_settings):
 
 
 def test_operation_error_log_line_sanitizes_hostile_awx_body(enabled_settings, caplog):
-    # umbrella dmf-cms#108 fix-round 4: this is the SERVER-SIDE log line
+    # This is the SERVER-SIDE log line
     # (the SANITIZE FOR CLIENT comment right above it exists precisely
     # because the sibling above only proved the CLIENT-facing op.error is
     # clean — the log line is a separate %s-formatted call carrying
@@ -595,9 +595,9 @@ def test_async_deploy_runner_blocked_by_active_opposite_job(enabled_settings):
 
 
 # --------------------------------------------------------------------------
-# #24 fix round 1 (codex GATE-24 P1) — generic /api/workflows/{name}/launch
+# #24 — generic /api/workflows/{name}/launch
 # on a catalog lifecycle JT used to resolve to the same per-entry lock as
-# the catalog endpoints. codex R2-2 supersedes that entirely: a lifecycle
+# the catalog endpoints. That is superseded entirely: a lifecycle
 # JT is now REFUSED outright at this endpoint (409 use-catalog-endpoint),
 # regardless of whether a conflicting op is in flight — the #202 WP2
 # run-tracking/facility-lock/auto-rollback machinery only exists on the
@@ -674,7 +674,7 @@ def test_workflow_launch_refusal_audit_uses_effective_action(enabled_settings, c
 
 
 def test_workflow_launch_never_touches_ops_store_for_lifecycle_jt(enabled_settings):
-    # codex R2-2: the refusal happens BEFORE any ops-store interaction — a
+    # The refusal happens BEFORE any ops-store interaction — a
     # lifecycle JT launched via the generic endpoint must never create,
     # reattach to, or otherwise touch an Operation; the catalog endpoint's
     # own dispatch is completely independent and still works normally.
@@ -784,7 +784,7 @@ def test_sync_teardown_conflict_active_opposite_job_returns_409(disabled_setting
 
 
 # --------------------------------------------------------------------------
-# codex R2-5 — the sync (autoscale-disabled) flow now ALSO tracks its
+# The sync (autoscale-disabled) flow now ALSO tracks its
 # launch as an Operation and attaches the job watcher, so the advisory
 # facility check / auto-rollback / outcome surfacing have teeth in the
 # shipped default mode too, not just when autoscale is on. Requires a
@@ -808,9 +808,8 @@ def test_sync_deploy_creates_a_tracked_operation(disabled_settings):
             resp = client.post(f"/api/catalog/{entry.key}/deploy", json={"reason": "test"})
             assert resp.status_code == 200, resp.text
             assert resp.json()["job_id"] == 4242
-            # codex R3-4: the response gains an ADDITIVE "operation_id" key
-            # (a prior draft kept the shape unchanged; R3-4 requires it for
-            # sync-flow observability).
+            # The response gains an ADDITIVE "operation_id" key
+            # (needed for sync-flow observability).
             assert resp.json()["operation_id"]
 
             def _resolved():
@@ -825,7 +824,7 @@ def test_sync_deploy_creates_a_tracked_operation(disabled_settings):
     assert ops[0].target == entry.key
     assert ops[0].job_id == 4242
     assert ops[0].request_id == resp.json()["request_id"]
-    assert ops[0].run_id == resp.json()["request_id"]  # codex R3-3: fresh dispatch identity
+    assert ops[0].run_id == resp.json()["request_id"]  # fresh dispatch identity
 
 
 def test_sync_teardown_creates_a_tracked_operation(disabled_settings):
@@ -843,7 +842,7 @@ def test_sync_teardown_creates_a_tracked_operation(disabled_settings):
             client.get("/auth/login", follow_redirects=False)
             resp = client.post(f"/api/catalog/{entry.key}/teardown", json={"reason": "test"})
             assert resp.status_code == 200, resp.text
-            assert resp.json()["operation_id"]  # codex R3-4
+            assert resp.json()["operation_id"]
 
             def _resolved():
                 ops = client.app.state.operations.list_all()
@@ -860,7 +859,7 @@ def test_sync_teardown_creates_a_tracked_operation(disabled_settings):
 
 
 def test_sync_deploy_without_lifespan_still_launches_no_op_tracking(disabled_settings):
-    # The getattr-guard (codex R2-5/prior WP2-B bugfix): a bare TestClient()
+    # The getattr-guard (prior WP2-B bugfix): a bare TestClient()
     # with no lifespan must still launch successfully (no AttributeError),
     # it just skips operation tracking entirely — this is the test-only
     # path the guard exists for, never production (uvicorn always runs the
@@ -883,9 +882,9 @@ def test_sync_deploy_without_lifespan_still_launches_no_op_tracking(disabled_set
 
 
 # --------------------------------------------------------------------------
-# #24 fix round 2 (codex GATE-24R2 finding 2) — the generic
+# #24 — the generic
 # /api/workflows/{name}/launch sync path used to have its own cross-JT
-# guard. codex R2-2 supersedes it: the refusal (409 use-catalog-endpoint)
+# guard. That is superseded: the refusal (409 use-catalog-endpoint)
 # now applies BEFORE the async/sync split, so these sync-flow JTs are
 # refused unconditionally too — the AWX mocks below are never even called.
 # --------------------------------------------------------------------------
@@ -955,7 +954,7 @@ def test_workflow_launch_sync_configure_jt_is_refused_without_touching_awx(disab
 
 
 # --------------------------------------------------------------------------
-# #24 fix round 2 (codex GATE-24R2 finding 1) — ambiguous lifecycle JT names
+# #24 — ambiguous lifecycle JT names
 # must fail closed, not silently last-win to the wrong lock namespace.
 # --------------------------------------------------------------------------
 
@@ -1048,8 +1047,8 @@ def test_workflow_launch_same_jt_both_stages_is_ambiguous(enabled_settings):
 
 def test_workflow_launch_unambiguous_jt_still_maps_alongside_ambiguous(enabled_settings):
     # The ambiguous entries must not poison the rest of the map: a clean
-    # entry's JT still resolves to its own catalog key — codex R2-2 means
-    # that resolution now surfaces as a use-catalog-endpoint refusal
+    # entry's JT still resolves to its own catalog key — though that
+    # resolution now surfaces as a use-catalog-endpoint refusal
     # (rather than the old lock-conflict 409), but the map lookup itself
     # (jt_name -> the RIGHT catalog_key, not a poisoned/ambiguous one) is
     # exactly what this test is still proving.
@@ -1109,9 +1108,9 @@ def test_async_teardown_runner_blocked_by_active_opposite_job(enabled_settings):
 
 
 # --------------------------------------------------------------------------
-# gate round 6 (lkirc, dmfdeploy/dmfdeploy#419): the sync already-active
-# path (codex R3-4's own _track_sync_reattach bridge) writes an audit row
-# that, before this round, carried no correlation back to the original
+# (dmfdeploy/dmfdeploy#419) The sync already-active
+# path (the _track_sync_reattach bridge) writes an audit row
+# that once carried no correlation back to the original
 # tracked operation — a reattach to an AWX-side-already-running job could
 # never receive its terminal outcome. Drives the REAL endpoint (not a
 # hand-built fixture line, unlike test_audit_events_endpoint.py's own
@@ -1161,7 +1160,7 @@ def test_gate_round_6_lkirc_sync_deploy_already_active_links_to_the_original_ope
     # First call: no active job -> genuine dispatch, creates the tracked
     # op. Second and third calls: AWX reports the SAME job already active
     # -> the sync already-active branch, exercised TWICE (repeated
-    # reattaches on one run, lkirc's own explicit ask).
+    # reattaches on one run).
     with patch("dmf_cms.main.load_catalog_entries", return_value=[entry]), \
          patch("dmf_cms.main.lookup_job_template_by_name", side_effect=_lookup_jt_by_name(entry)), \
          patch("dmf_cms.main.launch_job", return_value=9001), \

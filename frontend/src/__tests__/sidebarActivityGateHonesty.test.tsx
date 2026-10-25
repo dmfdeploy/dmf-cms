@@ -1,6 +1,5 @@
 /**
- * Sidebar / Activity — useCurrentUser gate honesty (fix-round 6, PR #81,
- * umbrella #385 codex sweep). Both used `user?.role`/`user?.awx_configured`
+ * Sidebar / Activity — useCurrentUser gate honesty (umbrella #385). Both used `user?.role`/`user?.awx_configured`
  * straight off `data`, defaulting to the LEAST-privileged reading whenever
  * `user` was `undefined` — which covers "still loading" and "read failed
  * with nothing ever retained" identically to "genuinely a viewer". Sidebar

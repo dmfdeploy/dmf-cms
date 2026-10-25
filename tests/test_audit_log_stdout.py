@@ -18,7 +18,7 @@ reads the audit line back off the *process's own stdout*. This is the only
 check in the suite that can distinguish "the line is logged" (always true)
 from "the line reaches a stream anyone could read" (what #425 is about).
 
-umbrella dmf-cms#108 fix-round 1: stdout and stderr are read as TWO
+Stdout and stderr are read as TWO
 SEPARATE pipes, and every match below is against stdout alone. Merging
 them (``stderr=subprocess.STDOUT``, the original shape of this test) would
 let a regression that sent the audit line to stderr instead — or a config
@@ -224,7 +224,7 @@ def test_awx_write_audit_line_reaches_process_stdout_under_real_uvicorn(running_
 
 
 def test_awx_write_audit_line_appears_exactly_once_on_stdout_under_deployed_config(running_console):
-    """umbrella dmf-cms#108 fix-round 1 (DECIDE+DOCUMENT — propagate):
+    """Propagation decision (DECIDE+DOCUMENT):
     ``dmf_cms.audit`` is left at its default ``propagate=True`` (see
     ``_configure_logging``'s own docstring for the reasoning — 19
     caplog-based assertions elsewhere in this suite depend on records

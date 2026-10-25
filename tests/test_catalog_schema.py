@@ -235,7 +235,7 @@ def test_load_no_ebu_block_rejected(tmp_path: Path):
     assert entry is None
 
 
-# ── P1 unhashable / non-string value tests (codex gate) ──────────────
+# ── Unhashable / non-string value tests ──────────────
 
 
 def test_validate_vertical_list_rejected_no_crash():

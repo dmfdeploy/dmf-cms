@@ -121,7 +121,7 @@ def test_fetch_preview_one_none_on_transport_error(monkeypatch):
     assert mxl.fetch_preview_one("http://h:9000") is None
 
 
-# --- WP-D codex fixes: shape_status bounding (P2) + fail-closed parse (P3) ---
+# --- WP-D: shape_status bounding (P2) + fail-closed parse (P3) ---
 
 def test_shape_status_admits_real_values_and_omits_node():
     raw = {
@@ -137,7 +137,7 @@ def test_shape_status_admits_real_values_and_omits_node():
     assert out["available"] is True
     assert out["role"] == "receiver"
     assert out["provider"] == "aliyun"
-    assert "node" not in out  # not relayed from the sidecar (codex R2)
+    assert "node" not in out  # not relayed from the sidecar
     assert out["mxl_version"] == "1.2.3"
     assert out["flow"]["head_index"] == 7
     assert out["flow"]["grain_rate"] == "50/1"
@@ -165,7 +165,7 @@ def test_shape_status_drops_locator_smuggling():
 
 
 def test_shape_status_rejects_short_locator_strings():
-    # codex R2: the exact short-locator cases a length cap alone let through.
+    # The exact short-locator cases a length cap alone let through.
     raw = {
         "mxl_version": "192.0.2.2",                       # IPv4-shaped -> dropped
         "flow": {"format": "netbox.mxl.svc.cluster.local", "grain_rate": "http://x"},

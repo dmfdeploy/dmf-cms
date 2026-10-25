@@ -2,13 +2,13 @@
  * Media-native tile grid + live modal (WP-C, dmfdeploy/dmfdeploy#185).
  *
  * Covers the load-bearing behaviours: deterministic keyed grid + catalog
- * display-name join; the Grid|Table toggle (persisted); the codex P2/P3 polling
+ * display-name join; the Grid|Table toggle (persisted); the polling
  * bounds (no churn in table view / hidden tab / beyond the live-tile cap /
  * under reduced motion); the fixed 16:9 box that never resizes on a dropped
  * frame; the live modal open/close; and the C5 clear-for-deployment flow from a
  * tile (reason required + Activity record).
  *
- * GUARD LABEL (dmfdeploy#414 gate, round 1): every test in this file is a
+ * GUARD LABEL (dmfdeploy#414): every test in this file is a
  * GUARD pinning the pre-#414 behaviours described above, unchanged by this
  * arc — only the mount route moved: renderSetupPage() now mounts /setup
  * (was the bare slug), renderHomePage() now mounts the bare slug directly
@@ -1180,7 +1180,7 @@ describe('tile lifecycle badge grammar (umbrella #285 addendum)', () => {
   })
 })
 
-// codex P2-1 (umbrella #347 WP-4, rounds 1-2): Tile.tsx's `children` prop is
+// (umbrella #347 WP-4) Tile.tsx's `children` prop is
 // typed React.ReactNode, so nothing at the TYPE level stops a caller from
 // putting an interactive element inside it (which WOULD land inside the
 // primary Link — the exact defect Tile exists to prevent for the `actions`
@@ -1189,7 +1189,7 @@ describe('tile lifecycle badge grammar (umbrella #285 addendum)', () => {
 // regression net instead: render the actual busiest tile (every badge that
 // can appear simultaneously — lifecycle + degraded + reconciling) and assert
 // its primary link has zero interactive descendants, via the shared, bounded
-// check (testUtils/domAssertions.ts) — round 1's inline check only rejected
+// check (testUtils/domAssertions.ts) — the original inline check only rejected
 // button/a/[role="button"], narrower than Tile.tsx's own contract; this uses
 // the same broader definition both real call sites now share.
 describe('Tile: WorkloadEntryTile keeps the primary link free of interactive descendants (codex P2-1)', () => {
@@ -1290,7 +1290,7 @@ describe('Unassigned group disposal explanation (umbrella #285 addendum)', () =>
 // never established. These pin the fix: a `reason`-carrying degraded read
 // gets honest "cannot enumerate" copy instead, and the raw reason token
 // never appears outside a details disclosure.
-// fix-round P2-4 (PR #81): the unknown-token fallback used to name what
+// The unknown-token fallback used to name what
 // happened with no next step at all — a shrug, not Art. 8 content.
 describe('degradedReasonCopy', () => {
   it('the unknown/absent-token fallback still states a next step', () => {
@@ -1352,7 +1352,7 @@ describe('degraded-read honesty (hard gate 1, umbrella #385)', () => {
     expect(within(summary.closest('details') as HTMLElement).getByText(reason)).toBeTruthy()
   })
 
-  // fix-round P1-1 (PR #81): this test used to assert the exact defect hard
+  // This test used to assert the exact defect hard
   // gate 1 exists to catch. `workloads: []` with `invalid_instances:
   // [bad-svc]` is a payload that PROVES at least one Media Function
   // instance exists — media_workloads.py excludes an invalid-multiple
@@ -1393,7 +1393,7 @@ describe('degraded-read honesty (hard gate 1, umbrella #385)', () => {
     ).toBeNull()
   })
 
-  // fix-round P2-3 (PR #81): TanStack Query RETAINS the last-good `data`
+  // TanStack Query RETAINS the last-good `data`
   // across a failed background refetch — `isLoading`/`isFetching` settle
   // back to false and `data` keeps its prior (honest, at-the-time) value
   // while `isError` flips true. Without an explicit isError check, the

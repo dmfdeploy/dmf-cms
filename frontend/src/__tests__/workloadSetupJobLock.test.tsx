@@ -21,7 +21,7 @@
  * its own busy flag in the SAME synchronous handler that starts the job,
  * independent of whatever the stage's own mutation library does.
  *
- * GUARD LABEL (dmfdeploy#414 gate, round 1): every test in this file is a
+ * GUARD LABEL (dmfdeploy#414): every test in this file is a
  * GUARD pinning the pre-#414 GATE-D1 P1.1 synchronous job-lock contract
  * described above, unchanged by this arc — only the mount route moved,
  * from the bare slug to /setup. Baseline: the pre-#414 commit on `main`,
@@ -117,7 +117,7 @@ describe("WorkloadSetup's own job-lock contract, isolated from any stage's mutat
     // No await, no waitFor: this assertion runs on the exact render produced
     // by the click above.
     expect(within(rail).queryByRole('button', { name: 'Design' })).toBeNull()
-    // dmfdeploy#481 (Shell Round 2): the rail's own in-progress sentence is
+    // dmfdeploy#481: the rail's own in-progress sentence is
     // gone outright, not merely reworded — the lock itself (every key
     // demoted off <button> on this SAME synchronous click) is the thing
     // this test proves, not a status sentence.

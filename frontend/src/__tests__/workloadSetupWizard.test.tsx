@@ -22,7 +22,7 @@
  * navigation unlocks instead of wedging forever (the #344 fix, proved at the
  * integration level this time, not just the unit level).
  *
- * GUARD LABEL (dmfdeploy#414 gate, round 1): the umbrella #347 WO-D1
+ * GUARD LABEL (dmfdeploy#414): the umbrella #347 WO-D1
  * Acceptance Criterion 1 contract this file pins is a GUARD, unchanged by
  * dmfdeploy#414 — only the mount route moved, from the bare slug to
  * /setup. Baseline: the pre-#414 commit on `main`, where these same
@@ -231,13 +231,13 @@ describe('mount -> pending -> membership change -> unwedge (Acceptance Criterion
       expect(within(rail()).queryByRole('button', { name: 'Design' })).toBeNull()
       expect(within(rail()).queryByRole('button', { name: 'Finalise & Review' })).toBeNull()
     })
-    // dmfdeploy#481 (Shell Round 2): the rail's own note is gone outright —
+    // dmfdeploy#481: the rail's own note is gone outright —
     // the navigation refusal itself (every seam above) is what this test
     // proves, not a status sentence anywhere in the row.
     expect(within(rail()).queryAllByText(/A Configure job is in progress/).length).toBe(0)
     expect(within(configureSection).queryByRole('button', { name: '← Previous' })).toBeNull()
     expect(within(configureSection).queryByRole('button', { name: 'Next →' })).toBeNull()
-    // umbrella #432 G3 (gate round 2, finding A2): Previous/Next stay quiet
+    // umbrella #432 G3: Previous/Next stay quiet
     // — no dead control either way, and repeating the job's identity a
     // second/third time was always the defect, rail or no rail.
     expect(within(configureSection).queryByText(/A Configure job is in progress/)).toBeNull()

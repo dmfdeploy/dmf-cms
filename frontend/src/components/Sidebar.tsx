@@ -124,8 +124,7 @@ function renderItem(item: NavItem, pathname: string) {
       key={item.label}
       to={item.path}
       aria-label={item.label}
-      // VISUAL PARITY FIX ROUND (dmfdeploy/dmfdeploy#512, operator ruling
-      // off a rendered A/B/C comparison — see lib/stagePalette.ts's own
+      // VISUAL PARITY (dmfdeploy/dmfdeploy#512, decided off a rendered A/B/C comparison — see lib/stagePalette.ts's own
       // docstring for the full account). This tile's selected state was
       // `bg-accent/20 text-accent` (1.49:1 fill-vs-fill against this
       // tile's own resting state — under WCAG 1.4.11's 3:1 state-change
@@ -190,7 +189,7 @@ export default function Sidebar() {
   // hover/focus tooltip per item, not gone — just no longer competing with
   // the breadcrumb for the same job.
   const location = useLocation()
-  // fix-round 6 (PR #81, umbrella #385 codex sweep): `user` alone drove the
+  // (umbrella #385) `user` alone drove the
   // role gate below — `undefined` covers BOTH "still loading" and "the read
   // failed with nothing ever retained", so a role/tenancy read that failed
   // on first load silently narrowed this nav to viewer-only with no signal
@@ -212,19 +211,19 @@ export default function Sidebar() {
   const secondaries = navItems.filter((item) => item.section === 'secondary')
 
   return (
-    // No overflow-hidden here (operator review, PR #70): it is vestigial
+    // No overflow-hidden here: it is vestigial
     // from the retired expanded/collapsed transition (compare b49174a's
     // `w-56 <-> w-16` animated width, where clipping the label span mid-
     // transition was the point). Nothing in this permanently-fixed w-16
     // rail needs clipping any more — the one thing that DID get clipped by
     // it was each tooltip's own escape past the rail's edge, which is the
     // rail's only visible label for the icon-only nav. `w-16` alone still
-    // holds the fixed-width layout (umbrella #515, gate P1: `shrink-0` used
+    // holds the fixed-width layout (umbrella #515: `shrink-0` used
     // to sit alongside it here too, dropped once this element left flow
-    // entirely — see that fix round's own comment below); overflow was
+    // entirely — see the comment below); overflow was
     // never load-bearing for the width either.
     //
-    // FIX ROUND (umbrella #515, gate P1): `<aside>` is now the element
+    // (umbrella #515) `<aside>` is now the element
     // positioned OUT of flow, not Topbar's header-slot row (Shell.tsx's own
     // comment has the full account of why that inversion was necessary —
     // the row's real height varies by width/wrap in a way a fixed offset
@@ -240,12 +239,12 @@ export default function Sidebar() {
     // `overflow-hidden` above, not an oversight.
     //
     // `z-30` still beats the row's own `z-20` (Topbar.tsx) with the SAME
-    // numeric values the gate-P1 fix round's first attempt already used —
+    // numeric values the earlier attempt already used —
     // NOT "the same way it always has": before ANY #515 work, this element
     // carried no z-index at all (`position: static`, `z-index: auto`),
     // which loses to any explicit value, and the row's `z-20` painted OVER
     // it the instant they ever shared a vertical band — that backwards
-    // stacking WAS the #515 bug. What changed between the fix round's two
+    // stacking WAS the #515 bug. What changed between the two
     // attempts is only WHICH element left flow (Topbar.tsx's own comment):
     // this element was `relative z-30` while the row was `fixed z-20`; now
     // this element is `fixed z-30` while the row is `relative z-20` — the

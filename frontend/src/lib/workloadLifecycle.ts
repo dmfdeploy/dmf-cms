@@ -175,7 +175,7 @@ export interface WorkloadLifecycleInput {
    */
   membersDataTrustworthy?: boolean
   /**
-   * umbrella #432 fix round: the SAME read, minus the freshness component —
+   * umbrella #432: the SAME read, minus the freshness component —
    * `!isError && configured === true && degraded !== true`, deliberately NOT
    * `&& !isFetching`. `membersDataTrustworthy` above folds `isFetching` in on
    * purpose (it fail-closes a MUTATION gate — purge authorization — and a
@@ -373,8 +373,7 @@ export function classifyWorkloadLifecycle(
 
 /**
  * The ONE constructor every route rendering a workload's rail must use to
- * turn a MediaWorkload into a WorkloadLifecycleInput (fix round, umbrella
- * #347 WP-3 spec B gate, P2-3). Before this existed, WorkloadDetail.tsx
+ * turn a MediaWorkload into a WorkloadLifecycleInput (umbrella #347 WP-3). Before this existed, WorkloadDetail.tsx
  * (renamed WorkloadSetup.tsx by dmfdeploy#414) and Operate.tsx (renamed
  * WorkloadHome.tsx) each hand-built this object, and they had drifted: the
  * Operate.tsx copy set only `lifecycle` and `hasBootstrappedMembers`,
@@ -392,7 +391,7 @@ export function classifyWorkloadLifecycle(
  * the time, WorkloadHome.tsx today) runs no jobs of its own and always
  * passes none.
  *
- * FIX ROUND (P3 round 3, P3-5): `membersDataTrustworthy`/`purgeAuthorized`
+ * `membersDataTrustworthy`/`purgeAuthorized`
  * used to be taken PRE-COMPUTED, as plain booleans the caller was trusted
  * to have run through isGroupedReadTrustworthy/isPurgeAuthorized below
  * before handing them in — a docstring claim, not a type-level one: the
@@ -495,7 +494,7 @@ export function runningReadoutFromInstances(
 }
 
 /**
- * umbrella #432 fix round: `isGroupedReadTrustworthy` above, minus the
+ * umbrella #432: `isGroupedReadTrustworthy` above, minus the
  * `!isFetching` conjunct — see `membersDataRetained`'s own docstring for why
  * this is a SEPARATE formula rather than a change to that one. A read that
  * is currently being re-fetched in the background is still exactly as good

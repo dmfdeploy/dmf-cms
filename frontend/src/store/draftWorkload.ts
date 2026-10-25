@@ -34,7 +34,7 @@ export interface DraftWorkloadState {
   slugTouched: boolean
   selectedKey: string | null
   /**
-   * WP-3 spec D fix round (P2-4): the IDENTITY of the facility the
+   * WP-3 spec D: the IDENTITY of the facility the
    * operator actually confirmed — its name, the exact string the
    * confirmation copy showed them — NOT a bare boolean. A boolean alone
    * cannot tell "confirmed dmf-lab" apart from "confirmed SOME facility,

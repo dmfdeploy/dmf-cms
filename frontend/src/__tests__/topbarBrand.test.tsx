@@ -9,26 +9,26 @@
  *    content-presence-gated: registering content while on a non-workload
  *    route (or under a mismatched slug) must never render row 2.
  * 3. The module surface enforces "data in, Topbar renders" rather than
- *    merely claiming it (fix round 2): no raw store setter is reachable
+ *    merely claiming it: no raw store setter is reachable
  *    from outside store/headerSlot.ts, and the only way to register
  *    content is useRegisterHeaderSlot with the typed rail MODEL — there
  *    is no way to hand Topbar a pre-rendered node instead.
- * 4. The rail model is UNFORGEABLE (fix round 3), pinned by
+ * 4. The rail model is UNFORGEABLE, pinned by
  *    @ts-expect-error. (The primary-action descriptor this point used to
  *    also cover — a disabled action's reason required to typecheck — was
- *    deleted in the WP-3 spec B gate's fix round: it had no producer, the
+ *    deleted in WP-3 spec B: it had no producer, the
  *    promoted action that shipped at the time was a portal instead — since
  *    ALSO retired, umbrella #518: Deploy renders inline unconditionally
  *    now, nothing portals anywhere. See headerSlot.ts's own docstring for
  *    the full chain.)
  * 5. classifyWorkloadForHeaderSlot takes the workload's raw
- *    WorkloadLifecycleInput, not a FlowState (fix round 4). Classification
+ *    WorkloadLifecycleInput, not a FlowState. Classification
  *    is a two-phase call — classifyWorkloadForHeaderSlot
  *    (input -> ClassifiedFlow) then buildHeaderSlotRail (ClassifiedFlow +
  *    extras -> HeaderSlotRailModel) — split for WP-3 (a caller needs the
  *    classifier's own steps/current/offFlow to compute its selection
  *    before it can build a rail), and buildHeaderSlotRail's first
- *    argument is exactly as unforgeable as round 4's single-call
+ *    argument is exactly as unforgeable as the earlier single-call
  *    factory was: a plain FlowState-shaped object does not typecheck
  *    there either. Every fixture in this file builds its rail through
  *    both real calls.
@@ -95,7 +95,7 @@ const NOOP_EXTRAS = {
   onSelect: () => {},
 }
 
-// FIX ROUND (dmf-cms#391, codex gate — P1, the counts): RailModelExtras no
+// RailModelExtras no
 // longer has a runningReadout field of any kind — NOOP_EXTRAS above dropped
 // it entirely, and classifyWorkloadForHeaderSlot now takes the workload's
 // raw instances directly as its own second argument instead. This fixture
@@ -178,8 +178,8 @@ describe('the header slot module surface enforces its guarantees, not just claim
       // umbrella #515: a pure route-parsing helper and a read-only boolean
       // selector, added so "is the slot row showing" is computed in exactly
       // one exported place — Topbar.tsx is the only caller of
-      // useShowHeaderSlotRow today (a gate-P1 fix round removed Shell.tsx's
-      // own use of it entirely, see headerSlot.ts's own docstring), but
+      // useShowHeaderSlotRow today (Shell.tsx's
+      // own use of it was removed entirely, see headerSlot.ts's own docstring), but
       // keeping the rule here rather than re-inlining it costs nothing even
       // with a single caller. Neither export lets a caller register or
       // mutate a rail model, so this test's own guarantee (above) is
@@ -202,7 +202,7 @@ describe('the rail model is unforgeable — only buildHeaderSlotRail can produce
     // this project's tsconfig include=["src"] type-checks __tests__ too —
     // not by vitest, which strips types without checking them.
     //
-    // FIX ROUND (codex gate, P1b): this object used to OMIT runningReadout
+    // This object used to OMIT runningReadout
     // entirely, which became a required field when dmf-cms#391 added it —
     // meaning the @ts-expect-error was satisfied by "runningReadout is
     // missing", not by the brand, and would have stayed green even with the
@@ -230,7 +230,7 @@ describe('the rail model is unforgeable — only buildHeaderSlotRail can produce
     // classifyWorkloadForHeaderSlot is the only function that can produce a
     // ClassifiedFlow; buildHeaderSlotRail accepts ONLY that branded type,
     // not a plain FlowState. Splitting classification into two calls for
-    // WP-3 does not reopen round 4's gap: a hand-built FlowState still
+    // WP-3 does not reopen the earlier gap: a hand-built FlowState still
     // cannot reach a rail model, it just fails one call earlier now.
     const flowShaped: FlowState = {
       current: 'configure',
@@ -268,12 +268,9 @@ describe('the rail model is unforgeable — only buildHeaderSlotRail can produce
   })
 })
 
-// NEW (dmf-cms#391, codex gate — P1 fix, then P1 RESIDUAL, then P1 the
-// counts, then mutable output): four rounds of the same lesson, on the run-
-// count readout's `trustworthy` flag and its running/total NUMBERS.
+// NEW (dmf-cms#391): the run-count readout's `trustworthy` flag and its running/total NUMBERS.
 //
-// THE PRECISE GUARANTEE THIS BLOCK PROVES, stated narrowly on purpose (fix
-// round, codex gate — precision pass; an earlier version of this comment
+// THE PRECISE GUARANTEE THIS BLOCK PROVES, stated narrowly on purpose (an earlier version of this comment
 // said "from ANY caller-suppliable channel at all", which overclaims): a
 // rail model produced by buildHeaderSlotRail carries counts derived from
 // the instances actually given to classifyWorkloadForHeaderSlot, and
@@ -309,8 +306,8 @@ describe('the run-count readout — trustworthy AND the counts themselves — is
     expect(railB.runningReadout.trustworthy).toBe(false)
   })
 
-  // NEW (codex gate — P1, the counts): this is the actual reproduction of
-  // the hole codex found — a genuine, honestly-obtained trustworthy flow,
+  // NEW: this is the actual reproduction of
+  // the hole — a genuine, honestly-obtained trustworthy flow,
   // with fabricated running/total numbers attached alongside it. Proves the
   // rendered count tracks the REAL instances fed to the classifier, not
   // anything a caller could separately specify.
@@ -354,7 +351,7 @@ describe('the run-count readout — trustworthy AND the counts themselves — is
     }).not.toThrow()
   })
 
-  // NEW (codex gate, P1 residual): a spread copy of a real, trustworthy
+  // NEW: a spread copy of a real, trustworthy
   // ClassifiedFlow. This is deliberately NOT a @ts-expect-error case —
   // object spread copies symbol-keyed properties same as string-keyed ones,
   // so `{ ...flow }` still genuinely satisfies ClassifiedFlow's brand
@@ -375,7 +372,7 @@ describe('the run-count readout — trustworthy AND the counts themselves — is
     expect(rail.runningReadout.total).toBe(0)
   })
 
-  // NEW (codex gate, P1 residual): a wholly hand-built fake, forced through
+  // NEW: a wholly hand-built fake, forced through
   // the type system with `as unknown as ClassifiedFlow` — the type-level
   // brand check is bypassed entirely here on purpose, simulating a caller
   // willing to lie to the compiler outright. Still fails closed, because
@@ -394,7 +391,7 @@ describe('the run-count readout — trustworthy AND the counts themselves — is
     expect(rail.runningReadout.total).toBe(0)
   })
 
-  // NEW (codex gate — mutable output): a rail model is plain JS once built;
+  // NEW: a rail model is plain JS once built;
   // nothing stopped a caller from mutating it after the fact, with no cast
   // and no identity trickery at all — `rail.runningReadout.running = 999`
   // typechecked and took effect. Proves the fix at the level that actually
@@ -416,7 +413,7 @@ describe('the run-count readout — trustworthy AND the counts themselves — is
     }).toThrow()
 
     // The real proof: the ORIGINAL derived count is what survives, not
-    // "999" — not merely "the object claims to be frozen". Shell Round 2
+    // "999" — not merely "the object claims to be frozen". The shell redesign
     // (dmfdeploy#481) removed LifecycleStrip's own rendering of this
     // readout entirely (the band carries no indicators now — see that
     // component's own docstring), so there is no longer a DOM path through

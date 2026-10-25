@@ -1,6 +1,6 @@
 /**
  * classifyForgejo / forgejoEmptyCopy and classifyChanges / changesEmptyCopy
- * — pure classifier unit tests (fix-round on umbrella #385 PR #81).
+ * — pure classifier unit tests (umbrella #385).
  *
  * Component-level coverage of the same defect class lives in
  * mediaWorkloadsGrid.test.tsx and facility.test.tsx (hold-then-reject
@@ -40,7 +40,7 @@ describe('classifyForgejo', () => {
     expect(classifyForgejo(q)).toBe('error')
   })
 
-  // fix-round P2-3: the shape TanStack Query actually produces after a
+  // The shape TanStack Query actually produces after a
   // successful load followed by a failed background refetch — isLoading
   // and isFetching have both settled false, data is RETAINED from the
   // prior success, and isError is true. A stale `reason: ""` must not
@@ -75,13 +75,13 @@ describe('classifyForgejo', () => {
     expect(classifyForgejo(q)).toBe('unconfigured')
   })
 
-  // fix-round P3-5: apiCall's generic return type is a compile-time cast,
+  // apiCall's generic return type is a compile-time cast,
   // not runtime validation. An absent or unrecognised token must fail
   // CLOSED (non-authoritative), never open into 'ok' — the switch default
   // used to return 'ok', which turns a malformed payload plus an empty
   // array into a claimed genuine empty.
   it('an absent reason token fails closed, not open', () => {
-    // `reason` is REQUIRED on the response types (fix-round P3), but
+    // `reason` is REQUIRED on the response types, but
     // apiCall's generic return is a compile-time cast, not runtime
     // validation — a malformed real payload can still omit it. Bypassing
     // the type here is the point of the test: prove the classifier defends

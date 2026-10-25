@@ -1,5 +1,5 @@
 /**
- * Review finding on PR #144: `requestedLabel[state] ?? requestedLabel.unknown`
+ * Own-property lookup: `requestedLabel[state] ?? requestedLabel.unknown`
  * (and the sibling requestedBadge / observedBadge / REQUESTED_ICON lookups in
  * ProvisionStage.tsx and WorkloadTile.tsx) resolve inherited `Object.prototype`
  * properties — `constructor`, `__proto__`, `toString`, … — instead of falling

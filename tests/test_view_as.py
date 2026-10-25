@@ -144,11 +144,11 @@ def test_set_view_as_rejects_invalid_role():
 
 
 def test_view_as_set_and_cleared_audit_lines_sanitize_actor(caplog):
-    # umbrella dmf-cms#108 fix-round 2: "view-as set"/"view-as cleared"
+    # "view-as set"/"view-as cleared"
     # mirror the clear-for-deployment C5 record (per their own comment)
     # and format actor=%s from real.subject (an OIDC claim — dev-login's
     # username stands in for it here) unescaped, same injection shape
-    # fix-round 1 fixed in _audit_awx_write.
+    # already fixed in _audit_awx_write.
     import logging
 
     client = _client(groups=ADMIN, dev_username="admin\nFORGED view-as set: actor=root")
@@ -168,7 +168,7 @@ def test_view_as_set_and_cleared_audit_lines_sanitize_actor(caplog):
 
 
 def test_bootstrap_console_groups_log_line_sanitizes_hostile_awx_body(monkeypatch, caplog):
-    # umbrella dmf-cms#108 fix-round 4: exc may be AuthentikAPIError,
+    # exc may be AuthentikAPIError,
     # whose str() embeds Authentik's own raw response body — the same
     # "upstream response content" category as the invitation-error test
     # above, at a startup-time call site instead of a live one.
@@ -425,7 +425,7 @@ def test_invitations_downgraded_admin_mints_for_the_admins_own_identity(monkeypa
 
 
 def test_invitations_sanitizes_authentik_error_for_the_client(monkeypatch, caplog):
-    # Finding 1 (WO-423 fix round 1): before this change only an admin could
+    # Before this change only an admin could
     # reach this branch; now any authenticated role can, so a raw Authentik
     # response body reaching the client is a disclosure this PR introduced,
     # not a pre-existing issue. Match the AWX error paths elsewhere in this
@@ -459,9 +459,8 @@ def test_invitations_sanitizes_authentik_error_for_the_client(monkeypatch, caplo
 
 
 def test_invitations_authentik_error_audit_line_sanitizes_actor_and_body(monkeypatch, caplog):
-    # umbrella dmf-cms#108 fix-round 4: this log line (main.py, the ERROR
-    # path right below the one the test above exercises) was PR #107's own
-    # fix (15109be) moving exc.body OUT of the JSON-encoded HTTP response
+    # This log line (main.py, the ERROR
+    # path right below the one the test above exercises) moved exc.body OUT of the JSON-encoded HTTP response
     # (where control characters were already escaped) and INTO this %s
     # log line — closing a disclosure vector and opening an injection one
     # in the same edit. Both fields are externally influenced: actor

@@ -3,7 +3,7 @@ import type { FlowStepId } from './workloadFlow'
 /**
  * The lifecycle rail's per-stage IDENTITY icon set (dmfdeploy#482).
  *
- * PROVENANCE, FIX ROUND (operator ruling 2026-08-31, superseding the
+ * PROVENANCE (operator ruling 2026-08-31, superseding the
  * dmfdeploy#482-era set below): the set this file originally recorded
  * (pencil / puzzle / cloud-upload / sliders / circled-check, all
  * `lucide-react`) was itself a RECONSTRUCTION — the operator's reference

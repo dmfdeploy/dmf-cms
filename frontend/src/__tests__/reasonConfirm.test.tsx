@@ -107,7 +107,7 @@ describe('ReasonConfirm component', () => {
   })
 })
 
-// umbrella #432, FIX ROUND (operator report: "too much small text on those
+// umbrella #432 ("too much small text on those
 // provision / switch / teardown / delete action"). Same hierarchy, one step
 // up in scale — see this component's own docstring for the full reasoning.
 describe('ReasonConfirm popover type scale (umbrella #432, FIX ROUND)', () => {
@@ -129,7 +129,7 @@ describe('ReasonConfirm popover type scale (umbrella #432, FIX ROUND)', () => {
     expect(textarea.className.split(/\s+/)).not.toContain('field-xs')
   })
 
-  // umbrella #432, FIX ROUND (0.28.0 walk finding): min-w-80 is a floor, not
+  // umbrella #432: min-w-80 is a floor, not
   // a ceiling — measured live at 1988px wide with a 1954px unwrapped
   // description line, because the panel is a bare block inside a wide stage
   // row with nothing else to constrain it. THE HONEST LIMIT OF THIS TEST:

@@ -60,7 +60,7 @@ export function classifyAuditEvents(q: AuditEventsQueryLike): AuditEventsState {
         phase = 'ok'
         break
       default:
-        // lkirc P2 (dmfdeploy/dmf-cms#140, 2026-09-04), same shape as
+        // Same shape as
         // classifyForgejo above (changesState.ts): apiCall's generic
         // return type is a compile-time cast, not runtime response
         // validation -- an ABSENT reason, or a malformed/unrecognised
@@ -92,8 +92,7 @@ export function auditEventsEmptyCopy(phase: AuditEventsPhase): string {
     default:
       // Not "no facility actions" — the read is genuinely role-gated (plan
       // §4.3), so an empty list here means nothing in this user's
-      // permitted view, never a claim about the facility as a whole
-      // (codex R496-A F7).
+      // permitted view, never a claim about the facility as a whole.
       //
       // dmfdeploy/dmfdeploy#553: "were recorded" claimed knowledge this
       // read doesn't have — a handful of lines that fail to parse (a
@@ -107,7 +106,7 @@ export function auditEventsEmptyCopy(phase: AuditEventsPhase): string {
   }
 }
 
-// codex R496-A F6: a bound that binds must be disclosed, not applied
+// A bound that binds must be disclosed, not applied
 // silently behind what would otherwise read as an ordinary, complete
 // history — see AuditEventsResponse.capped's comment for the two cases
 // this covers.
@@ -137,7 +136,7 @@ export function auditOutcomeLabel(outcome: AuditEventOutcome): string {
     case 'failed':
       return 'Failed'
     case 'unknown':
-      // codex R496-C P1-2: distinct from 'Failed' on purpose — a lost
+      // Distinct from 'Failed' on purpose — a lost
       // outcome is not a verdict.
       return 'Outcome unknown'
   }

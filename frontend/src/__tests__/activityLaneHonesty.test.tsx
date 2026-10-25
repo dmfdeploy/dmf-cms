@@ -26,7 +26,7 @@ function json(body: unknown, status = 200) {
   return new Response(JSON.stringify(body), { status, headers: { 'Content-Type': 'application/json' } })
 }
 
-// lkirc P2 (dmfdeploy/dmf-cms#140, 2026-09-04): every fetch mock in this
+// Every fetch mock in this
 // file that renders HistoryLane falls through an unmatched-route `return
 // json({})` -- which used to read as an accidental "ok, empty" for
 // /api/audit/events, now correctly reads as an untrustworthy (absent)
@@ -248,7 +248,7 @@ describe('History lane: Forgejo commits/pulls degraded-read honesty', () => {
     expect(screen.getByText('No recent pull requests')).toBeTruthy()
   })
 
-  // fix-round P1-2 (PR #81, second pass): the first pass only ever called
+  // An earlier version only ever called
   // forgejoEmptyCopy INSIDE the length===0 branch, so a partial read that
   // still retained rows (the common case — some repos succeeded) rendered
   // those rows with no incompleteness notice at all, looking exactly as
@@ -306,7 +306,7 @@ describe('History lane: Forgejo commits/pulls degraded-read honesty', () => {
     expect(screen.queryByText('No recent commits')).toBeNull()
   })
 
-  // fix-round P2-3: a settled failed refetch must win over TanStack Query's
+  // A settled failed refetch must win over TanStack Query's
   // retained prior-success data — hold-then-reject, not first-load (see the
   // matching pins in mediaWorkloadsGrid.test.tsx and facility.test.tsx).
   it('a settled failed refetch overrides a retained "No recent commits" — never re-states it', async () => {
@@ -347,8 +347,8 @@ describe('History lane: Forgejo commits/pulls degraded-read honesty', () => {
     expect(screen.queryByText('No recent commits')).toBeNull()
   })
 
-  // fix-round 3 (PR #81): the empty-only hold-then-reject test above passed
-  // even before this round's fix, because an EMPTY retained payload already
+  // The empty-only hold-then-reject test above passed
+  // even before the fix, because an EMPTY retained payload already
   // fell through to the (correct) empty-branch copy. The actual gap the
   // reviewer found only shows with NON-EMPTY retained rows: the commits/
   // pulls panels only ever showed a notice for the 'partial' phase, so a
@@ -449,7 +449,7 @@ describe('History lane: Forgejo commits/pulls degraded-read honesty', () => {
   })
 })
 
-// fix-round 4 (PR #81, codex sibling sweep): the History lane's OWN Recent
+// The History lane's OWN Recent
 // Jobs panel — same gap, same fix, as the (now-removed, dmfdeploy/
 // dmfdeploy#419/#554) Workspace RecentChanges widget once shared via
 // classifyChanges: a settled failed refetch used to retain non-empty `jobs`
@@ -505,7 +505,7 @@ describe('History lane: Recent Jobs panel retained-error honesty', () => {
   })
 })
 
-// umbrella #432 §F fix-round 3 (codex gate): same defect class, same fix, as
+// umbrella #432 §F: same defect class, same fix, as
 // recentChanges.test.tsx's matching pin on the Workspace widget — the title
 // and the badge here used to be two INDEPENDENT jobOutcome(job.status)
 // reads, which diverged for an empty status (the backend's own default for

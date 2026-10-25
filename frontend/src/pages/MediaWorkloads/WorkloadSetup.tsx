@@ -146,14 +146,14 @@ const FORWARD_STEPS: FlowStepId[] = FLOW_STEPS.filter((id) => id !== 'finalise')
  *  loading-safe branches ahead of the wizard's own data — loading/error/
  *  unconfigured/not-found.
  *
- *  dmfdeploy#414 gate, round 3: this used to claim "no job of THIS wizard's
+ *  dmfdeploy#414: this used to claim "no job of THIS wizard's
  *  own can be in flight before its workload record resolves, so these
  *  callers never pass jobInFlight" — true about jobs THIS WIZARD starts,
  *  but stated as if it were the whole story, and it wasn't: a HANDED-OFF
  *  launch (Create's router-state handoff) has its own job/operation running
  *  from the moment this page mounts, regardless of what these four
  *  branches' own read is doing, and none of that was ever "this wizard's
- *  own". That gap is what round 3 fixed — not by passing jobInFlight here,
+ *  own". That gap is what the fix closed — not by passing jobInFlight here,
  *  but by making the launch handoff decide the render OUTRIGHT, ahead of
  *  every branch that reaches this function (see WorkloadSetup's own
  *  launch-handoff check, now first). By construction, none of these four
@@ -237,7 +237,7 @@ export default function WorkloadSetup() {
   // says Setup regardless of what state the read is in.
   usePageTitle(`${workload?.name ?? slug} — Setup`)
 
-  // dmfdeploy#414 gate, round 3 (P1): checked BEFORE isLoading/error/
+  // dmfdeploy#414: checked BEFORE isLoading/error/
   // unconfigured below, not after — this used to sit where the old
   // `!workload` not-found check still sits, past all three. That let a
   // launch handoff reach one of THOSE branches first whenever the grouped
@@ -251,7 +251,7 @@ export default function WorkloadSetup() {
   // already running the instant this page mounts — so the operator got a
   // live "View live" link straight past WorkloadMaterializing's lock, for
   // a workload NetBox does not know about yet. Same defect shape as the
-  // two fix-rounds before this one: reasoning correct about one path
+  // two earlier fixes: reasoning correct about one path
   // (nothing of the wizard's own can be in flight before its record
   // resolves — still true), silently wrong about the path that bypasses it
   // (a launch handoff's job is in flight regardless of what this page's
@@ -337,7 +337,7 @@ export default function WorkloadSetup() {
   // The launch-handoff check that used to sit here (GATE-B P1: a workload
   // ABSENT because it was just launched is not a not-found) now runs FIRST,
   // ahead of isLoading/error/unconfigured above — see that check's own
-  // comment (dmfdeploy#414 gate, round 3) for why. By construction, reaching
+  // comment (dmfdeploy#414) for why. By construction, reaching
   // this point means `launch` was never present in the first place: the
   // hoisted check already returned for every render where it was.
   if (!workload) {
@@ -357,7 +357,7 @@ export default function WorkloadSetup() {
     )
   }
 
-  // GATE-D1.4 (operator review round 2, PR #70): keyed on the workload's own
+  // Keyed on the workload's own
   // identity, not just mounted once. React does NOT remount a component on
   // a route PARAM change alone — navigating from /media-workloads/A to
   // /media-workloads/B re-renders the same WorkloadWizard instance with a
@@ -384,8 +384,8 @@ export default function WorkloadSetup() {
       // succeeded, not that it was COMPLETE — the grouped endpoint can
       // return HTTP 200 with degraded: true (members excluded from this
       // payload, per media_workloads.py's own definition), and an excluded
-      // invalid-multiple member can share this workload's tag. FIX ROUND
-      // (P3-5): this used to reduce to a boolean HERE via
+      // invalid-multiple member can share this workload's tag.
+      // This used to reduce to a boolean HERE via
       // isGroupedReadTrustworthy and thread the boolean down — now threads
       // the raw read down instead, so buildWorkloadLifecycleInput is the
       // only place that formula runs (see its own docstring for why the
@@ -418,16 +418,16 @@ function WorkloadWizard({
   // umbrella #347: freshness of the SAME grouped read `workload` itself came
   // from — computed by the parent (the only place that holds the query's
   // own isError/isFetching), threaded through rather than re-queried here.
-  // FIX ROUND (P3-5): the raw read, not membersDataTrustworthy's old
+  // The raw read, not membersDataTrustworthy's old
   // pre-reduced boolean — buildWorkloadLifecycleInput below now runs
   // isGroupedReadTrustworthy itself, so this component doesn't call it.
   groupedRead: { isError: boolean; isFetching: boolean; configured?: boolean; degraded?: boolean }
 }) {
   const { hash } = useLocation()
-  // fix-round 5 (PR #81, codex sibling sweep): isError threaded down to
+  // isError threaded down to
   // DesignStage — see its own doc comment on `catalogFailed` for why.
   //
-  // fix-round 6 (PR #81, umbrella #385): retrofitted onto settleQuery.
+  // (umbrella #385) retrofitted onto settleQuery.
   const { data: catalogData, loading: catalogLoading, failed: catalogError } = settleQuery(useCatalog())
   // umbrella #378b: the SAME effective-role read FinaliseStage already uses
   // for audit fields (user?.role — already view-as-resolved by /api/me, see
@@ -486,7 +486,7 @@ function WorkloadWizard({
     trustworthy: isGroupedReadTrustworthy(groupedRead),
   }
 
-  // FIX ROUND (WP-3 spec B gate, P2-3; strengthened P3-5): built through the
+  // (WP-3 spec B) Built through the
   // ONE shared constructor WorkloadHome.tsx now also uses
   // (lib/workloadLifecycle.ts's buildWorkloadLifecycleInput) — member-state/
   // purgeable-entity facts can no longer drift between the two routes
@@ -503,7 +503,7 @@ function WorkloadWizard({
     switching,
     tearingDown,
     groupedRead,
-    // umbrella #378b (fix round): fail-closed on IDENTITY FRESHNESS, not just
+    // umbrella #378b: fail-closed on IDENTITY FRESHNESS, not just
     // on the role value — mirrors groupedRead's own discipline (#343) for
     // the exact same reason. TanStack Query retains the PREVIOUS /api/me
     // payload while a refetch is in flight and after one fails, so
@@ -521,8 +521,7 @@ function WorkloadWizard({
       role: userQuery.data?.role,
     },
   })
-  // umbrella dmf-cms#391 Pass 1, FIX ROUND (codex gate — P1, the counts):
-  // workload.instances threaded straight in — classifyWorkloadForHeaderSlot
+  // umbrella dmf-cms#391 Pass 1: workload.instances threaded straight in — classifyWorkloadForHeaderSlot
   // derives the rail's running/total itself from this same array, rather
   // than trusting a pre-computed count from further down this function (see
   // store/headerSlot.ts's TRUST side table docstring for why that
@@ -537,7 +536,7 @@ function WorkloadWizard({
   // frozen-during-a-poll value): row 1 of that table requires a stale or
   // in-flight read to withhold the affordance itself, not merely delay it —
   // the opposite of the #392 freeze this page applies to step selection.
-  // Takes only `input` — no `workload.instances` — since the fix-round gate
+  // Takes only `input` — no `workload.instances` — since
   // (dmfdeploy#412): the earlier version read instance.live_view here to
   // pick between two operating-state labels, which is exactly the preview
   // claim classifyForwardExit's own docstring now explains live_view cannot
@@ -551,7 +550,7 @@ function WorkloadWizard({
   // crafted fragment can never reach a control the gate closed.
   const requestedStep = hash.replace(/^#/, '')
 
-  // umbrella #392 fix round: groupedRead.isFetching/userQuery.isFetching
+  // umbrella #392: groupedRead.isFetching/userQuery.isFetching
   // feed the SAME steps classification (via membersDataTrustworthy /
   // purgeAuthorized in workloadLifecycle.ts) that decides which step is
   // openable — deliberately, so a background poll can't make the operator
@@ -667,7 +666,7 @@ function WorkloadWizard({
   // (cyan) treatment whenever its state is locked.
   const canPrevious = !jobInFlight && prevStep !== null
   const canNext = !jobInFlight && nextStep !== null
-  // dmfdeploy#412 FIX ROUND 3: nextStep === null is no longer one meaning.
+  // dmfdeploy#412: nextStep === null is no longer one meaning.
   // It is true on Finalise & Review (forwardIndex === -1, off FORWARD_STEPS
   // entirely — genuinely the last step of FLOW_STEPS) AND on Configure
   // (forwardIndex is FORWARD_STEPS' last index — no further constructive
@@ -683,8 +682,7 @@ function WorkloadWizard({
   const isLastFlowStep = activeIndex === FLOW_STEPS.length - 1
 
   const jobOwnerLabel = jobOwner ? STEP_LABEL[jobOwner] : null
-  // umbrella #432 G3 (gate round 2, finding A2), UPDATED by dmfdeploy#481
-  // (Shell Round 2). ORIGINALLY: LifecycleStrip (mounted in the header slot
+  // umbrella #432 G3, updated by dmfdeploy#481 (shell redesign). ORIGINALLY: LifecycleStrip (mounted in the header slot
   // above via buildHeaderSlotRail below, from this SAME jobOwnerLabel) was
   // the ONE place on this screen that stated "A {jobOwnerLabel} job is in
   // progress." — for every job owner, not only Finalise & Review. The first
@@ -759,7 +757,7 @@ function WorkloadWizard({
   // (e.g. offering 'deploy' at some other position) would silently make
   // that hardcoding wrong with nothing here to catch it.
   //
-  // FIX ROUND (§D1, codex gate item 6, this file's own sibling
+  // (§D1, this file's own sibling
   // CreateWorkload.tsx): a locked step's Next must never be primary
   // regardless of what `nextIsPrimary` computes — enforced now in
   // FlowStep.tsx itself (`nextPrimary && !locked`), not repeated here. This
@@ -802,8 +800,7 @@ function WorkloadWizard({
       lockedReasons: LOCKED_REASON,
       jobOwnerLabel,
       jobInFlight,
-      // umbrella dmf-cms#391 Pass 1, FIX ROUND (codex gate — P1, the
-      // counts): this call site used to compute running/total itself and
+      // umbrella dmf-cms#391 Pass 1: this call site used to compute running/total itself and
       // hand them in here — that was the actual gap (a caller-supplied
       // count with no formula behind it, forgeable independently of
       // `trustworthy`). Removed entirely: buildHeaderSlotRail derives
@@ -875,7 +872,7 @@ function WorkloadWizard({
         onBusyChange={setTearingDown}
         lastSwitchResult={lastSwitchResult}
         onJobStart={() => startJob('finalise')}
-        // umbrella #378 fix round 2: threaded from the SAME userQuery this
+        // umbrella #378: threaded from the SAME userQuery this
         // component already reads for purgeAuthorized, rather than
         // FinaliseStage subscribing to useCurrentUser() itself — see that
         // prop's own docstring for why a second subscriber is the bug.
@@ -1011,14 +1008,14 @@ function WorkloadWizard({
  * success affordance the issue's acceptance criteria rule out.
  *
  * Neither `label` nor `description` below asserts anything about whether a
- * preview exists (FIX ROUND, dmfdeploy#412 adversarial gate round 1) — see
+ * preview exists (dmfdeploy#412) — see
  * classifyForwardExit's own docstring for why instance.live_view cannot
  * honestly support that claim in either direction. "Open live view" names
  * the destination ROUTE (that is what the console already calls it), not a
  * promise about what is on it.
  *
  * Nor does 'view-status's description assert anything about a JOB OUTCOME
- * (FIX ROUND, round 2) — see classifyForwardExit's own docstring on
+ * — see classifyForwardExit's own docstring on
  * 'view-status' for why the classifier has no job-outcome input to draw
  * that from. It states only that the position is configure and nothing has
  * been observed running yet, never that a deploy "succeeded".

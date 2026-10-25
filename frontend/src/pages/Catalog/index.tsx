@@ -34,7 +34,7 @@ interface EntryActionState {
 export default function Catalog() {
   usePageTitle('Catalog')
   const queryClient = useQueryClient()
-  // fix-round 7 (PR #81, umbrella #385, codex call-site sweep): retrofitted
+  // (umbrella #385) retrofitted
   // onto settleQuery. This page's OWN bug, distinct from the isError-gating
   // shape the rest of this arc chases: `if (error)` below used to replace
   // the ENTIRE page with the error panel on ANY failed read, even a settled
@@ -464,7 +464,7 @@ function OperationStatusLine({
   onLaunched: (jobId: number) => void
   onError: () => void
 }) {
-  // fix-round 6 (PR #81, umbrella #385 codex sweep): a settled failed
+  // (umbrella #385) A settled failed
   // refetch retained the last-good `operation` with no notice at all —
   // `failed` distinguishes that from a genuinely fresh read.
   const { data: operation, failed } = settleQuery(useOperationStatus(operationId))
@@ -546,7 +546,7 @@ function JobStatusLine({
   kind: 'deploy' | 'teardown'
   onComplete: (key: string, kind: 'deploy' | 'teardown') => void
 }) {
-  // fix-round 6: same shape as OperationStatusLine above.
+  // Same shape as OperationStatusLine above.
   const { data: jobStatus, failed } = settleQuery(useCatalogJobStatus(entryKey, jobId))
 
   useEffect(() => {

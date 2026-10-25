@@ -4,7 +4,7 @@ import { settleQuery } from '@/lib/queryState'
 import PageHeading from '@/components/PageHeading'
 import { usePageTitle } from '@/hooks/usePageTitle'
 
-// fix-round 5 (PR #81, codex sibling sweep): none of the three reads on this
+// None of the three reads on this
 // page checked `isError` anywhere. A never-loaded read (isError, no data at
 // all) defaulted every metric to a confident `0%` plus a green "✓ Healthy"
 // badge, and every list to its genuinely-empty copy ("No active alerts",
@@ -18,10 +18,9 @@ import { usePageTitle } from '@/hooks/usePageTitle'
 // still — qualified by a notice rather than silently presented as fresh).
 export default function Monitoring() {
   usePageTitle('Monitoring')
-  // fix-round 6 (PR #81, umbrella #385): retrofitted onto settleQuery —
+  // (umbrella #385) retrofitted onto settleQuery —
   // `.data`/`.isError`/`.isLoading` below become `.data`/`.failed`/`.loading`
-  // via the settled result; every branch reads exactly as it did in
-  // fix-round 5.
+  // via the settled result; every branch reads exactly as before.
   const metrics = settleQuery(useMonitoringMetrics())
   const alerts = settleQuery(useMonitoringAlerts())
   const targets = settleQuery(useMonitoringTargets())

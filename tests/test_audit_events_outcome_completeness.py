@@ -1,5 +1,5 @@
 """Mechanical completeness guard for the outcome-acceptance allowlist
-(dmfdeploy/dmfdeploy#496, codex R496-A NEW-1).
+(dmfdeploy/dmfdeploy#496).
 
 An enumerated ACCEPTANCE set is only as trustworthy as its completeness,
 and "did we list enough" has already been wrong twice on this exact
@@ -86,7 +86,7 @@ def _sweep_outcome_tokens() -> tuple[dict[str, set[str]], dict[str, bool]]:
     substrings embedded in the format string rather than passed as ``%s``
     args to ``_audit_awx_write``).
 
-    dmfdeploy/dmf-cms#140 (codex F2, 2026-09-03): the direct-emission
+    The direct-emission
     branch used to key on the literal substring ``"awx write:
     action=rollback"`` — which broke SILENTLY, with the guard staying
     green, the moment the writer fix inserted an `fmt=2 ` token between
@@ -315,7 +315,7 @@ def test_the_sweep_itself_finds_a_realistic_number_of_tokens_per_action():
 
 
 def test_the_sweep_finds_the_auto_rollback_dispatchs_own_direct_emitters():
-    # dmfdeploy/dmf-cms#140 (codex F2, 2026-09-03): this is the SPECIFIC
+    # This is the SPECIFIC
     # regression the "realistic number" test above cannot be trusted to
     # catch on its own — main.py's _audit_awx_write-routed rollback calls
     # alone already clear the >=5 threshold, so the sweep going blind to
@@ -331,7 +331,7 @@ def test_the_sweep_finds_the_auto_rollback_dispatchs_own_direct_emitters():
 
 
 def test_guard_still_finds_the_direct_emitters_after_their_message_text_changes():
-    # MUTATION-VERIFICATION against the EXACT failure codex found: the
+    # MUTATION-VERIFICATION against the EXACT failure: the
     # sweep used to key on the literal substring "awx write:
     # action=rollback" and went silently blind the moment a token was
     # inserted between the two halves. Exercises the sweep against SYNTHETIC
@@ -383,7 +383,7 @@ def test_guard_still_finds_the_direct_emitters_after_their_message_text_changes(
 
 
 def test_capacity_skipped_and_capacity_override_are_acceptance_not_terminal():
-    # codex R496-A NEW-1's concrete proof case, pinned directly: both are
+    # Concrete proof case, pinned directly: both are
     # deploy-only L3-preflight outcomes where the run proceeds regardless
     # (main.py:485-490 docstring "Skips with an audited capacity-skipped
     # outcome"; main.py:553-588 docstring "the run proceeds anyway").

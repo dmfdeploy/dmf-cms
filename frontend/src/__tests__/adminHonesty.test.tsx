@@ -1,6 +1,5 @@
 /**
- * Admin page — retained-error honesty (fix-round 5, PR #81, codex sibling
- * sweep). None of users/groups/health checked `isError` anywhere:
+ * Admin page — retained-error honesty. None of users/groups/health checked `isError` anywhere:
  *  - Users (People/Machine identities): a failed read rendered "No people" /
  *    "No machine identities", or kept a retained roster with no notice.
  *  - Groups: same shape, plus a per-group member COUNT claim.

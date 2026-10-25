@@ -12,7 +12,7 @@ import { usePageTitle } from '@/hooks/usePageTitle'
 // C4/D8) renders two of these over the human vs machine partitions rather than
 // one flat roster, so human and non-human principals never blur together.
 //
-// fix-round 5 (PR #81, codex sibling sweep): `failed` is new. `users.length
+// `failed` gates `emptyLabel` too. `users.length
 // === 0` used to be the WHOLE gate on `emptyLabel` ("No people"/"No machine
 // identities") — a settled failed read (no isError check anywhere in this
 // file) rendered that exact claim, or, with data retained across a failed
@@ -101,11 +101,11 @@ function UsersTable({ users, isLoading, failed, emptyLabel }: {
 
 export default function Admin() {
   usePageTitle('Admin')
-  // fix-round 5 (PR #81, codex sibling sweep): isError on all three — see
+  // isError on all three — see
   // UsersTable's own doc comment and the Integration Health / Groups
   // sections below for what each one fixes.
   //
-  // fix-round 6 (PR #81, umbrella #385): retrofitted onto settleQuery —
+  // (umbrella #385) retrofitted onto settleQuery —
   // `.isError`/`.isLoading` below become `.failed`/`.loading`.
   const users = settleQuery(useAdminUsers())
   const groups = settleQuery(useAdminGroups())
@@ -142,7 +142,7 @@ export default function Admin() {
           </h2>
         </div>
         <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-4 p-6">
-          {/* fix-round 5: named regardless of whether `health.data` is
+          {/* Named regardless of whether `health.data` is
               retained — a Connected/Disconnected dot plus latency is a
               status-posture claim of exactly the kind classifyWorkspaceHealth
               exists to prevent from rendering unqualified. */}
@@ -243,7 +243,7 @@ export default function Admin() {
           </h2>
         </div>
         <div className="divide-y divide-panel">
-          {/* fix-round 5: named regardless of whether groups are retained —
+          {/* Named regardless of whether groups are retained —
               the per-group member COUNT below is exactly the kind of claim
               from an unconfirmed read hard gate 1 forbids. */}
           {groups.failed && (

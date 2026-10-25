@@ -204,7 +204,7 @@ def test_sync_deploy_accepts_boundary_slugs(awx_spy):
 
 
 def test_sync_deploy_rejects_trailing_newline_slugs(awx_spy, caplog):
-    # codex GATE-239CMS P2: Python re.match's trailing $ anchor matches just
+    # Python re.match's trailing $ anchor matches just
     # before a final newline, so a naive .match() lets "studio-a\n" through —
     # which would land a raw newline in AWX extra_vars and the audit log line
     # (log-splitting surface). fullmatch closes this.
@@ -222,7 +222,7 @@ def test_sync_deploy_rejects_trailing_newline_slugs(awx_spy, caplog):
 
 
 def test_sync_deploy_rejects_non_string_workload_even_when_falsy(awx_spy, caplog):
-    # codex GATE-239CMS P3-1: 0 / false / [] / {} are JSON values a client
+    # 0 / false / [] / {} are JSON values a client
     # could plausibly send by mistake — `if not workload` would silently treat
     # them as "no workload" (wrong: they're malformed, not omitted). Only
     # absent-key / null / "" are legitimate omission; every other non-string
@@ -255,7 +255,7 @@ def test_sync_deploy_treats_null_and_empty_string_workload_as_omitted(awx_spy):
 
 
 def test_sync_deploy_non_object_body_is_clean_400_not_a_crash(awx_spy):
-    # codex GATE-239CMS P3-2: a non-dict JSON body (bare array/string/number)
+    # A non-dict JSON body (bare array/string/number)
     # used to raise an unhandled AttributeError inside _require_reason's
     # (body or {}).get(...) before workload validation ever ran. Must be a
     # clean 400 reason-required, same shape as a missing body, with zero AWX
@@ -286,7 +286,7 @@ def _autoscale_settings() -> Settings:
 
 
 def _wait_for_launch(app, op_id):
-    # codex #202 WP2: LAUNCHED is no longer a resting state for deploy/
+    # LAUNCHED is no longer a resting state for deploy/
     # teardown ops — the job watcher spawned right after it can race straight
     # through to RUN_COMPLETE before this poll loop ever observes LAUNCHED
     # itself. job_id is set at the same moment and never changes afterward,

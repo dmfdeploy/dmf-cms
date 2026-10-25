@@ -66,7 +66,7 @@ def test_load_valid_j1_instance(tmp_path: Path):
     _write(tmp_path, "topology-params.j1.yaml", J1_INSTANCE)
     tp, err = load_topology_instance(str(tmp_path), "topology-params.j1.yaml")
     assert err is None
-    # Whole-object equality (codex P1): a loader that drops/rewrites any
+    # Whole-object equality: a loader that drops/rewrites any
     # field — a source's flow_id, its pattern, the viewer's id — must fail
     # this test. Field-sample assertions would miss that.
     assert tp == EXPECTED_J1_TOPOLOGY_PARAMS
@@ -253,7 +253,7 @@ def test_duplicate_source_ids_refused(tmp_path: Path):
 
 
 def test_invalid_flow_id_uuid_refused(tmp_path: Path):
-    # codex P1: flow_id must be a well-formed UUID, per the WP1 frozen
+    # flow_id must be a well-formed UUID, per the WP1 frozen
     # schema (dmf-media catalog/topology-params.schema.yaml).
     body = """\
     topology_params:
@@ -274,7 +274,7 @@ def test_invalid_flow_id_uuid_refused(tmp_path: Path):
 
 
 def test_duplicate_flow_ids_refused(tmp_path: Path):
-    # codex P1: flow_id must be unique across sources[] — distinct source
+    # flow_id must be unique across sources[] — distinct source
     # ids with the SAME flow_id must still be refused.
     body = """\
     topology_params:
@@ -298,14 +298,13 @@ def test_duplicate_flow_ids_refused(tmp_path: Path):
 
 
 def test_duplicate_flow_ids_different_case_still_refused(tmp_path: Path):
-    # codex P1 re-gate: the SAME UUID spelled in different case is the SAME
+    # The SAME UUID spelled in different case is the SAME
     # flow identity — uniqueness must compare parsed uuid.UUID values, not
     # raw strings, or a lowercase vs uppercase spelling of the identical
     # UUID would pass a naive string-set comparison while carrying one flow.
     # Must be a letter-bearing UUID: an all-digit one is byte-identical to
     # its own .upper(), which would ALSO pass the old (broken) naive
-    # string-set comparison — making the test vacuous, not discriminating
-    # (codex caught this exact gap on re-gate).
+    # string-set comparison — making the test vacuous, not discriminating.
     lower = "5fbec3b1-1b0f-417d-9059-8b94a47197ed"
     upper = lower.upper()
     assert lower != upper  # guards against ever regressing to a vacuous probe
@@ -331,7 +330,7 @@ def test_duplicate_flow_ids_different_case_still_refused(tmp_path: Path):
 
 
 def test_duplicate_patterns_refused(tmp_path: Path):
-    # codex P1: pattern must be distinct across sources[] — the switch
+    # pattern must be distinct across sources[] — the switch
     # must be visually unambiguous (spec §4).
     body = """\
     topology_params:
@@ -354,7 +353,7 @@ def test_duplicate_patterns_refused(tmp_path: Path):
     assert "pattern values are not distinct" in err
 
 
-# ── load_topology_instance: topology_ref containment (codex P2) ─────────
+# ── load_topology_instance: topology_ref containment ─────────
 
 
 def test_topology_ref_parent_traversal_refused(tmp_path: Path):

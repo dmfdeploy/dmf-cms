@@ -1,0 +1,13 @@
+# Allowlist for bin/check-review-comments.sh. One entry per line:
+#   <path>:<fixed substring of the line>  # <reason>
+# Entries go away as the lines they cover change; add one only for a mention
+# that is not review history.
+bin/working-model-digest.sh:codex/qwen don't run hooks  # names the agents this hook cannot reach; not review history
+frontend/src/__tests__/narrowWidthCssSync.test.ts:inset(2px round 6px)  # a CSS value quoted in a comment, not a review round
+frontend/src/__tests__/createWorkload.test.tsx:umbrella #432 §D1 FIX ROUND: Next is never primary  # test title string; renaming it would change code
+frontend/src/__tests__/finalisePurgeWedge.test.tsx:umbrella #432 §D2 FIX ROUND: Delete permanently's icon  # test title string; renaming it would change code
+frontend/src/__tests__/lifecycleStrip.test.tsx:(dmfdeploy#405, Shell Round 2)  # test title string; renaming it would change code
+frontend/src/__tests__/lifecycleStrip.test.tsx:(dmf-cms#128 fix round)  # test title string; renaming it would change code
+frontend/src/__tests__/railEdgeContrast.test.tsx:extracts the real bg-* utility even when  # test title string; renaming it would change code
+frontend/src/__tests__/reasonConfirm.test.tsx:ReasonConfirm popover type scale (umbrella #432, FIX ROUND)  # test title string; renaming it would change code
+frontend/src/__tests__/workloadSetupForwardExit.test.tsx:dmfdeploy#412 FIX ROUND 3: the footer  # test title string; renaming it would change code

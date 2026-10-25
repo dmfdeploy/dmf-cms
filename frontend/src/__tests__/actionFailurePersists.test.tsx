@@ -23,7 +23,7 @@
  * .isError paragraph and ConfigureStage.tsx's close-only-on-success submit)
  * — the reference shape this fix now matches everywhere else.
  *
- * GUARD LABEL (dmfdeploy#414 gate, round 1): every test in this file is a
+ * GUARD LABEL (dmfdeploy#414): every test in this file is a
  * GUARD pinning the pre-#414 #386 fix described above, unchanged by this
  * arc — only the wizard-mounting tests' route moved, from the bare slug to
  * /setup. Baseline: the pre-#414 commit on `main`, where these same
@@ -290,7 +290,7 @@ describe('Catalog: a refused teardown stays legible at the point of action', () 
   })
 })
 
-// FIX ROUND (P3-7, sub-claim 2): the describe block above only ever drove
+// The describe block above only ever drove
 // Catalog's TEARDOWN control through ReasonConfirm's onConfirm; DEPLOY has
 // its own separate onConfirm closure in EntryCard (workload extraField,
 // different mutation) and was never exercised here, so a regression to the

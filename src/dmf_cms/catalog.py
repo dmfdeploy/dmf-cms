@@ -328,7 +328,7 @@ def load_topology_instance(
             return None, f"topology_ref '{topology_ref}': sources[{i}].pattern missing/invalid"
         ids.append(sid)
         # Uniqueness compares the PARSED uuid.UUID value, not the raw
-        # string (codex P1 re-gate): "5FBEC3B1-..." and "5fbec3b1-..." are
+        # string: "5FBEC3B1-..." and "5fbec3b1-..." are
         # the SAME flow identity in different case spellings — a
         # string-set comparison would let both through. The authored
         # string itself (flow_id, not parsed_flow_id) is what's stored
@@ -414,7 +414,7 @@ def _service_lifecycle_tag(
     try:
         result = _netbox._request(netbox_url, netbox_token, path, ssl_context=ctx)
     except _netbox.NetboxAPIError as exc:
-        # umbrella dmf-cms#108 fix-round 4: exc.str() embeds NetBox's own
+        # exc.str() embeds NetBox's own
         # raw response body (upstream response content). service_name is
         # NOT sanitized — it's catalog-config-derived (provision.netbox_
         # service.name in a static YAML file), never live-request input.

@@ -49,9 +49,9 @@ describe('classifyWorkspaceHealth', () => {
     expect(isNominal(s)).toBe(false)
   })
 
-  // fix-round 5 (PR #81, codex sibling sweep): `stale` is computed as
+  // `stale` is computed as
   // `q.isError` UNCONDITIONALLY (not gated on phase), so it was already
-  // correct here — the bug this round fixed was that HealthCore.tsx and
+  // correct here — the bug was that HealthCore.tsx and
   // NotificationBell.tsx never CONSULTED it for the 'not-configured'
   // phase. Pinning the classifier's own correctness explicitly so a
   // future change to this function can't silently reintroduce the

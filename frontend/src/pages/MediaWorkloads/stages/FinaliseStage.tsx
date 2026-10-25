@@ -106,8 +106,8 @@ export default function FinaliseStage({
    */
   onJobStart: () => void
   /**
-   * Audit identity for the actor/role fields below — umbrella #378 fix
-   * round 2: this used to be this component's OWN useCurrentUser() call,
+   * Audit identity for the actor/role fields below — umbrella #378:
+   * this used to be this component's OWN useCurrentUser() call,
    * but that made FinaliseStage a SECOND subscriber to the ['user'] query,
    * first mounting only when the operator navigates here — which, once
    * WorkloadWizard started gating the purge affordance on that query's own
@@ -132,11 +132,11 @@ export default function FinaliseStage({
    */
   runningReadout: AutomationRunningReadout
 }) {
-  // fix-round 5 (PR #81, codex sibling sweep): `catalogFailed` threaded into
+  // `catalogFailed` threaded into
   // the absence claim below — see ProvisionStage.tsx's identical fix for
   // the full reasoning (same shared PlanStage/CreateWorkload precedent).
   //
-  // fix-round 6 (PR #81, umbrella #385): retrofitted onto settleQuery.
+  // (umbrella #385) retrofitted onto settleQuery.
   const { data: catalogData, loading: catalogLoading, failed: catalogFailed } = settleQuery(useCatalog())
   const teardownMutation = useTeardownCatalog()
   const purgeMutation = usePurgeWorkload()
@@ -162,7 +162,7 @@ export default function FinaliseStage({
   const [purgeConfirmText, setPurgeConfirmText] = useState('')
   const [purgeOpId, setPurgeOpId] = useState<string | null>(null)
   const [purgeReview, setPurgeReview] = useState<Operation | null>(null)
-  // fix-round 6 (PR #81, umbrella #385 codex sweep): the third direct
+  // (umbrella #385) The third direct
   // (non-JobProgress) poller in this file — `data` alone used to drive the
   // inline "— {state}" text below with no notice when a settled failed
   // refetch retained the last-observed state.
@@ -403,7 +403,7 @@ export default function FinaliseStage({
               )}
             </div>
           ) : purgeArming ? (
-            // umbrella #392 fix round: checked BEFORE purgeAllowed, mirroring
+            // umbrella #392: checked BEFORE purgeAllowed, mirroring
             // FinaliseEntry's teardown panel below (arming alone keeps
             // ReasonConfirm mounted) and ConfigureStage's InstanceSwitchControl
             // (own docstring: "allowed gates only the INITIAL button — once
@@ -445,7 +445,7 @@ export default function FinaliseStage({
               />
             </div>
           ) : purgeAllowed ? (
-            // FIX ROUND (operator report on 0.27.0): 🗑 is an emoji-presentation
+            // 🗑 is an emoji-presentation
             // glyph — it renders in the emoji font's own colours and ignores
             // `text-white`, so it read muddy on the red-600 fill (unlike ⏏/▶
             // elsewhere, which are text-presentation and DO inherit
@@ -603,7 +603,7 @@ function FinaliseEntry({
   // AutomationInProgressNotice, because only this call site knows which
   // token is "last" for its own action.
   const inTail = progressOperation?.progress_step === 'finalising'
-  // codex adversarial review (feat/390-throbber, T2/G4): a REAL guard, not
+  // A REAL guard, not
   // an emergent property of "callers stop rendering the notice once
   // resolved" — that claim was contradicted by the code. `inFlight`
   // (above) is driven by track.jobId/opId, and JobStatusLine's own
@@ -693,8 +693,7 @@ function FinaliseEntry({
         </div>
       )}
 
-      {/* umbrella #432, FIX ROUND (operator: "a large friendly message is
-          missing for teardown, that it takes a while and so on"). The
+      {/* umbrella #432: teardown needs a large friendly message saying it takes a while. The
           provision path got this layer (WorkloadMaterializing.tsx); this
           half of that order was scoped to the deploy-specific page and
           teardown — which renders here, inline in this same stage card,

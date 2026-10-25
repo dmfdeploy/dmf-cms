@@ -114,7 +114,7 @@ def test_post_job_read_failure_is_run_status_unknown_never_assumed_clean(monkeyp
 
 
 def test_post_job_read_failure_line_sanitizes_key(monkeypatch, caplog):
-    # umbrella dmf-cms#108 fix-round 4: `key` (the workload slug here) is
+    # `key` (the workload slug here) is
     # externally influenced — same defect class as the AWX audit line,
     # same stdout stream, a different call site entirely.
     import logging
@@ -237,8 +237,7 @@ def test_other_watched_actions_are_unaffected_by_the_finalise_purge_branch(monke
 
 
 def test_p1_2_incomplete_post_job_paginated_read_is_run_status_unknown(monkeypatch):
-    # umbrella #347 fix round FIX-A2b.4 (GATE-A2b.3) — codex's exact P1-2
-    # fixture, exercised end-to-end through the REAL purge_residue_present
+    # umbrella #347: exercised end-to-end through the REAL purge_residue_present
     # (only the raw NetBox HTTP call is mocked): count=1, non-null next,
     # empty first page — and this time the survivor's page is NEVER
     # returned (next stays set forever), so the completeness-verified fetch

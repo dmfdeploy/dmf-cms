@@ -31,7 +31,7 @@
  * `import.meta.env.DEV` with the literal `false` in a production build
  * (`vite build` runs with mode "production" by default).
  *
- * FIX ROUND (codex gate — P3): this used to claim that lets dead code
+ * This used to claim that lets dead code
  * elimination remove "a dynamic `import()`" inside the gated branch — false;
  * App.tsx imports LifecycleRailHarness with a plain STATIC top-level
  * `import`, not a dynamic one, and this module makes no import() call of
@@ -52,7 +52,7 @@
  * re-confirming the same already-verified compiler behaviour), so treat it
  * as a one-time verification rather than a standing regression test.
  *
- * FIX ROUND (dmf-cms#391): the matcher must tolerate a leading Vite `base`
+ * The matcher must tolerate a leading Vite `base`
  * prefix on `pathname`, not just the bare path. vite.config.ts sets
  * `base: '/static/app/'` (the production backend's static-asset mount
  * point), and Vite serves the dev SPA shell at that same prefix — a real
@@ -112,7 +112,7 @@ export function isDevHarnessRoute(pathname: string, base: string = import.meta.e
  * dmfdeploy/dmfdeploy#498). A SIBLING constant/gate pair, not a generalized
  * multi-route version of the pair above — `isDevHarnessRoute`'s exact
  * boolean contract is pinned in real depth by this file's own test suite's
- * base-prefix-tolerance fix-round history, and widening its signature to
+ * base-prefix-tolerance history, and widening its signature to
  * cover a second route for the sake of a few avoided lines wasn't worth
  * that risk. `stripBase` (the actually-reusable logic) is shared as-is.
  */
@@ -133,7 +133,7 @@ export function isGhostGridHarnessRoute(
  * Third sibling, same reasoning as the ghost-grid pair immediately above —
  * a thin one-line gate per harness over the shared `stripBase`, rather than
  * widening `isDevHarnessRoute` into a route-identifying signature and
- * touching every assertion its fix-round history pins. Two branches
+ * touching every assertion its tests pin. Two branches
  * (dmfdeploy/dmfdeploy#390 and dmfdeploy/dmfdeploy#498) reached this same
  * conclusion independently, which is the argument for keeping the pattern
  * rather than generalizing it on the next one.

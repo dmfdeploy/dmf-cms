@@ -70,7 +70,7 @@ def test_round_trip_carries_the_l3_outcome_as_a_suffix_on_the_state_token(caplog
 
 
 def test_a_target_forged_to_look_like_a_complete_line_survives_as_literal_content(caplog):
-    # The same proof _audit_awx_write's own writer-fix round-trip tests
+    # The same proof _audit_awx_write's own writer fix's round-trip tests
     # give its quoted fields -- target rides through the SAME %r-quoted
     # field here, so the same guarantee must hold: forged-looking content
     # comes back as target's own literal value, never as structure that
@@ -214,7 +214,7 @@ def test_watcher_started_then_ttl_timeout_writes_the_honest_unknown_join(monkeyp
 
 
 def test_watcher_never_started_then_ttl_timeout_reports_unknown_but_keeps_run_failed_internally(monkeypatch):
-    # gate round 4 (lkirc B2): the OTHER give-up outcome (never observed
+    # The OTHER give-up outcome (never observed
     # to have started) still resolves the INTERNAL ops-store state to
     # plain RUN_FAILED, UNCHANGED — rollback eligibility and
     # _facility_busy_check's dirty-state handling both still need that
@@ -261,7 +261,7 @@ def test_watcher_never_started_then_ttl_timeout_reports_unknown_but_keeps_run_fa
 
 
 def test_watcher_three_failed_get_job_reads_reports_unknown_never_a_confirmed_failure(monkeypatch, caplog):
-    # gate round 4 (lkirc B2): the other cited give-up path — three
+    # The other cited give-up path — three
     # consecutive get_job failures, never having observed the job start.
     # Same fix, same proof shape as the TTL site above.
     app, ops_store = _fake_app()
@@ -296,14 +296,14 @@ def test_watcher_manual_rollback_never_writes_an_activity_join(monkeypatch, capl
 
 
 def test_watcher_manual_rollback_with_colliding_subject_never_writes_an_activity_join(monkeypatch, caplog):
-    # #560 round 4 (lkirc): the actual collision — a MANUAL rollback whose
+    # #560: the actual collision — a MANUAL rollback whose
     # dispatching subject happens to be literally "system:auto-rollback"
     # (api_run_rollback sets initiator=user.subject with no reserved-
     # namespace check on it). Before this fix, is_auto_rollback compared
     # op.initiator to that exact string, so this op would have been
     # misread as automatic and joined into Activity History despite never
     # being dispatched by _maybe_auto_trigger_rollback — the exact
-    # provenance-vs-string-match confusion #560 round 4 exists to close.
+    # provenance-vs-string-match confusion #560 exists to close.
     # auto_rollback_dispatch is never set here (defaults False, as a real
     # manual dispatch through api_run_rollback never sets it either), so
     # this must resolve identically to any other manual rollback: no join.
@@ -325,7 +325,7 @@ def test_watcher_auto_rollback_writes_a_terminal_join(monkeypatch, caplog):
     # _audit_watch_terminal call leaves the operation state intact but makes
     # this endpoint-consumable terminal record disappear.
     #
-    # round 4 (lkirc): auto_rollback_dispatch=True, not just a
+    # auto_rollback_dispatch=True, not just a
     # "system:auto-rollback" initiator — that string alone is no longer
     # trusted (see test_watcher_manual_rollback_with_colliding_subject_
     # never_writes_an_activity_join below for the discriminating case this

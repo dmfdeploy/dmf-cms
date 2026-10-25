@@ -1,9 +1,9 @@
 /**
- * dmfdeploy/dmfdeploy#496, codex R496-A fix round (F4/F6/F7/F8): four
- * findings that all shipped as reasonable-looking code but were wrong in a
+ * dmfdeploy/dmfdeploy#496: four
+ * defects that all shipped as reasonable-looking code but were wrong in a
  * way only a real render/interaction proves. Each test here pins the
- * specific claim codex made about the previous version, so a regression
- * fails here rather than being re-discovered by a future gate.
+ * specific claim made about the previous version, so a regression
+ * fails here rather than being re-discovered later.
  */
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import { act, cleanup, fireEvent, render, screen, within } from '@testing-library/react'
@@ -82,7 +82,7 @@ describe('F4: the default/expert split is a real DOM boundary, not just CSS muti
     renderHistory()
     await screen.findByText('The automation engine reported an error')
 
-    // codex R496-A F4: "CSS muting is not an access boundary" — the raw
+    // "CSS muting is not an access boundary" — the raw
     // token must be behind a real disclosure, not merely styled small and
     // always rendered. <details>.open is the actual enforcement mechanism;
     // assert its structural state, not just text presence (jsdom does not
@@ -99,7 +99,7 @@ describe('F4: the default/expert split is a real DOM boundary, not just CSS muti
     renderHistory()
     await screen.findByText('The automation engine reported an error')
 
-    // codex R496-A F4's second half: `meaning` was silently never
+    // `meaning` was silently never
     // rendered (only headline + next_step) — must be visible at default,
     // no interaction required.
     expect(screen.getByText(/automation engine itself returned an error/)).toBeTruthy()
@@ -405,7 +405,7 @@ describe('F8: the local panel never claims completion for a dispatch-time record
     // this file's top-level `import HistoryLane`, before the localStorage
     // write above. Force the SAME read `persist.rehydrate()` performs on
     // every real page load, same technique as
-    // activityReconcileExpectationHonesty.test.tsx's fix-round 1 lesson —
+    // activityReconcileExpectationHonesty.test.tsx's lesson —
     // setting localStorage alone does not retroactively repopulate memory.
     await useActivityStore.persist.rehydrate()
 
@@ -547,7 +547,7 @@ describe('lkirc P2 (dmfdeploy/dmf-cms#140, 2026-09-04): an untrustworthy reason 
     // Cast deliberately: `reason` is a closed string-literal union at
     // compile time, but nothing at RUNTIME guarantees the backend (or a
     // future version skew) only ever sends one of those three values --
-    // that gap is lkirc's exact point.
+    // that gap is the point.
     mkFetch({
       ...FAILED_DEPLOY_RESPONSE,
       reason: 'some-future-token-this-frontend-does-not-know-yet',

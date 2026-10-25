@@ -116,7 +116,7 @@ def test_empty_catalog_yields_empty_default_list(monkeypatch):
 
 
 def test_view_as_downgrade_loses_the_all_escape_hatch(monkeypatch):
-    # Codex P2-2 (B+E composition): an admin who has set view-as to a lower
+    # (B+E composition): an admin who has set view-as to a lower
     # role has an effective role below admin, so ?all=true is NOT honored —
     # the internal template stays hidden (fail-closed on the effective role).
     client = _client(ADMIN)
@@ -127,7 +127,7 @@ def test_view_as_downgrade_loses_the_all_escape_hatch(monkeypatch):
     assert "eso-openbao-health-check" not in [t["name"] for t in body["templates"]]
 
 
-# ── Job-history paths (codex P1-1 / P1-2) ──────────────────────────────────
+# ── Job-history paths ──────────────────────────────────
 
 
 def _job_names(resp):

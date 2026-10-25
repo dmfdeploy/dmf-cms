@@ -18,7 +18,7 @@ const LANE_TITLE: Record<'jobs' | 'history', string> = {
 // (IA §7 matrix) — cosmetic here, the backend gates every action.
 export default function Activity() {
   const { lane } = useParams()
-  // fix-round 6 (PR #81, umbrella #385 codex sweep): `user` was `undefined`
+  // (umbrella #385) `user` was `undefined`
   // on the FIRST render of every direct load of /activity/jobs, not just on
   // a failed read — `canUseJobs` defaulted to false before the role was
   // ever confirmed, so the very first render below fired a REPLACE redirect

@@ -991,7 +991,7 @@ def test_detail_transport_unreachable_is_200_never_500(monkeypatch):
 
 
 # ---------------------------------------------------------------------------
-# GATE-S1 P2a: malformed / nullable rows. Codex reproduced a live 500 from a
+# Malformed / nullable rows. A live 500 came from a
 # VALID NetBox read whose device row carried site=None — the read succeeded,
 # the SHAPING blew up outside the guard. These pin the repro directly: the
 # transport-error tests above never covered it, because nothing was wrong

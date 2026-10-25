@@ -50,7 +50,6 @@ KV_DETAIL_TOKENS = frozenset({
     # templated site — playbooks/finalise-purge.yml's own
     #     detail={{ _purge_stage | default('pre-lock') }}
     # — enumerated from that play's `_purge_stage:` set_fact values plus its
-    # own default, on dmf-runbooks branch arc2b-finalise-purge (PR #37).
-    # 'pre-lock' is already a member (shared default with the switch play).
+    # own default. 'pre-lock' is already a member (shared default with the switch play).
     "preflight", "member-purge", "tag-purge", "final-read",
 })

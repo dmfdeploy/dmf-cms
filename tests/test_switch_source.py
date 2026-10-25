@@ -334,7 +334,7 @@ def test_actuator_launch_exception_sets_launch_failed(monkeypatch):
 
 
 def test_actuator_launch_exception_log_line_sanitizes_hostile_awx_body(monkeypatch, caplog):
-    # umbrella dmf-cms#108 fix-round 4: exc may be AWXAPIError, whose
+    # exc may be AWXAPIError, whose
     # str() embeds AWX's own raw response body.
     import logging
 

@@ -16,8 +16,7 @@ import { Input, Select, Textarea } from './FormField'
  * shares. Defaults to ``"warning"`` (byte-for-byte the original amber
  * styling) so every existing caller is unaffected.
  *
- * umbrella #432, FIX ROUND (operator report, live: "too much small text on
- * those provision / switch / teardown / delete action"). Every size in this
+ * umbrella #432: too much small text on the provision / switch / teardown / delete actions. Every size in this
  * component used to sit at 11-12px (title/description text-xs, the reason
  * field's own `field-xs` density, helper/hint text-[11px]) — dense enough
  * that the panel read as a wall of fine print rather than a confirm step.
@@ -32,7 +31,7 @@ import { Input, Select, Textarea } from './FormField'
  * affordance to an operator — scaled identically there, in its own file,
  * for the same reason.
  *
- * FIX ROUND (0.28.0 walk finding): `min-w-80` is a MINIMUM — every call
+ * `min-w-80` is a MINIMUM — every call
  * site (FinaliseStage.tsx's Teardown/Delete permanently armed panels,
  * ConfigureStage.tsx's Switch source, Catalog/index.tsx,
  * Activity/JobsLane.tsx) mounts this as a bare block inside a wide stage

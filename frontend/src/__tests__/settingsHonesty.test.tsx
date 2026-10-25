@@ -1,6 +1,6 @@
 /**
  * Settings.tsx — useCurrentUser retained-error + unauthenticated-vs-failed
- * honesty (fix-round 7, PR #81, umbrella #385 codex gate).
+ * honesty (umbrella #385).
  *
  *  - `!user` alone used to be the WHOLE gate for "Not authenticated" — a
  *    genuine 401 (real) and any OTHER failed read (a transient 500/network
@@ -54,7 +54,7 @@ describe('Settings: a genuine 401 reads as "Not authenticated"; any other failur
   })
 
   it('a 500 / transient read failure does NOT claim "Not authenticated" — it says the read failed', async () => {
-    // fix-round 8 (codex mutation-test find): a body that fails to parse as
+    // A body that fails to parse as
     // JSON at all (`new Response('boom', { status: 500 })`) throws a plain
     // SyntaxError out of apiCall — `error instanceof APIError` is ALREADY
     // false for that reason alone, so this assertion would pass even with

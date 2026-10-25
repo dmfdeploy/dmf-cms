@@ -39,7 +39,7 @@ CATALOG_TAG = "dmf-catalog"
 # before they can ever be composed into an in-cluster URL. Always applied with
 # .fullmatch (NOT .match): re '$' matches before a trailing '\n', so 'mxl-x\n'
 # would slip past .match and then raise http.client.InvalidURL when composed —
-# fullmatch anchors the whole string and rejects that (codex WP-D P2).
+# fullmatch anchors the whole string and rejects that.
 _DNS_LABEL = re.compile(r"[a-z0-9]([a-z0-9-]{0,61}[a-z0-9])?")
 
 # Default SSRF allowlists (overridden by MXLSettings). Kept here too so
@@ -98,7 +98,7 @@ def sidecar_base_url(
     # cluster_service (dmf-runbooks roles/mxl); requiring equality blocks
     # retargeting even to another workload inside the mxl namespace.
     #
-    # Threat model (codex WP-D P2): this defends against a writer that can only
+    # Threat model: this defends against a writer that can only
     # tamper with custom_fields. The ADR-0032 scoped catalog writer can also
     # change a Service's `name`, so it controls BOTH sides of this equality —
     # but that writer is a trusted in-cluster component (a compromise of it
@@ -313,7 +313,7 @@ def _observed_by_app(prometheus_url: str) -> dict[str, float]:
     try:
         rows = _prometheus.query(url=prometheus_url, expr='probe_success{job="netbox-probe"}')
     except Exception as exc:  # pragma: no cover - defensive
-        # umbrella dmf-cms#108 fix-round 4: exc may be PrometheusAPIError/
+        # exc may be PrometheusAPIError/
         # NetboxAPIError, whose str() embeds that service's own raw
         # response body — upstream response content. Every
         # sanitize_audit_field(str(exc)) call in this module follows the
@@ -427,8 +427,7 @@ def _cluster_service_from_target(instance_target: str) -> Optional[str]:
     return host.split(".", 1)[0]
 
 
-# umbrella #347 fix round FIX-A2b.5 (GATE-A2b.3R P1), hardened FIX-A2b.6
-# (GATE-A2b.3R2): the real dmf-promsd probe-target shape (ADR-0038 target
+# The real dmf-promsd probe-target shape (ADR-0038 target
 # construction) is <cluster_service>.<namespace>.svc.cluster.local:<port>
 # [/path] for an in-cluster Service — but dmf-promsd
 # (../dmf-promsd/src/dmf_promsd/sd.py _probe_target, read read-only for
@@ -482,7 +481,7 @@ _PURGE_IGNORABLE_TARGET_RE = re.compile(
 
 def _classify_purge_probe_target(instance_target: str) -> tuple[str, Optional[str]]:
     """Classify a Prometheus ``instance`` label for the purge overlay read
-    (umbrella #347 fix round FIX-A2b.6, GATE-A2b.3R2) — see the module-level
+    (umbrella #347) — see the module-level
     comment above ``_PURGE_PROBE_TARGET_RE`` for the full rationale.
 
     Returns ``("joinable", cluster_service)``, ``("ignorable", None)``, or
@@ -726,7 +725,7 @@ def list_workloads_grouped(
         "invalid_instances": invalid_instances,
     }
 
-# umbrella #347 fix round FIX-A2b.4 (P1-2, GATE-A2b.3): hard cap on pages a
+# Hard cap on pages a
 # completeness-verified purge fetch will follow before refusing — generous
 # enough for any real facility's residue, small enough that a runaway
 # `next` chain fails fast rather than hanging.
@@ -745,10 +744,9 @@ def _fetch_services_page_complete(
     netbox_url: str, netbox_token: str, ssl_verify: bool, path: str,
 ) -> list[dict[str, Any]]:
     """Follow NetBox's own ``next`` pagination to exhaustion and verify the
-    collected total against the reported ``count`` (umbrella #347 fix round
-    FIX-A2b.4, P1-2, GATE-A2b.3) — never a silent partial read.
+    collected total against the reported ``count`` (umbrella #347) — never a silent partial read.
     ``_fetch_services`` (the plain, single-page read every other consumer —
-    list/grouped/clear — keeps using unchanged, out of this round's scope)
+    list/grouped/clear — keeps using unchanged, out of scope here)
     silently truncates to page 1 of any >500-result set; the finalise-purge
     preflight's purgeability decision and the post-job watcher's SOLE
     absence claim (Console Constitution Art. 1) must never be built on that
@@ -821,7 +819,7 @@ def _fetch_services_complete(
     tenant_slugs: Optional[tuple[str, ...]],
 ) -> list[dict[str, Any]]:
     """Completeness-verified counterpart to ``_fetch_services`` (umbrella
-    #347 fix round FIX-A2b.4, P1-2) — used ONLY by the finalise-purge
+    #347) — used ONLY by the finalise-purge
     preflight (``resolve_purge_target``) and the post-job residue check
     (``purge_residue_present``). See ``_fetch_services_page_complete``'s
     own docstring for why this is a parallel function rather than a change

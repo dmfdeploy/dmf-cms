@@ -1,5 +1,5 @@
 /**
- * dmfdeploy/dmfdeploy#481, FIX ROUND (orchestrator/codex gate). The lifecycle
+ * dmfdeploy/dmfdeploy#481. The lifecycle
  * rail must not be a descendant of the top bar's `banner` landmark.
  *
  * WHY. `Topbar.tsx` renders `<header>` as a direct child of a plain `<div>`
@@ -19,7 +19,7 @@
  * all), and the per-page tests render via testUtils/HeaderSlotProbe, which
  * reproduces the header slot's CONTENT but not Topbar's real DOM structure.
  *
- * MUTATION-VERIFIED (fix round): reverting the header-slot row to a child of
+ * MUTATION-VERIFIED: reverting the header-slot row to a child of
  * `<header>` (its pre-fix position) makes the assertion below fail with
  * `expected null, received: <div data-testid="header-slot-row">...` — the
  * banner-containment fact itself, not an incidental symptom. See the PR

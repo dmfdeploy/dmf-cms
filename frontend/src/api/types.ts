@@ -431,7 +431,7 @@ export interface ChangesPullsResponse {
 // ------------------------------------------------------------------
 
 export interface AuditEventOutcome {
-  // 'unknown' (codex R496-C P1-2): the record's outcome field is blank on
+  // 'unknown': the record's outcome field is blank on
   // an otherwise complete, parseable line — a THIRD case, never folded
   // into 'failed'. "Not proven in flight" is not "the action failed";
   // rendering a lost outcome as a definite failure would be this lane
@@ -467,7 +467,7 @@ export interface AuditEvent {
   role: string
   reason: string
   at: string
-  // lkirc (dmfdeploy/dmf-cms#140): request_id is NOT a per-row identity
+  // request_id is NOT a per-row identity
   // — one request can legitimately produce multiple rows (an L3
   // preflight's capacity-skipped/capacity-override line shares its
   // request_id with that same request's later dispatched line). This is

@@ -116,7 +116,7 @@ export default function WorkloadHome() {
   const { data: catalogData } = settleQuery(useCatalog())
   const userQuery = useCurrentUser()
   const [openInstance, setOpenInstance] = useState<MediaWorkloadInstance | null>(null)
-  // umbrella #432 fix round (item 4): distinct from `openInstance` being
+  // umbrella #432: distinct from `openInstance` being
   // null (closed) — true once a settled, trustworthy read has confirmed the
   // instance the operator opened no longer exists. See the reconciliation
   // effect below for when this flips.
@@ -150,7 +150,7 @@ export default function WorkloadHome() {
   }
 
   const hasReadError = error != null
-  // umbrella #432 fix round (item 2): distinct from `hasReadError` alone —
+  // umbrella #432: distinct from `hasReadError` alone —
   // TanStack Query retains the prior successful `data` across a BACKGROUND
   // refetch failure (queryState.ts:3-11), so `hasReadError` alone can't tell
   // a first-ever load failure (nothing to show) apart from a later poll
@@ -167,7 +167,7 @@ export default function WorkloadHome() {
   const readUnusable = hasReadError || isUnconfigured
 
   const workloadForRail = data?.workloads.find((w) => w.slug === slug)
-  // Gate round 4: `firstLoadFailed` alone was not enough. It only covers
+  // `firstLoadFailed` alone is not enough. It only covers
   // `data == null` — a background failure that retains a payload sails
   // straight past it into `isUnconfigured` or the `!workload` branch below,
   // both of which then assert a present-tense STATUS or ABSENCE claim
@@ -233,7 +233,7 @@ export default function WorkloadHome() {
     [workloadForRail],
   )
 
-  // umbrella #432 fix round (item 4): openInstance is a ONE-TIME snapshot
+  // umbrella #432: openInstance is a ONE-TIME snapshot
   // (set by WorkloadTile's onOpen below) — nothing previously reconciled it
   // against a later read, so a modal opened on an instance that then left
   // the inventory stayed open indefinitely, polling an endpoint that could
@@ -281,7 +281,7 @@ export default function WorkloadHome() {
     )
   }
 
-  // umbrella #432 fix round (item 2) / gate round 4: a genuine FIRST load
+  // umbrella #432: a genuine FIRST load
   // failure — no retained payload exists to fall back on — still gets the
   // bare error page; there is nothing else honest to show. So does a
   // BACKGROUND failure whose retained payload would otherwise only resolve
@@ -338,7 +338,7 @@ export default function WorkloadHome() {
   // `workloadForRail`, the exact condition railInput's own ternary tests.
   const input = railInput as WorkloadLifecycleInput
   const homeState = classifyHomeState(input)
-  // Gate round 3 finding: this used to be named/commented as "current
+  // This used to be named/commented as "current
   // confirmed observation", which overclaimed. `homeState === 'live'` is a
   // VALUE, and that value persists through an ordinary in-flight background
   // poll of retained, error-free, non-degraded data — classifyHomeState
@@ -352,8 +352,7 @@ export default function WorkloadHome() {
   // only goes false on a GENUINE transition — an error, a degraded payload,
   // an unconfigured environment, or the backend's own position moving —
   // which is exactly when classifyHomeState returns 'unresolved' instead.
-  // Used below to decide the section heading's wording alone (item 5, gate
-  // round 3): `showLiveGrid` itself widens past 'live' on purpose (see its
+  // Used below to decide the section heading's wording alone: `showLiveGrid` itself widens past 'live' on purpose (see its
   // own comment) and is not driven by this.
   const homeStateIsLive = homeState === 'live'
 
@@ -361,17 +360,17 @@ export default function WorkloadHome() {
   // comment up there) — reused here rather than recomputed, so there is
   // exactly one "what does the retained inventory say" answer per render.
 
-  // umbrella #432 §A / fix round item 1. Content persistence, NOT a trust
+  // umbrella #432 §A. Content persistence, NOT a trust
   // relaxation.
   //
   // classifyHomeState is correct: on a read with no usable retained payload
   // it returns 'unresolved', and no affordance may be offered from that
   // state (Art. 1). What was originally wrong was using that verdict to
   // decide whether observed content RENDERS AT ALL — see workloadFlow.ts's
-  // `classifyHomeState` docstring for how #432's fix round stopped an
+  // `classifyHomeState` docstring for how #432 stopped an
   // in-flight background poll from being the trigger for that at all.
   //
-  // What THIS gate got wrong on the first attempt (fix round item 1): it
+  // What THIS gate originally got wrong: it
   // gated on `instances.length > 0`, which proves MEMBERSHIP, not running.
   // A 'setup' workload's bootstrapped-but-never-started instances satisfy
   // that condition too, so a genuine transition into 'unresolved' (an
@@ -389,7 +388,7 @@ export default function WorkloadHome() {
   // in-flight — see anyMemberObservedRunning above); every affordance below
   // stays gated on homeState === 'live' alone, so it correctly withdraws on
   // a GENUINE transition out of 'live' — an error, a degraded payload, the
-  // backend's own position moving. Gate round 3 correction: this is NOT the
+  // backend's own position moving. To be precise: this is NOT the
   // same thing as "claims disappear during an in-flight poll" — homeState
   // itself does not flip for an ordinary background poll of unchanged good
   // data (classifyHomeState reads membersDataRetained, not the
@@ -439,7 +438,7 @@ export default function WorkloadHome() {
       )}
 
       {/*
-        dmfdeploy#414 Addendum 2 / umbrella #432 fix round item 2: loading and
+        dmfdeploy#414 Addendum 2 / umbrella #432: loading and
         a genuine FIRST-load failure are their own branches above (this
         component's own firstLoadFailed/isUnconfigured/isLoading checks) —
         these two notices cover what classifyHomeState alone can tell apart
@@ -550,7 +549,7 @@ export default function WorkloadHome() {
         <section className="panel mt-6 border border-white/10" aria-label="Live view">
           <div className="border-b border-white/10 px-4 py-3">
             <h2 className="text-base font-semibold">
-              {/* umbrella #432 fix round item 5: "Live view" unqualified is
+              {/* umbrella #432: "Live view" unqualified is
                   false on an unresolved-but-retained read — the tiles below
                   are the last observation this page HAS, not a claim about
                   this instant. Gate round 4 correction: that observation is
@@ -597,7 +596,7 @@ export default function WorkloadHome() {
         the surface someone is looking at precisely when they care most.
         Dismissal stays the operator's decision, so this slot is fixed too.
 
-        umbrella #432 fix round item 4: `openInstance` is a one-time snapshot
+        umbrella #432: `openInstance` is a one-time snapshot
         that nothing used to reconcile — the effect declared near the top of
         this component (see its own comment) keeps it in step with the
         CURRENT inventory once a settled, trustworthy read confirms one, and

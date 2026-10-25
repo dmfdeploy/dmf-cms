@@ -43,7 +43,7 @@
  * slug, formerly WorkloadDetail's route, now WorkloadHome.tsx) and a new
  * Workload setup case (the guided flow's own `/setup` route, WorkloadSetup.tsx).
  *
- * GUARD LABEL (dmfdeploy#414 gate, round 1): every case in this file OTHER
+ * GUARD LABEL (dmfdeploy#414): every case in this file OTHER
  * than "Workload home"/"Workload setup" (added by #414, above) and the two
  * WorkloadSetup/WorkloadHome-specific rows inside sections 2 and 3 (renamed
  * from WorkloadDetail/Operate, content unchanged) is a GUARD pinning the

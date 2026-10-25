@@ -116,7 +116,7 @@ describe('Facilities list (S1, #285)', () => {
   // — that structural commitment is what's re-pinned here, on the element
   // that actually carries it, rather than weakened or dropped.
   //
-  // `card` does NOT live on the container (round-4, lkirc finding): it
+  // `card` does NOT live on the container: it
   // lives on the Link itself, exactly as pre-refactor — see Tile.tsx's own
   // comment for why (a container-side `card` silently shrinks the real
   // clickable target versus the pre-refactor single-`<Link>` shape, since
@@ -144,14 +144,14 @@ describe('Facilities list (S1, #285)', () => {
     expect(linkClass).toContain('card')
   })
 
-  // codex P2-1 (umbrella #347 WP-4, rounds 1-2): Tile.tsx's `children` prop
+  // (umbrella #347 WP-4) Tile.tsx's `children` prop
   // is typed React.ReactNode, so nothing at the TYPE level stops this call
   // site from putting an interactive element inside it (which would land
   // inside the primary Link — the exact defect Tile exists to prevent for
   // the `actions` slot). tile.test.tsx proves the slot is safe in isolation;
   // it can't prove THIS real call site keeps `children` clean, so that's
   // pinned here directly against the actual rendered page, via the shared,
-  // bounded check (testUtils/domAssertions.ts) — round 1's inline check only
+  // bounded check (testUtils/domAssertions.ts) — the original inline check only
   // rejected button/a/[role="button"], narrower than Tile.tsx's own
   // contract; this uses the same broader definition mediaWorkloadsGrid's
   // call-site test now shares.
@@ -188,7 +188,7 @@ describe('Facilities list (S1, #285)', () => {
     expect(screen.queryByRole('link')).toBeNull()
   })
 
-  // fix-round 4 (PR #81, codex sibling sweep): this page ignored
+  // This page ignored
   // `summary.isError` entirely — a settled failed read with NO retained
   // data ever fell through FacilityEntry's whole reason ladder to `!site`,
   // which reads "NetBox has no site recorded yet" — a real environment
@@ -314,7 +314,7 @@ describe('classifyFacilityDetail', () => {
     expect(classifyFacilityDetail(q).phase).toBe('loaded')
   })
 
-  // fix-round 5 (PR #81, codex sibling sweep): the 'unconfigured' branch
+  // The 'unconfigured' branch
   // used to hardcode `stale: false`, never consulting `q.isError` — a
   // settled failed refetch after a retained "unconfigured" read silently
   // presented that stale config posture as current.
@@ -389,7 +389,7 @@ describe('Facility Detail page states', () => {
     expect(screen.queryByText('Capacity')).toBeNull()
   })
 
-  // fix-round 5 (PR #81, codex sibling sweep): the 'unconfigured' branch
+  // The 'unconfigured' branch
   // hardcoded `stale: false` — a settled failed refetch after a retained
   // "unconfigured" read rendered the same message with no staleness
   // notice, presenting it as a fresh, current read. Hold-then-reject.
@@ -498,7 +498,7 @@ describe('Facility Detail page states', () => {
     expect(screen.getByText('512 MiB')).toBeTruthy()
   })
 
-  // fix-round 4 (PR #81, codex sibling sweep): classifyFacilityDetail only
+  // classifyFacilityDetail only
   // treated isError as authoritative when NO data was ever retained
   // (`isError && !q.data`) — a settled failed refetch with a RETAINED
   // successful payload still classified as 'loaded' with no staleness
@@ -688,8 +688,8 @@ describe('Facility Detail page states', () => {
 // stays outside the grid, and every pre-existing assertion in this file
 // (reason banners, empty states, stale handling, above) keeps passing
 // UNMODIFIED — that's what proves the table markup, columns, reason-banner
-// branching, and empty-state text in all four panels are unchanged (codex
-// round-2 P3-2 — an earlier version of this comment said "byte-for-byte
+// branching, and empty-state text in all four panels are unchanged
+// (an earlier version of this comment said "byte-for-byte
 // unchanged" without qualification, which overstated it: PlatformServices/
 // CapacityPanel each carry exactly their directed subtitle edit, see
 // Detail.tsx's own comment above the grid wrapper for the precise split).
@@ -722,7 +722,7 @@ describe('Facility Detail — panel regroup (WP-4, umbrella #347)', () => {
     expect(screen.getByText(/Requests committed is not usage/)).toBeTruthy()
   })
 
-  // lkirc round-5 finding: each panel's own outer div kept `mb-6` from when
+  // Each panel's own outer div kept `mb-6` from when
   // they were a vertical stack, which — inside a `gap-6` grid — ADDS to the
   // gap rather than replacing it (a grid item's margin is independent of
   // grid `gap`), doubling the intended 1.5rem spacing between rows to 3rem.
@@ -775,7 +775,7 @@ describe('Facility Detail — media workloads count panel honesty (umbrella #385
       },
     })
     expect(await screen.findByText('Media workloads')).toBeTruthy()
-    // fix-round P2-4 (PR #81): this used to pipe MediaWorkloads' own
+    // This used to pipe MediaWorkloads' own
     // "netbox-unreachable" token through Facility's OWN reason vocabulary
     // (facilityReasonCopy), which does not define it (its nearest entry is
     // the differently-spelled "netbox-unreadable") and fell through to a
@@ -786,7 +786,7 @@ describe('Facility Detail — media workloads count panel honesty (umbrella #385
     expect(screen.queryByText(/0 media workload/)).toBeNull()
   })
 
-  // fix-round P1-1 (PR #81): same shape as MediaWorkloads/index.tsx's own
+  // Same shape as MediaWorkloads/index.tsx's own
   // pin — `workloads: []` with `invalid_instances` non-empty PROVES an
   // instance exists (excluded, not absent). "0 media workloads provisioned"
   // is exactly the false-absence claim hard gate 1 forbids.
@@ -815,9 +815,9 @@ describe('Facility Detail — media workloads count panel honesty (umbrella #385
     expect(screen.queryByText(/isn.t responding right now/)).toBeNull()
   })
 
-  // fix-round P1-1, SECOND PASS (PR #81): the first pass only withheld the
+  // An earlier version only withheld the
   // number when `workloads` was empty — this is the missing counter-example
-  // the reviewer named. One VALID group ("alpha") plus an invalid instance
+  // the case an earlier version missed. One VALID group ("alpha") plus an invalid instance
   // that names workload:beta AND workload:gamma: those two tags could each
   // name an entire group with NO other member at all, so the true total is
   // unknown — it could be 1, 2, or 3. The endpoint cannot tell, so this
@@ -858,7 +858,7 @@ describe('Facility Detail — media workloads count panel honesty (umbrella #385
     expect(screen.getByText(/this count may be incomplete/)).toBeTruthy()
   })
 
-  // fix-round P2-3 (PR #81): a settled failed refetch must win over stale
+  // A settled failed refetch must win over stale
   // retained data — hold-then-reject, not first-load (see the matching pin
   // in mediaWorkloadsGrid.test.tsx for the full reasoning). Fake timers so
   // the 15s refetchInterval (api/hooks.ts's useMediaWorkloadsGrouped) can be
@@ -921,7 +921,7 @@ describe('Facility Detail — media workloads count panel honesty (umbrella #385
     ).toBeNull()
   })
 
-  // fix-round 5 (PR #81, codex sibling sweep): `!data.configured` was
+  // `!data.configured` was
   // checked BEFORE `isError`, contradicting the panel's own doc comment
   // ("isError wins regardless of retained data") — a settled failed
   // refetch that retained a `configured: false` payload silently kept

@@ -146,7 +146,7 @@ afterEach(() => {
   vi.unstubAllGlobals()
 })
 
-// GUARD LABEL (dmfdeploy#414 gate, round 1): unlike the rest of this file,
+// GUARD LABEL (dmfdeploy#414): unlike the rest of this file,
 // /new's own rail-absence is a GUARD — dmfdeploy#414 did not touch the
 // create route at all. Baseline: the pre-#414 commit on `main`, where this
 // same assertion passed identically (the route contract change is entirely

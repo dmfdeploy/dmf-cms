@@ -16,7 +16,7 @@
  *    itself comes from the REFRESHED grouped read no longer listing the
  *    workload — never asserted independently of that read.
  *
- * GUARD LABEL (dmfdeploy#414 gate, round 1): every test in this file is a
+ * GUARD LABEL (dmfdeploy#414): every test in this file is a
  * GUARD pinning the pre-#414 umbrella #347 WO-A2b-2 delete-permanently
  * contract described above, unchanged by this arc — only the mount route
  * moved, from the bare slug to /setup. Baseline: the pre-#414 commit on
@@ -164,7 +164,7 @@ describe('Finalise & Review: delete permanently drives to a real completion', ()
 
     await waitFor(() => expect(purgeCalls).toBe(1))
 
-    // umbrella #378 fix round 2: actor/role for the audit record now come
+    // umbrella #378: actor/role for the audit record now come
     // from a prop threaded down from WorkloadWizard's own userQuery, not
     // FinaliseStage's own (now-removed) useCurrentUser() subscription —
     // this is the one thing that move could silently get wrong (an
@@ -360,7 +360,7 @@ describe('Finalise & Review: delete permanently drives to a real completion', ()
   })
 
   it('is withdrawn during a genuinely pending background refetch (isFetching), even though the retained payload is still eligible', async () => {
-    // umbrella #347 fix round FIX-A2b.4 (GATE-A2b.3, P2-3): the prior
+    // umbrella #347: the prior
     // version of this test only ever supplied a COMPLETED response and
     // never actually constructed a pending fetch — react-query's own
     // isFetching never went true, so it never exercised
@@ -415,7 +415,7 @@ describe('Finalise & Review: delete permanently drives to a real completion', ()
     refetchControl.resolve?.()
   })
 
-  // fix-round 6 (PR #81, umbrella #385 codex sweep): FinaliseStage's own
+  // (umbrella #385) FinaliseStage's own
   // direct useOperationStatus(purgeOpId) poll — the third of the file's
   // trackers, alongside JobProgress.tsx's shared OperationStatusLine/
   // JobStatusLine — used to render only `— {purgeOp.state}` off `data`
@@ -493,7 +493,7 @@ describe('Finalise & Review: delete permanently drives to a real completion', ()
 })
 
 // ---------------------------------------------------------------------------
-// umbrella #432 §D2 FIX ROUND (operator report, live in Chrome on 0.27.0):
+// umbrella #432 §D2:
 // 🗑 is an emoji-presentation glyph — it renders in the emoji font's own
 // colours and ignores `text-white`, so it read muddy on the red-600 fill
 // (unlike ⏏/▶ elsewhere, which are text-presentation and DO inherit

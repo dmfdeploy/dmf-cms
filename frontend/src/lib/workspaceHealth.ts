@@ -28,9 +28,9 @@ export interface HealthQueryLike {
 }
 
 export function classifyWorkspaceHealth(q: HealthQueryLike): WorkspaceHealthState {
-  // fix-round 6 (PR #81, umbrella #385): retrofitted onto settleQuery — this
+  // (umbrella #385): retrofitted onto settleQuery — this
   // classifier's own `stale` was already unconditional (`q.isError`, no
-  // `!q.data` gate); the bug rounds 4-5 found was in CONSUMERS not checking
+  // `!q.data` gate); the bug was in CONSUMERS not checking
   // it for the 'not-configured' phase. Expressed through the shared
   // primitive now so a new classifier gets the same unconditional shape by
   // copying this one, rather than re-deriving it correctly by luck.

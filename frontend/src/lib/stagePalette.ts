@@ -30,11 +30,11 @@ export const CONTROL_FILL = 'bg-stage-control text-stage-control-fg'
 
 /**
  * The lifecycle RAIL's own neutral fill + ink (dmfdeploy#481/#482/#483,
- * redesign fix round). ONE shared token pair for all five keys — hue does
+ * redesign). ONE shared token pair for all five keys — hue does
  * not live anywhere on the rail any more.
  *
  * FULL ACCOUNT, so a future reader does not have to reconstruct it from
- * git blame: hue started as five per-stage FILL colours; a fix round found
+ * git blame: hue started as five per-stage FILL colours; a later revision found
  * those could not simultaneously clear 4.5:1 against one ink AND 3:1
  * against the achromatic selected fill for the light-zone stages (a
  * structural conflict, not a tuning gap). The next round moved hue to a
@@ -51,8 +51,7 @@ export const CONTROL_FILL = 'bg-stage-control text-stage-control-fg'
  * measured figures from either abandoned design are reproduced here or
  * anywhere else; the surface they described no longer exists.
  *
- * VISUAL PARITY FIX ROUND (dmfdeploy/dmfdeploy#512, operator finding
- * against a live provision run). Two independent findings, both resolved
+ * VISUAL PARITY (dmfdeploy/dmfdeploy#512). Two independent findings, both resolved
  * here:
  *
  * (1) THE UNSELECTED FILL READ TOO BRIGHT, AND DARKENING IT COLLIDES WITH
@@ -194,8 +193,8 @@ export const CONTROL_FILL = 'bg-stage-control text-stage-control-fg'
  * (#2c2c2e -> #58879e), at 3.57:1 — the same figure already cited above
  * for the face's own selected-state change, since hover and selected
  * share the identical edge/face colour by construction — on top of the
- * ink delta, so hover ends up STRONGER than it was before this round
- * touched anything, not weaker. CODEX GATE P3 (dmfdeploy/dmfdeploy#512):
+ * ink delta, so hover ends up STRONGER than it was before this change
+ * touched anything, not weaker. (dmfdeploy/dmfdeploy#512)
  * an earlier version of this paragraph cited the FIRST PASS edge design's
  * own figures here (#616161->#e8e8ea, 5.06:1) after the edge ruling had
  * already moved on to the FINAL PASS tokens above — corrected to the
@@ -223,8 +222,7 @@ export const CONTROL_FILL = 'bg-stage-control text-stage-control-fg'
  *   - HOVER: `RAIL_SELECTED_FACE` — THE SELECTED FILL COLOUR, not a bright
  *     accent and not `--color-text` (the first pass's choice, superseded).
  *     Operator-explicit, and deliberate: it makes hover a PREVIEW of what
- *     selecting the key will look like. (CODEX GATE P3,
- *     dmfdeploy/dmfdeploy#512: an earlier version of this bullet also
+ *     selecting the key will look like. (dmfdeploy/dmfdeploy#512: an earlier version of this bullet also
  *     justified the choice as "reserves accent hue for focus alone" — that
  *     was never accurate, not even under the pre-P1-fix design; see the
  *     CORRECTION below, this file's own paragraph a few lines down. What
@@ -274,7 +272,7 @@ export const CONTROL_FILL = 'bg-stage-control text-stage-control-fg'
  * `:focus-visible`) and a real pointer hover, separately and together
  * (hover+focus-visible simultaneously is the actual case when a keyboard
  * user tabs onto a key their pointer already rests on). CORRECTION WHILE
- * VERIFYING THIS (pre-CODEX-GATE state, superseded below): the rail's own
+ * VERIFYING THIS (superseded below): the rail's own
  * focus ring was never accent-coloured in the first place — unlike
  * Sidebar.tsx's tiles (`focus-visible:outline-accent`), LifecycleStrip.tsx's
  * ring at this point used `outline-current` (RAIL_INK/RAIL_SELECTED_INK —
@@ -286,15 +284,14 @@ export const CONTROL_FILL = 'bg-stage-control text-stage-control-fg'
  * `key-edge`, sits INSIDE the button following the clipped silhouette;
  * focus sits OUTSIDE it, in the inter-key gap) plus hue.
  *
- * CODEX GATE P1 (dmfdeploy/dmfdeploy#512) FOUND A REAL BUG IN THAT DESIGN,
+ * A REAL BUG IN THAT DESIGN (dmfdeploy/dmfdeploy#512),
  * SUPERSEDING THE PARAGRAPH ABOVE: `outline` paints on top of an element's
  * own `box-shadow`, so on a SELECTED key (`RAIL_SELECTED_INK` = `text-bg`,
  * i.e. `currentColor` = `--color-bg`) the ink-dependent `outline-current`
  * rendered in the exact same colour as the box-shadow sandwich's own first
  * layer and fully occluded both shadows underneath it — measured at
  * ~1.04:1 against `--color-sidebar` on a real focused+selected render, far
- * under the 3:1 non-text floor, reproducing codex's prediction almost
- * exactly. Fixed by dropping the ink dependency entirely: the ring is now
+ * under the 3:1 non-text floor. Fixed by dropping the ink dependency entirely: the ring is now
  * a fixed `focus-visible:outline-text` (never `currentColor`, never keyed
  * to selection state), and the now-fully-redundant box-shadow sandwich is
  * removed rather than kept as dead code. Verified 15.53:1 on a real render

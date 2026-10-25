@@ -114,7 +114,7 @@ export default function InstanceLiveModal({
   displayName: string
   onClose: () => void
   /**
-   * umbrella #432 fix round (item 4): true once a settled, trustworthy
+   * umbrella #432: true once a settled, trustworthy
    * grouped read has confirmed this instance no longer exists — WorkloadHome
    * reconciles `openInstance` by id against every such read and sets this
    * rather than closing the modal out from under the operator unannounced.
@@ -137,7 +137,7 @@ export default function InstanceLiveModal({
     return () => document.removeEventListener('keydown', onKey)
   }, [onClose])
 
-  // Focus management for aria-modal (codex P3): pull focus into the dialog on
+  // Focus management for aria-modal: pull focus into the dialog on
   // open, keep Tab within it, and restore focus to the opener on close so
   // keyboard users are never left interacting with inert background controls.
   useEffect(() => {

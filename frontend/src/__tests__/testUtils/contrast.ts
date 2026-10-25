@@ -9,7 +9,7 @@
  */
 
 /**
- * BUG FOUND AND FIXED (dmfdeploy/dmfdeploy#512 fix round, first pass): this
+ * (dmfdeploy/dmfdeploy#512) This
  * used to regex the raw CSS text directly, comments included. index.css's
  * own doc comments routinely restate a token's value in prose for
  * readability (e.g. "--color-rail-fill: #2c2c2e, Y=0.0253 — the rail key's
@@ -25,9 +25,8 @@
  * first fix stripped `/* ... *\/` comments with a blanket regex before
  * matching.
  *
- * CODEX GATE, P2 (dmfdeploy/dmfdeploy#512) — three more ways to win a
- * false match, all REPRODUCED against the first-pass fix above and fixed
- * here:
+ * (dmfdeploy/dmfdeploy#512) Three more ways to win a
+ * false match, all reproduced against the fix above and fixed here:
  *
  *   (a) A `content:` string VALUE containing a token mention (e.g.
  *       `content: "--color-rail-fill: #111111"` in some unrelated

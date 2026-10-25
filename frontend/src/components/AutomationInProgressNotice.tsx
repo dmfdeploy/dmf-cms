@@ -192,8 +192,7 @@ export default function AutomationInProgressNotice({
 
   return (
     <div>
-      {/* FIX ROUND (dmfdeploy/dmfdeploy#514, operator: "disc-3 not centered
-          vertically to the text it belongs to"): `items-baseline` ->
+      {/* The disc was not centered vertically to the text it belongs to (dmfdeploy/dmfdeploy#514): `items-baseline` ->
           `items-center`. Tailwind's preflight sets `svg { display: block }`,
           so the disc icon's own box has no text baseline to align to — it
           was aligning to its BOTTOM edge instead, which is what read as

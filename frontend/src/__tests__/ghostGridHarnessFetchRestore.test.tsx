@@ -4,7 +4,7 @@
  *
  * React.StrictMode (enabled by main.tsx) double-invokes a `useState` lazy
  * initializer on mount, against the SAME hook state, specifically to
- * surface non-idempotent side effects. The harness's original fix-round
+ * surface non-idempotent side effects. The harness's original version
  * captured "the original fetch" into a `useRef` written by that
  * initializer — safe-looking, but the second invocation read
  * `window.fetch` AFTER the first invocation had already replaced it with

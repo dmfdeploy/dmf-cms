@@ -43,7 +43,7 @@ from typing import Optional
 
 from .catalog import CatalogEntry
 from .operations import Operation
-# codex round-4: the single shared "is this string a usable target
+# The single shared "is this string a usable target
 # identity" parser lives in promsd.py (no reverse dependency — promsd.py
 # never imports drain.py, so this is safe at module level) and is reused
 # here rather than kept as a second copy; see promsd._strip_to_host's own
@@ -56,7 +56,7 @@ logger = logging.getLogger(__name__)
 # main._KV_DETAIL_TOKENS.
 DRAIN_VERIFIED_DETAIL = "monitoring-drain-verified"
 DRAIN_PENDING_DETAIL = "monitoring-drain-pending"
-# codex round-1 F1: an operation this drain verification resolves as a
+# An operation this drain verification resolves as a
 # SIDE EFFECT of the primary rollback op's own upgrade (main.py
 # _mark_drain_verified) — the facility-coherence fix.
 ROLLBACK_VERIFIED_DETAIL = "rollback-verified"
@@ -64,7 +64,7 @@ SUPERSEDED_BY_VERIFIED_ROLLBACK_DETAIL = "superseded-by-verified-rollback"
 
 MONITORING_PROBE_TAG = "monitoring:probe"
 
-# RFC1123 DNS label (mirrors media_workloads._DNS_LABEL) — codex round-1 F4:
+# RFC1123 DNS label (mirrors media_workloads._DNS_LABEL):
 # an authored override (or a derived name/namespace) that isn't a valid DNS
 # label can never match what PromSD/the cluster actually compose as a host,
 # so it must fail closed rather than silently produce an uncheckable target.
@@ -181,7 +181,7 @@ def resolve_drain_targets(
             entry, netbox_url=netbox_url, netbox_token=netbox_token, ssl_verify=ssl_verify
         )
     except Exception:
-        # umbrella dmf-cms#108 fix-round 3: checked, not assumed —
+        # Checked, not assumed —
         # entry.key is NOT externally influenced. CatalogEntry is
         # constructed in exactly one place in this codebase
         # (catalog.load_catalog_entries, parsing the static YAML files
@@ -319,7 +319,7 @@ def _resolve_drain_targets(
             # target — fail closed rather than compose an unmatchable host.
             return None
 
-        # H_run: the run/catalog projection identity — codex round-1 F4.
+        # H_run: the run/catalog projection identity.
         # This is what the LAUNCHER would have composed as this service's
         # monitoring target had it stayed monitored, straight from the
         # catalog (+ optional override), and is what THIS run's drain must
@@ -329,7 +329,7 @@ def _resolve_drain_targets(
         # present+monitored record legitimately retains H_run.
         h_run = DrainTarget(cluster_service=spec_cluster_service, cluster_namespace=spec_cluster_namespace)
 
-        # F2 (codex round-2): request limit=2 so a second matching record
+        # Request limit=2 so a second matching record
         # can never hide beyond this page while still keeping the request
         # cheap/bounded.
         path = f"/api/ipam/services/?name={urllib.parse.quote(service_name)}&limit=2"
@@ -484,7 +484,7 @@ def _strict_prometheus_active_targets(prometheus_url: str) -> list[dict]:
             raise RuntimeError(f"malformed Prometheus activeTargets row.discoveredLabels: {discovered!r}")
         instance = (labels or {}).get("instance")
         param_target = (discovered or {}).get("__param_target")
-        # codex round-4 F1: "usable" means _strip_to_host actually parses
+        # "usable" means _strip_to_host actually parses
         # it into a non-empty host — the EXACT parser the matching loop
         # below applies — not merely "is this a non-empty string". ":" is
         # a non-empty string that _strip_to_host(":") reduces to None; a

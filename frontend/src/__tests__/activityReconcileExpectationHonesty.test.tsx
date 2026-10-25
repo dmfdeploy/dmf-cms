@@ -13,7 +13,7 @@
  * ClearForDeployment.tsx's own copy pin nor the backend's own string pin
  * would have caught a defect in the wiring BETWEEN them; this is that seam.
  *
- * fix-round 1 (dmfdeploy/dmfdeploy#411 gate): the first version of this test
+ * (dmfdeploy/dmfdeploy#411) The first version of this test
  * only unmounted-and-remounted a React tree, never touching localStorage or
  * the in-memory zustand singleton, while its own prose claimed "a fresh page
  * load" — it wasn't one. This version forces the store's REAL
@@ -27,7 +27,7 @@
  * asserts on actor/role, not just reconcile_expectation, since the record's
  * whole point is C5 accountability, not only honest copy.
  *
- * GUARD LABEL (dmfdeploy#414 gate, round 1): this test is a GUARD pinning
+ * GUARD LABEL (dmfdeploy#414): this test is a GUARD pinning
  * the pre-#414 #411 fix described above, unchanged by this arc — only the
  * mount route moved, from the bare slug to /setup. Baseline: the pre-#414
  * commit on `main`, where this same assertion passed identically against

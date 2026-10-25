@@ -189,7 +189,7 @@ describe('Workspace health core states (plan §6)', () => {
     expect(await screen.findByText(/Monitoring is not configured in this environment/)).toBeTruthy()
   })
 
-  // fix-round 5 (PR #81, codex sibling sweep): classifyWorkspaceHealth's
+  // classifyWorkspaceHealth's
   // `stale` field was already correctly computed as `q.isError`
   // unconditionally (see workspaceHealth.test.ts's own pin for the 'live'
   // phase) — but this early return for 'not-configured' never CONSULTED

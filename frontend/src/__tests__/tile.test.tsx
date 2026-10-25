@@ -8,7 +8,7 @@
  * structurally, with a real interactive fixture in the slot — not just by
  * reading the source.
  *
- * WHAT THIS FILE CANNOT PROVE (lkirc round-4 finding): jsdom has no real
+ * WHAT THIS FILE CANNOT PROVE: jsdom has no real
  * layout engine, so no test here can observe rendered box geometry — the
  * click-surface parity claim in Tile.tsx's own comments (the Link's
  * clickable box exactly matches the container's, no residual gap) was
@@ -95,7 +95,7 @@ describe('Tile', () => {
     expect(button.contains(link)).toBe(false)
   })
 
-  // lkirc round-4 finding: an earlier version of Tile.tsx put `card`
+  // An earlier version of Tile.tsx put `card`
   // (index.css — background/border/rounded corners/`p-4` padding) on the
   // OUTER container, reasoning it was "what a reader perceives as the
   // tile". That silently shrank the real clickable/tappable target, because

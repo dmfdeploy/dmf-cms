@@ -11,7 +11,7 @@ import { workloadHomePath } from '../../lib/routes'
  * WorkloadMaterializing.tsx (rendered while a just-fired deploy is still
  * being polled, before the workload exists in the inventory at all).
  *
- * FIX ROUND (dmfdeploy#414 gate, round 1 — P1): this component used to live
+ * (dmfdeploy#414) This component used to live
  * only in WorkloadSetup.tsx, and WorkloadMaterializing.tsx's own exit was a
  * second, always-active implementation — reasoned as safe because leaving
  * does not cancel the launch job server-side. That reasoning missed the

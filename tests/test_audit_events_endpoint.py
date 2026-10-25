@@ -35,7 +35,7 @@ def _client(groups, *, loki_configured=True) -> TestClient:
         dev_groups=groups,
         loki=LokiSettings(url="http://loki.test") if loki_configured else LokiSettings(),
     )
-    # gate round 1 (codex P2): /api/audit/events now reads
+    # /api/audit/events reads
     # app.state.operations.ttl_seconds, which the app's lifespan (not
     # __init__) populates — TestClient only runs lifespan startup as a
     # context manager. Every caller here uses the returned client for the
@@ -152,7 +152,7 @@ UNPARSEABLE = "2026-09-03 12:00:00,000 INFO dmf_cms.audit: awx write: action=dep
 # grammar (operator decision) — so a truncated/malformed line, WITH or
 # WITHOUT a truncated fmt=2 marker, is unparseable for the same reason
 # UNPARSEABLE above already is, and needs no dedicated fixture. What DOES
-# still need coverage on the new format: codex R496-C P1-2's property
+# still need coverage on the new format: the property
 # that a genuinely blank `outcome` value (the row otherwise complete and
 # well-formed) renders as an honest "unknown", never a forged verdict —
 # reachable on this grammar as an outcome that's simply empty, not as a
@@ -197,7 +197,7 @@ DEPLOY_TERMINAL_WATCHER_GAVE_UP_JOIN = _line(
     outcome="run_status_unknown", linked_request_id="rid-deploy-term-2",
 )
 
-# gate round 1 (codex P1): a real, authenticated user whose IdP subject
+# A real, authenticated user whose IdP subject
 # HAPPENS to collide with the reserved system:job-watch actor literal,
 # doing an ordinary deploy of their own -- role=operator, never "system"
 # (a real user's role can never be that value; see classify_record's own
@@ -209,7 +209,7 @@ COLLIDING_ACTOR_REAL_USER_DEPLOY = _line(
     workload="wl-g",
 )
 
-# gate round 4 (lkirc B1): a single deploy REQUEST that shares one
+# A single deploy REQUEST that shares one
 # request_id across TWO rows — an L3 preflight acceptance (capacity-
 # skipped, main.py's _l3_preflight) and the later real dispatch — exactly
 # main.py:485-490's own shape, plus a terminal join for that same
@@ -230,7 +230,7 @@ DEPLOY_PREFLIGHT_DISPATCH_TERMINAL_JOIN = _line(
     outcome="run_complete", linked_request_id="rid-preflight-1",
 )
 
-# gate round 5 (lkirc): a reattach row is written by a FRESH, different
+# A reattach row is written by a FRESH, different
 # request_id (a new HTTP request) but concerns the SAME run as the
 # original dispatch — main.py's deploy/teardown reattach call sites now
 # carry that run's own stable identity (the original op's request_id) via
@@ -269,7 +269,7 @@ TEARDOWN_RUN_2_TERMINAL_JOIN = _line(
     outcome="run_failed", linked_request_id="rid-run-2",
 )
 
-# gate round 6 (lkirc): the SAME defect as round 5's reattach fixtures,
+# The SAME defect as the reattach fixtures above,
 # at the SYNC already-active path — main.py:5143/:5392 (deploy/teardown)
 # now carry the run's own stable identity too. Two already-active rows on
 # the SAME run (rid-run-3), proving repeated sync reattaches all resolve.
@@ -354,7 +354,7 @@ def _loki(monkeypatch):
     monkeypatch.setattr(audit_events.loki, "raw_runtime_config", _fake_raw_runtime_config)
 
 
-# gate round 1 (codex P2): list_audit_events now ages a stale, never-joined
+# list_audit_events ages a stale, never-joined
 # in_flight row using REAL wall-clock time by default (`now_ns=None` ->
 # `time.time_ns()`) against `app.state.operations.ttl_seconds` (3600s).
 # FIXTURE_LINES' own `ts_ns_str` values are `str(i)` -- i.e. a handful of
@@ -540,7 +540,7 @@ def test_a_dispatch_row_with_no_terminal_join_at_all_stays_in_flight_never_a_gue
 
 
 def test_gate_round_1_codex_p1_a_real_user_colliding_with_the_reserved_actor_still_gets_their_row():
-    # codex P1: a genuine user's deploy row, whose actor happens to equal
+    # A genuine user's deploy row, whose actor happens to equal
     # the reserved system:job-watch literal (role=operator -- a real
     # user's role can never be "system"), must survive end to end,
     # classified as an ordinary deploy -- never dropped, never folded into
@@ -554,7 +554,7 @@ def test_gate_round_1_codex_p1_a_real_user_colliding_with_the_reserved_actor_sti
 
 
 def test_gate_round_2_codex_f5_producer_to_reader_invariant_end_to_end(monkeypatch, caplog):
-    # gate round 2 (codex F5): every OTHER test in this file hand-builds
+    # Every OTHER test in this file hand-builds
     # its fixture lines, role= values included -- that proves the READER's
     # logic but nothing about whether the REAL producers actually emit
     # what the P1 invariant assumes. This one drives the real
@@ -616,10 +616,10 @@ def test_gate_round_2_codex_f5_producer_to_reader_invariant_end_to_end(monkeypat
 
 
 def test_gate_round_2_codex_f2_a_missing_operations_store_never_masquerades_as_a_loki_outage(monkeypatch, caplog):
-    # codex F2: app.state.operations only exists once the app's ASGI
+    # app.state.operations only exists once the app's ASGI
     # lifespan has actually run -- a TestClient invoked WITHOUT that
     # startup (deliberately NOT using __enter__ here, unlike this file's
-    # own _client() helper as of gate round 1) must not fall into the
+    # own _client() helper) must not fall into the
     # endpoint's generic except-Exception handler and mislabel a real,
     # working Loki read as "Loki itself is unreachable".
     monkeypatch.setattr(audit_events.time, "time_ns", lambda: 10_000 * 1_000_000_000)  # would age, if aging ran
@@ -639,8 +639,8 @@ def test_gate_round_2_codex_f2_a_missing_operations_store_never_masquerades_as_a
     # Aging fails OPEN when the bound can't be resolved -- the row stays
     # in_flight even though "now" above was pushed well past the bound
     # that WOULD have aged it had app.state.operations been available
-    # (see test_gate_round_1_codex_p2_a_stale_never_joined_row_ages_into_
-    # the_honest_unknown, same now_ns, same row, opposite outcome).
+    # (see the test that ages a stale never-joined row into the honest
+    # unknown: same now_ns, same row, opposite outcome).
     assert row["outcome"]["state"] == "in_flight"
 
     # Never silent: a distinct, loudly-logged condition, not folded into
@@ -681,7 +681,7 @@ def test_a_present_store_whose_ttl_access_raises_never_masquerades_as_a_loki_out
 
 
 def test_gate_round_1_codex_p2_a_stale_never_joined_row_ages_into_the_honest_unknown(monkeypatch):
-    # codex P2: a dispatch row that NEVER receives a terminal join (a
+    # A dispatch row that NEVER receives a terminal join (a
     # console restart mid-watch, a crashed/cancelled watcher -- from this
     # read path they are indistinguishable, see _age_stale_in_flight's own
     # docstring) must stop claiming to still be in flight once it has
@@ -721,7 +721,7 @@ def test_gate_round_1_codex_p2_a_join_resolved_row_is_never_aged_regardless_of_n
 
 
 def test_gate_round_4_lkirc_b1_a_preflight_row_keeps_its_own_outcome_the_dispatch_row_alone_carries_the_verdict():
-    # lkirc B1: DEPLOY_PREFLIGHT_SKIPPED_SHARING_REQUEST_ID and
+    # DEPLOY_PREFLIGHT_SKIPPED_SHARING_REQUEST_ID and
     # DEPLOY_DISPATCH_SHARING_REQUEST_ID share ONE request_id
     # (rid-preflight-1) — exactly main.py's own _l3_preflight shape
     # (capacity-skipped, then the real dispatch, same request). A
@@ -753,7 +753,7 @@ def test_gate_round_4_lkirc_b1_a_preflight_row_keeps_its_own_outcome_the_dispatc
 
 
 def test_gate_round_5_lkirc_a_reattached_deploy_receives_the_same_terminal_outcome_as_the_original():
-    # lkirc: request_id identifies the HTTP REQUEST that wrote a row, not
+    # request_id identifies the HTTP REQUEST that wrote a row, not
     # the RUN it concerns. DEPLOY_REATTACH_1/_2 are written by fresh,
     # DIFFERENT request_ids (their own) but concern the SAME run as
     # DEPLOY_ORIGINAL_DISPATCH_FOR_REATTACH (rid-run-1) — main.py's
@@ -772,7 +772,7 @@ def test_gate_round_5_lkirc_a_reattached_deploy_receives_the_same_terminal_outco
 
 
 def test_gate_round_5_lkirc_a_reattached_teardown_receives_the_same_terminal_outcome_as_the_original():
-    # Same fix, the other action class lkirc explicitly named (both call
+    # Same fix, the other action class (both call
     # sites, not just one).
     client = _client(OPERATOR_ONLY)
     payload = client.get("/api/audit/events").json()
@@ -795,7 +795,7 @@ def test_gate_round_5_lkirc_multiple_reattaches_all_resolve_no_row_double_counte
 
 
 def test_gate_round_6_lkirc_a_sync_already_active_deploy_receives_the_same_terminal_outcome_as_the_original():
-    # lkirc, round 6: the SAME defect as round 5, at the sync
+    # The SAME defect as the async reattach, at the sync
     # already-active path instead of the async reattach path — main.py's
     # _track_sync_reattach returns the SAME existing op, but the audit row
     # used to carry no link to it at all.
@@ -822,7 +822,7 @@ def test_gate_round_6_lkirc_a_sync_already_active_teardown_receives_the_same_ter
 
 
 def test_gate_round_6_lkirc_repeated_sync_reattaches_all_resolve_no_row_double_counted():
-    # lkirc asked for this explicitly: REPEATED sync reattaches (not just
+    # REPEATED sync reattaches (not just
     # one) on a single run all resolve to that run's single terminal
     # outcome, and none of them collapse into or duplicate each other.
     client = _client(OPERATOR_ONLY)
@@ -863,7 +863,7 @@ def test_a_watched_action_in_flight_never_carries_headline_meaning_next_step():
 
 
 def test_a_row_with_an_unrecoverable_outcome_renders_unknown_end_to_end():
-    # codex R496-C P1-2, through the full pipeline: DEPLOY_BLANK_OUTCOME is
+    # Through the full pipeline: DEPLOY_BLANK_OUTCOME is
     # a fully well-formed fmt=2 line whose `outcome` value happens to be
     # blank. The row still renders (gated normally, real actor/action/
     # target), and its outcome is an honest "unknown" — never a forged
@@ -1131,7 +1131,7 @@ def test_writer_fix_round_trip_blank_workload_and_capacity_never_render_as_the_w
 
 
 def test_writer_fix_round_trip_a_reattach_carries_its_run_id_through_the_real_emitter(caplog):
-    # gate round 5 (lkirc): _audit_awx_write's own new linked_request_id
+    # _audit_awx_write's own linked_request_id
     # parameter, through the REAL emitter -- not just the hand-built
     # fixture lines the other reattach tests use.
     request = _FakeRequest()
@@ -1174,7 +1174,7 @@ def test_writer_fix_omitting_linked_request_id_never_appends_the_trailing_field(
 
 
 def test_gate_round_6_lkirc_the_missing_link_guard_fires_loudly_for_a_referencing_outcome_with_no_link(caplog):
-    # gate round 6 (lkirc): "an audit row that describes an EXISTING
+    # "an audit row that describes an EXISTING
     # operation must carry that operation's identity" is now enforced
     # inside _audit_awx_write itself, not just remembered per call site —
     # this is what makes a THIRD omission impossible rather than merely
@@ -1243,8 +1243,7 @@ def test_gate_round_6_lkirc_the_guard_never_fires_for_launch_rollback_or_finalis
 
 
 def test_a_legacy_unquoted_line_from_before_the_writer_fix_is_not_rendered_end_to_end(monkeypatch):
-    # Operator decision (2026-09-03, following lkirc's fifth review,
-    # dmfdeploy/dmf-cms#140): the writer fix protects future records but
+    # Operator decision (2026-09-03, dmfdeploy/dmf-cms#140): the writer fix protects future records but
     # cannot make retained ones trustworthy — a forged legacy line and a
     # legitimate one were PROVEN byte-identical, so no reader-side check
     # could ever authenticate one. Legacy lines are dropped, not parsed by
@@ -1270,8 +1269,7 @@ def test_a_legacy_unquoted_line_from_before_the_writer_fix_is_not_rendered_end_t
 
 
 def test_a_reflected_body_on_a_non_audit_logger_does_not_produce_a_row_end_to_end(monkeypatch):
-    # lkirc's EIGHTH finding, through the full pipeline (dmfdeploy/dmf-
-    # cms#140, 2026-09-04) -- a genuinely different class from every
+    # Through the full pipeline (dmfdeploy/dmf-cms#140, 2026-09-04) -- a genuinely different class from every
     # forgery test above: those all prove a record's FIELDS can't be
     # forged; this proves a record's very EXISTENCE can't be forged
     # either, by an upstream/caller value reflected verbatim into a
@@ -1318,8 +1316,8 @@ def test_a_reflected_body_on_a_non_audit_logger_does_not_produce_a_row_end_to_en
 
 
 # ----------------------------------------------------------------------
-# dmfdeploy/dmf-cms#140 — codex's P1/P2 findings against the first
-# version of the writer fix, and the format-marker redesign that fixed
+# dmfdeploy/dmf-cms#140 — defects in the first version of the writer fix,
+# and the format-marker redesign that fixed
 # them (both data-loss defects, not forgery, per the operator's ruling
 # that a legitimate row vanishing is squarely in scope). Round-tripped
 # through the REAL emitter, same discipline as every other test in this

@@ -136,7 +136,7 @@ function InstanceSwitchControl({
   onResult: (result: SwitchSourceResult) => void
   onJobStart: () => void
 }) {
-  // fix-round 6 (PR #81, umbrella #385): retrofitted onto settleQuery — the
+  // (umbrella #385) retrofitted onto settleQuery — the
   // raw query is kept alongside for `.refetch()` (not part of the settled
   // shape, which is deliberately read-only), used below on a successful
   // switch.
@@ -159,9 +159,9 @@ function InstanceSwitchControl({
     return () => clearInterval(id)
   }, [arming])
 
-  // fix-round 5 (PR #81, codex sibling sweep): consistency touch-up with
+  // Consistency touch-up with
   // WorkloadHome.tsx's InstanceActiveSource and DesignStage's InstanceComposition
-  // (both fixed the same way this round). Lower-severity here specifically
+  // (both fixed the same way). Lower-severity here specifically
   // because isObservedFresh below already self-fails-closed within 15s
   // regardless of isError (observed_at goes stale on its own), but the
   // withdraw-on-error contract should read the same everywhere this

@@ -53,7 +53,7 @@ export const InsideFlowStep = createContext(false)
  * catch: it is handed the answer, not the inputs the answer is judged
  * from.
  *
- * FIX ROUND (§D1, codex gate item 6): `nextPrimary` alone is NOT enough —
+ * (§D1) `nextPrimary` alone is NOT enough —
  * this component also clamps it to `false` whenever ITS OWN `state` is
  * `locked`, the same defence-in-depth the paragraph above already applies
  * to `children`. The bug this closes: CreateWorkload.tsx's draft wizard
@@ -117,7 +117,7 @@ const FlowStep = forwardRef<
      *  action of its own. False on Provision (both wizards: it renders its
      *  own primary Deploy/Provision-now offer). See this component's own
      *  file docstring for the full rule, why there is no default, AND the
-     *  fix-round clamp: this component ALSO forces Next neutral whenever
+     *  clamp: this component ALSO forces Next neutral whenever
      *  `state` is `locked`, regardless of what's passed here. */
     nextPrimary: boolean
     /** Stated reason when Previous/Next are refused (jobInFlight or no
@@ -195,8 +195,8 @@ const FlowStep = forwardRef<
         {canNext ? (
           <button
             type="button"
-            // FIX ROUND (§D1, codex gate item 6): `&& !locked`, not
-            // `nextPrimary` alone — see the file docstring's "FIX ROUND"
+            // (§D1) `&& !locked`, not
+            // `nextPrimary` alone — see the file docstring's clamp
             // paragraph. A locked step is reachable (Next is unconditional,
             // by design) but never gets to be the one cyan control, because
             // wherever it points is ALSO locked prose, never a real action.

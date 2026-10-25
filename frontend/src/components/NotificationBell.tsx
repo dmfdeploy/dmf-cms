@@ -32,7 +32,7 @@ function summaryText(state: WorkspaceHealthState): string {
     case 'loading':
       return 'Checking…'
     case 'not-configured':
-      // fix-round 5: `stale` was computed but never consulted for this
+      // `stale` was computed but never consulted for this
       // phase — same gap HealthCore.tsx had, same fix (see its comment).
       return state.stale ? 'Monitoring not configured — unconfirmed just now' : 'Monitoring not configured'
     case 'unknown':

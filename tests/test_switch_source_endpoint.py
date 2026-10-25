@@ -111,7 +111,7 @@ SOURCE_B_FLOW_ID = "b0ae9cba-a989-4568-ac96-8bd19272c966"
 
 
 def _patch_fresh_observed_source_a(monkeypatch):
-    """umbrella #320/#321 fix-round: the POST endpoint's own write-seam
+    """umbrella #320/#321: the POST endpoint's own write-seam
     gate now re-resolves observed truth before EVERY dispatch — every
     existing test that expects a real dispatch needs this (a fresh,
     matching sidecar observation), same as the fixture's own declared
@@ -288,7 +288,7 @@ def test_unknown_source_instance_is_422(monkeypatch):
     assert resp.json()["error"] == "source-not-found"
 
 
-# ── write-seam observed-truth gate (umbrella #320/#321 fix-round) ───────
+# ── write-seam observed-truth gate (umbrella #320/#321) ───────
 #
 # The GET .../topology read enforces "never trust the catalog's own
 # source_selection as live truth" — these tests prove the POST write seam

@@ -162,7 +162,7 @@ afterEach(() => {
 
 // ---------------------------------------------------------------------------
 
-// dmfdeploy#405 FIX ROUND: this file's own name and the "isn't open yet"
+// dmfdeploy#405: this file's own name and the "isn't open yet"
 // phrase inside this describe title are now history, not current fact — the
 // banner itself is gone (P8, de1b94d; see the second test's own comment for
 // the full account). A title that states a falsehood is worse than a broken
@@ -197,7 +197,7 @@ describe('dmfdeploy#416: the requested-lock reason reaches the operator (the "is
     await waitFor(() => expect(queryClient.getQueryState(['user'])?.fetchStatus).toBe('idle'))
     await waitFor(() => expect(queryClient.getQueryState(['media-workloads-grouped'])?.fetchStatus).toBe('idle'))
 
-    // FIX ROUND: re-derive the panel by role+name EVERY time, never cache a
+    // Re-derive the panel by role+name EVERY time, never cache a
     // node reference and re-read only its attribute. A captured reference
     // stays live even if a regression bounces the wizard's selection to a
     // DIFFERENT step — React reconciles the SAME DOM position to render
@@ -262,7 +262,7 @@ describe('dmfdeploy#416: the requested-lock reason reaches the operator (the "is
     railFinaliseNotLocked()
   })
 
-  // dmfdeploy#405 FIX ROUND: this used to be the positive control proving
+  // dmfdeploy#405: this used to be the positive control proving
   // the #392/#416 fix above could not be satisfied by suppressing the
   // banner outright — a genuinely, durably locked step (no unsettled read
   // involved at all) still had to show SOMETHING. de1b94d then deleted the

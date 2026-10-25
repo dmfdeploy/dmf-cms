@@ -114,7 +114,7 @@ EXCLUDED_DIR_PARTS = {"static", "__pycache__", "node_modules", "__tests__", "tes
 
 # Bare bans: each of these must never appear anywhere in application
 # source, in ANY framing — even a NEGATED sentence still names the phantom
-# actor, which is itself the defect. (Fix-round 1's first attempt at the
+# actor, which is itself the defect. (An early attempt at the
 # main.py docstring wrote "there is no automation lane" and tripped the
 # original guard on exactly this — negating the phrase is not the fix,
 # retiring it is.) The drift-check/drift-loop entries are deliberately verb-
@@ -131,8 +131,8 @@ _BARE_BANS: tuple[str, ...] = (
     "loop's job",
 )
 
-# "awx ... lane", tolerating exactly ONE intervening word (fix-round 4):
-# media_workloads.py's reconcile_pending comment survived every guard round
+# "awx ... lane", tolerating exactly ONE intervening word:
+# media_workloads.py's reconcile_pending comment survived every earlier version of this guard
 # so far — "the AWX drift lane exists to converge (ADR-0037 §4)" — because
 # "awx" and "lane" were never adjacent, so the plain "awx lane" substring
 # ban never matched it, and the verb-shape pattern needs an object ("it" /
@@ -144,15 +144,15 @@ _BARE_BANS: tuple[str, ...] = (
 # speculative family.
 _AWX_LANE_RE = re.compile(r"\bawx(?:\s+\w+)?\s+lane\b", re.IGNORECASE)
 
-# General claim-verb shape (fix-round 2, narrowed fix-round 3): every
-# retired phrasing, AND every evasion the gate found against fix-round 1's
+# General claim-verb shape: every
+# retired phrasing, AND every evasion the gate found against the earlier
 # exact-phrase check, has this skeleton — some actor, optionally a "will"
 # modal, one of these verbs, then either "it", "the desired state", or
 # "automatically" within a short span: "AWX converges it", "AWX will
 # converge it", "a scheduled reconciler will converge the desired state",
 # "the AWX service applies it automatically". Exactly the three verb forms
 # the demonstrated evasions actually used ("converges?", "converge",
-# "applies") — fix-round 2 briefly also matched "apply"/"handles?"/
+# "applies") — an earlier version also matched "apply"/"handles?"/
 # "resolves?"/"reconciles?", which caught nothing the four gate examples
 # below didn't already catch, but did trip on ordinary, unrelated true
 # sentences elsewhere in the codebase ("the Service still resolves" — DNS
@@ -178,7 +178,7 @@ _CLAIM_VERB_RE = re.compile(
 # converges it automatically" — a true, negated claim — so a bare ban on the
 # verb shape would fail the fix itself. Flag a match unless a negation cue
 # sits in the SAME CLAUSE, i.e. since the last clause boundary (. ; : — or
-# newline) before it — fix-round 1's plain character-count window read
+# newline) before it — a plain character-count window read
 # "It is not the check; AWX converges it." as negated, because "not" was
 # only 20-odd characters back, in an entirely different clause.
 _NEGATION_CUES: tuple[str, ...] = ("nothing", "no one", "never", "not ")
@@ -270,9 +270,8 @@ RETIRED_PHRASINGS: list[tuple[str, str]] = [
      "the catalog launch / drift-detection loop's job — never k3s from here."),
     ("a hypothetical unnamed actor (never actually shipped, guards the general shape)",
      "The reconciliation service converges it automatically within minutes."),
-    # fix-round 2 (dmfdeploy/dmfdeploy#411 gate): four evasions the gate
-    # found against fix-round 1's exact-phrase matcher, verified by hand
-    # against the committed matcher before this round's fix.
+    # dmfdeploy/dmfdeploy#411: four evasions found against the original
+    # exact-phrase matcher, verified by hand before it was widened.
     ("clause-blind negation (gate example)",
      "It is not the check; AWX converges it."),
     ("modal variant, no trailing s (gate example)",
@@ -281,9 +280,9 @@ RETIRED_PHRASINGS: list[tuple[str, str]] = [
      "a scheduled reconciler will converge the desired state"),
     ("unlisted verb, automatic-adverb shape (gate example)",
      "the AWX service applies it automatically"),
-    # fix-round 4 (dmfdeploy/dmfdeploy#411 gate): a LIVE instance found by
+    # dmfdeploy/dmfdeploy#411: a LIVE instance found by
     # manual source read, not by this guard — media_workloads.py's
-    # reconcile_pending comment, unchanged by every prior round because
+    # reconcile_pending comment, missed by every earlier version because
     # "awx" and "lane" were never adjacent and the sentence has no object
     # this file's verb-shape pattern requires.
     ("media_workloads.py reconcile_pending comment (pre-fix, found live in source)",

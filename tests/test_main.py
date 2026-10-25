@@ -209,7 +209,7 @@ def test_logout_routes_through_end_session(monkeypatch):
     assert resp.status_code == 200
     # The landing kills the SSO session via the IdP end-session endpoint, keyed
     # by client_id + post_logout_redirect_uri. No id_token_hint: we never stash
-    # the id_token in the client-side session cookie (codex WP-E P2).
+    # the id_token in the client-side session cookie.
     assert "https://auth.example.invalid/application/o/dmf-console/end-session/" in resp.text
     assert "id_token_hint" not in resp.text
     assert "client_id=dmf-console" in resp.text
@@ -219,8 +219,7 @@ def test_logout_routes_through_end_session(monkeypatch):
 
 
 def test_logout_discovery_failure_log_line_sanitizes_hostile_exception_text(monkeypatch, caplog):
-    # umbrella dmf-cms#108 fix-round 4: genuinely ambiguous per that
-    # round's own reasoning (discovery_document uses a raw urlopen, so
+    # Genuinely ambiguous (discovery_document uses a raw urlopen, so
     # exc is typically an HTTPError or JSONDecodeError, not a clean
     # *APIError.body) — sanitized per the "ambiguous -> sanitize" rule.
     import logging

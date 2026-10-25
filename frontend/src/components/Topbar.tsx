@@ -163,7 +163,7 @@ export default function Topbar() {
   // document entirely, where relatedTarget is null) closes it. Wired as
   // React's own onBlur prop on the wrapper below, NOT a manual
   // addEventListener('focusout', …) in a mount-only effect — that first
-  // attempt (fix-round 1) captured `menuRef.current` in a local const at
+  // attempt captured `menuRef.current` in a local const at
   // effect-run time. Topbar renders `null` until the auth store populates
   // (see the early return below), so on the normal initial-load path the
   // wrapper div does not exist yet when the `[]`-effect runs: the captured
@@ -192,7 +192,7 @@ export default function Topbar() {
   // useShowHeaderSlotRow (store/headerSlot.ts, umbrella #515) rather than
   // inlined here — this file's history already has one example of two
   // independent copies of the same route-shape test drifting apart (see
-  // headerSlot.ts's own FIX ROUND note), and keeping the rule in one
+  // headerSlot.ts's own note), and keeping the rule in one
   // exported place costs nothing even with a single caller.
   //
   // Called ABOVE the `!user` early return, deliberately: this component's
@@ -219,7 +219,7 @@ export default function Topbar() {
   const isHome = pathname === '/'
 
   return (
-    // FIX ROUND (orchestrator/codex gate, dmfdeploy#481): the header-slot
+    // (dmfdeploy#481) The header-slot
     // row is now a SIBLING of <header>, not nested inside it — see the
     // block below for why. React needs one root; a Fragment costs nothing
     // Shell.tsx's own flex-col layout doesn't already provide (it stacks
@@ -429,7 +429,7 @@ export default function Topbar() {
       {showSlotRow && slotContent && (
         <div
           data-testid="header-slot-row"
-          // FIX ROUND (umbrella #515, gate P1): this row is back in NORMAL
+          // (umbrella #515) This row is back in NORMAL
           // FLOW — `relative z-20 flex flex-nowrap shrink-0`, no `fixed`, no
           // `inset-x-0`/`top-14`. A first attempt made this row `position:
           // fixed` (offsetting `<main>` by a matching constant in
@@ -460,8 +460,7 @@ export default function Topbar() {
           // row's `z-20` wherever the two genuinely overlap (the row's full
           // width crossing the sidebar's 64px column).
           //
-          // VISUAL PARITY FIX ROUND (dmfdeploy/dmfdeploy#512, operator
-          // finding against a live provision run): `bg-sidebar` (not
+          // Visual parity (dmfdeploy/dmfdeploy#512): `bg-sidebar` (not
           // `bg-bg`) matches Sidebar.tsx's own token exactly, so the two
           // read as one surface where they visually meet — unaffected by
           // the positioning change above, still true, still why this token

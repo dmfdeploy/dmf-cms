@@ -16,7 +16,7 @@
  * would count it forever; `functionKeys.some(key => activeTrack(track[key]))`
  * does not, because the departed key is no longer in `functionKeys`.
  *
- * GUARD LABEL (dmfdeploy#414 gate, round 1): every test in this file is a
+ * GUARD LABEL (dmfdeploy#414): every test in this file is a
  * GUARD pinning the pre-#414 GATE-D1 P2.5 wedge fix described above,
  * unchanged by this arc — only the mount route moved, from the bare slug
  * to /setup. Baseline: the pre-#414 commit on `main`, where these same

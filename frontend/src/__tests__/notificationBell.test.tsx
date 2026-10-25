@@ -114,7 +114,7 @@ describe('NotificationBell', () => {
     expect(screen.queryByText('All systems nominal')).toBeNull()
   })
 
-  // fix-round 5 (PR #81, codex sibling sweep): `state.stale` was already
+  // `state.stale` was already
   // correctly computed (classifyWorkspaceHealth's `stale = q.isError`,
   // unconditional) but never consulted for the 'not-configured' phase here
   // — same gap as HealthCore.tsx (see workspace.test.tsx's matching pin).

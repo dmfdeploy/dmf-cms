@@ -4,7 +4,7 @@
 
 /** Own-property lookup for state→value maps: an untrusted state such as
  *  "constructor" or "__proto__" must fall back to `unknown`, never resolve an
- *  inherited Object property (review finding on PR #144). */
+ *  inherited Object property. */
 export function lookupState<T>(map: Record<string, T> & { unknown: T }, state: string | null | undefined): T {
   return typeof state === 'string' && Object.prototype.hasOwnProperty.call(map, state) ? map[state] : map.unknown
 }
@@ -50,7 +50,7 @@ export const OBSERVED_TITLE = 'Observed state — proven by live monitoring prob
  * Callers look up with `lookupState(requestedLabel, state)` — an own-property
  * check, not `requestedLabel[state] ?? requestedLabel.unknown` (that shape
  * resolves inherited Object properties like `constructor` instead of falling
- * back; see the review finding on PR #144) — the same lookup requestedBadge's
+ * back) — the same lookup requestedBadge's
  * colour lookup and the Provision icon map now use too.
  */
 export const requestedLabel: Record<string, string> & { unknown: string } = {

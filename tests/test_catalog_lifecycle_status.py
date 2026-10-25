@@ -68,7 +68,7 @@ def test_single_service_netbox_error_is_error(monkeypatch):
 
 
 def test_single_service_netbox_error_log_line_sanitizes_hostile_body(monkeypatch, caplog):
-    # umbrella dmf-cms#108 fix-round 4: NetboxAPIError.body is upstream
+    # NetboxAPIError.body is upstream
     # response content, same as media_workloads.py's identical pattern.
     import logging
 

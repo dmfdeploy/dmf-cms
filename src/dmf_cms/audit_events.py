@@ -431,7 +431,7 @@ def _parse_new_format_line(tail: str) -> dict[str, str] | None:
         tail[trailing_marker + len(f"{_TRAILING_FIELD}="):].strip() if trailing_marker is not None else ""
     )
 
-    # dmfdeploy/dmfdeploy#419, gate round 1 (codex P1): `actor` alone is
+    # `actor` alone is
     # NOT proof a line is console-authored — main.py's _audit_awx_write
     # writes actor=%r straight from user.subject, an unvalidated IdP
     # claim (see that function's own %r-quoting comment). A real user
@@ -449,8 +449,7 @@ def _parse_new_format_line(tail: str) -> dict[str, str] | None:
     # BOTH fields together closes the specific gap an ordinary user's own
     # unvalidated IdP claim could otherwise reach — a stronger property
     # than actor alone, not a second forgeable heuristic layered over the
-    # first. Not an unconditional guarantee, though (gate round 2, codex
-    # F1): `role` reaches this reader only via the session cookie
+    # first. Not an unconditional guarantee, though: `role` reaches this reader only via the session cookie
     # Starlette signs — genuinely tamper-evident to an ordinary user, but
     # only for as long as session integrity actually holds end to end.
     # That is a platform-level property this module has no way to verify
@@ -467,13 +466,13 @@ def _parse_new_format_line(tail: str) -> dict[str, str] | None:
             and values["actor"] == _JOB_WATCH_ACTOR
             and values["role"] == "system"
         )
-        # gate round 5/6 (lkirc): a row correlating to its run's own
+        # A row correlating to its run's own
         # stable identity — main.py's _audit_awx_write, deploy/teardown
         # call sites only, whose outcome MEANS "an existing operation was
-        # found" (REFERENCES_EXISTING_OPERATION_TOKENS below: reattached,
-        # round 5; already-active, round 6 — the second one this same
-        # permission check was ALSO missing at first, exactly the "wrong
-        # enumeration" lesson of round 6). Deliberately gated on `outcome`
+        # found" (REFERENCES_EXISTING_OPERATION_TOKENS below: reattached
+        # and already-active). The permission check once covered only one of
+        # the two, so it keys on what the token means, not on the call site.
+        # Deliberately gated on `outcome`
         # rather than actor/role (both are genuinely user-initiated: a
         # real actor, a real role, never "system") — safe because every
         # token in that set is ALWAYS a fixed code literal at those call
@@ -549,9 +548,9 @@ def _selector_matches(selector: str, labels: dict[str, str]) -> bool:
         # series is equivalent to that label being present with the value
         # "" — NOT "this matcher can't apply". A negative matcher like
         # {container!="foo"} legitimately matches a query that carries no
-        # container label at all (codex R496-A F2b: the earlier `actual is
-        # None -> no match` version missed exactly this, silently falling
-        # through to a global that may be longer — an over-claim).
+        # container label at all (an `actual is None -> no match` version
+        # would miss this, silently falling through to a global that may be
+        # longer — an over-claim).
         actual = labels.get(label, "")
         try:
             if op == "=" and actual != value:
@@ -588,8 +587,8 @@ def resolve_retention_window(config_yaml: str, labels: dict[str, str]) -> Retent
     if not isinstance(limits, dict):
         return RetentionWindow(known=False, seconds=None, reason="unparseable")
 
-    # Collect every matching, parseable rule as (priority, seconds) — codex
-    # R496-A F2a: Loki resolves an equal-priority tie by taking the
+    # Collect every matching, parseable rule as (priority, seconds). Loki
+    # resolves an equal-priority tie by taking the
     # SHORTER period, not "whichever rule was encountered first" (an
     # over-claim risk the same direction #530 exists to prevent). So this
     # can't be a running "best so far" comparison; it needs every matching
@@ -749,7 +748,7 @@ def user_passes_gate(cls: str, *, role: str, groups: tuple[str, ...]) -> bool:
 
 _AWX_ERROR_PREFIX = "awx-error:"
 
-# ALLOWLIST, not a denylist (codex R496-A F3) — an earlier version of this
+# ALLOWLIST, not a denylist — an earlier version of this
 # function named the refusal tokens it knew about and treated everything
 # else as acceptance. main.py emits FAR more refusal tokens than that list
 # named (already-active-other-run, ambiguous-lifecycle-jt, capacity-
@@ -779,8 +778,7 @@ _AWX_ERROR_PREFIX = "awx-error:"
 # main.py:5315, a 409) and must render failed, not in flight — this was
 # the concrete case that proved the old denylist wrong.
 #
-# "capacity-skipped"/"capacity-override" (deploy only, codex R496-A NEW-1
-# — the allowlist's own first pass still missed these two) — both are
+# "capacity-skipped"/"capacity-override" (deploy only; an early version of the allowlist missed these two) — both are
 # L3-preflight outcomes where the run PROCEEDS regardless: `l3.enabled is
 # False` skips the tier and continues (main.py:485-490, docstring: "Skips
 # with an audited capacity-skipped outcome"), and an operator override
@@ -806,7 +804,7 @@ _ACCEPTANCE_OUTCOMES: dict[str, frozenset[str]] = {
     "finalise-purge": frozenset({"dispatched", "reattached"}),
 }
 
-# gate round 4 (lkirc B1): the subset of deploy/teardown's own acceptance
+# The subset of deploy/teardown's own acceptance
 # vocabulary that means "a job was actually dispatched/launched/reattached
 # to" — as opposed to "an L3 preflight decision was made and the run
 # proceeds" (capacity-skipped/capacity-override, deploy-only). Both kinds
@@ -820,7 +818,7 @@ _ACCEPTANCE_OUTCOMES: dict[str, frozenset[str]] = {
 # its own comment for what happens without the restriction.
 _DISPATCH_OUTCOME_TOKENS = frozenset({"dispatched", "launched", "reattached", "already-active"})
 
-# gate round 6 (lkirc, PR review): the subset of _DISPATCH_OUTCOME_TOKENS
+# The subset of _DISPATCH_OUTCOME_TOKENS
 # that means "an EXISTING operation was found" (reattached, already-active)
 # rather than "a new one was just created" (dispatched, launched) — a row
 # carrying one of these can only ever join to its terminal outcome if it
@@ -830,7 +828,7 @@ _DISPATCH_OUTCOME_TOKENS = frozenset({"dispatched", "launched", "reattached", "a
 # refuse writing such a row without the link — DERIVED as a subset here,
 # never redefined independently in main.py, so the two can never drift
 # apart the way the missing-link bug itself has now been found twice
-# (reattached, round 5; already-active, round 6) by enumerating this
+# (reattached, already-active) by enumerating this
 # wrong: by call site, not by what the OUTCOME TOKEN itself means.
 REFERENCES_EXISTING_OPERATION_TOKENS = _DISPATCH_OUTCOME_TOKENS - frozenset({"dispatched", "launched"})
 
@@ -906,7 +904,7 @@ _UNRECOGNISED_FAILURE_COPY = {
     "next_step": "Contact a system engineer with the request id below.",
 }
 
-# codex R496-C P1-2: an honest THIRD answer, never collapsed into the
+# An honest THIRD answer, never collapsed into the
 # failure copy above — "we could not read this record's outcome" is not
 # "this record's action failed".
 _UNKNOWN_OUTCOME_COPY = {
@@ -970,7 +968,7 @@ def build_outcome(action: str, outcome: str) -> dict[str, object]:
 # safe as a plain field. Every state the deploy/teardown/(auto-)rollback
 # branches of `_watch_job_operation` can actually reach is mapped:
 # RUN_COMPLETE, RUN_FAILED, FAILED_ROLLBACK_REQUIRED (deploy's own
-# confirmed-mutation-failure state), ROLLBACK_INCOMPLETE (#560 round 5 —
+# confirmed-mutation-failure state), ROLLBACK_INCOMPLETE (#560 —
 # a ROLLBACK op's own fail-closed dirty terminal, operations.py's
 # OperationState docstring puts it in the SAME "confirmed, not merely
 # unobserved" category FAILED_ROLLBACK_REQUIRED is already in here — the
@@ -1042,7 +1040,7 @@ def build_terminal_join_outcome(raw_outcome: str) -> dict[str, object]:
 
 
 # ----------------------------------------------------------------------
-# Staleness bound (dmfdeploy/dmfdeploy#419, gate round 1, codex P2): a
+# Staleness bound (dmfdeploy/dmfdeploy#419): a
 # dispatch row with NO terminal join at all is not always the console-
 # restart-lost-the-watch gap the panel's explainer discloses — most of
 # the time it just means the watcher hasn't finished yet. Left unbounded,
@@ -1051,7 +1049,7 @@ def build_terminal_join_outcome(raw_outcome: str) -> dict[str, object]:
 # this read path's point of view those are indistinguishable from a
 # genuinely still-running job, and none of them ever writes a join
 # record), which is exactly the "never silently keep reading dispatched
-# as though that were an ending" failure the work order named.
+# as though that were an ending" failure it prevents.
 #
 # The bound reused here is `OperationStore.ttl_seconds` — main.py's own
 # watcher gives up (TTL timeout) once an op has run this long, so NO
@@ -1112,8 +1110,8 @@ def list_audit_events(
     a genuine empty history from "we could not ask" (plan AC 7); `window`
     is a separate, independently-failing axis (plan condition 2).
 
-    `max_in_flight_age_seconds` (dmfdeploy/dmfdeploy#419, gate round 1,
-    codex P2): the caller's own watcher-give-up bound (main.py reads
+    `max_in_flight_age_seconds` (dmfdeploy/dmfdeploy#419):
+    the caller's own watcher-give-up bound (main.py reads
     `app.state.operations.ttl_seconds`) — a deploy/teardown row with no
     terminal join, older than this, ages from 'in_flight' into the honest
     'unknown' rather than claiming to still be watched forever. See
@@ -1170,7 +1168,7 @@ def list_audit_events(
 
     rows.sort(key=lambda row: row[0], reverse=True)  # newest first, merged across streams
 
-    # codex R496-A F6: a bound that binds must be disclosed, not just
+    # A bound that binds must be disclosed, not just
     # applied silently. Two ways this read can be less than exhaustive
     # without LOOKING like it: (1) the window derivation failed, so the
     # query actually ran against the technical ceiling
@@ -1207,11 +1205,11 @@ def list_audit_events(
     # same dispatch (not expected in practice — a watcher runs once per
     # op — but cheap to make correct rather than assumed).
     #
-    # gate round 1 (codex P1): actor alone is a forgeable field (main.py's
+    # Actor alone is a forgeable field (main.py's
     # _audit_awx_write writes it straight from user.subject) — a real
     # user's own genuine deploy/teardown row could otherwise get pulled
     # into this join source. role == "system" is what closes that gap
-    # (see classify_record's own docstring for why, and its gate round 2
+    # (see classify_record's own docstring for why, and its
     # caveat on what this still depends on); requiring both here is what
     # keeps a user-authored row out of this map, not just out of `events`
     # directly.
@@ -1231,7 +1229,7 @@ def list_audit_events(
         # `record_role` (this ROW's own parsed role= field) — deliberately
         # NOT named `role`, which already means this FUNCTION's own
         # requesting-user role parameter two lines below (user_passes_gate).
-        # gate round 1 (codex P1): classify_record needs the record's role
+        # classify_record needs the record's role
         # too now, to distinguish a genuine system-authored line from a
         # user-authored one whose actor merely collides with a reserved
         # literal.
@@ -1256,13 +1254,12 @@ def list_audit_events(
         # request_id -> unchanged from before: its own dispatch-time
         # outcome, honest about not yet being confirmed.
         #
-        # gate round 4 (lkirc B1): keyed by request_id alone is NOT
+        # Keyed by request_id alone is NOT
         # enough on its own — a request_id can carry an L3 preflight's own
         # acceptance row (capacity-skipped/capacity-override, main.py's
         # _l3_preflight, e.g. main.py:485-490) sharing it with that SAME
-        # request's later dispatch row. Applying the join to both (gate
-        # round 1's own "every row is a facet of one operation" call,
-        # which lkirc correctly overturned) rendered one deployment as
+        # request's later dispatch row. Applying the join to both (treating
+        # every row as a facet of one operation) rendered one deployment as
         # DUPLICATE succeeded/failed rows and destroyed the preflight
         # row's own distinct result by overwriting it with a verdict it
         # never described. The join below additionally requires THIS
@@ -1276,7 +1273,7 @@ def list_audit_events(
         # behavior change.
         outcome = build_outcome(action, fields.get("outcome", ""))
         if cls in ("deploy", "teardown", "auto-rollback"):
-            # gate round 5 (lkirc): request_id identifies the HTTP REQUEST
+            # request_id identifies the HTTP REQUEST
             # that wrote a given row, not the RUN the row concerns — a
             # reattach row is written by a fresh request (its own,
             # different request_id) but concerns the SAME run as the
@@ -1285,8 +1282,8 @@ def list_audit_events(
             # that run can reach — the dispatch row IS it already (its own
             # request_id, no linked_request_id needed); a reattach row
             # carries it explicitly via linked_request_id (main.py's
-            # reattach call sites, gate round 5); the terminal join's own
-            # linked_request_id already pointed at it from round 1.
+            # reattach call sites); the terminal join's own
+            # linked_request_id already points at it.
             # Resolving ALL THREE the same way is what makes
             # terminal_by_request_id (keyed by that same identity) find a
             # reattach row's terminal outcome at all — before this, a
@@ -1302,7 +1299,7 @@ def list_audit_events(
                 else fields.get("linked_request_id") or fields.get("request_id", "")
             )
             terminal_fields = terminal_by_request_id.get(run_id)
-            # gate round 4 (lkirc B1): is_dispatch_row still gates on THIS
+            # is_dispatch_row still gates on THIS
             # row's own outcome token, unchanged — resolving run_id above
             # never widens which ROWS are eligible, only which KEY a
             # genuinely-eligible row (dispatch OR reattach) looks up. A
@@ -1318,7 +1315,7 @@ def list_audit_events(
             if terminal_fields is not None and is_dispatch_row:
                 outcome = build_terminal_join_outcome(terminal_fields.get("outcome", ""))
             else:
-                # gate round 1 (codex P2): no ELIGIBLE join for this row —
+                # No ELIGIBLE join for this row —
                 # age it into 'unknown' once it's provably outlived any
                 # watcher that could still be attached to it. Reaches a
                 # preflight row too (it can never receive the join's own
@@ -1342,7 +1339,7 @@ def list_audit_events(
             "role": fields.get("role", ""),
             "reason": fields.get("reason", ""),
             "at": _iso(ts_ns_str),
-            # lkirc (dmfdeploy/dmf-cms#140): a single request_id can
+            # A single request_id can
             # legitimately carry MULTIPLE rows — e.g. an L3 preflight's
             # own capacity-skipped/capacity-override line (main.py:488,
             # :580) shares its request_id with that same request's later

@@ -43,10 +43,10 @@ import { contrastRatio, cssVar } from './testUtils/contrast'
  * and not a hex) that Topbar.tsx's header-slot row actually renders, read
  * from the component's own source text.
  *
- * CODEX GATE, P2 (dmfdeploy/dmfdeploy#512) — REPRODUCED AND FIXED. The
- * first version of this function found the row's className text, then ran
+ * (dmfdeploy/dmfdeploy#512) An earlier version of
+ * this function found the row's className text, then ran
  * `/\bbg-([a-z][\w-]*)\b/` (no `^`/`$` anchors) against the WHOLE string —
- * a SUBSTRING search, not a token match. Reproduced with codex's own exact
+ * a SUBSTRING search, not a token match. Reproduced with the exact
  * string, `className="hover:bg-bg bg-selected-face"`: the regex matches
  * `bg-bg` INSIDE `hover:bg-bg` first (it appears earlier in the string),
  * so the test would have measured against `--color-bg` and reported a
@@ -85,7 +85,7 @@ import { contrastRatio, cssVar } from './testUtils/contrast'
  * new tag" — tolerant of `<header>`-in-prose, still stopping before any
  * genuine descendant markup.
  */
-/** `source` defaults to the real Topbar.tsx text; overridable so codex's
+/** `source` defaults to the real Topbar.tsx text; overridable so
  *  exact repro strings can be pinned as permanent regression tests below
  *  without needing to actually mutate the real component file for each. */
 function bandBackgroundToken(source: string = topbarSource): string {

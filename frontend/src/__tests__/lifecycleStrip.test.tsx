@@ -8,9 +8,8 @@ import { FLOW_STEPS, type FlowStepId, type FlowStepState } from '../lib/workload
  * The rail's "never colour alone" contract (Constitution Art. 11, umbrella
  * #347 WO-D1 Acceptance Criterion 8).
  *
- * SHELL ROUND 2 REDESIGN (dmfdeploy#481/#482/#483, operator direction)
- * rewrote this file's fixtures and most of its assertions across several
- * fix rounds — see LifecycleStrip.tsx's own docstring for the full
+ * SHELL REDESIGN (dmfdeploy#481/#482/#483)
+ * rewrote this file's fixtures and most of its assertions — see LifecycleStrip.tsx's own docstring for the full
  * account, points A/B/C. Per-fact status, stated plainly for the CURRENT
  * design:
  *   - IDENTITY (stage): an always-present icon PLUS the always-present EBU
@@ -25,7 +24,7 @@ import { FLOW_STEPS, type FlowStepId, type FlowStepState } from '../lib/workload
  *     STATE at all (identity and selection are the only two axes fill/edge
  *     may vary on). The only surviving non-colour cue is the
  *     `aria-describedby` reason text, which is words, not a glyph.
- *   - POSITION: REMOVED ENTIRELY (fix round). The backend-derived position
+ *   - POSITION: REMOVED ENTIRELY. The backend-derived position
  *     can only ever be `provision`, `configure`, `operate` (off this
  *     five-key rail, dmfdeploy#414) or `unknown` — never design, plan or
  *     finalise (ADR-0046: finalise is never inferred from absence) — so a
@@ -36,10 +35,9 @@ import { FLOW_STEPS, type FlowStepId, type FlowStepState } from '../lib/workload
  *     a PEER VIEW. This file now pins the ABSENCE of both.
  *   - SELECTION: a swap to the shared opaque `--color-selected-face` on
  *     both `key-fill` and `key-edge`, plus dark ink — the rail's ONLY
- *     state now that position is gone. (CODEX GATE P3,
- *     dmfdeploy/dmfdeploy#512: an earlier version of this bullet named
+ *     state now that position is gone. (dmfdeploy/dmfdeploy#512: an earlier version of this bullet named
  *     "the achromatic bg-text/text-bg inversion" here — that design was
- *     retired by the VISUAL PARITY FIX ROUND further down this same file,
+ *     retired by the VISUAL PARITY work further down this same file,
  *     see that section's own account, and this bullet was left describing
  *     it as if still current.) See LifecycleStrip.tsx's own "SELECTION —
  *     REBUILT" section for exactly what this file can and cannot prove
@@ -85,12 +83,12 @@ function chip(label: string): HTMLElement {
   return screen.getByLabelText(label)
 }
 
-/** The chip's clipped fill layer (SHELL ROUND 2) — carries the fill colour
+/** The chip's clipped fill layer — carries the fill colour
  *  class; the outer chip element itself stays transparent so the chevron
  *  notch/point actually shows the page behind it rather than a
  *  rectangular background masking the cutout.
  *
- *  VISUAL PARITY FIX ROUND (#512): swaps between RAIL_FILL (unselected)
+ *  VISUAL PARITY (#512): swaps between RAIL_FILL (unselected)
  *  and RAIL_SELECTED_FACE (selected) — a plain two-state class swap, not
  *  an added layer. See edgeLayer() below for the OTHER clipped layer,
  *  which varies by its own resting/hover/selected state machine. */
@@ -113,7 +111,7 @@ function LabelFor(id: FlowStepId): string {
 
 afterEach(cleanup)
 
-// SHELL ROUND 2 (dmfdeploy#482): every key now renders its own identity
+// SHELL REDESIGN (dmfdeploy#482): every key now renders its own identity
 // icon UNCONDITIONALLY — the exact opposite of Pass 1's "no per-state icon
 // at all" invariant this describe block used to pin. Rewritten to pin the
 // new invariant: one <svg> per key, aria-hidden, alongside the unchanged
@@ -161,7 +159,7 @@ describe('every key renders its own identity icon plus its bare EBU label, regar
   })
 })
 
-// SHELL ROUND 2: the padlock icon, the dashed border, and the "Locked" text
+// SHELL REDESIGN: the padlock icon, the dashed border, and the "Locked" text
 // caption are ALL gone (LifecycleStrip.tsx's own docstring — the Visual
 // System doc §2 rejects any fill/edge distinction for stage STATE, locked
 // included). What survives from dmfdeploy#405 unchanged: a locked key is
@@ -240,7 +238,7 @@ describe('locked state is reachable, and its only surviving non-colour cue is th
   })
 })
 
-// SHELL ROUND 2 (dmfdeploy#481, folding in dmfdeploy#499's acceptance
+// SHELL REDESIGN (dmfdeploy#481, folding in dmfdeploy#499's acceptance
 // criteria): the shared "A <stage> job is in progress." note that used to
 // follow the <ol> is deleted outright, not relocated — the band now
 // carries zero status text while a job is in flight. What survives
@@ -277,7 +275,7 @@ describe('a job in flight demotes every chip to inert, and the band states no st
   })
 })
 
-// FIX ROUND (orchestrator/codex gate): the position tally and
+// The position tally and
 // `aria-current="step"` are REMOVED, not restyled — verified against the
 // backend (`_derive_workload_lifecycle`, src/dmf_cms/media_workloads.py):
 // the derived position can only ever be provision/configure/operate/
@@ -290,7 +288,7 @@ describe('a job in flight demotes every chip to inert, and the band states no st
 // MUTATION-VERIFIED: reinstating `aria-current={isPosition ? 'step' :
 // undefined}` on the button branch (the exact pre-removal line) makes the
 // second assertion below fail — `expected null, received "step"` — naming
-// the reinstated attribute directly. Checked by hand during this fix round
+// the reinstated attribute directly. Checked by hand
 // (see the PR description for the actual failure output), then reverted.
 describe('the rail carries no position marker of any kind — selection is its only state (fix round)', () => {
   it('no key, in any state, carries a position-tally element or aria-current', () => {
@@ -343,11 +341,10 @@ describe('the rail carries no position marker of any kind — selection is its o
   })
 })
 
-// VISUAL PARITY FIX ROUND (dmfdeploy/dmfdeploy#512, operator finding
-// against a live provision run): the achromatic bg-text/text-bg invert
+// VISUAL PARITY (dmfdeploy/dmfdeploy#512): the achromatic bg-text/text-bg invert
 // this describe block used to pin is GONE.
 //
-// CODEX GATE P3 (dmfdeploy/dmfdeploy#512): an earlier version of this
+// (dmfdeploy/dmfdeploy#512) An earlier version of this
 // comment described an INTERIM design at this exact spot — the sidebar's
 // own cyan-tint treatment (`bg-accent/55 text-accent`) painted on a NEW
 // third `key-tint` layer stacked on top of `key-fill`, plus mutation-
@@ -361,7 +358,7 @@ describe('the rail carries no position marker of any kind — selection is its o
 // final design this file tests; `key-tint`'s ABSENCE is itself asserted
 // directly in the "no separate rectangular selection ring" tests further
 // down.
-// VISUAL PARITY FIX ROUND (#512, operator ruling off two rendered
+// VISUAL PARITY (#512, decided off two rendered
 // comparison boards — see stagePalette.ts's own docstring for the full,
 // multi-pass account: achromatic invert -> alpha tint -> shared opaque
 // face). FINAL SHAPE: `key-fill` swaps RAIL_FILL/RAIL_SELECTED_FACE, ink
@@ -377,7 +374,7 @@ describe('the rail carries no position marker of any kind — selection is its o
 // (deleting the selected-fill swap) makes the discriminating assertion
 // below fail — `expected 'absolute...bg-rail-fill' to contain
 // 'bg-selected-face'` — naming the missing token directly. Checked by
-// hand during this fix round, then restored.
+// hand, then restored.
 describe('selection swaps fill/edge to the shared opaque face and inks the label dark, and is aria-pressed', () => {
   it('the selected chip carries the shared face on both fill and edge, and dark ink; an unselected sibling carries neither', () => {
     const steps: Record<FlowStepId, FlowStepState> = {
@@ -441,8 +438,7 @@ describe('selection swaps fill/edge to the shared opaque face and inks the label
   })
 })
 
-// LKIRC GATE FINDING (dmf-cms#131, dmfdeploy/dmfdeploy#512), REPRODUCED AND
-// FIXED. `RAIL_HOVER_INK` (`hover:text-text`) fires on the element it's
+// (dmfdeploy/dmfdeploy#512) `RAIL_HOVER_INK` (`hover:text-text`) fires on the element it's
 // applied to regardless of ancestry, unlike `RAIL_EDGE_HOVER`
 // (`group-hover:bg-selected-face`), which only fires under a `.group:hover`
 // ancestor. The interactive `<button>` branch carries `group`; the
@@ -459,8 +455,8 @@ describe('selection swaps fill/edge to the shared opaque face and inks the label
 // RAIL_HOVER_INK for unselected keys (dropping the `interactive` check)
 // makes the first describe block's second assertion fail — `expected
 // '...text-resting-ink hover:text-text...' not to contain 'hover:text-text'`
-// — naming the reintroduced carrier directly. Checked by hand during this
-// fix round, then restored.
+// — naming the reintroduced carrier directly. Checked by hand,
+// then restored.
 describe('the job-in-flight (non-interactive) branch never carries a hover carrier the interactive branch does not also structurally support (lkirc gate finding)', () => {
   it('an unselected, job-in-flight chip renders the inert <div> and carries neither hover class', () => {
     const steps: Record<FlowStepId, FlowStepState> = {
@@ -516,7 +512,7 @@ describe('the job-in-flight (non-interactive) branch never carries a hover carri
   })
 })
 
-// CODEX GATE, P1 RELEASE BLOCKER (dmfdeploy/dmfdeploy#512): `outline-current`
+// (dmfdeploy/dmfdeploy#512) `outline-current`
 // plus the two-tone `box-shadow` sandwich occupied the SAME 0-2px outward
 // band, and outline paints on top of an element's own box-shadow — so a
 // selected key's dark ink (`text-bg`) made outline-current fully occlude
@@ -536,7 +532,7 @@ describe('the job-in-flight (non-interactive) branch never carries a hover carri
 // pre-fix class) alongside or instead of `outline-text` makes the first
 // assertion below fail — `expected '...outline-current...' not to contain
 // 'outline-current'`. Reinstating the box-shadow class makes the second
-// assertion fail similarly. Checked by hand during this fix round, then
+// assertion fail similarly. Checked by hand, then
 // reverted.
 describe('the focus ring is a fixed token, never ink-dependent (codex gate P1 fix)', () => {
   it.each(['design', 'provision'] as FlowStepId[])('%s: carries focus-visible:outline-text regardless of selection, never outline-current', (id) => {
@@ -571,15 +567,15 @@ describe('the focus ring is a fixed token, never ink-dependent (codex gate P1 fi
   })
 })
 
-// FIX ROUND (orchestrator/codex gate, redesign, operator ruling): hue is
+// REDESIGN: hue is
 // removed from the rail entirely, not just off the fill — the bottom-edge
-// LINE a prior fix round added was itself measured and removed once dE2000
+// LINE added earlier was itself measured and removed once dE2000
 // showed it imperceptible (0.85-1.17) for one pair under the two common
 // CVDs. Icon shape and the EBU label are the rail's sole identity carriers
 // now. This describe block pins that ABSENCE, replacing the retired
 // hue-line describe block outright.
 //
-// VISUAL PARITY FIX ROUND (#512): an INTERIM design (see stagePalette.ts)
+// VISUAL PARITY (#512): an INTERIM design (see stagePalette.ts)
 // briefly put accent on the rail as the selection cue — that attempt was
 // itself retired in favour of a shared opaque `--color-selected-face`
 // (a distinct blue-teal, never `--color-accent`), so the ORIGINAL "cyan
@@ -590,7 +586,7 @@ describe('the focus ring is a fixed token, never ink-dependent (codex gate P1 fi
 // MUTATION-VERIFIED: reinstating a `bg-rail-design`-style class on the fill
 // layer (the exact pre-removal per-stage token) makes the first assertion
 // below fail — naming a stage-hue class where none should exist. Checked
-// by hand during this fix round, then reverted.
+// by hand, then reverted.
 describe('no key carries any per-stage hue, or accent, anywhere — identity rests on icon and label alone (redesign, operator ruling; revised #512)', () => {
   it('carries no bg-rail-<stage> class, no hue-line element, on any key in any state', () => {
     const steps: Record<FlowStepId, FlowStepState> = {
@@ -628,7 +624,7 @@ describe('no key carries any per-stage hue, or accent, anywhere — identity res
   })
 })
 
-// SHELL ROUND 2 (dmfdeploy#481): the reserved-but-empty badge slot (Visual
+// SHELL REDESIGN (dmfdeploy#481): the reserved-but-empty badge slot (Visual
 // System doc §5 — "badge-ready, no counts this round"). Renders no number
 // until the ADR-0046 actionable-item derivation (dmfdeploy#495) exists.
 describe('the badge slot is reserved but renders no count this round', () => {
@@ -655,7 +651,7 @@ describe('the badge slot is reserved but renders no count this round', () => {
 })
 
 // dmfdeploy#414: the rail is exactly five keys, nothing adjacent that could
-// read as a sixth. SHELL ROUND 2 adds no new sixth element either (no
+// read as a sixth. The shell redesign adds no new sixth element either (no
 // readout, no separate status line) — this proves the row is STILL exactly
 // the five keys and nothing else.
 describe('the rail is exactly five keys, nothing adjacent that could read as a sixth', () => {
@@ -683,7 +679,7 @@ describe('the rail is exactly five keys, nothing adjacent that could read as a s
 })
 
 // ---------------------------------------------------------------------------
-// FIX ROUND (WP-3 spec B gate, P3-6; corrected P3 round 3): a job-in-flight
+// (WP-3 spec B) A job-in-flight
 // chip can still be the selected one, and before this fix nothing but its
 // fill colour said so — every non-locked chip's text collapses to the
 // identical "· Waiting" during a job, so a screen-reader/colour-blind
@@ -695,7 +691,7 @@ describe('the rail is exactly five keys, nothing adjacent that could read as a s
 // was present in markup, not that it was an exposed accessibility property.
 // Corrected to a visually-hidden "Selected" text node — reachable text,
 // not a state attribute with no widget role to attach to. Unchanged by
-// Shell Round 2.
+// the shell redesign.
 // ---------------------------------------------------------------------------
 
 describe('a job-in-flight chip that is also the SELECTED one still carries that in the accessibility tree', () => {
@@ -735,7 +731,7 @@ describe('a job-in-flight chip that is also the SELECTED one still carries that 
   })
 })
 
-// FIX ROUND (operator finding against a90bfd2's live render): the content
+// The content
 // group is centred by the flex button against the BOX, but a notched key's
 // PAINTED shape isn't the box — the notch removes CONTENT_OFFSET_PX * 2 px
 // of material from the left side only, which silently pushed the icon+
@@ -764,7 +760,7 @@ describe('content re-centring on a notched key (fix round, contentOffsetStyle)',
   })
 
   it('is exactly half the notch depth (17px), not an independently-tunable number', () => {
-    // VISUAL PARITY FIX ROUND (#512): 6 -> 8.5, following NOTCH_DEPTH's own
+    // VISUAL PARITY (#512): 6 -> 8.5, following NOTCH_DEPTH's own
     // 12 -> 17 rescale (28px -> 40px key). Not re-derived here from
     // NOTCH_DEPTH (not exported — the constant this pins is the one
     // lifecycleStrip.tsx's own "CONTENT RE-CENTRING" comment states as the
@@ -796,13 +792,12 @@ describe('content re-centring on a notched key (fix round, contentOffsetStyle)',
   })
 })
 
-// GATE FIX (codex round 3, P2): the tests above are genuinely discriminating
+// The tests above are genuinely discriminating
 // for `contentOffsetStyle` itself, and the "no transform in jsdom" test
 // above is a real safety net — but NEITHER observes the two `key-content`
 // call sites in LifecycleStrip.tsx actually threading SUPPORTS_SHAPE_CURVE
-// through rather than a hardcoded literal (CODEX GATE P3,
-// dmfdeploy/dmfdeploy#512: line numbers dropped from this citation — this
-// file has grown enough since round 3 that a pinned line number goes stale
+// through rather than a hardcoded literal (dmfdeploy/dmfdeploy#512: line numbers dropped from this citation — this
+// file has grown enough since then that a pinned line number goes stale
 // on its own, same lesson as the Sidebar.tsx citations in
 // LifecycleStrip.tsx itself). A call site that changed to
 // `contentOffsetStyle(position, false)` would keep every test above green
@@ -859,7 +854,7 @@ describe('the supported-browser call sites thread SUPPORTS_SHAPE_CURVE through t
 })
 
 // -----------------------------------------------------------------------
-// NARROW-WIDTH FIX ROUND (dmf-cms#128). lkirc's review correctly flagged a
+// NARROW-WIDTH LAYOUT (dmf-cms#128). There was a
 // narrow-width regression from the `justify-center`/`w-full` centring
 // change; the actual mechanism (measured on a real render, see
 // LifecycleStrip.tsx's own docstring) is that the `<ol>` — a flex ITEM of
@@ -892,11 +887,11 @@ describe('the rail holds its width at narrow viewports instead of shrinking belo
   }
 
   // MUTATION-VERIFIED: dropping `shrink-0` from the `<ol>`'s className (the
-  // exact regression this fix round found — see LifecycleStrip.tsx's own
-  // "NARROW-WIDTH FIX ROUND" docstring for the measured 166px -> 78px
+  // exact regression — see LifecycleStrip.tsx's own
+  // "NARROW-WIDTH LAYOUT" docstring for the measured 166px -> 78px
   // collapse this class prevents) makes this assertion fail —
   // `expected 'grid w-max grid-cols-5 items-center gap-[3px] max-[390px]:w-full max-[390px]:grid-cols-1 max-[390px]:gap-2' to contain 'shrink-0'`.
-  // Checked by hand during this fix round, then restored.
+  // Checked by hand, then restored.
   it('pins shrink-0 on the orchestration <ol> — without it, w-max is a preferred width the flex parent can shrink past, not a floor', () => {
     renderFiveOpen()
     const list = screen.getByRole('list')
@@ -905,10 +900,10 @@ describe('the rail holds its width at narrow viewports instead of shrinking belo
   })
 
   // MUTATION-VERIFIED: reverting the <nav> to plain `justify-center` (the
-  // pre-fix class, and exactly what lkirc's review was reviewing) makes the
+  // pre-fix class) makes the
   // second assertion below fail — `expected [ 'flex', 'w-full',
   // 'flex-nowrap', 'items-center', 'justify-center' ] not to contain
-  // 'justify-center'`. Checked by hand during this fix round, then restored.
+  // 'justify-center'`. Checked by hand, then restored.
   //
   // Split assertion deliberately: `justify-center-safe` CONTAINS the
   // substring `justify-center`, so a plain `.not.toContain('justify-center')`
@@ -929,7 +924,7 @@ describe('the rail holds its width at narrow viewports instead of shrinking belo
   // MUTATION-VERIFIED: dropping either max-[390px]: class from the <ol>
   // makes the corresponding assertion below fail, naming the missing class
   // directly (e.g. `expected [...] to contain 'max-[390px]:grid-cols-1'`).
-  // Checked by hand during this fix round, then restored.
+  // Checked by hand, then restored.
   it('pins the stacked-layout classes on the <ol> for the ~390px-and-below breakpoint, per the approved design\'s mobile treatment', () => {
     renderFiveOpen()
     const tokens = screen.getByRole('list').className.split(' ')
@@ -940,7 +935,7 @@ describe('the rail holds its width at narrow viewports instead of shrinking belo
   // MUTATION-VERIFIED: removing `lifecycle-rail-chevron` from a key-fill
   // span's className makes this assertion fail for that key, naming it —
   // e.g. `Finalise & Review key-fill missing lifecycle-rail-chevron`.
-  // Checked by hand during this fix round (removed it from the Design key
+  // Checked by hand (removed it from the Design key
   // specifically, confirmed only Design's assertion failed), then restored.
   it('carries the CSS hook classes the narrow-width notch-drop override (index.css) targets, on every key', () => {
     const steps: Record<FlowStepId, FlowStepState> = {

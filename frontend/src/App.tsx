@@ -39,7 +39,7 @@ export default function App() {
   const throbberHarness = isThrobberHarnessRoute(location.pathname)
   const anyHarness = devHarness || ghostGridHarness || throbberHarness
 
-  // FIX ROUND (dmf-cms#391, codex gate — D): `enabled: !devHarness` makes
+  // `enabled: !devHarness` makes
   // the dev-harness route genuinely fire zero network calls, rather than
   // firing an unstubbed /api/me it never reads the result of and merely
   // hoping that's harmless. See useCurrentUser's own docstring for why this

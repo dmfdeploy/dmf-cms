@@ -1,5 +1,5 @@
 /**
- * Monitoring page (fix-round 5, PR #81, codex sibling sweep).
+ * Monitoring page.
  *
  * None of the three reads on this page (metrics, alerts, targets) checked
  * `isError` anywhere. A never-loaded read defaulted every metric to a
