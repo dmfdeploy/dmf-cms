@@ -1,4 +1,4 @@
-// Shared "settled query" primitive (fix-round 6, PR #81, umbrella #385).
+// Shared "settled query" primitive (umbrella #385).
 //
 // WHY THIS EXISTS. TanStack Query retains the last-good `data` across a
 // failed background refetch: `isLoading`/`isFetching` settle back to
@@ -21,7 +21,7 @@
 // USAGE. A consumer that ONLY needs "can I trust a claim from this data"
 // checks `.failed`. A consumer that wants to keep SHOWING retained content
 // alongside a notice (Art. 5 — the screen stays still, established by
-// MediaWorkloads/index.tsx and every fix-round-3/4/5 panel since) reads
+// MediaWorkloads/index.tsx and every panel since) reads
 // `.data` off the settled result directly — that stays an explicit,
 // visible choice at the call site, never something `data ?? []` does by
 // accident.

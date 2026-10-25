@@ -11,7 +11,7 @@ import { settleQuery } from '../../lib/queryState'
 // Activity → Jobs lane (pages/Activity/JobsLane.tsx). This component's
 // surviving content is Integration Status + Infrastructure Services only.
 export default function AdminPanels() {
-  // fix-round 5 (PR #81, codex sibling sweep): this component is currently
+  // This component is currently
   // unreferenced (see pages/Workspace/index.tsx's own comment — re-wiring it
   // is four edits by that comment), so nothing here is operator-visible
   // today. Fixed alongside Admin.tsx anyway rather than left as a landmine
@@ -22,7 +22,7 @@ export default function AdminPanels() {
   // Connected/Disconnected + latency/user/template counts from `healthData`
   // with no isError check at all — same shape as Admin.tsx's own
   // Integration Health panel.
-  // fix-round 6 (PR #81, umbrella #385): retrofitted onto settleQuery.
+  // (umbrella #385) retrofitted onto settleQuery.
   const { data: user, failed: userError } = settleQuery(useCurrentUser())
   const { data: contract, failed: contractError } = settleQuery(useAppContract())
   const { data: healthData, loading: healthLoading, failed: healthError } = settleQuery(useAdminHealth())

@@ -35,7 +35,7 @@ export default function HealthCore() {
           Monitoring is not configured in this environment, so facility
           health cannot be assessed from here.
         </p>
-        {/* fix-round 5 (PR #81, codex sibling sweep): `state.stale` (backed
+        {/* `state.stale` (backed
             by classifyWorkspaceHealth's own unconditional `q.isError`) was
             being COMPUTED correctly but never CONSULTED here — this early
             return skipped past it entirely, so a failed refetch after a

@@ -1,6 +1,6 @@
 /**
  * JobProgress.tsx — OperationStatusLine / JobStatusLine retained-error
- * honesty (fix-round 6, PR #81, umbrella #385 codex sweep). Both used to
+ * honesty (umbrella #385). Both used to
  * destructure only `data` from their poll — a settled failed refetch that
  * retained the last-good state rendered it with no notice at all. This is
  * the canonical (shared, exported) implementation; JobsLane.tsx's and

@@ -1,6 +1,5 @@
 /**
- * Catalog/index.tsx — useCatalog retained-error honesty (fix-round 7, PR
- * #81, umbrella #385, codex call-site sweep). Distinct from the isError-
+ * Catalog/index.tsx — useCatalog retained-error honesty (umbrella #385). Distinct from the isError-
  * gating shape the rest of this arc chases: `if (error)` used to replace
  * the ENTIRE page with the error panel on ANY failed read, even a settled
  * refetch that retained a perfectly good `catalogData` — discarding real,

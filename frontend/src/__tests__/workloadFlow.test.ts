@@ -430,17 +430,16 @@ describe('classifyForwardExit: the forward exit out of Configure', () => {
     expect(classifyForwardExit({ ...TRUSTED, tearingDown: true })).toBe('none')
   })
 
-  // BASELINE NOTE (fix round 2, gate P3): the configure branch these two
+  // BASELINE NOTE: the configure branch these two
   // tests exercise (`if (input.lifecycle === 'configure') { return
   // input.anyMemberObservedRunning ? 'none' : 'view-status' }`) has been
-  // byte-identical since fix round 0 (commit ea5535b) through the current
-  // tip — rounds 1 and 2 touched the operate branch, the docstring, and the
-  // UI copy, never this one. So these two ARE mutation-discriminating
+  // byte-identical since classifyForwardExit was introduced (commit ea5535b)
+  // — later changes touched the operate branch, the docstring, and the UI
+  // copy, never this one. So these two ARE mutation-discriminating
   // against origin/main (classifyForwardExit did not exist there — a whole-
-  // revert throws `TypeError: classifyForwardExit is not a function`, see
-  // round 0's report) but are REGRESSION GUARDS, not new-behaviour tests,
-  // with respect to fix round 0/1/2 specifically — restated explicitly here
-  // per the instruction that every mutation claim name its baseline.
+  // revert throws `TypeError: classifyForwardExit is not a function`) but are
+  // REGRESSION GUARDS, not new-behaviour tests, with respect to that
+  // introduction. Every mutation claim names its baseline.
   it('row: position is configure, running not yet observed → "View workload status" (never a deploy-outcome claim)', () => {
     expect(classifyForwardExit({ ...TRUSTED, anyMemberObservedRunning: false })).toBe(
       'view-status',
@@ -451,7 +450,7 @@ describe('classifyForwardExit: the forward exit out of Configure', () => {
     expect(classifyForwardExit({ ...TRUSTED, anyMemberObservedRunning: true })).toBe('none')
   })
 
-  // FIX ROUND (dmfdeploy#412 adversarial gate): a trusted operating read is
+  // (dmfdeploy#412) A trusted operating read is
   // ONE state, 'live' — never split on instance.live_view. See
   // classifyForwardExit's own docstring for why live_view cannot honestly
   // distinguish a preview claim: it is sidecar-URL resolvability, not

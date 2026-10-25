@@ -23,17 +23,15 @@ import { classifyWorkloadForHeaderSlot, buildHeaderSlotRail } from '../../store/
  * each specimen are all read back off the real `rail` object at render
  * time, not asserted separately.
  *
- * FIX ROUND (dmf-cms#391, codex gate — new P2, then P1/the counts): TWO
- * rounds of this same lesson. First: an earlier version of this file called
+ * HOW THE COUNTS ARE DERIVED: an earlier version of this file called
  * classifyWorkloadFlow directly and hand-supplied `runningReadout.trustworthy`
- * itself, bypassing buildHeaderSlotRail entirely — fixed by routing through
- * the real pipeline instead. Second, after that fix: this file still
- * supplied `running`/`total` as plain hand-typed numbers passed alongside
- * the input, because at the time that was still how the real pipeline
- * itself worked (a caller-supplied count, independent of trustworthy) —
- * that WAS the actual gap codex found in production code, not just here,
- * and closing it in store/headerSlot.ts changed classifyWorkloadForHeaderSlot's
- * own signature to take a real `instances` array instead of a pre-computed
+ * itself, bypassing buildHeaderSlotRail entirely — it now routes through
+ * the real pipeline instead. A later version still supplied `running`/`total`
+ * as plain hand-typed numbers passed alongside the input, because that was
+ * how the real pipeline itself worked (a caller-supplied count, independent
+ * of trustworthy) — a gap in production code, not just here. Closing it in
+ * store/headerSlot.ts changed classifyWorkloadForHeaderSlot's own
+ * signature to take a real `instances` array instead of a pre-computed
  * count. This file follows that change: no specimen states `running`/
  * `total` directly any more — each states a synthetic `instances` array
  * (via the tiny `fixtureInstances` helper below, or by hand for the one
@@ -48,7 +46,7 @@ import { classifyWorkloadForHeaderSlot, buildHeaderSlotRail } from '../../store/
  * demonstrate the Operate-key tally divergence/convergence pair (formerly
  * #6 and #7) were removed with it, before the tally itself was.
  *
- * FIX ROUND (orchestrator/codex gate, redesign): LifecycleStrip no longer
+ * REDESIGN: LifecycleStrip no longer
  * accepts (or renders) a position marker of any kind — the position tally
  * and `aria-current` were removed entirely (see that component's own
  * docstring point B: the backend can never derive design/plan/finalise as
@@ -57,7 +55,7 @@ import { classifyWorkloadForHeaderSlot, buildHeaderSlotRail } from '../../store/
  * amendment). `rail.current`/`rail.offFlow` in the debug `<dl>` below are
  * STILL genuinely computed by the real `buildHeaderSlotRail` pipeline —
  * `store/headerSlot.ts` was deliberately left untouched (its own trust/
- * derivation machinery has test coverage this fix round's scope doesn't
+ * derivation machinery has test coverage this change's scope doesn't
  * extend to, and a future consumer may still want it) — but LifecycleStrip
  * itself no longer reads either field. The `<dl>` rows exist for debugging
  * the classifier's own output, not to demonstrate anything the rail still
@@ -65,7 +63,7 @@ import { classifyWorkloadForHeaderSlot, buildHeaderSlotRail } from '../../store/
  * note claiming "the tally should render here" would now be describing
  * behaviour that does not exist.
  *
- * SAME FIX ROUND: hue is also gone from the rail entirely — tried as a
+ * Also: hue is gone from the rail entirely — tried as a
  * fill, then as a line, measured at each stage, and removed once the line
  * measured imperceptible (dE2000 0.85-1.17) for one pair under the two
  * common CVDs. Every key renders the same neutral fill/ink now; only icon
@@ -80,7 +78,7 @@ interface Specimen {
   input: WorkloadLifecycleInput
   /** A minimal, real-shaped instances array — classifyWorkloadForHeaderSlot
    *  derives running/total from this itself; nothing here states a count
-   *  directly. See the file docstring's FIX ROUND note. */
+   *  directly. See the file docstring's note on how the counts are derived. */
   instances: { observed_state: string }[]
   activeChip: FlowStepId | null
   jobOwnerLabel: string | null
@@ -179,7 +177,7 @@ const SPECIMENS: Specimen[] = [
       isPurgeableEntity: true,
     },
     // Deliberately non-zero (stale note removed: this used to document a
-    // RunningReadout component that Shell Round 2 already deleted outright
+    // RunningReadout component that an earlier shell redesign already deleted outright
     // — see LifecycleStrip.tsx's own docstring, "row-end run-count readout
     // ... is deleted outright too". Kept non-zero anyway so the debug
     // running/total row below still shows a real derived count during a

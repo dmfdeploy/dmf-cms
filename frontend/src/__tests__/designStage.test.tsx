@@ -1,5 +1,5 @@
 /**
- * DesignStage (fix-round 5, PR #81, codex sibling sweep) — two defects:
+ * DesignStage — two defects:
  *
  *  1. InstanceComposition (the topology-derived "composed of…" line) was
  *     the unfixed twin of Operate.tsx's InstanceActiveSource (dmfdeploy#414

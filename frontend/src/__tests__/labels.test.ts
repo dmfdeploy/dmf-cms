@@ -40,7 +40,7 @@ describe('humanizeContext', () => {
 })
 
 describe('describeJob', () => {
-  // umbrella #432 §F fix-round 3 (codex gate): describeJob's second argument
+  // umbrella #432 §F: describeJob's second argument
   // is the ALREADY-COMPUTED jobOutcome() word, not a raw AWX status — every
   // call below runs it through jobOutcome() first, exactly like the real
   // caller (HistoryLane.tsx's Recent Jobs panel) now does, computing it once
@@ -94,7 +94,7 @@ describe('describeJob', () => {
     }
   })
 
-  // umbrella #432 §F fix-round 3 (codex gate): describeJob used to take the
+  // umbrella #432 §F: describeJob used to take the
   // raw status and call jobOutcome() a SECOND time internally, independent
   // of whatever the caller had already computed for the badge. That always
   // agreed for jobOutcome's 5 named outcomes (same pure function, same

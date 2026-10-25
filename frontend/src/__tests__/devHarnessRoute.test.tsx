@@ -2,7 +2,7 @@
  * dmf-cms#391 — the lifecycle-rail inspection harness's route gate.
  *
  * Three things are pinned here: the pure gating logic (isDevHarnessRoute)
- * directly; the base-prefix-tolerance FIX ROUND below (a real bug the
+ * directly; the base-prefix-tolerance tests below (a real bug the
  * operator found by loading the harness in an actual browser — the first
  * version of this file only ever exercised the bare, unprefixed pathname,
  * which is exactly the "easier property" a matcher can pass on and still be
@@ -18,7 +18,7 @@
  * exercises the same documented Vite behaviour this runtime test already
  * pins, at the cost of a full production build per suite run.
  *
- * FIX ROUND (codex gate — D): App.tsx passes `useCurrentUser(!devHarness)`,
+ * App.tsx passes `useCurrentUser(!devHarness)`,
  * so the dev-harness route is also pinned here to make genuinely ZERO
  * network calls — not merely to render successfully despite one going
  * unread, which is what an earlier version of this file's own comments
@@ -126,7 +126,7 @@ describe('isDevHarnessRoute — the pure gate', () => {
   })
 })
 
-// FIX ROUND (dmf-cms#391): found by loading the harness in a real browser —
+// Found by loading the harness in a real browser —
 // the exact-match version of isDevHarnessRoute could only ever see the bare
 // path, but Vite serves the dev SPA shell (and a real deep-link/bookmark
 // hard-navigation lands on) the base-PREFIXED path, `${APP_BASE}__dev/...`.
@@ -174,7 +174,7 @@ describe('isDevHarnessRoute — accepts the base-prefixed pathname form Vite act
 
 describe('the harness is absent from the production route table', () => {
   it('is reachable through the real <App/> when DEV is true, and makes NO network call at all', async () => {
-    // FIX ROUND (codex gate — D): App.tsx now calls
+    // App.tsx calls
     // useCurrentUser(!devHarness), so on this route the query is genuinely
     // `enabled: false` — no /api/me request fires at all, not merely one
     // whose result goes unread. A spy (not a stub) is the actual proof: no

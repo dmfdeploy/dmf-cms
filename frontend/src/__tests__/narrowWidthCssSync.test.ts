@@ -1,5 +1,5 @@
 /**
- * LKIRC GATE ROUND 2 (dmfdeploy/dmfdeploy#512). index.css's own
+ * dmfdeploy/dmfdeploy#512. index.css's own
  * `@media (width < 390px)` block hand-copies two of LifecycleStrip.tsx's
  * TS constants into literal CSS numbers — `border-radius: 8px` for
  * `BOX_RADIUS`, and `clip-path: inset(2px round 6px)` for `RING_INSET` /
@@ -7,17 +7,16 @@
  * `!important`-override an INLINE style set from those same constants
  * (`chevronStyle`/`chevronInnerStyle`), and a media query cannot read a TS
  * constant. Both call sites say "kept in sync by hand" in their own
- * comments, and that hand-sync is exactly how the round-2 bug arrived
+ * comments, and that hand-sync is exactly how the original bug arrived
  * unnoticed: `.lifecycle-rail-chevron-fill` lost its `clip-path` entirely
- * for a full fix round (only `border-radius` was restored after the P2
- * fix) and nothing caught it, because nothing compared the CSS literal
+ * while only `border-radius` was restored, and nothing caught it, because nothing compared the CSS literal
  * against the constant it claims to track.
  *
  * This file closes that gap: it reads BOTH sides from their own source of
  * truth — `BOX_RADIUS`/`RING_INSET` from the TS module, the media-query
  * literals from index.css's own raw text — and asserts they still agree,
  * so a future change to either side that isn't mirrored in the other
- * fails HERE, not three fix rounds later on a real render nobody thought
+ * fails HERE, not later on a real render nobody thought
  * to check at a narrow viewport.
  */
 import { describe, expect, it } from 'vitest'

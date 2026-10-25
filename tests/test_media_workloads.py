@@ -257,7 +257,7 @@ def test_netbox_failure_degrades_never_500(monkeypatch):
 
 
 def test_netbox_failure_log_line_sanitizes_hostile_body(monkeypatch, caplog):
-    # umbrella dmf-cms#108 fix-round 4: NetboxAPIError.body is upstream
+    # NetboxAPIError.body is upstream
     # response content — whatever NetBox's own HTTP response body says,
     # verbatim. This module has 8 sites following this exact pattern
     # (a NetboxAPIError-specific except clause logging str(exc), which
@@ -285,7 +285,7 @@ def test_netbox_failure_log_line_sanitizes_hostile_body(monkeypatch, caplog):
 
 
 def test_prometheus_overlay_failure_log_line_sanitizes_hostile_body(monkeypatch, caplog):
-    # umbrella dmf-cms#108 fix-round 4: same reasoning, the OTHER upstream
+    # Same reasoning, the OTHER upstream
     # service this module calls — PrometheusAPIError.body is Prometheus's
     # own raw response body. Direct unit call (not the full endpoint):
     # _observed_by_app is the simplest of the module's three Prometheus
@@ -372,7 +372,7 @@ def test_clear_requires_reason(monkeypatch):
 
 
 def test_clear_non_object_body_is_clean_400_not_a_crash(monkeypatch):
-    # fix-round P3 (codex GATE-239CMS-R2): this endpoint used to parse the
+    # This endpoint used to parse the
     # body inline with its own (body or {}).get("reason", ...), which raised
     # an unhandled AttributeError on a non-object JSON body (dict.get doesn't
     # exist on a list/str/int) — a live-probed 500, not a clean 400. Now
@@ -498,14 +498,14 @@ def test_clear_reconcile_expectation_names_no_nonexistent_actor(monkeypatch):
 
 
 def test_clear_audit_line_sanitizes_instance_and_actor(monkeypatch, caplog):
-    # umbrella dmf-cms#108 fix-round 2: this is the canonical ADR-0028 C5
+    # This is the canonical ADR-0028 C5
     # clear-for-deployment record — the one _audit_awx_write's own
     # docstring says the AWX writes were modelled on — and it formats
     # `instance` (a raw path parameter, unvalidated at this point: a
     # nonexistent instance name still reaches this log line via the
     # not-found outcome below) and `actor` (user.subject, an OIDC claim —
     # dev-login's own username field stands in for it here) with plain
-    # %s, same injection shape fix-round 1 fixed in _audit_awx_write. A
+    # %s, same injection shape already fixed in _audit_awx_write. A
     # hostile instance name here never matches a real NetBox service, so
     # this exercises the SAME not-found response path
     # test_clear_out_of_scope_404_no_side_effect already covers — the
@@ -695,12 +695,12 @@ def test_scoped_service_cache_separates_scopes():
     assert calls["n"] == 2
 
 
-# --- WP-D codex fixes: DNS-label trailing-newline (P2c) + list allowlist (P3a) ---
+# --- WP-D: DNS-label trailing-newline (P2c) + list allowlist (P3a) ---
 
 @pytest.mark.parametrize("bad", ["mxl-x\n", "mxl-x\r", "\nmxl-x", "mxl-x\t"])
 def test_sidecar_base_url_rejects_trailing_whitespace_labels(bad):
     # re '$' matches before a trailing newline; fullmatch must reject it so no
-    # http.client.InvalidURL (500) can ever be composed (codex P2).
+    # http.client.InvalidURL (500) can ever be composed.
     svc = _svc_cf(bad, {"cluster_service": bad, "cluster_namespace": "mxl", "cluster_port": 9000})
     assert sidecar_base_url(svc) is None
 
@@ -837,7 +837,7 @@ def test_topology_source_pattern_none_when_parent_has_no_topology_ref(tmp_path: 
 
 
 # ---------------------------------------------------------------------------
-# fix-round r1 (codex 452-r1 gate) — two gaps the r1 gate found:
+# Two gaps:
 #
 # P2 "single derivation" is asserted only by source inspection: both
 # list_instances and list_workloads_grouped visibly pass catalog_dir to
@@ -867,7 +867,7 @@ def test_topology_source_pattern_none_when_source_id_is_none(tmp_path: Path):
 
 
 def test_topology_source_pattern_agrees_between_flat_and_grouped_reads(monkeypatch, tmp_path: Path):
-    """umbrella #452 fix-round r1 (codex P2): list_instances (flat) and
+    """umbrella #452: list_instances (flat) and
     list_workloads_grouped both claim to build their instance dicts through
     the SAME _service_to_instance call — this is the test that makes that a
     fact about the real functions, not an inspection of the source. Exercises

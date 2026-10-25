@@ -38,7 +38,7 @@ describe('ClearForDeployment confirm panel copy', () => {
     expect(textarea.className.split(/\s+/)).toContain('field')
   })
 
-  // umbrella #432, FIX ROUND (operator report: "too much small text").
+  // umbrella #432 ("too much small text").
   // Same scale bump as ReasonConfirm.tsx's own popover, in this separate
   // component that duplicates the same shell.
   it('raises the panel width floor and the title/field scale off the old dense defaults', () => {
@@ -56,7 +56,7 @@ describe('ClearForDeployment confirm panel copy', () => {
     expect(textarea.className.split(/\s+/)).not.toContain('field-xs')
   })
 
-  // umbrella #432, FIX ROUND (0.28.0 walk finding): same max-width cap as
+  // umbrella #432: same max-width cap as
   // ReasonConfirm.tsx's own popover, and the same honest limit — see that
   // test's own comment. jsdom cannot measure rendered width, so this pins
   // the class contract only, not the actual layout; the walk is what

@@ -32,10 +32,10 @@ export interface ChangesQueryLike {
 }
 
 export function classifyChanges(q: ChangesQueryLike): ChangesState {
-  // fix-round 6 (PR #81, umbrella #385): retrofitted onto settleQuery —
+  // (umbrella #385) retrofitted onto settleQuery —
   // `loading`/`failed` below are exactly the `q.isLoading && !q.data` /
-  // `q.isError` checks this function itself introduced in fix-round 4 (see
-  // that round's note, preserved in queryState.ts now), expressed through
+  // `q.isError` checks this function itself introduced (see
+  // the note, preserved in queryState.ts now), expressed through
   // the shared primitive so a new classifier copies this shape by default.
   const settled = settleQuery(q)
   const jobs = settled.data?.jobs ?? []
@@ -117,7 +117,7 @@ export type ForgejoPhase =
   | 'partial' // some repos read, some failed — rows shown are real but incomplete
   | 'unconfigured'
   | 'error' // the console's own API call failed, OR the payload's reason
-            // token could not be trusted as authorizing "ok" (fix-round P3-5)
+            // token could not be trusted as authorizing "ok"
 
 export interface ForgejoQueryLike {
   isLoading: boolean
@@ -126,7 +126,7 @@ export interface ForgejoQueryLike {
 }
 
 export function classifyForgejo(q: ForgejoQueryLike): ForgejoPhase {
-  // fix-round 6 (PR #81, umbrella #385): retrofitted onto settleQuery — see
+  // (umbrella #385) retrofitted onto settleQuery — see
   // classifyChanges' identical note above.
   const settled = settleQuery(q)
   if (settled.loading) return 'loading'
@@ -141,7 +141,7 @@ export function classifyForgejo(q: ForgejoQueryLike): ForgejoPhase {
     case '':
       return 'ok'
     default:
-      // fix-round P3-5: `apiCall`'s generic return type is a compile-time
+      // `apiCall`'s generic return type is a compile-time
       // cast, not runtime validation — an absent, malformed, or
       // newly-added-but-unhandled token must NOT fail OPEN into 'ok'
       // (which forgejoEmptyCopy below reads as "Forgejo answered, this is
@@ -161,7 +161,7 @@ export function forgejoEmptyCopy(phase: ForgejoPhase, kind: string): string {
     case 'partial':
       return `Some repositories could not be read — recent ${kind} may be incomplete. Retrying automatically.`
     case 'unconfigured':
-      // Art. 8 next-step (fix-round P2-4): naming the fact alone left the
+      // Art. 8 next-step: naming the fact alone left the
       // operator with nothing to do about it.
       return 'Source control is not configured in this environment — an administrator can connect it to show recent commits and pull requests here.'
     case 'error':

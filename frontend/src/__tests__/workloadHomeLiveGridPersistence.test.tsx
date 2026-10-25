@@ -1,14 +1,13 @@
 /**
  * WorkloadHome — the live grid, its tiles, and its modal must SURVIVE a
- * background refetch, and must do so HONESTLY (umbrella dmfdeploy#432 §A,
- * fix round on the blocked first attempt).
+ * background refetch, and must do so HONESTLY (umbrella dmfdeploy#432 §A).
  *
  * WHAT A PLAIN RENDER TEST CANNOT PROVE, AND WHY THIS FILE IS SHAPED THE WAY
  * IT IS.
  *
  * `membersDataRetained` (workloadLifecycle.ts) — not the stricter,
  * isFetching-folding `membersDataTrustworthy` — is what `classifyHomeState`
- * gates on since this fix round, precisely so an in-flight background poll
+ * gates on precisely so an in-flight background poll
  * of an UNCHANGED, error-free payload is not treated as a semantic change
  * (UX Constitution §3 hard gate #5). A test that only asserts "the grid is
  * present after the refetch" would pass against the ORIGINAL blocked code
@@ -23,8 +22,8 @@
  * on a `live_view:false` fixture, so it created no preview `<img>`, no
  * cache-buster, and no openable modal: it could not prove the production
  * symptom (#432 §A: "preview <img> lost element identity, ?t=5 -> ?t=1").
- * This file adds exactly those missing proofs, plus the transitions the
- * fix-round work order named: a failed background refetch, setup staying
+ * This file adds exactly those missing proofs, plus these transitions:
+ * a failed background refetch, setup staying
  * setup (never flashing "Live view") through a GENUINE transition to
  * unresolved, trustworthy partial bring-up, a degraded FIRST response, and
  * deletion of the instance behind an open modal.
@@ -217,7 +216,7 @@ describe('an ordinary background poll of unchanged, trustworthy data (item 3)', 
       expect(queryClient.isFetching({ queryKey: ['media-workloads-grouped'] })).toBeGreaterThan(0),
     )
 
-    // THE fix-round assertion: unlike the pre-fix code, an in-flight poll of
+    // THE assertion: unlike the pre-fix code, an in-flight poll of
     // unchanged data must not read as 'unresolved' — neither notice mounts.
     expect(screen.queryByText(AMBIGUOUS_NOTICE)).toBeNull()
     expect(screen.queryByText(FAILED_NOTICE)).toBeNull()
@@ -394,9 +393,9 @@ describe('a failed background refetch retains its content (item 2)', () => {
     expect(screen.queryByText(/The monitoring surface for this workload/)).toBeNull()
   })
 
-  // Gate round 4: `firstLoadFailed` (data == null) is not the only shape a
+  // `firstLoadFailed` (data == null) is not the only shape a
   // background failure with retained data can take. These two prove the
-  // retained-status precedence for the two branches gate round 4 named —
+  // retained-status precedence for the two branches —
   // both of which sit AHEAD of the main workload-found path and were never
   // reachable from an in-flight-grid scenario, so the test above alone
   // could not have caught either.
@@ -671,15 +670,15 @@ describe('the open modal reconciles against the current inventory (item 4)', () 
 })
 
 // ---------------------------------------------------------------------------
-// gate round 3: `membersDataRetained` lets homeState stay 'live'/'setup'
+// `membersDataRetained` lets homeState stay 'live'/'setup'
 // through an in-flight background poll, which is CORRECT (case (a) — the
 // last settled read is sound; a poll in flight over unchanged, error-free
-// data is not a semantic change). What round 2's own code and comments got
+// data is not a semantic change). What earlier code and comments got
 // wrong was describing this as "claims do not persist" — they do, for
-// exactly this case. These two tests lock in the specific residue named by
-// the gate: the "Live view" heading must not qualify to "showing last known
+// exactly this case. These two tests lock in the specific residue —
+// the "Live view" heading must not qualify to "showing last known
 // state" merely because a poll is in flight, and the setup CTA must survive
-// one too (the previous round's own "every live sibling persists" test only
+// one too (the earlier "every live sibling persists" test only
 // exercised homeState==='live', never 'setup', and checked the SECTION's
 // static aria-label, never the <h2> TEXT that actually varies).
 //
@@ -707,7 +706,7 @@ describe('claims gated on homeState persist through an in-flight poll too, not o
       expect(queryClient.isFetching({ queryKey: ['media-workloads-grouped'] })).toBeGreaterThan(0),
     )
 
-    // THE assertion gate round 3 named: homeStateIsLive (and therefore the
+    // THE assertion: homeStateIsLive (and therefore the
     // heading's wording) must not flip merely because this read is in
     // flight — only a GENUINE transition (error/degraded/position change)
     // may qualify it. Mutation-tested: swapping `homeStateIsLive`'s

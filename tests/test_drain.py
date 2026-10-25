@@ -107,7 +107,7 @@ def test_failed_job_with_monitoring_surfaces_marker_is_never_eligible():
 
 
 def test_F2_duplicate_surfaces_key_is_never_eligible():
-    # codex round-1 F2: _sanitize_kv preserves duplicate valid keys
+    # _sanitize_kv preserves duplicate valid keys
     # verbatim — a marker with BOTH surfaces=monitoring AND
     # surfaces=netbox must never resolve to whichever one this function
     # scans first; ambiguous -> ineligible, same as a missing key.
@@ -155,7 +155,7 @@ def test_F6_multiple_deploy_ops_agreeing_on_target_are_not_ambiguous():
 
 
 def test_F6_multiple_deploy_ops_disagreeing_on_target_is_ambiguous():
-    # codex round-1 F6 repro: two deploy records map the SAME run_id to
+    # Two deploy records map the SAME run_id to
     # DIFFERENT catalog targets — OperationStore doesn't enforce run_id
     # uniqueness, so this must fail closed, never order-selected.
     ops = [
@@ -194,7 +194,7 @@ def test_strip_to_host_foo_never_equals_foo_bar():
 
 
 def test_R4_strip_to_host_unparseable_but_truthy_strings_yield_none():
-    # codex round-4: these are all non-empty strings (truthy) but parse to
+    # These are all non-empty strings (truthy) but parse to
     # an EMPTY/None host — the exact gap a truthiness-only validator missed.
     assert drain._strip_to_host(":") is None
     assert drain._strip_to_host("://") is None
@@ -254,7 +254,7 @@ def test_resolve_drain_targets_present_with_probe_tag_exact_match_is_excluded_re
 
 
 def test_F4_present_with_probe_tag_but_different_identity_still_drain_expected(monkeypatch):
-    # codex round-1 F4 repro: a restored pre-existing record legitimately
+    # A restored pre-existing record legitimately
     # monitors a DIFFERENT host than this run's own projection — that
     # doesn't excuse H_run itself from draining. A naive "any monitoring:
     # probe tag means retained" check would wrongly exclude it.
@@ -285,7 +285,7 @@ def test_resolve_drain_targets_present_with_string_tags_shape_and_matching_ident
 
 
 def test_F5_two_records_for_the_same_name_is_fail_closed_none(monkeypatch):
-    # codex round-1 F5 repro: NetBox service names aren't guaranteed
+    # NetBox service names aren't guaranteed
     # unique by this code — an ambiguous name match must never trust
     # records[0] (a still-cached target on the second record would go
     # unchecked forever otherwise).
@@ -295,11 +295,11 @@ def test_F5_two_records_for_the_same_name_is_fail_closed_none(monkeypatch):
     assert drain.resolve_drain_targets(ENTRY_SINGLE_SERVICE, netbox_url="http://nb.test", netbox_token="t") is None
 
 
-# --- F2 (round-2): NetBox list envelope validation --------------------------
+# --- NetBox list envelope validation --------------------------
 
 
 def test_R2_F2_empty_body_envelope_is_fail_closed_none(monkeypatch):
-    # codex round-2 F2 repro: an HTTP-200 EMPTY body ({}) must never read
+    # An HTTP-200 EMPTY body ({}) must never read
     # as "zero results" (genuine absence) — it's unreadable, not absent.
     monkeypatch.setattr(netbox_module, "_request", lambda *a, **k: {})
     assert drain.resolve_drain_targets(ENTRY_SINGLE_SERVICE, netbox_url="http://nb.test", netbox_token="t") is None
@@ -316,7 +316,7 @@ def test_R2_F2_missing_count_key_is_fail_closed_none(monkeypatch):
 
 
 def test_R2_F2_paginated_response_with_more_matches_is_fail_closed_none(monkeypatch):
-    # codex round-2 F2 repro verbatim: count says 2 matching records exist,
+    # count says 2 matching records exist,
     # but this page's results only carries 1 (a "next" page holds the
     # other) — count is authoritative and disagrees with len(results), so
     # this can never be trusted as "exactly one record".
@@ -353,8 +353,7 @@ def test_R2_F2_limit_2_requested_in_query(monkeypatch):
 
 
 def test_F4_restored_custom_field_divergence_end_to_end(monkeypatch):
-    # codex round-1 F4's own headline repro, reproduced verbatim: a
-    # pre-existing unmonitored record's snapshot restores
+    # A pre-existing unmonitored record's snapshot restores
     # cluster_service=legacy-svc, while this run's own deployed identity
     # (via catalog override) is run-svc. WP4 must still check run-svc, not
     # legacy-svc — a stale run-svc target in both seams must NOT read as
@@ -628,11 +627,11 @@ def test_F3a_promsd_malformed_payload_is_fail_closed_false_end_to_end(monkeypatc
     assert drain.check_drained([TARGET], promsd_url="http://promsd.test", prometheus_url="http://prom.test") is False
 
 
-# --- F3 (round-2): PromSD empty-body + nested-shape validation -------------
+# --- PromSD empty-body + nested-shape validation -------------
 
 
 def test_R2_F3_empty_response_body_raises(monkeypatch):
-    # codex round-2 F3 repro: /sd/probe -> HTTP 200 with raw body b"" — not
+    # /sd/probe -> HTTP 200 with raw body b"" — not
     # valid JSON, must never silently degrade to [] (real-drain evidence).
     class _FakeResp:
         def __enter__(self):
@@ -664,7 +663,7 @@ def test_R2_F3_empty_body_end_to_end_stays_pending(monkeypatch):
 
 
 def test_R2_F3_group_targets_not_a_list_raises(monkeypatch):
-    # codex round-2 F3 repro verbatim: a bare string is iterable in
+    # A bare string is iterable in
     # Python, so {"targets": "not-a-list"} would otherwise be scanned
     # character-by-character by the host-matching loop instead of raising.
     monkeypatch.setattr(promsd_module, "_request", lambda *a, **k: [{"targets": "not-a-list", "labels": {}}])
@@ -720,7 +719,7 @@ def test_promsd_ready_false_on_error(monkeypatch):
 
 
 def test_R3_F2_ready_false_contradictory_200_body(monkeypatch):
-    # codex round-3 F2 repro verbatim: HTTP 200 with ready=false — a
+    # HTTP 200 with ready=false — a
     # version/proxy/server inconsistency must never read as ready.
     monkeypatch.setattr(promsd_module, "_request", lambda *a, **k: {"status": "stale", "ready": False})
     assert promsd_module.ready(url="http://promsd.test") is False
@@ -749,7 +748,7 @@ def test_R3_F2_ready_false_ready_truthy_but_not_bool_true(monkeypatch):
 
 
 def test_R3_F2_readyz_repro_end_to_end_stays_pending(monkeypatch):
-    # codex round-3 F2's full repro: /readyz -> 200 {"status":"stale",
+    # /readyz -> 200 {"status":"stale",
     # "ready":false}, /sd/probe -> [], and a valid non-matching Prometheus
     # self target — must stay unverified, never drained.
     monkeypatch.setattr(promsd_module, "_request", lambda *a, **k: {"status": "stale", "ready": False})
@@ -800,7 +799,7 @@ def test_F3c_prometheus_empty_active_targets_is_fail_closed_false(monkeypatch):
 
 
 def test_R3_F1_prometheus_row_with_no_labels_is_fail_closed_false(monkeypatch):
-    # codex round-3 F1 repro verbatim: activeTargets=[{}] satisfies the
+    # activeTargets=[{}] satisfies the
     # non-empty liveness sentinel while contributing no candidate host at
     # all — must never let the cycle read as drained.
     _mock_promsd_ready(monkeypatch)
@@ -839,11 +838,11 @@ def test_R3_F1_prometheus_row_with_valid_param_target_is_accepted(monkeypatch):
     assert drain.check_drained([TARGET], promsd_url="http://promsd.test", prometheus_url="http://prom.test") is True
 
 
-# --- F1 (round-4): validate with the matcher's own parser, not truthiness --
+# --- Validate with the matcher's own parser, not truthiness --
 
 
 def test_R4_F1_prometheus_row_instance_colon_is_fail_closed_false(monkeypatch):
-    # codex round-4 F1 repro verbatim: instance=":" is a non-empty
+    # instance=":" is a non-empty
     # (truthy) string but _strip_to_host(":") is None — the row
     # contributes no real candidate host and must never read as drained.
     _mock_promsd_ready(monkeypatch)
@@ -876,11 +875,11 @@ def test_R4_F1_prometheus_row_normal_host_port_path_still_validates(monkeypatch)
     assert drain.check_drained([TARGET], promsd_url="http://promsd.test", prometheus_url="http://prom.test") is True
 
 
-# --- F2 (round-4): same principle, applied to promsd targets ---------------
+# --- Same principle, applied to promsd targets ---------------
 
 
 def test_R4_F2_promsd_target_colon_is_fail_closed_false(monkeypatch):
-    # codex round-4 F2 repro verbatim: {"targets":[":"],"labels":{}} — a
+    # {"targets":[":"],"labels":{}} — a
     # non-empty (truthy) string that _strip_to_host(":") reduces to None.
     _mock_promsd_ready(monkeypatch)
     monkeypatch.setattr(promsd_module, "_request", lambda *a, **k: [{"targets": [":"], "labels": {}}])
@@ -922,11 +921,11 @@ def test_R4_F2_promsd_target_normal_host_port_path_still_validates(monkeypatch):
     assert result == [{"targets": ["host.ns.svc.cluster.local:9000/probe/path"], "labels": {}}]
 
 
-# --- F3 (round-3): N-service normalization never partial -------------------
+# --- N-service normalization never partial -------------------
 
 
 def test_R3_F3_mixed_valid_and_malformed_list_member_is_fail_closed_none(monkeypatch):
-    # codex round-3 F3 repro verbatim: a declared 2-service list where the
+    # A declared 2-service list where the
     # second member is a bare string, not a dict. Filtering out just the
     # malformed member (leaving a 1-spec list that resolves trivially
     # retained/empty) would silently drop a real service from the drain

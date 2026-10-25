@@ -176,7 +176,7 @@ def test_read_entry_demand_declared_parses():
 
 
 def test_read_entry_demand_malformed_resources_layer_is_invalid_budget_not_500():
-    # codex R2-6: every layer is type-checked before being indexed/.get()'d —
+    # Every layer is type-checked before being indexed/.get()'d —
     # a structurally malformed provision block (resources as a list, not a
     # mapping) must be a clean invalid-budget refusal, never an unhandled
     # AttributeError that would surface as a 500 at the handler.
@@ -262,7 +262,7 @@ def test_ee_reserve_worker_without_requests_is_floor(monkeypatch):
 
 
 def test_ee_reserve_sums_across_all_containers_not_worker_only(monkeypatch):
-    # codex R2-4: a worker-only read undercounts — the whole pod's
+    # A worker-only read undercounts — the whole pod's
     # scheduler-effective demand sums EVERY container's declared requests.
     # sidecar 10m/16Mi + worker 400m/768Mi = 410m/784Mi, not just 400m/768Mi.
     # JSON is also valid YAML — PyYAML handles both (§3.2 note).
@@ -458,7 +458,7 @@ def test_supply_app_dominates_when_larger_than_init(monkeypatch):
 
 
 def test_supply_overhead_has_no_node_label_and_is_filtered_to_eligible(monkeypatch):
-    # codex R3-1: kube_pod_overhead_* carries namespace/pod/uid but NO node
+    # kube_pod_overhead_* carries namespace/pod/uid but NO node
     # label — query bare (no matcher) and filter client-side to the eligible
     # set, so a same-named-metric row for an INELIGIBLE pod never leaks in.
     # app=100m + overhead 20m/10Mi (podE, eligible) -> 120m/60Mi; a second
@@ -516,7 +516,7 @@ def test_supply_demand_for_pod_absent_from_pod_info_is_excluded(monkeypatch):
 
 
 def test_supply_disjoint_pod_info_and_phase_is_budget_unavailable(monkeypatch):
-    # codex R3-2: pod_info and phase are both non-empty individually but
+    # pod_info and phase are both non-empty individually but
     # talk about DIFFERENT pods -> eligible = pod_info ∩ phase is empty. A
     # live single node always has kube-system pods in that intersection; an
     # empty result here is a KSM scrape-consistency problem, never "zero
@@ -537,7 +537,7 @@ def test_supply_no_data_is_budget_unavailable(monkeypatch):
 
 
 def test_supply_empty_pod_info_is_budget_unavailable_even_with_valid_allocatable(monkeypatch):
-    # codex R2-2c: kills the false-FIT — valid allocatable data alone must
+    # Kills the false-FIT — valid allocatable data alone must
     # NOT be treated as "empty node, nothing running, plenty of headroom".
     # An empty kube_pod_info means KSM itself is unscraped, not a genuinely
     # idle node (a live node always runs at least kube-system pods).
@@ -567,7 +567,7 @@ def test_supply_prometheus_error_is_budget_unavailable(monkeypatch):
 
 
 def test_supply_bare_exception_is_budget_unavailable(monkeypatch):
-    # codex R2-2a: the fail-closed boundary catches ANY exception, not just
+    # The fail-closed boundary catches ANY exception, not just
     # PrometheusAPIError — a bare transport-level TimeoutError must collapse
     # to the same refusal, never propagate as a raw 500.
     def boom(*, url, expr):
@@ -578,7 +578,7 @@ def test_supply_bare_exception_is_budget_unavailable(monkeypatch):
 
 
 def test_supply_malformed_row_is_budget_unavailable(monkeypatch):
-    # codex R2-2b: a row missing an expected label must abort the whole
+    # A row missing an expected label must abort the whole
     # read, never be silently dropped (silent partial data understates
     # existing demand and risks a false FIT).
     routes = _supply_routes(
@@ -590,7 +590,7 @@ def test_supply_malformed_row_is_budget_unavailable(monkeypatch):
 
 
 def test_supply_pod_info_nan_value_is_budget_unavailable_not_pod_count_1(monkeypatch):
-    # codex R5-1 exact repro: pod_info value=NaN (phase value=1, valid)
+    # Exact repro: pod_info value=NaN (phase value=1, valid)
     # previously still counted as bound-to-node — the sentinel key set was
     # built from metric LABELS only, the value was never checked at all.
     routes = _supply_routes(
@@ -624,7 +624,7 @@ def test_supply_phase_zero_value_is_budget_unavailable(monkeypatch):
 
 
 def test_supply_phase_expr_carries_equals_one_filter():
-    # codex R5-1c: the discriminating mock must enforce the == 1 form —
+    # The discriminating mock must enforce the == 1 form —
     # pins the exact expr string the exact-match dispatcher keys on.
     assert _supply_exprs()["phase"].endswith(" == 1")
 
@@ -640,7 +640,7 @@ def test_supply_two_nodes_is_multi_node_unsupported(monkeypatch):
 
 
 def test_supply_mismatched_allocatable_keysets_is_budget_unavailable(monkeypatch):
-    # codex R3-4: cpu reports {n1,n2}, memory reports only {n1} -> the
+    # cpu reports {n1,n2}, memory reports only {n1} -> the
     # keysets differ. Must NOT silently narrow to the intersection ({n1})
     # and return a clean NodeSupply for n1 — that would treat a
     # data-integrity problem as an ordinary single-node read.
@@ -654,7 +654,7 @@ def test_supply_mismatched_allocatable_keysets_is_budget_unavailable(monkeypatch
 
 
 def test_supply_negative_app_demand_no_longer_increases_headroom(monkeypatch):
-    # codex R4-1 exact live repro: an eligible pod reporting app cpu=-1 core
+    # Exact live repro: an eligible pod reporting app cpu=-1 core
     # / memory=-1048576 bytes previously SUBTRACTED from already-requested
     # (requested_cpu_m=-1000), silently INCREASING headroom instead of
     # refusing. A metric value can never legitimately be negative.
@@ -698,7 +698,7 @@ def test_supply_nan_value_is_budget_unavailable(monkeypatch):
 
 @pytest.mark.parametrize("zero_cpu,zero_mem", [(True, False), (False, True)])
 def test_supply_zero_allocatable_is_budget_unavailable(monkeypatch, zero_cpu, zero_mem):
-    # codex R4-1: allocatable must be strictly positive, not merely
+    # allocatable must be strictly positive, not merely
     # non-negative — a node with 0 allocatable cpu/mem can't run anything.
     e = _supply_exprs()
     routes = {
@@ -735,7 +735,7 @@ def test_evaluate_fit():
     assert result.shortfall_cpu_m == 0
     assert result.shortfall_mem_b == 0
     assert result.report["ee_reserve"] == {"cpu_m": 250, "mem_b": 512 * MI, "source": "cg-declared"}
-    # codex R2-8: facility is always the node display name, not the catalog
+    # facility is always the node display name, not the catalog
     # key — the catalog entry lives only in the demand line items.
     assert result.report["facility"] == "n1"
 
@@ -793,7 +793,7 @@ def test_evaluate_report_and_text_shape():
 
 
 # ---------------------------------------------------------------------------
-# Settings — L3 kill switch strict tri-state parser (codex R3-3)
+# Settings — L3 kill switch strict tri-state parser
 # ---------------------------------------------------------------------------
 
 
@@ -815,7 +815,7 @@ def test_l3_enabled_env_true_tokens_enable(monkeypatch):
 
 
 def test_l3_enabled_env_typo_fails_safe_on_with_warning(monkeypatch, caplog):
-    # codex R3-3's exact repro: 'tru' (a typo for 'true') must NOT silently
+    # Exact repro: 'tru' (a typo for 'true') must NOT silently
     # disable the kill switch the way the generic _env_bool would (that
     # helper treats any unrecognized token as False).
     monkeypatch.setenv("DMF_CONSOLE_L3_ENABLED", "tru")

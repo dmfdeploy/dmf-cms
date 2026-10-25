@@ -140,7 +140,7 @@ def _audit_lines(caplog):
 
 
 def _wait_for_launch(app, op_id):
-    # codex #202 WP2: LAUNCHED is no longer a resting state for deploy/
+    # LAUNCHED is no longer a resting state for deploy/
     # teardown ops — the job watcher spawned right after it can race straight
     # through to RUN_COMPLETE before this poll loop ever observes LAUNCHED
     # itself. job_id is set at the same moment and never changes afterward,
@@ -323,7 +323,7 @@ def test_l3_disabled_skips_gate_audits_and_proceeds(monkeypatch, awx_spy, caplog
 
 
 def test_l3_enabled_but_prometheus_unconfigured_is_409_fail_closed(monkeypatch, awx_spy, caplog):
-    # codex R2-1: NOT a skip — the console tier has exactly one seam to
+    # NOT a skip — the console tier has exactly one seam to
     # supply data (prometheus.query()); "enabled but can't read supply"
     # must never silently pass as a no-op.
     monkeypatch.setattr(main, "load_catalog_entries", _entries(FIT_ENTRY))
@@ -439,7 +439,7 @@ def test_async_reattach_to_existing_operation_never_runs_preflight(monkeypatch, 
 
 
 def test_async_refused_preflight_unwedges_operation_for_immediate_retry(monkeypatch):
-    # codex R2-7 CRITICAL: a preflight refusal AFTER get_or_create_exclusive
+    # CRITICAL: a preflight refusal AFTER get_or_create_exclusive
     # creates the op must mark it terminal (ERROR) before returning — else a
     # wedged WAKING/LAUNCHING op blocks every subsequent deploy attempt for
     # this catalog entry (via the exclusive-lock dedupe) until TTL GC.

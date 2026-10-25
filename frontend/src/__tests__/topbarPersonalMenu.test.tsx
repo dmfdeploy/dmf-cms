@@ -161,13 +161,13 @@ describe('Topbar personal menu dismissal (umbrella #432 §B)', () => {
     expect(screen.getByText('ops@dmf.example.com')).toBeTruthy()
   })
 
-  // umbrella #432 §B fix-round 2. renderTopbar() above seeds the auth store
+  // umbrella #432 §B. renderTopbar() above seeds the auth store
   // BEFORE the first render, on every other test in this file — Topbar
   // therefore always has a real `user` and its wrapper div exists from its
   // very first commit. That is NOT the normal production path: the identity
   // fetch settles AFTER Topbar's first commit, so Topbar renders `null`
   // (see its early `if (!user) return null`) before the wrapper div (and
-  // its `ref`) exist at all. Fix-round 1 hid a defect exactly there: a
+  // its `ref`) exist at all. An earlier version hid a defect exactly there: a
   // manual `wrapper?.addEventListener('focusout', …)` inside a mount-only
   // (`[]`-deps) effect captured `menuRef.current` — null, at that point —
   // and never re-ran once the real wrapper mounted, so the listener was

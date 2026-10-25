@@ -1,12 +1,11 @@
 /**
- * Regression tests for `cssVar()` itself (dmfdeploy/dmfdeploy#512 codex gate,
- * P2). Three shared callers (railEdgeContrast.test.tsx,
+ * Regression tests for `cssVar()` itself (dmfdeploy/dmfdeploy#512). Three shared callers (railEdgeContrast.test.tsx,
  * formFieldPrimitive.test.tsx, buttonHierarchy.test.tsx) all trust this
  * function to find the ONE real declaration of a custom property in raw
  * CSS text — a false match here silently corrupts every contrast
  * assertion built on top of it, the same failure shape as the
  * comment-vs-declaration bug this file's sibling doc comment already
- * describes. These pin codex's own three repro strings so the fix doesn't
+ * describes. These pin three repro strings so the fix doesn't
  * quietly regress the next time someone touches `maskCommentsAndStrings`
  * or the declaration regex.
  */

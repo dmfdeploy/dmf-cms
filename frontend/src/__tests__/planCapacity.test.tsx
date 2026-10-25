@@ -360,7 +360,7 @@ describe('an unreadable facility capacity', () => {
   })
 
   it('shows the unreadable state — not the stale numbers — when a refetch fails after an earlier success', async () => {
-    // The defect the operator caught on PR #66 (fix round, 2026-08-01):
+    // The defect:
     // summarizeCapacity checked only `!facilityDetail.data`, so once the
     // first read succeeded, a later refetch failure left react-query's
     // retained previous payload looking exactly like a fresh, current one —
@@ -393,7 +393,7 @@ describe('an unreadable facility capacity', () => {
 
 describe('a facility summary whose refetch fails after an earlier success', () => {
   it('reports the facility unreachable and drops Capacity, rather than keeping the stale numbers', async () => {
-    // GATE-B8 (codex, fix round 2): useFacilitySummary's `data` was flattened
+    // useFacilitySummary's `data` was flattened
     // to `sites` unconditionally, so a failed refetch that retained the prior
     // single-site payload still made `singleSite` truthy — mounting the
     // Capacity section (and calling summarizeCapacity) off a read the stage

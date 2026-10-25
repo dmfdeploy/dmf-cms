@@ -83,15 +83,15 @@ export default function ProvisionStage({
    */
   onPromotedActionChange?: (hasPromotedAction: boolean) => void
 }) {
-  // fix-round 5 (PR #81, codex sibling sweep): `catalogFailed` is threaded
+  // `catalogFailed` is threaded
   // into the absence claim below — a failed catalog read left `entries`
   // empty exactly like a genuinely-empty catalog would, so the stage
   // announced a confident "no templates matched" manufactured out of an
   // unhandled error path (verbatim the failure mode PlanStage.tsx's own
   // docstring names, already fixed there and in CreateWorkload.tsx).
-  // fix-round 6 (PR #81, umbrella #385): retrofitted onto settleQuery.
+  // (umbrella #385) retrofitted onto settleQuery.
   const { data: catalogData, loading: catalogLoading, failed: catalogFailed } = settleQuery(useCatalog())
-  // fix-round 7 (PR #81, umbrella #385, codex call-site sweep): retrofitted
+  // (umbrella #385) retrofitted
   // onto settleQuery — behavior-preserving (user is only ever read via
   // `?? 'unknown'` audit-trail fallbacks below, which already degrade
   // honestly for ANY reason `user` is undefined, same reasoning as
@@ -313,7 +313,7 @@ export default function ProvisionStage({
               isDeploying={deployMutation.isPending && deployMutation.variables?.key === entry.key}
               deployError={deployMutation.variables?.key === entry.key ? deployMutation.error : null}
               onDeploy={(reason, ws) => handleDeploy(entry, reason, ws)}
-              // FIX ROUND (P2-3): explicit Cancel out of a FAILED attempt
+              // Explicit Cancel out of a FAILED attempt
               // must actually clear the error, not just visually dismiss it
               // — deployMutation.isError otherwise persists until some
               // entry's NEXT mutate() call overwrites it, which could be a

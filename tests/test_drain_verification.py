@@ -150,7 +150,7 @@ def _catalog(monkeypatch):
 def test_A1_eligible_auto_rollback_drained_upgrades_to_run_complete_and_replaces_its_audit_outcome(monkeypatch, caplog):
     app, ops_store = _fake_app()
     _seed_run(ops_store)
-    # #560 round 4: auto_rollback_dispatch=True — the trusted flag, not
+    # #560: auto_rollback_dispatch=True — the trusted flag, not
     # just the "system:auto-rollback" initiator string.
     op = ops_store.create(
         "rollback", RUN_ID, request_id="rid-auto-rollback", initiator="system:auto-rollback",
@@ -243,7 +243,7 @@ def test_A3_surfaces_superset_never_enters_drain_verification(monkeypatch):
 
 
 # ---------------------------------------------------------------------------
-# A4 — #560 round 5 (lkirc): the counterpart to A1 above. A1 proves the
+# A4 — #560: the counterpart to A1 above. A1 proves the
 # eligible-and-later-PROMOTED-to-RUN_COMPLETE path (a newer run_complete
 # join wins). This proves the other branch: an automatic rollback that
 # NEVER gets promoted — here, because it never earns any outcome marker at
@@ -260,7 +260,7 @@ def test_A3_surfaces_superset_never_enters_drain_verification(monkeypatch):
 def test_A4_ineligible_auto_rollback_incomplete_reads_as_failed_never_unknown(monkeypatch, caplog):
     app, ops_store = _fake_app()
     _seed_run(ops_store)
-    # #560 round 4: the TRUSTED flag, not just the "system:auto-rollback"
+    # #560: the TRUSTED flag, not just the "system:auto-rollback"
     # initiator string — see test_operations_lifecycle.py/
     # test_watch_terminal_audit.py's own coverage of that trust boundary.
     op = ops_store.create(
@@ -472,7 +472,7 @@ def test_A6_prometheus_erroring_never_upgrades(monkeypatch):
 
 
 def test_F3_promsd_not_ready_never_upgrades_end_to_end(monkeypatch):
-    # codex round-1 F3a repro through the full watcher flow: a cold
+    # Through the full watcher flow: a cold
     # adapter's 200 [] on /sd/probe must never be trusted while /readyz
     # says not-ready.
     app, ops_store = _fake_app()
@@ -519,7 +519,7 @@ def test_F3_prometheus_malformed_envelope_never_upgrades_end_to_end(monkeypatch)
 
 
 def test_F5_ambiguous_netbox_record_never_upgrades_end_to_end(monkeypatch):
-    # codex round-1 F5 repro through the full watcher flow: two same-name
+    # Through the full watcher flow: two same-name
     # records must never trust records[0].
     app, ops_store = _fake_app()
     _seed_run(ops_store)
@@ -573,7 +573,7 @@ def test_A7_only_prometheus_still_has_it_stays_incomplete(monkeypatch):
 
 # ---------------------------------------------------------------------------
 # A8 — sync-mode parity: the sync dispatch branch of api_run_rollback also
-# ends up at _spawn_job_watcher (codex R2-5), the SAME entrypoint the
+# ends up at _spawn_job_watcher, the SAME entrypoint the
 # WP4 eligibility hook lives in — no separate sync-terminal path exists.
 # ---------------------------------------------------------------------------
 
@@ -668,8 +668,7 @@ def test_A9_verify_drain_upgrades_when_now_drained(monkeypatch):
 
 
 def test_A9_verify_drain_not_yet_drained_is_200_drained_false(monkeypatch):
-    # codex round-3 F2: renamed from the stale "...stays_409" — the
-    # not-drained branch is a legitimate check result (HTTP 200,
+    # The not-drained branch is a legitimate check result (HTTP 200,
     # drained:false), not a conflict; 409 is reserved for ineligible ops
     # and the correlation-changed-mid-poll refusal (see the F1 tests).
     with _verify_drain_client() as client:
@@ -759,7 +758,7 @@ def test_F1_verified_drain_resolves_deploy_op_and_clears_facility_block(monkeypa
     with _verify_drain_client() as client:
         app = client.app
         ops_store = app.state.operations
-        # The exact codex round-1 repro: deploy D at FAILED_ROLLBACK_REQUIRED
+        # The exact repro: deploy D at FAILED_ROLLBACK_REQUIRED
         # with run_id=R, rollback B targeting R.
         deploy_op = _seed_run(ops_store, deploy_state=OperationState.FAILED_ROLLBACK_REQUIRED)
         _seed_pending_rollback(app)
@@ -787,8 +786,7 @@ def test_F1_superseded_rollback_ops_also_resolve(monkeypatch):
         ops_store = app.state.operations
         _seed_run(ops_store)
 
-        # A superseded EARLIER rollback attempt at the same run_id — codex
-        # round-2 F4's own repro: a DIFFERENT launcher outcome
+        # A superseded EARLIER rollback attempt at the same run_id: a DIFFERENT launcher outcome
         # (stale-snapshot, not even rollback_incomplete) that must never
         # be overwritten. Created (and thus least-recently-updated)
         # BEFORE the primary op, so _find_rollback_op_for_run's
@@ -812,7 +810,7 @@ def test_F1_superseded_rollback_ops_also_resolve(monkeypatch):
         assert updated_primary.l3_outcome == "rollback_complete"
 
         # The superseded op resolves to a non-dirty terminal too (facility
-        # unblocks), but F4 (codex round-2, REVERSES round-1's directive)
+        # unblocks), but the rule
         # forbids falsifying its own outcome: RUN_FAILED (truthful — that
         # attempt did NOT complete), l3_outcome and the retained error
         # content stay EXACTLY what the launcher reported (stale-snapshot
@@ -831,7 +829,7 @@ def test_F1_superseded_rollback_ops_also_resolve(monkeypatch):
 
 
 def test_F1_TOCTOU_correlation_ambiguous_at_finalize_time_upgrades_nothing():
-    # codex round-2 R2b-1: correlation was UNAMBIGUOUS when
+    # correlation was UNAMBIGUOUS when
     # _prepare_drain_verification resolved it (poll start), but a second
     # deploy op disagreeing on target for the SAME run_id appears before
     # the drain check actually completes (a race — a reattach/manual-track
@@ -867,7 +865,7 @@ def test_F1_TOCTOU_correlation_ambiguous_at_finalize_time_upgrades_nothing():
 
 
 def test_F1_endpoint_race_during_check_drained_returns_409_nothing_upgraded(monkeypatch, caplog):
-    # codex round-2 F1's own endpoint-level repro: _prepare_drain_verification
+    # Endpoint-level repro: _prepare_drain_verification
     # resolves cleanly (correlation is unambiguous at that moment), but a
     # disagreeing deploy op for the SAME run_id appears DURING
     # check_drained's own seam reads (a race elsewhere) — before
@@ -960,9 +958,9 @@ def test_F9_no_contradictory_details_after_recheck(monkeypatch):
 
 
 # ---------------------------------------------------------------------------
-# umbrella dmf-cms#108 fix-round 3: run_id reaches THREE non-audit
+# run_id reaches THREE non-audit
 # logger.info/logger.exception calls inside _verify_drain_and_finalize
-# unescaped — the SAME run_id fix-round 2 sanitized at the auto-rollback
+# unescaped — the SAME run_id already sanitized at the auto-rollback
 # AUDIT call sites, on the SAME stdout stream. A forged line does not have
 # to originate from an audit call site to read as one once it shares the
 # stream. All three call _verify_drain_and_finalize directly (not the full

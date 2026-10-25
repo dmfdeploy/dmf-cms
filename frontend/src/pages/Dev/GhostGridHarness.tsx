@@ -200,7 +200,7 @@ const DEFAULT_SPECIMEN = SPECIMENS[1]
 // The TRUE original `window.fetch`, captured ONCE at module evaluation —
 // before this module ever gets a chance to install a specimen stub.
 //
-// FIX ROUND (dmfdeploy/dmf-cms#126 review): an earlier version captured this
+// An earlier version captured this
 // per-render, inside the component, via a `useRef` written by the same
 // `useState` lazy initializer that installs the stub below. That looked
 // safe — `useRef` hands back the SAME object on every render of a given
@@ -272,7 +272,7 @@ export default function GhostGridHarness() {
    * even starts that update's render/commit/effects — no ordering to
    * reason about at all.
    *
-   * FIX ROUND (found by this file's own end-to-end test): an earlier
+   * An earlier
    * version left this swap to a `useState` lazy initializer + `useEffect`
    * cleanup pair ON SpecimenStage itself, one instance per specimen — but
    * the OLD instance's cleanup (restoring what IT captured as "original")

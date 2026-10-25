@@ -26,7 +26,7 @@ export default function DesignStage({
   workload: MediaWorkload
   catalogEntries: CatalogEntry[]
   catalogLoading: boolean
-  // fix-round 5 (PR #81, codex sibling sweep): a failed catalog read left
+  // A failed catalog read left
   // `catalogEntries` empty exactly like a genuinely-empty catalog would —
   // every function's join then missed, and EVERY item below rendered "this
   // function key isn't in the current catalog… may have been removed" for a
@@ -73,7 +73,7 @@ export default function DesignStage({
               ? `${workload.progress.designed} element${workload.progress.designed === 1 ? '' : 's'} designed`
               : 'Design progress unavailable'}
           </h3>
-          {/* fix-round 5: named ONCE at the section level — a failed catalog
+          {/* Named ONCE at the section level — a failed catalog
               read misses EVERY join below, so accusing each function
               individually of having been "removed" would repeat a false
               claim once per row instead of naming the real, single cause.
@@ -179,7 +179,7 @@ export default function DesignStage({
  * confusing empty box.
  */
 function InstanceComposition({ instance }: { instance: string }) {
-  // fix-round 5 (PR #81, codex sibling sweep): this was the unfixed twin of
+  // This is the twin of
   // WorkloadHome.tsx's InstanceActiveSource — same seam, same missing check. An
   // errored read is unknown, not absence: a failed refetch can retain the
   // prior successful data while isError flips true (useInstanceTopology has
@@ -190,7 +190,7 @@ function InstanceComposition({ instance }: { instance: string }) {
   // just changed it"). The row withdraws on error too, same as its sibling —
   // the newest read is the one it speaks for.
   //
-  // fix-round 6 (PR #81, umbrella #385): retrofitted onto settleQuery.
+  // (umbrella #385) retrofitted onto settleQuery.
   const topology = settleQuery(useInstanceTopology(instance))
   if (topology.failed || !topology.data || !Array.isArray(topology.data.sources)) return null
 

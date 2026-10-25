@@ -15,7 +15,7 @@ const roleBadgeStyles: Record<string, string> = {
 
 export default function Settings() {
   usePageTitle('Settings')
-  // fix-round 7 (PR #81, umbrella #385, codex gate): `!user` alone used to
+  // (umbrella #385) `!user` alone used to
   // be the WHOLE gate for "Not authenticated" below — that read as true for
   // a genuine 401 (real) AND for any OTHER failed read (a transient 500 or
   // network error, mislabelled as the same claim), AND a settled failed

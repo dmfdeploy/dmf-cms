@@ -13,7 +13,7 @@ import type { AuditEvent, AuditEventOutcome } from '../api/types'
 // Per-class title, honest about acceptance-vs-verdict (plan §4.4/AC 2): a
 // watched action never claims completion it hasn't reached, so its title
 // only ever says "dispatched" while genuinely unconfirmed. 'unknown'
-// (codex R496-C P1-2) gets its own honest phrasing — never folded into
+// gets its own honest phrasing — never folded into
 // "failed" or "dispatched", either of which would claim knowledge the row
 // does not have.
 //
@@ -78,8 +78,8 @@ function AuditEventOutcomeBlock({ outcome }: { outcome: AuditEventOutcome }) {
           : 'bg-blue-500/20 text-blue-400'
   // Default level (plan §4.5 / AC 2a): what happened, what it means for
   // the facility, what to do next — all three, not just headline+
-  // next_step (codex R496-A F4 caught `meaning` silently missing here).
-  // Shared by 'failed' AND 'unknown' (codex R496-C P1-2) — both need an
+  // next_step (`meaning` must not be silently missing here).
+  // Shared by 'failed' AND 'unknown' — both need an
   // honest explanation at default; only 'failed' also carries a raw
   // system-error string worth gating below.
   const plainLanguageBlock = outcome.headline && (
@@ -113,8 +113,8 @@ function AuditEventOutcomeBlock({ outcome }: { outcome: AuditEventOutcome }) {
       {outcome.state === 'failed' && (
         // Expert level ONLY: a raw system-error string (e.g.
         // awx-error:503) must not reach the default view at all —
-        // CSS-muted-but-always-rendered is NOT an access boundary
-        // (codex R496-A F4). A closed <details> keeps it out of the
+        // CSS-muted-but-always-rendered is NOT an access boundary.
+        // A closed <details> keeps it out of the
         // rendered default view; expanding it is the deliberate,
         // explicit act that makes reading it "expert level". Not shown
         // for 'unknown' — its detail is always "" (that IS the lost
@@ -332,7 +332,7 @@ export default function ActivityPanel({ title, explainer = 'inline' }: ActivityP
               )
             ) : (
               auditState.events.map((event) => (
-                // lkirc (dmfdeploy/dmf-cms#140): request_id alone is
+                // request_id alone is
                 // NOT a per-row identity — an L3 preflight's own
                 // capacity-skipped/capacity-override row shares its
                 // request_id with that same request's later dispatched

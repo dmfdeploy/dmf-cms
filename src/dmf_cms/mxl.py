@@ -14,7 +14,7 @@ import re
 import urllib.error
 import urllib.request
 
-# Tight positive grammars for the bounded public status fields (codex WP-D R2):
+# Tight positive grammars for the bounded public status fields:
 # a compromised/buggy sidecar must not be able to smuggle a URL / IP / internal
 # DNS coord into the client payload, even a SHORT one. Each field gets the
 # narrowest grammar that still admits its real values.
@@ -113,8 +113,8 @@ def fetch_preview(endpoints, role: str, timeout: float = 4.0) -> bytes | None:
 # Per-instance (NetBox-derived) fetchers for the Media Workloads live view
 # (WP-D / G26). base_url is composed server-side by
 # media_workloads.sidecar_base_url — an allowlisted, DNS-validated,
-# identity-checked in-cluster URL — NEVER raw user input. These add the codex
-# WP-D P3 hardening: short timeouts, response byte caps, and a JPEG magic-byte
+# identity-checked in-cluster URL — NEVER raw user input. These add
+# hardening: short timeouts, response byte caps, and a JPEG magic-byte
 # check, so a compromised or misdirected sidecar can't wedge or poison the
 # console.
 # ---------------------------------------------------------------------------
@@ -139,7 +139,7 @@ def fetch_status_one(
             raw = _read_capped(resp, max_bytes)
     except (urllib.error.URLError, urllib.error.HTTPError, http.client.HTTPException, OSError, TimeoutError, ValueError):
         # http.client.HTTPException covers InvalidURL from any composed-host
-        # oddity that slipped the label gate — degrade, never 500 (codex P2).
+        # oddity that slipped the label gate — degrade, never 500.
         return None
     if not raw:
         return None

@@ -1,6 +1,5 @@
 /**
- * useLivePreview (LivePreviewBox.tsx) — retained-error honesty (fix-round 6,
- * PR #81, umbrella #385 codex sweep). `status.isError` was never checked —
+ * useLivePreview (LivePreviewBox.tsx) — retained-error honesty (umbrella #385). `status.isError` was never checked —
  * a settled failed refetch after a successful available+preview read kept
  * the "Live · sidecar preview" caption and the live dot with no notice
  * that the current poll had failed.
@@ -234,7 +233,7 @@ describe('WorkloadTile live preview — the static pattern card (umbrella #452)'
     expect(container.querySelector('.bg-green-400')).toBeTruthy()
   })
 
-  // fix-round r1 (codex P1): a sidecar that ADVERTISES a preview
+  // A sidecar that ADVERTISES a preview
   // (preview: true) but whose actual frame fails to load must never show
   // the static card — that combination is a live-signal failure, not a
   // reason to fall back to "what the source is configured to emit". Before
@@ -275,7 +274,7 @@ describe('WorkloadTile live preview — the static pattern card (umbrella #452)'
     expect(screen.queryByText('STATIC')).toBeNull()
   })
 
-  // fix-round r1 (codex P2): the known-pattern-with-no-preview test above
+  // The known-pattern-with-no-preview test above
   // only proved the card RENDERS — it never proved the cache-bust interval
   // (whose only purpose is refreshing an <img> src, at PREVIEW_TICK_MS)
   // stays OFF while the card is showing. `vi.getTimerCount()` alone can't

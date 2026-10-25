@@ -32,7 +32,7 @@
  *     navigating away and back within the tab, via a non-persisted store,
  *     and is architecturally incapable of surviving a reload.
  *
- * GUARD LABEL (dmfdeploy#414 gate, round 1): every test in this file is a
+ * GUARD LABEL (dmfdeploy#414): every test in this file is a
  * GUARD pinning the pre-#414 WP-3 spec C draft-wizard contract described
  * above, EXCEPT the two describe blocks explicitly marked "dmfdeploy#414"
  * below ("the destination never denies a just-launched workload"'s two new
@@ -97,14 +97,14 @@ interface FetchOpts {
   jobStatus?: Record<number, { status: string; is_done: boolean }>
   /** Operation status the destination polls, for the async launch path. */
   operation?: Record<string, unknown>
-  /** dmfdeploy#414 gate, round 3: HTTP status the grouped-inventory read
+  /** dmfdeploy#414: HTTP status the grouped-inventory read
    *  returns, simulating a persistently failing read (WorkloadSetup's own
    *  `error` branch). */
   groupedStatus?: number
-  /** dmfdeploy#414 gate, round 3: the `configured` flag the grouped-
+  /** dmfdeploy#414: the `configured` flag the grouped-
    *  inventory read reports (WorkloadSetup's own unconfigured branch). */
   groupedConfigured?: boolean
-  /** dmfdeploy#414 gate, round 3: never resolves the grouped-inventory
+  /** dmfdeploy#414: never resolves the grouped-inventory
    *  read, pinning the query in `isLoading` for the whole test — the exact
    *  race the gate found (a launch handoff reaching WorkloadSetup while its
    *  own read has not resolved even once). */
@@ -123,7 +123,7 @@ function mkFetch(opts: FetchOpts = {}) {
   // Mutable so a test can simulate the launcher stamping the tag partway
   // through the journey, which is the real sequence.
   let workloads: MediaWorkload[] = opts.workloads ?? []
-  // FIX ROUND P2-4: mutable, so a test can simulate the facility summary's
+  // Mutable, so a test can simulate the facility summary's
   // own periodic refresh returning a DIFFERENT single site mid-draft — the
   // reachable transition the confirmed-facility identity check exists for.
   let facilitySites = opts.facilitySites ?? [{ name: 'dmf-lab', slug: 'dmf-lab', device_count: 3 }]
@@ -155,7 +155,7 @@ function mkFetch(opts: FetchOpts = {}) {
     }
     if (url.endsWith('/api/media-workloads/grouped')) {
       calls.grouped += 1
-      // dmfdeploy#414 gate, round 3: checked before the ordinary response
+      // dmfdeploy#414: checked before the ordinary response
       // below, same shape as catalogGate above — a promise that never
       // settles pins isLoading indefinitely rather than racing a real delay.
       if (opts.groupedPending) return new Promise<Response>(() => {})
@@ -432,7 +432,7 @@ describe('the draft gate', () => {
       expect(within(stepSection('Plan')).queryByRole('button', { name: 'Confirm placement' })).toBeNull()
     })
 
-    // FIX ROUND (WP-3 spec D gate, P2-4). Mutation-tested repro: confirm
+    // (WP-3 spec D) Mutation-tested repro: confirm
     // dmf-lab, the facility summary's own periodic refresh then returns a
     // DIFFERENT single site, navigate back to Plan — before this fix the
     // page read "Confirmed — this workload will run on replacement-lab"
@@ -611,7 +611,7 @@ describe('studio name → shown workload identity', () => {
     ).toBeTruthy()
   })
 
-  // umbrella #432 §G (gate round 2, finding B2): the name typed here is
+  // umbrella #432 §G: the name typed here is
   // collected as though it were durable identity ("Studio identity",
   // "Studio name", a draft-loss warning implying the whole draft becomes
   // recorded on Provision) but is silently discarded — only the derived
@@ -748,8 +748,7 @@ describe('Provision: the deploy POST', () => {
 })
 
 // ---------------------------------------------------------------------------
-// An already-deployed template cannot be provisioned again (operator review,
-// PR #66)
+// An already-deployed template cannot be provisioned again
 //
 // ProvisionStage.tsx has always suppressed its deploy for an entry whose
 // catalog lifecycle is `active` — one template provisions one NetBox service,
@@ -935,7 +934,7 @@ describe('a template already deployed on this facility', () => {
   })
 
   it('withdraws the action while a catalog re-read is still in flight', async () => {
-    // GATE-B7 round 3. The read in flight is precisely the one that would
+    // The read in flight is precisely the one that would
     // correct a lifecycle that has moved, so acting on the superseded answer
     // while its replacement is on the wire is the closeable part of the
     // staleness problem. Driven with a catalog response the test holds open,
@@ -1131,7 +1130,7 @@ function workloadFixture(): MediaWorkload {
 }
 
 /**
- * dmfdeploy#414 gate, round 3: renders WorkloadSetup directly with a launch
+ * dmfdeploy#414: renders WorkloadSetup directly with a launch
  * handoff already in router state, bypassing armAndConfirm() — the create
  * journey's own fetch mock has no way to control the grouped read's
  * TIMING/OUTCOME independently of the deploy call, and that is exactly what
@@ -1164,9 +1163,7 @@ describe('the destination never denies a just-launched workload', () => {
     expect(screen.getByText(/appears here once the launcher records it/)).toBeTruthy()
   })
 
-  // umbrella #432, FIX ROUND (operator feedback: "if you must keep all the
-  // small text just add large friendly message... users will ignore all the
-  // small text"). ADDITIVE per the operator's own amendment — the existing
+  // umbrella #432: a large friendly message alongside the small text, since readers tend to skip small text. ADDITIVE — the existing
   // "appears here once the launcher records it" paragraph (asserted above)
   // stays untouched; these pin the NEW loud layer on top of it.
   describe('the loud, friendly layer added on top of the existing record', () => {
@@ -1268,7 +1265,7 @@ describe('the destination never denies a just-launched workload', () => {
     expect(screen.getByRole('navigation', { name: 'Media workload lifecycle' })).toBeTruthy()
   }, 15000)
 
-  // dmfdeploy#414 gate, round 1 (P1): the setup exit here is the SAME
+  // dmfdeploy#414: the setup exit here is the SAME
   // shared ViewLiveExit WorkloadSetup.tsx's loading-safe branches use, and
   // it obeys the identical job-navigation lock — while the launch job is
   // genuinely still being polled, "View live" would send the operator into
@@ -1277,12 +1274,12 @@ describe('the destination never denies a just-launched workload', () => {
   // yet. NEW test — the earlier round shipped this exit always-active,
   // reasoned (wrongly) as safe because leaving does not cancel the launch
   // job server-side. Of the tests in this describe block, this is the one
-  // that discriminates round 1's fix on its own: it checks BOTH the locked
-  // state and the release, so a baseline that never locked at all (round 1's
-  // actual bug) fails it. The FAILED-terminal test right after it checks
-  // only a single unlocked state and is labelled a guard accordingly (round
-  // 2 gate correction); the operation-level test further below is round 2's
-  // own discriminating test, labelled where it sits.
+  // that discriminates the job-lock fix on its own: it checks BOTH the locked
+  // state and the release, so a baseline that never locked at all fails it.
+  // The FAILED-terminal test right after it checks only a single unlocked
+  // state and is labelled a guard accordingly; the operation-level test
+  // further below is the discriminating test for the operation half,
+  // labelled where it sits.
   it('the "View live" exit stays locked while the launch job is polling, then unlocks once it settles', async () => {
     const h = mkFetch({ workloads: [], jobStatus: { 900: { status: 'running', is_done: false } } })
     await armAndConfirm()
@@ -1309,10 +1306,8 @@ describe('the destination never denies a just-launched workload', () => {
     expect(screen.queryByText(/View live — /)).toBeNull()
   }, 10000)
 
-  // dmfdeploy#414 gate, round 2 (P2): GUARD, relabelled — this was carried
-  // over from round 1 under the same "NEW test" framing as the one above,
-  // but on its own it does not discriminate the fix from its absence. The
-  // pre-round-1 baseline (ViewLiveExit always rendered the active Link,
+  // dmfdeploy#414: GUARD — on its own this test does not discriminate
+  // the fix from its absence. The pre-fix baseline (ViewLiveExit always rendered the active Link,
   // unconditionally) would ALSO show the Link here, since that baseline
   // never withheld it for ANY job state — a test that only checks the
   // unlocked case cannot tell "correctly unlocked" apart from "never
@@ -1322,13 +1317,13 @@ describe('the destination never denies a just-launched workload', () => {
   // independently proving anything new. Kept as a guard because the
   // FAILED-vs-successful distinction is still worth pinning on its own.
   //
-  // Re-checked against round 2's P1 fix (the operation-level raw-terminal
+  // Re-checked against the operation-level fix (the raw-terminal
   // signal, JobProgress.tsx): this test drives armAndConfirm()'s SYNC
   // deploy path (job_id present in the launch handoff from the very
   // first render, no operationId), so OperationStatusLine never mounts and
   // the new operationDone signal never leaves its initial `false` — this
-  // case is governed entirely by jobDone (round 1) both before and after
-  // round 2's change. It does not become newly discriminating; still a
+  // case is governed entirely by jobDone both before and after
+  // that change. It does not become newly discriminating; still a
   // guard.
   it('unlocks on a FAILED terminal job too, not only a successful one', async () => {
     mkFetch({ workloads: [], jobStatus: { 900: { status: 'failed', is_done: true } } })
@@ -1340,7 +1335,7 @@ describe('the destination never denies a just-launched workload', () => {
     expect(screen.getByRole('link', { name: 'View live' })).toBeTruthy()
   })
 
-  // dmfdeploy#414 gate, round 2 (P1): round 1's fix above covered the JOB
+  // dmfdeploy#414: the fix above covered the JOB
   // half of this lock (jobDone, fed by JobStatusLine's unpaced
   // onDoneChange) but left the OPERATION half reading operationFailed —
   // set from OperationStatusLine's onError callback, which is deliberately
@@ -1349,7 +1344,7 @@ describe('the destination never denies a just-launched workload', () => {
   // to read "Error" before whatever consumes the callback reacts. That left
   // the exit locked, still claiming "wait for its outcome", for up to 3
   // more seconds after the status line right next to it had already
-  // switched to "Error" — the identical defect class as round 1's P1, one
+  // switched to "Error" — the identical defect class as the job half, one
   // layer down. NEW test: it asserts the unlock is observable WHILE the
   // heading is still "Provisioning", i.e. strictly before the paced flip to
   // "Launch failed" — a fix that reads only the paced signal cannot pass
@@ -1364,11 +1359,11 @@ describe('the destination never denies a just-launched workload', () => {
     })
     await armAndConfirm()
     // Anchors on the materializing view specifically, before checking the
-    // lock. Before dmfdeploy#414 gate round 3's fix, WorkloadSetup's own
+    // lock. Before the dmfdeploy#414 fix, WorkloadSetup's own
     // isLoading branch reached an (unconditionally active) "View live"
     // link on the very first render — before the grouped read had resolved
     // even once — so checking for the link without anchoring here could
-    // have matched THAT link instead of this one. Round 3 hoisted the
+    // have matched THAT link instead of this one. The fix hoisted the
     // launch-handoff check ahead of isLoading (see WorkloadSetup.tsx), so
     // that branch is no longer reachable while `launch` is present at
     // all — the anchor stays as defensive test hygiene, not because the
@@ -1391,8 +1386,8 @@ describe('the destination never denies a just-launched workload', () => {
     })
   }, 10000)
 
-  // dmfdeploy#414 gate, round 3 (P1): a THIRD instance of the same defect
-  // shape as the two rounds above — reasoning correct about one path,
+  // dmfdeploy#414: a THIRD instance of the same defect
+  // shape as the two tests above — reasoning correct about one path,
   // silently wrong about the path that bypasses it. WorkloadSetup's own
   // isLoading/error/unconfigured early returns sat ABOVE the launch-handoff
   // check that routes to WorkloadMaterializing, and every one of them
@@ -1701,7 +1696,7 @@ describe('the draft survives the tab, not the browser', () => {
     expect(useDraftWorkloadStore.getState().studioName).toBe('')
     expect(useDraftWorkloadStore.getState().slug).toBe('')
     expect(useDraftWorkloadStore.getState().selectedKey).toBeNull()
-    // FIX ROUND P2-4: renamed from a bare boolean to the confirmed
+    // Renamed from a bare boolean to the confirmed
     // facility's own identity — see draftWorkload.ts's own docstring.
     expect(useDraftWorkloadStore.getState().confirmedFacilityName).toBeNull()
   })
@@ -1939,8 +1934,7 @@ describe('umbrella #432 §D1: Next carries primary weight only when the mounted 
 })
 
 // ---------------------------------------------------------------------------
-// umbrella #432 §D1 FIX ROUND (codex gate item 6, confirmed against be4a44b
-// by both the reviewer and independently here): Next was never primary
+// umbrella #432 §D1: Next was never primary
 // ONLY on Provision — the guard at CreateWorkload.tsx's own `nextIsPrimary`
 // only checks `stepId === 'provision'`, so for every OTHER stepId the
 // expression is unconditionally true. Configure and Finalise & Review are

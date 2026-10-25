@@ -20,7 +20,7 @@ function actionTitle(action: ConsoleActionType, target: string): string {
     case 'teardown':
       return `Tore down ${target}`
     case 'launch':
-      // codex R496-A F8: this record is written at DISPATCH time, not
+      // This record is written at DISPATCH time, not
       // confirmed completion — directly beneath a facility panel that
       // carefully never claims completion, a past-tense "Launched" read
       // as a confirmed outcome it cannot actually vouch for.
@@ -70,10 +70,10 @@ export default function HistoryLane() {
   // sibling reads (hard gate 1: an empty/failed read is not "zero commits").
   const commitsPhase = classifyForgejo(commits)
   const pullsPhase = classifyForgejo(pulls)
-  // fix-round 3 (PR #81): the two phases that can co-exist with NON-EMPTY
+  // The two phases that can co-exist with NON-EMPTY
   // retained rows and therefore need a notice regardless of emptiness.
-  // 'partial' (fix-round 2): some repos read, some failed, real rows kept.
-  // 'error' (this round): a SETTLED failed refetch — TanStack Query
+  // 'partial' : some repos read, some failed, real rows kept.
+  // 'error' : a SETTLED failed refetch — TanStack Query
   // retains the last-good `data` across it, so `isLoading` is false and
   // the panel below still has real rows to render, but the CURRENT read
   // failed. Without this, those retained rows rendered with no notice at
@@ -175,7 +175,7 @@ export default function HistoryLane() {
             <div className="px-6 py-8 text-center text-muted text-sm">Loading jobs...</div>
           ) : (
             <>
-              {/* fix-round 4 (PR #81, codex sibling sweep): a settled failed
+              {/* A settled failed
                   refetch ('error' phase) retains TanStack Query's last-good
                   `jobs` — the length===0 branch below never fires when rows
                   are retained, so this used to render them with no notice
@@ -202,7 +202,7 @@ export default function HistoryLane() {
               ) : (
                 jobsState.jobs.slice(0, 10).map((job) => {
                   // Derived ONCE per row and fed to BOTH the title and the
-                  // badge below (umbrella #432 §F fix-round 3, codex gate:
+                  // badge below (umbrella #432 §F:
                   // the same fix, at the time, also applied to the now-
                   // removed Workspace RecentChanges widget). Styling below
                   // still keys off the raw job.status, unchanged — only the
@@ -258,14 +258,12 @@ export default function HistoryLane() {
             <div className="px-6 py-8 text-center text-muted text-sm">Loading commits...</div>
           ) : (
             <>
-              {/* fix-round P1-2 (PR #81, round 2) + fix-round 3: rendered
-                  whenever the phase is 'partial' OR 'error', INDEPENDENT of
-                  emptiness. Round 2 covered 'partial' (some repos read, some
-                  failed) but a SETTLED failed refetch ('error') retains the
-                  prior successful `data` — round 3 closes that gap: those
-                  retained rows below used to render with no notice at all,
-                  presenting last-good data as current after the read that
-                  would have confirmed it had already failed. */}
+              {/* Rendered whenever the phase is 'partial' OR 'error', INDEPENDENT of
+                  emptiness. 'partial' means some repos read and some failed; a
+                  SETTLED failed refetch ('error') retains the prior successful `data`,
+                  so those retained rows below would otherwise render with no notice at
+                  all, presenting last-good data as current after the read that would
+                  have confirmed it had already failed. */}
               {commitsNeedsNotice && (
                 <div className="px-6 py-2 text-xs text-amber-300 bg-amber-500/10">
                   {forgejoEmptyCopy(commitsPhase, 'commits')}

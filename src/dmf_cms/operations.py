@@ -33,7 +33,7 @@ class OperationState(str, Enum):
       not an auto-rollback trigger).
     * FAILED_ROLLBACK_REQUIRED — a DEPLOY job started then failed: surfaces
       may be dirty. The plan §4.5 auto-rollback trigger state.
-    * ROLLBACK_INCOMPLETE — codex R2-1: a ROLLBACK op's own fail-closed
+    * ROLLBACK_INCOMPLETE — a ROLLBACK op's own fail-closed
       terminal. RUN_COMPLETE for a rollback requires BOTH a successful AWX
       job status AND an exact ``rollback_complete`` outcome marker — every
       other combination (job failed, marker missing, marker says
@@ -42,7 +42,7 @@ class OperationState(str, Enum):
       is never silently treated as clean. See main.py
       ``_watch_job_operation`` and ``_facility_busy_check``'s dirty-state
       handling.
-    * RUN_STATUS_UNKNOWN — codex R3-2: the watcher gave up (TTL timeout, 3
+    * RUN_STATUS_UNKNOWN — the watcher gave up (TTL timeout, 3
       consecutive ``get_job`` failures, or an unexpected crash) AFTER
       observing the job had started, for a NON-rollback watched action.
       Distinct from FAILED_ROLLBACK_REQUIRED: that state means a CONFIRMED
@@ -105,7 +105,7 @@ _WATCHED_TERMINAL_STATES = frozenset({
     OperationState.ERROR,
 })
 
-# codex R2-6/R3-2: the subset of terminal states that are additionally
+# The subset of terminal states that are additionally
 # DIRTY — the run reached a stop but may have left the facility's surfaces
 # in an inconsistent state. _facility_busy_check (main.py) treats these as
 # blocking even though they're terminal for dedupe/GC purposes.
@@ -146,7 +146,7 @@ class Operation:
     # identifies the ORIGINAL request that started this run). initiator is
     # the dispatching user's subject. l3_outcome is a parsed launcher-side
     # outcome token; WP2-A leaves it unset, WP2-B's marker-parsing fills it.
-    # codex round-2 R2b-2 (wording tightened by round-2 F4): WP4 adds
+    # WP4 adds
     # exactly ONE console-originated exception, and it applies ONLY to the
     # SINGLE rollback op whose own monitoring drain was directly verified
     # — drain verification (main.py _mark_drain_verified) may finalize
@@ -166,13 +166,13 @@ class Operation:
     request_id: str | None = None
     initiator: str | None = None
     l3_outcome: str | None = None
-    # codex R2-3: auto-trigger status, kept SEPARATE from l3_outcome (which
+    # Auto-trigger status, kept SEPARATE from l3_outcome (which
     # otherwise always keeps the raw launcher token — see the WP4 console-
     # provenance exception noted above). One of "triggered" | "disabled" |
     # "already-in-progress" | "identity-unknown" | None (not yet evaluated,
     # or this op never reached FAILED_ROLLBACK_REQUIRED/RUN_STATUS_UNKNOWN).
     auto_rollback: str | None = None
-    # codex R3-3: this op's RUN identity — what a rollback command's own
+    # This op's RUN identity — what a rollback command's own
     # run_id must equal to target THIS run. For a FRESH dispatch this is
     # always the op's own request_id (set explicitly at launch time, not
     # round-tripped through AWX). For a REATTACH to an AWX job this console
@@ -202,7 +202,7 @@ class Operation:
     # an API response body (that disclosure IS the vulnerability this
     # field closes).
     purge_tenant_scope: tuple[str, ...] | None = None
-    # dmfdeploy/dmfdeploy#560, round 4 (lkirc): a TRUSTED, dispatch-time-only
+    # dmfdeploy/dmfdeploy#560: a TRUSTED, dispatch-time-only
     # record of "this rollback op was actually auto-dispatched by
     # ``_maybe_auto_trigger_rollback``" — never re-derived from
     # ``initiator``. The prior code compared ``initiator ==
@@ -304,7 +304,7 @@ class OperationStore:
             request_id: C5 request_id minted at dispatch (#202 WP2)
             initiator: Dispatching user's subject (#202 WP2)
             auto_rollback_dispatch: trusted auto-dispatch provenance
-                (#560 round 4) — see ``Operation.auto_rollback_dispatch``
+                (#560) — see ``Operation.auto_rollback_dispatch``
 
         Returns:
             Newly created Operation
@@ -387,7 +387,7 @@ class OperationStore:
             request_id: C5 request_id, set only if a new op is created
             initiator: Dispatching user's subject, set only if created
             auto_rollback_dispatch: trusted auto-dispatch provenance
-                (#560 round 4), set only if a new op is created — see
+                (#560), set only if a new op is created — see
                 ``Operation.auto_rollback_dispatch``
 
         Returns:
@@ -452,7 +452,7 @@ class OperationStore:
                 caller's tenant scope, set only if a new op is created (never
                 on reattach); see ``Operation.purge_tenant_scope``
             auto_rollback_dispatch: trusted auto-dispatch provenance
-                (#560 round 4), set only if a new op is created — see
+                (#560), set only if a new op is created — see
                 ``Operation.auto_rollback_dispatch``
 
         Returns:

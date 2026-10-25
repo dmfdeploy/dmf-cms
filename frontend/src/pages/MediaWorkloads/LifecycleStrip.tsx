@@ -23,13 +23,13 @@ import { RAIL_EDGE_HOVER, RAIL_FILL, RAIL_HOVER_INK, RAIL_INK, RAIL_SELECTED_FAC
  * keys below — no Control group, no Operate link.
  *
  * PASS 1 — CROSSPOINT BUS REDESIGN (dmf-cms#391) and PASS 2 — COMPLETENESS
- * GRAMMAR / EQUAL COLUMNS / REACHABLE LOCKED KEYS (dmfdeploy#449) and SHELL
- * ROUND 2 (dmfdeploy#481/#482/#483 — own band, icons, chevron form) shipped
+ * GRAMMAR / EQUAL COLUMNS / REACHABLE LOCKED KEYS (dmfdeploy#449) and the
+ * shell redesign (dmfdeploy#481/#482/#483 — own band, icons, chevron form) shipped
  * the foundations below. See git history for those accounts.
  *
- * SHELL ROUND 2 REDESIGN, TWO OPERATOR-DIRECTED SIMPLIFICATIONS ON TOP OF
- * THAT FOUNDATION — both large net deletions, both decided BY EVIDENCE this
- * round produced rather than by restyling:
+ * SHELL REDESIGN, TWO SIMPLIFICATIONS ON TOP OF
+ * THAT FOUNDATION — both large net deletions, both decided BY EVIDENCE
+ * rather than by restyling:
  *
  *   A. HUE REMOVED FROM THE RAIL ENTIRELY (not just off the fill — this
  *      round first moved it to a bottom-edge line, then measured it there
@@ -66,7 +66,7 @@ import { RAIL_EDGE_HOVER, RAIL_FILL, RAIL_HOVER_INK, RAIL_INK, RAIL_SELECTED_FAC
  *      STATE. The per-stage actionable/uncommitted question is the badge
  *      slot below, reserved and empty until dmfdeploy#495/ADR-0046 lands.
  *   C. THE CHEVRON IS NOW DRAWN WITH `clip-path: shape()`, not
- *      `polygon()` (fix round, operator direction 2026-08-31: "rethink how
+ *      `polygon()` (operator direction 2026-08-31: "rethink how
  *      this shape could be constructed"). The shipped polygon had grown to
  *      56 hand-tuned vertices — unreadable as source, and a polyline
  *      approximation of a curve rather than an exact one. `shape()` draws
@@ -85,9 +85,9 @@ import { RAIL_EDGE_HOVER, RAIL_FILL, RAIL_HOVER_INK, RAIL_INK, RAIL_SELECTED_FAC
  *      per-corner sweep-direction reasoning to get wrong.
  *
  *      FIVE RADII, not two — the operator's original read (on a 28px key,
- *      pre-#512) on a rendered variant board, correcting an earlier round's
+ *      pre-#512) on a rendered variant board, correcting an earlier
  *      "8px box / 16px+6px arrow" split that over-rounded the tip into a
- *      blob and under-differentiated the two joints. CODEX GATE P3
+ *      blob and under-differentiated the two joints.
  *      (dmfdeploy/dmfdeploy#512): an earlier version of this list also
  *      hardcoded the pre-#512 pixel values here (BOX_RADIUS 6px on "this
  *      28px control", TIP_RADIUS 5px on "a 14px half-height", JOINT_TIP/
@@ -143,9 +143,9 @@ import { RAIL_EDGE_HOVER, RAIL_FILL, RAIL_HOVER_INK, RAIL_INK, RAIL_SELECTED_FAC
  * (dmfdeploy#482), no padlock (IA doc #493 amendment), no indicators in the
  * row (dmfdeploy#481/#499), the badge slot (reserved, empty), and locked
  * keys reachable and visually identical to open ones of the same stage.
- * (CODEX GATE P3, dmfdeploy/dmfdeploy#512: an earlier version of this list
+ * (dmfdeploy/dmfdeploy#512: an earlier version of this list
  * also named "the two-tone focus ring" as surviving unchanged — that
- * stopped being true the moment CODEX GATE P1, below, removed the
+ * stopped being true the moment the FOCUS RING rebuild, below, removed the
  * box-shadow half of it; the ring is a single fixed-colour outline now,
  * not two-tone. See the FOCUS RING section immediately below for the full
  * account.)
@@ -156,8 +156,8 @@ import { RAIL_EDGE_HOVER, RAIL_FILL, RAIL_HOVER_INK, RAIL_INK, RAIL_SELECTED_FAC
  * node instead (WAI-ARIA 1.2 defines `aria-pressed` only for
  * `role="button"`).
  *
- * SELECTION — REBUILT, VISUAL PARITY FIX ROUND (dmfdeploy/dmfdeploy#512,
- * operator ruling off two separate rendered comparison boards — see
+ * SELECTION — REBUILT, VISUAL PARITY (dmfdeploy/dmfdeploy#512,
+ * decided off two separate rendered comparison boards — see
  * stagePalette.ts's own docstring for the full derivation, including the
  * retired achromatic invert AND the retired alpha-tint attempt this
  * superseded). Selection is a plain two-state class swap on `key-fill`
@@ -180,10 +180,10 @@ import { RAIL_EDGE_HOVER, RAIL_FILL, RAIL_HOVER_INK, RAIL_INK, RAIL_SELECTED_FAC
  *     jsdom computes no pixels; those numbers are the actual guarantee, the
  *     tests here only prove the mechanism producing them is intact.
  *
- * FOCUS RING — REBUILT, CODEX GATE P1 RELEASE BLOCKER (dmfdeploy/
+ * FOCUS RING — REBUILT (dmfdeploy/
  * dmfdeploy#512). The ring used to be `outline-current` PLUS a fixed
- * two-tone `box-shadow` sandwich, reasoned (across several passes of this
- * same round) as "whichever one has better contrast for the current ink
+ * two-tone `box-shadow` sandwich, reasoned
+ * as "whichever one has better contrast for the current ink
  * carries the ring." That reasoning had a hole neither pass caught:
  * OUTLINE PAINTS ON TOP OF AN ELEMENT'S OWN BOX-SHADOW, and both occupied
  * the exact same 0-2px outward band — so `outline-current` didn't
@@ -195,7 +195,7 @@ import { RAIL_EDGE_HOVER, RAIL_FILL, RAIL_HOVER_INK, RAIL_INK, RAIL_SELECTED_FAC
  * selected+focused key's WHOLE ring samples as a uniform `--color-bg` on
  * the real render (canvas/pixel-sampled, not inferred from the CSS): 1.04:1
  * against the real band ground, no trace of the sandwich's lighter outer
- * stroke anywhere in the painted pixels. Caught by codex's review, verified
+ * stroke anywhere in the painted pixels. Verified
  * by hand before touching anything (mutation risk: fixing a non-defect is
  * worse than the defect).
  *
@@ -207,7 +207,7 @@ import { RAIL_EDGE_HOVER, RAIL_FILL, RAIL_HOVER_INK, RAIL_INK, RAIL_SELECTED_FAC
  * outline always fully covers the sandwich's own 0-2px band regardless of
  * ink or selection, so it would never be visible in any reachable state —
  * keeping code that looks load-bearing but structurally cannot ever paint
- * is exactly the class of stale claim this round kept finding elsewhere.
+ * is exactly the class of stale claim to avoid.
  * Measured, all four combinations, real render (canvas-composited computed
  * styles): unselected+focused 15.53:1, selected+focused 15.53:1,
  * unselected+hovered-and-focused 15.53:1, selected+hovered-and-focused
@@ -235,8 +235,8 @@ import { RAIL_EDGE_HOVER, RAIL_FILL, RAIL_HOVER_INK, RAIL_INK, RAIL_SELECTED_FAC
  *     the ring still fits inside the gap without touching a neighbouring
  *     key.
  *
- * EDGE CONTRAST WITHOUT A BORDER (#483 caution 2) — RE-RESOLVED TWICE this
- * fix round, final shape below (see stagePalette.ts's own docstring, point
+ * EDGE CONTRAST WITHOUT A BORDER (#483 caution 2) — RE-RESOLVED TWICE;
+ * final shape below (see stagePalette.ts's own docstring, point
  * (4), for the two-pass account). A clipped shape still cannot carry a
  * normal border, and a single fill can no longer both clear 3:1 against
  * the page AND read as the darker, subtler face the operator asked for —
@@ -251,10 +251,9 @@ import { RAIL_EDGE_HOVER, RAIL_FILL, RAIL_HOVER_INK, RAIL_INK, RAIL_SELECTED_FAC
  * changes between states) and only shows a real ring — `--color-selected-
  * face`, previewing selection — on hover. The `border-radius` fallback (no
  * `shape()` support) carries the same two-layer construction regardless of
- * which colour either layer currently holds. (CODEX GATE P3,
- * dmfdeploy/dmfdeploy#512: an earlier version of this paragraph said the
+ * which colour either layer currently holds. (dmfdeploy/dmfdeploy#512: an earlier version of this paragraph said the
  * fallback's inner rectangle "is just 2px smaller than the outer one" —
- * superseded by the CODEX GATE P2 fix below: `key-fill` is `inset-0`, the
+ * superseded by the inset fix below: `key-fill` is `inset-0`, the
  * SAME full-size box as `key-edge`, in BOTH the `shape()` and fallback
  * paths now, not a physically smaller box in either. The 2px effect is a
  * `clip-path: inset(2px round …)` in the fallback, and true polygon
@@ -265,10 +264,10 @@ import { RAIL_EDGE_HOVER, RAIL_FILL, RAIL_HOVER_INK, RAIL_INK, RAIL_SELECTED_FAC
  * 3:1 guarantee at rest is still WCAG 1.4.11-conformant here (the visible
  * label text does that job instead).
  *
- * NARROW-WIDTH FIX ROUND (dmf-cms#128). lkirc's review correctly called the
- * `justify-center` change above a narrow-width regression, but predicted the
- * wrong MECHANISM — negative inline-start overflow pushing the leading keys
- * out of the scroll container's reach. Measured on the real render at
+ * NARROW-WIDTH LAYOUT. The `justify-center` change above caused a
+ * narrow-width regression, but not by the mechanism first predicted:
+ * negative inline-start overflow pushing the leading keys out of the
+ * scroll container's reach. Measured on the real render at
  * 900/600/400px instead: that never happens, the first key sits at +1.0px
  * in every case, because something worse does — the `<ol>` SHRINKS rather
  * than overflowing (400px container -> 400px `<ol>`, not its 843px
@@ -281,9 +280,9 @@ import { RAIL_EDGE_HOVER, RAIL_FILL, RAIL_HOVER_INK, RAIL_INK, RAIL_SELECTED_FAC
  *   1. `shrink-0` on the `<ol>` makes `w-max` actually hold, restoring
  *      scroll-not-wrap — Topbar.tsx's `overflow-x-auto` wrapper scrolls,
  *      which is what it's for. `justify-center` on the `<nav>` becomes
- *      `justify-center-safe` in the same round: with the `<ol>` no longer
+ *      `justify-center-safe` in the same change: with the `<ol>` no longer
  *      shrinking, it genuinely CAN overflow the `<nav>` now, and safe
- *      centring is what forecloses lkirc's originally predicted failure
+ *      centring is what forecloses the originally predicted failure
  *      mode for good, rather than that failure mode simply having had
  *      nothing to trigger it yet.
  *   2. Below ~390px the rail abandons the horizontal chevron entirely and
@@ -295,7 +294,7 @@ import { RAIL_EDGE_HOVER, RAIL_FILL, RAIL_HOVER_INK, RAIL_INK, RAIL_SELECTED_FAC
  *      from this rail entirely (point A above), so identity already rests
  *      on icon PLUS label alone — dropping labels at exactly the width
  *      where space is tightest would leave a single carrier for the one
- *      channel this round already spent its whole CVD budget protecting.
+ *      channel the design already spent its whole CVD budget protecting.
  * The stacked layout is `max-[390px]:grid-cols-1`/`max-[390px]:w-full` on
  * the `<ol>` (see that element's own comment above). The notch drop is
  * `.lifecycle-rail-chevron`/`.lifecycle-rail-content` in index.css,
@@ -318,9 +317,8 @@ const STEP_LABEL: Record<FlowStepId, string> = {
  *  `fmt`), so this is only used to work out each vertex's own position,
  *  never emitted directly.
  *
- *  VISUAL PARITY FIX ROUND (dmfdeploy/dmfdeploy#512, operator finding
- *  against a live provision run): 28 -> 40, matching Sidebar.tsx's
- *  `h-10 w-10` selected tile exactly (CODEX GATE P3: line number dropped
+ *  VISUAL PARITY (dmfdeploy/dmfdeploy#512): 28 -> 40, matching Sidebar.tsx's
+ *  `h-10 w-10` selected tile exactly (line number dropped
  *  here rather than re-pinned — Sidebar.tsx's own #512 comments grew
  *  enough to move this element's line more than once already) — the rail
  *  key and the nav tile are now
@@ -342,12 +340,12 @@ const M = H / 2
  * protruding tip's transition joints sit, AND how far in from the left
  * edge the receiving notch's own apex reaches. The SAME constant, both
  * ends of the arrow (operator: "the arrow's horizontal inset, tip and
- * tail alike") — this round's proportions read clearly as directional
+ * tail alike") — these proportions read clearly as directional
  * sequence on a key this wide without being aggressive, which matters
  * because these stages are peer views, not a gated flow; an overstated
  * arrow would misstate that model.
  *
- * VISUAL PARITY FIX ROUND (#512): 12 -> 17 (12 * 40/28 = 17.14, rounded).
+ * VISUAL PARITY (#512): 12 -> 17 (12 * 40/28 = 17.14, rounded).
  * Scaling this one linearly with H, rather than judging it fresh, is
  * deliberate: the notch's horizontal reach is what makes the interlock
  * read as an ARROW rather than a bar with a bite taken out, and that
@@ -365,7 +363,7 @@ const NOTCH_DEPTH = 17
  * variant board found 7px+ turns the tip into a blob and loses the
  * directional read entirely.
  *
- * VISUAL PARITY FIX ROUND (#512): 5 -> 7 (5 * 40/28 = 7.14, rounded) — the
+ * VISUAL PARITY (#512): 5 -> 7 (5 * 40/28 = 7.14, rounded) — the
  * plain linear scale, confirmed still crisp (not blob-y) on a real render
  * at the new size, so no separate hand-tuning was needed here.
  */
@@ -375,18 +373,18 @@ const TIP_RADIUS = 7
  * The outer box terminal corner radius — Design's left end, Finalise &
  * Review's right end.
  *
- * VISUAL PARITY FIX ROUND (#512): 6 -> 8. This is NOT just the linear
+ * VISUAL PARITY (#512): 6 -> 8. This is NOT just the linear
  * scale (6 * 40/28 = 8.57, which would round to 9) — it is Sidebar.tsx's
  * own `h-10 w-10 rounded-lg` value (`rounded-lg` = 8px), taken deliberately
  * exact rather than independently rounded. The PRIOR round of this comment
  * argued 6px specifically BECAUSE the rail's 28px key and the sidebar's
  * 40px tile were different size buckets, and standard practice scales
- * corner radius by bucket — that reasoning is why this round does NOT
+ * corner radius by bucket — that reasoning is why the rail does NOT
  * independently re-derive a rail-specific radius any more: the rail key IS
  * now the sidebar tile's bucket (both 40px, per H above), so the same
  * radius is the size-correct value, not a coincidence to round away.
  *
- * Exported (LKIRC GATE ROUND 2, dmfdeploy/dmfdeploy#512) so
+ * Exported (dmfdeploy/dmfdeploy#512) so
  * index.css's own `@media (width < 390px)` block — which hardcodes this
  * value AND `BOX_RADIUS - RING_INSET` as literal CSS, "kept in sync by
  * hand" per its own comment — can be checked by a test against the SOURCE
@@ -407,7 +405,7 @@ export const BOX_RADIUS = 8
  * not a guess: the operator circled exactly the notch-side joints twice,
  * on two different equal-radius attempts, as still too sharp.
  *
- * VISUAL PARITY FIX ROUND (#512): 6/8 -> 9/12 — the linear scale is
+ * VISUAL PARITY (#512): 6/8 -> 9/12 — the linear scale is
  * 8.57/11.43; rounded independently that lands on 9/11, which would quietly
  * shift the ratio between the two (0.818, vs the original 0.75) and reopen
  * exactly the "acute corner reads sharper" gap the split radius exists to
@@ -472,7 +470,7 @@ function fmt(p: TaggedPoint): string {
  *  knowable here, but always far larger than twice the biggest radius
  *  this file uses (the shortest EBU label alone forces a key over 100px
  *  wide; every radius below is `JOINT_NOTCH_RADIUS` [12px] or under —
- *  CODEX GATE P3, dmfdeploy/dmfdeploy#512: an earlier version of this
+ *  dmfdeploy/dmfdeploy#512: an earlier version of this
  *  comment said "8px or under," stale even before the 40px rescale, since
  *  `JOINT_TIP_RADIUS` [9px] and `JOINT_NOTCH_RADIUS` [12px] are both
  *  defined above this point and used in the vertex lists below), so the
@@ -568,7 +566,7 @@ const MIDDLE_SHAPE = roundedShape(MIDDLE_VERTICES)
 const LAST_SHAPE = roundedShape(LAST_VERTICES)
 
 /**
- * CODEX GATE, P2 (dmfdeploy/dmfdeploy#512): `key-fill` used to be `key-edge`
+ * (dmfdeploy/dmfdeploy#512) `key-fill` used to be `key-edge`
  * with an extra `inset-[2px]` on the SAME box, reusing this file's `shape()`
  * string unchanged. That is a scale, not a perpendicular offset — the shape
  * string's fixed-pixel terms (NOTCH_DEPTH, every radius) stay literally the
@@ -579,7 +577,7 @@ const LAST_SHAPE = roundedShape(LAST_VERTICES)
  * edge, the tip apex, and the notch apex — all exactly RING_INSET). On the
  * DIAGONALS between those points it measurably tapers: real-pixel-sampled
  * at three points along the tip-side diagonal, ~1.4-1.5px against the
- * ~2px canonical width — reproducing exactly what codex's own perpendicular-
+ * ~2px canonical width — reproducing exactly what the perpendicular-
  * separation arithmetic predicted (`2·M/√(NOTCH_DEPTH²+M²)`, ≈1.52px for
  * this file's own constants).
  *
@@ -597,10 +595,10 @@ const LAST_SHAPE = roundedShape(LAST_VERTICES)
  * to the SAME full-size box `key-edge` uses (`inset-0`, not `inset-[Npx]`)
  * — the box no longer does any of the insetting, the geometry does.
  *
- * Exported (LKIRC GATE ROUND 2, dmfdeploy/dmfdeploy#512) for the same
+ * Exported (dmfdeploy/dmfdeploy#512) for the same
  * reason as `BOX_RADIUS` above — index.css's narrow-width fallback hand-
  * copies this value too (`clip-path: inset(2px round ...)`), and that
- * hand-copy is exactly the kind of drift that let this same round's
+ * hand-copy is exactly the kind of drift that let an earlier
  * fallback bug through undetected. See `narrowWidthCssSync.test.ts`.
  */
 export const RING_INSET = 2
@@ -697,7 +695,7 @@ const LAST_INNER_SHAPE = roundedShape(erodeVertices(LAST_VERTICES, RING_INSET))
  * fallback rectangle below is exactly what the test suite exercises,
  * which is fine per lifecycleStrip.test.tsx's own "jsdom computes no
  * pixels" rule; the chevron geometry is a real-browser concern, same as
- * before this round.
+ * before.
  */
 const SUPPORTS_SHAPE_CURVE =
   typeof CSS !== 'undefined' &&
@@ -720,20 +718,20 @@ function chevronStyle(position: 'first' | 'middle' | 'last'): CSSProperties {
 }
 
 /**
- * `key-fill`'s OWN style — CODEX GATE P2 fix, see `RING_INSET`'s own
+ * `key-fill`'s OWN style — see `RING_INSET`'s own
  * docstring above for why this can no longer just reuse `chevronStyle`'s
  * shape on an inset box. Applied to the SAME full-size box `key-edge`
  * uses (`inset-0` at the call site, not `inset-[Npx]`, in EITHER branch
  * below) — the geometry itself is what's `RING_INSET` smaller now,
  * uniformly, never the box.
  *
- * THE FALLBACK HAD ITS OWN, SEPARATE VERSION OF THE SAME BUG (codex gate):
+ * THE FALLBACK HAD ITS OWN, SEPARATE VERSION OF THE SAME BUG:
  * a plain `border-radius` rectangle inset via a shrunk BOX genuinely does
  * give a uniform ring on its flat edges, but reusing the SAME radius
  * (BOX_RADIUS) for both the outer box and the inset inner box does not —
  * two same-radius rounded corners with centres offset by `RING_INSET` in
  * both x and y have their ARCS separated by `RING_INSET·√2` at the 45°
- * point, not `RING_INSET` (confirmed against codex's own arithmetic:
+ * point, not `RING_INSET` (confirmed by arithmetic:
  * 2·√2 ≈ 2.83 for RING_INSET=2, not 2). `clip-path: inset(... round ...)`
  * fixes both problems in the fallback with the same move `shape()` used
  * above: apply the inset AND the smaller radius to the CLIP PATH itself,
@@ -749,7 +747,7 @@ function chevronInnerStyle(position: 'first' | 'middle' | 'last'): CSSProperties
 }
 
 /**
- * FIX ROUND — CONTENT RE-CENTRING. The icon+label group is centred by the
+ * CONTENT RE-CENTRING. The icon+label group is centred by the
  * flex `<button>`'s own `justify-center` against the BOX, but a notched
  * key's PAINTED shape isn't the box — the notch removes NOTCH_DEPTH px of
  * material from the left side only (see MIDDLE_VERTICES/LAST_VERTICES),
@@ -767,7 +765,7 @@ function chevronInnerStyle(position: 'first' | 'middle' | 'last'): CSSProperties
  * lifecycleStrip.test.tsx can pin the exact figure rather than
  * re-deriving or hardcoding its own copy.
  *
- * VISUAL PARITY FIX ROUND (#512): NOTCH_DEPTH's own rescale (12 -> 17)
+ * VISUAL PARITY (#512): NOTCH_DEPTH's own rescale (12 -> 17)
  * carries straight through — 8.5px now, not 6px. Left as a genuine half-
  * integer rather than rounded to keep it exact for a browser that will
  * itself render the resulting `calc()`/`translateX()` at sub-pixel
@@ -838,8 +836,7 @@ export default function LifecycleStrip({
   /** Which of the five keys reads as selected, or none. Drives the
    *  selected-face swap — the rail's ONLY state now (position tally
    *  removed, see the file docstring's point B; "inverted fill" was the
-   *  retired achromatic design this superseded, dmfdeploy/dmfdeploy#512
-   *  CODEX GATE P3). The accessible signal on top of
+   *  retired achromatic design this superseded, dmfdeploy/dmfdeploy#512). The accessible signal on top of
    *  that varies by branch: `aria-pressed` on the interactive `<button>`
    *  variant, a visually-hidden "Selected" text node on a job-in-flight
    *  chip's inert `<div>`. */
@@ -854,16 +851,15 @@ export default function LifecycleStrip({
   const railId = useId()
 
   return (
-    // SHELL ROUND 2 (#481): centred, not left-hugging — there is no
+    // SHELL REDESIGN (#481): centred, not left-hugging — there is no
     // right-pinned sibling left in this row to fight the centring. `w-full`
     // so the centring has the row's full width to work against.
     //
-    // FIX ROUND (dmf-cms#128, lkirc's review + operator-measured
-    // mechanism): plain `justify-center` here was HALF of the narrow-width
+    // (dmf-cms#128) Plain `justify-center` here was HALF of the narrow-width
     // regression — `justify-center-safe` (`justify-content: safe center`)
     // is the fix, not a defensive extra. See the `<ol>` comment just below
     // for the other half (`shrink-0`, the actual defect) and this file's
-    // own docstring ("NARROW-WIDTH FIX ROUND") for the full mechanism.
+    // own docstring ("NARROW-WIDTH LAYOUT") for the full mechanism.
     <nav aria-label="Media workload lifecycle" className="flex w-full flex-nowrap items-center justify-center-safe">
       {/*
         EQUAL COLUMNS (dmfdeploy#449, plan §3.3, unchanged by this redesign).
@@ -873,8 +869,7 @@ export default function LifecycleStrip({
         (Topbar's overflow-x-auto wrapper) the tracks would happily shrink
         below their content and wrap the labels rather than overflow.
 
-        FIX ROUND (dmf-cms#128, lkirc's review + operator-measured
-        mechanism): `shrink-0` is what actually stops that, and it was
+        (dmf-cms#128) `shrink-0` is what actually stops that, and it was
         MISSING — this comment used to call `w-max` alone load-bearing, but
         this `<ol>` is itself a flex ITEM of the `<nav>` above (`display:
         flex`), and a flex item's default `flex-shrink: 1` shrinks it below
@@ -891,7 +886,7 @@ export default function LifecycleStrip({
         `<nav>` at narrow widths, and plain `justify-center` centres an
         overflowing item symmetrically — including into negative
         inline-start overflow, which a scroll container cannot reach (the
-        failure lkirc's review predicted, from the right cause-and-effect
+        failure predicted earlier, from the right cause-and-effect
         shape but the wrong trigger — it doesn't fire today because nothing
         has ever actually overflowed the nav until this fix makes the ol
         stop shrinking). `safe center` falls back to start-alignment exactly
@@ -903,8 +898,8 @@ export default function LifecycleStrip({
         widens it to 8px, because the stacked, notch-dropped layout at that
         width no longer interlocks and reads better with normal breathing
         room between rows. `max-[390px]:grid-cols-1` / `max-[390px]:w-full`
-        are the OTHER tier of this fix round — see this file's own
-        docstring, "NARROW-WIDTH FIX ROUND", for why a rail this narrow
+        are the OTHER tier of this layout — see this file's own
+        docstring, "NARROW-WIDTH LAYOUT", for why a rail this narrow
         stacks vertically instead of continuing to scroll.
       */}
       <ol className={RAIL_LIST_CLASS}>
@@ -928,11 +923,11 @@ export default function LifecycleStrip({
           const position = index === 0 ? 'first' : index === FLOW_STEPS.length - 1 ? 'last' : 'middle'
           // Computed once per key — key-edge uses the full-size shape;
           // key-fill uses its own, genuinely (not box-) eroded inner shape
-          // (CODEX GATE P2, `RING_INSET`'s own docstring above).
+          // (see `RING_INSET`'s own docstring above).
           const shapeStyle = chevronStyle(position)
           const innerShapeStyle = chevronInnerStyle(position)
 
-          // VISUAL PARITY FIX ROUND (#512, operator ruling off a rendered
+          // VISUAL PARITY (#512, decided off a rendered
           // A/B/C comparison — see stagePalette.ts's own docstring for the
           // full derivation, including the interim alpha-tint attempt this
           // superseded, and point (4) for the edge's own separate ruling).
@@ -941,8 +936,8 @@ export default function LifecycleStrip({
           // the alpha-tint detour (just different token values, and now
           // shared byte-for-byte with Sidebar.tsx's own selected tile).
           const fillClass = isSelected ? RAIL_SELECTED_FACE : RAIL_FILL
-          // Hover is a NEW state for this rail (it never had one before this
-          // fix round) — added as a consequence of the resting-ink ruling,
+          // Hover is a NEW state for this rail (it never had one before #512) —
+          // added as a consequence of the resting-ink ruling,
           // not an independent decision: RAIL_INK moved off `--color-text`
           // to leave hover somewhere to brighten TO, so the rail needed an
           // actual hover rule to spend that headroom on, matching
@@ -951,8 +946,7 @@ export default function LifecycleStrip({
           // key's ink (RAIL_SELECTED_INK, dark-on-bright) has no matching
           // hover concept.
           //
-          // ALSO GATED ON `interactive` — LKIRC GATE FINDING, dmf-cms#131
-          // (dmfdeploy/dmfdeploy#512), REPRODUCED AND FIXED. `RAIL_HOVER_INK`
+          // ALSO GATED ON `interactive` (dmfdeploy/dmfdeploy#512). `RAIL_HOVER_INK`
           // is a plain `hover:text-text`, which fires on the element it's
           // applied to regardless of ancestry — unlike `RAIL_EDGE_HOVER`
           // (`group-hover:bg-selected-face` below), which only fires under a
@@ -1002,17 +996,17 @@ export default function LifecycleStrip({
 
           const inner = (
             <>
-              {/* FIX ROUND (operator ruling 2026-08-31): these five icons
+              {/* (Operator ruling 2026-08-31) These five icons
                   are inline filled SVG now, not `lucide-react` — see
                   stageIcons.tsx's own docstring for the full provenance.
                   `strokeWidth` no longer applies to a filled silhouette,
                   so it is dropped here rather than passed and ignored.
-                  VISUAL PARITY FIX ROUND (#512): h-3.5/w-3.5 (14px) ->
+                  VISUAL PARITY (#512): h-3.5/w-3.5 (14px) ->
                   h-5/w-5 (20px) — both are 50% of their container (28px
                   key, 40px key respectively, matching Sidebar.tsx's own
                   `w-5 h-5` icon in its own 40px tile), so this falls
                   straight out of the H rescale above rather than being an
-                  independent choice. (CODEX GATE P3: line number dropped
+                  independent choice. (line number dropped
                   from this citation — see BOX_RADIUS's own comment above
                   for why pinning a specific Sidebar.tsx line here keeps
                   drifting stale.) */}
@@ -1020,17 +1014,15 @@ export default function LifecycleStrip({
               <span className="text-xs font-semibold">{STEP_LABEL[id]}</span>
               {/* Badge slot (Visual System doc §5): reserved geometry and
                   width budget for a future actionable-item count
-                  (dmfdeploy#495, ADR-0046) — rendered EMPTY this round.
+                  (dmfdeploy#495, ADR-0046) — rendered EMPTY for now.
                   "Nothing painted twice, nothing claiming a number the
                   console cannot yet verify." Fixed-width so a later count
                   does not shift every key's width out from under equal
                   columns.
 
-                  CODEX GATE P3 (dmfdeploy/dmfdeploy#512), INVESTIGATED, NOT
-                  CHANGED: this diff rescales the icon (14px -> 20px) but
-                  leaves this slot at its pre-existing `w-3.5` (14px) —
-                  flagged as possibly a missed rescale. It is not: this
-                  diff does not touch this line at all (unchanged since the
+                  (dmfdeploy/dmfdeploy#512) The icon is rescaled (14px -> 20px) but
+                  this slot stays at its pre-existing `w-3.5` (14px). That is not a
+                  missed rescale: the rescale never touched this line (unchanged since the
                   slot's introduction, dmf-cms f919c6b, where it happened to
                   match the icon's OWN pre-#512 size — coincidence, not a
                   documented tie; §5.5 defers exact slot geometry to "the
@@ -1049,7 +1041,7 @@ export default function LifecycleStrip({
                   rescale in either direction) and is a structural property
                   of reserving an invisible trailing slot this way, not a
                   regression this PR introduced — out of scope for a
-                  parity-with-the-sidebar fix, which is what this round is. */}
+                  parity-with-the-sidebar fix. */}
               <span aria-hidden="true" data-testid="badge-slot" className="w-3.5 shrink-0" />
               {/* Locked is the one remaining per-key fact worth stating in
                   words (IA doc's #493 amendment: "conveyed in words... never
@@ -1065,7 +1057,7 @@ export default function LifecycleStrip({
             </>
           )
 
-          // VISUAL PARITY FIX ROUND (#512): TWO stacked clipped layers,
+          // VISUAL PARITY (#512): TWO stacked clipped layers,
           // painting the same silhouette — see stagePalette.ts's own
           // docstring for the full contrast derivation. Outer to inner:
           //   - key-edge (`inset-0`): STATE-DEPENDENT (point (4)) — RAIL_FILL
@@ -1075,7 +1067,7 @@ export default function LifecycleStrip({
           //     shared RAIL_SELECTED_FACE on `group-hover` (a preview of
           //     selection, not accent — see stagePalette.ts for why), and
           //     RAIL_SELECTED_FACE unconditionally once selected.
-          //   - key-fill (`inset-0`, SAME box as key-edge — CODEX GATE P2,
+          //   - key-fill (`inset-0`, SAME box as key-edge,
           //     see `RING_INSET`'s own docstring above for why this is no
           //     longer `inset-[2px]`): swaps between the darker RAIL_FILL
           //     (unselected) and the shared opaque RAIL_SELECTED_FACE
@@ -1116,8 +1108,7 @@ export default function LifecycleStrip({
                   // an ancestor, and the button is the correct one since it
                   // is the sole real pointer target now.
                   //
-                  // CODEX GATE, P1 RELEASE BLOCKER (dmfdeploy/dmfdeploy#512):
-                  // `outline-current` PLUS the two-tone `box-shadow` sandwich
+                  // (dmfdeploy/dmfdeploy#512) `outline-current` PLUS the two-tone `box-shadow` sandwich
                   // used to occupy the SAME 0-2px outward band, and outline
                   // paints on top of an element's own box-shadow — so the
                   // outline didn't sit alongside the sandwich, it fully
@@ -1137,8 +1128,8 @@ export default function LifecycleStrip({
                   // fully covers the sandwich's own 0-2px band regardless of
                   // ink, so the sandwich would never again be visible in any
                   // state — keeping unreachable code that LOOKS load-bearing
-                  // is exactly the kind of stale claim this round keeps
-                  // finding elsewhere. See "FOCUS RING" in this file's own
+                  // is exactly the kind of stale claim to avoid.
+                  // See "FOCUS RING" in this file's own
                   // docstring for the four-combination verification.
                   className={`group relative flex h-10 w-full items-center justify-center gap-1.5 whitespace-nowrap px-3 py-1.5 focus-visible:outline-2 focus-visible:outline-offset-0 focus-visible:outline-text ${inkClass}`}
                   // Explicit accessible name — the key's own label is all
@@ -1183,7 +1174,7 @@ export default function LifecycleStrip({
           rail is exactly the five keys above, with nothing adjacent that
           can be read as a sixth.
 
-          SHELL ROUND 2 (#481): the row-end run-count readout that used to
+          SHELL REDESIGN (#481): the row-end run-count readout that used to
           sit here (RunningReadout) is deleted outright too, along with the
           shared job-in-progress note that used to follow the <ol>. There
           is nothing left in this row but the five keys. */}

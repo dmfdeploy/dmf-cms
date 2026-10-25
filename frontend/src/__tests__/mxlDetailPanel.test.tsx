@@ -3,7 +3,7 @@
  * see mediaWorkloadsGrid.test.tsx's "never hits the retired legacy
  * aggregate on the live path" for the one legitimate caller).
  *
- * fix-round 5 (PR #81, codex sibling sweep): `isError` was never checked.
+ * `isError` was never checked.
  * A settled failed read with nothing retained fell into `!data?.configured`
  * and told the operator "Live view endpoints are not configured" — false;
  * the endpoints may be perfectly well configured, the read just failed. A

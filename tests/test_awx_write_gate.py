@@ -149,7 +149,7 @@ def test_admin_view_as_viewer_is_forbidden(awx_spy, _name, path):
 
 
 # --------------------------------------------------------------------------
-# C5 on EVERY post-auth return path (codex WP-E P2-1 / P3): request_id echoed
+# C5 on EVERY post-auth return path: request_id echoed
 # + an audit line, including the config-503 early returns; a missing reason is
 # still a 400 even when AWX is dark.
 # --------------------------------------------------------------------------
@@ -271,7 +271,7 @@ def test_admin_view_as_viewer_audit_shows_real_role(monkeypatch, awx_spy, caplog
 
 
 # --------------------------------------------------------------------------
-# umbrella dmf-cms#108 fix-round 1: audit-line injection. `workflow_name` is
+# Audit-line injection. `workflow_name` is
 # a raw path parameter, never validated, and reaches `target` on the
 # awx-not-configured audit path BEFORE any AWX-reachability check — so an
 # operator+ caller controls a value that lands unescaped in a %s-formatted
@@ -280,7 +280,7 @@ def test_admin_view_as_viewer_audit_shows_real_role(monkeypatch, awx_spy, caplog
 # (forging what looks like a second, independent line), corrupting the
 # record ADR-0028 C5 depends on.
 #
-# fix-round 2: parametrized over three C0 characters, not just LF. A bare
+# Parametrized over three C0 characters, not just LF. A bare
 # CR alone (no LF) is a DISTINCT threat from LF: in any terminal-backed log
 # reader (kubectl logs, journalctl to a tty) CR returns the cursor to
 # column 0, so a hostile value can overwrite the VISIBLE part of the real

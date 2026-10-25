@@ -48,11 +48,10 @@ export interface FacilityDetailQueryLike {
 export interface FacilityDetailState {
   phase: FacilityDetailPhase
   data?: FacilityDetailResponse
-  // fix-round 4/5 (PR #81, codex sibling sweep): true when `data` is
-  // retained from a prior success but the CURRENT read failed — for EITHER
-  // 'loaded' or 'unconfigured' (fix-round 5 closed the second: the
-  // unconfigured branch hardcoded `stale: false`, so a failed refetch
-  // after a valid unconfigured read silently presented that stale config
+  // True when `data` is retained from a prior success but the CURRENT
+  // read failed — for EITHER 'loaded' or 'unconfigured' (the unconfigured
+  // branch must not hardcode `stale: false`, or a failed refetch after a
+  // valid unconfigured read silently presents that stale config
   // posture as current). A settled isError with data retained must NOT
   // suppress the page (Art. 5 — the screen stays still; the same reasoning
   // already applied to MediaWorkloads/HistoryLane/RecentChanges), only
@@ -61,7 +60,7 @@ export interface FacilityDetailState {
 }
 
 export function classifyFacilityDetail(q: FacilityDetailQueryLike): FacilityDetailState {
-  // fix-round 6 (PR #81, umbrella #385): retrofitted onto settleQuery — see
+  // (umbrella #385) retrofitted onto settleQuery — see
   // classifyChanges' identical note in lib/changesState.ts.
   const settled = settleQuery(q)
   if (settled.loading) return { phase: 'loading', stale: false }
@@ -151,7 +150,7 @@ export default function FacilityDetail() {
 
       {state.phase === 'unconfigured' && (
         <>
-          {/* fix-round 5: a failed refetch after a valid unconfigured read
+          {/* A failed refetch after a valid unconfigured read
               must not silently present that (now possibly stale) config
               posture as current — same reasoning as the 'loaded' banner
               below, applied here too. */}
@@ -257,7 +256,7 @@ function Loaded({ data }: { data: FacilityDetailResponse }) {
 function NodesPanel({ data }: { data: FacilityDetailResponse }) {
   const { nodes } = data
   return (
-    // lkirc round-5: `mb-6` dropped — the grid wrapper's own `gap-6` spaces
+    // `mb-6` dropped — the grid wrapper's own `gap-6` spaces
     // this from its siblings now; keeping both would double it. See the
     // wrapper comment in Loaded() for the full reasoning.
     <div className="panel">
@@ -311,7 +310,7 @@ function NodesPanel({ data }: { data: FacilityDetailResponse }) {
 function PlatformServicesPanel({ data }: { data: FacilityDetailResponse }) {
   const { platform_services: services } = data
   return (
-    // lkirc round-5: `mb-6` dropped — see the grid wrapper comment in
+    // `mb-6` dropped — see the grid wrapper comment in
     // Loaded() for why (double-spacing with the grid's own `gap-6`).
     <div className="panel">
       {/* WP-4 (umbrella #347 Arc 4): subtitle deleted outright (not moved
@@ -391,7 +390,7 @@ function PlatformServicesPanel({ data }: { data: FacilityDetailResponse }) {
 function StoragePanel({ data }: { data: FacilityDetailResponse }) {
   const { storage } = data
   return (
-    // lkirc round-5: `mb-6` dropped — see the grid wrapper comment in
+    // `mb-6` dropped — see the grid wrapper comment in
     // Loaded() for why (double-spacing with the grid's own `gap-6`).
     <div className="panel">
       <div className="px-6 py-4 border-b border-panel">
@@ -438,7 +437,7 @@ function StoragePanel({ data }: { data: FacilityDetailResponse }) {
 function CapacityPanel({ data }: { data: FacilityDetailResponse }) {
   const { capacity } = data
   return (
-    // lkirc round-5: `mb-6` dropped — see the grid wrapper comment in
+    // `mb-6` dropped — see the grid wrapper comment in
     // Loaded() for why (double-spacing with the grid's own `gap-6`). It's
     // also the last grid cell in DOM order, so this specifically closes
     // the stray trailing gap the finding named below the grid.
@@ -515,11 +514,11 @@ function WorkloadCountPanel() {
   // never re-derives that count (a second, divergent count would be a
   // trust hazard, not a convenience).
   //
-  // fix-round 6 (PR #81, umbrella #385): retrofitted onto settleQuery — the
+  // (umbrella #385) retrofitted onto settleQuery — the
   // `isLoading`/`isError` names are kept at the destructure so every branch
-  // below reads exactly as it did in fix-round 5.
+  // below reads exactly as before.
   const { data, loading: isLoading, failed: isError } = settleQuery(useMediaWorkloadsGrouped())
-  // fix-round P1-1, SECOND PASS (umbrella #385 PR #81): the first pass only
+  // (umbrella #385) An earlier version only
   // withheld the number when `workloads` was EMPTY, reasoning that a
   // non-zero count stayed honest because "each surviving workload's own
   // instances already excludes" any invalid-tagged member. That reasoning
@@ -550,14 +549,14 @@ function WorkloadCountPanel() {
         ) : !data ? (
           // Settled error, nothing ever retained — distinct from "not
           // configured" below, which is a real, known environment fact this
-          // is not (fix-round P2-4: this used to fall into the "not
+          // is not (this used to fall into the "not
           // configured" branch's default text, misstating a read failure as
           // a configuration gap).
           <p className="text-sm text-muted">
             Cannot confirm the media workload count — this could not be read. Retrying automatically.
           </p>
         ) : isError ? (
-          // fix-round 5: this used to sit AFTER `!data.configured` below,
+          // This used to sit AFTER `!data.configured` below,
           // contradicting the doc comment above (`countUnreliable`'s own
           // "isError wins regardless of retained data") — a settled failed
           // refetch that retained a `configured: false` payload silently

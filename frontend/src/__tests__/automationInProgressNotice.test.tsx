@@ -2,7 +2,7 @@ import { act } from 'react'
 import { cleanup, render, screen } from '@testing-library/react'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import AutomationInProgressNotice from '../components/AutomationInProgressNotice'
-// codex adversarial review (feat/390-throbber, T3): jsdom does not compute
+// jsdom does not compute
 // real CSS cascade/media-query results, so a rendered-DOM test cannot prove
 // ".throbber-spin's animation is actually disabled under
 // prefers-reduced-motion" the way a real browser would. Read the shipped

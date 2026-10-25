@@ -190,7 +190,7 @@ def test_rollback_async_fresh_dispatch_returns_202(monkeypatch, awx_spy):
 
 
 # ---------------------------------------------------------------------------
-# sync already-active identity verification (codex R4-2b) — the rollback JT
+# sync already-active identity verification — the rollback JT
 # is SHARED across every run being rolled back, so "some rollback job is
 # active" doesn't mean it's THIS run_id's rollback.
 # ---------------------------------------------------------------------------
@@ -218,7 +218,7 @@ def test_rollback_sync_already_active_matching_run_id_reattaches(monkeypatch):
 
 
 def test_rollback_sync_already_active_other_run_is_409_no_op_created(monkeypatch):
-    # codex R4-2's exact probe: an active rollback job actually rolling
+    # An active rollback job actually rolling
     # back run A (l3_run_id=A) — a POST for a DIFFERENT run B must refuse,
     # never attribute A's job (and thus A's eventual outcome marker) to B.
     run_a = "a" * 32
@@ -363,7 +363,7 @@ def test_rollback_sync_extra_vars_contract(monkeypatch):
 
 
 def test_rollback_sync_creates_a_tracked_operation(monkeypatch):
-    # codex R2-5: the sync rollback branch now also tracks its launch as an
+    # The sync rollback branch now also tracks its launch as an
     # Operation + watcher — requires a lifespan'd TestClient (see the
     # getattr-guard, matching the sync deploy/teardown tests).
     monkeypatch.setattr(main, "lookup_job_template_by_name", lambda **k: {"id": 7})
@@ -379,7 +379,7 @@ def test_rollback_sync_creates_a_tracked_operation(monkeypatch):
         # _wait_for's 5s timeout.
         lambda **k: {"status": "successful", "started": "t0", "finished": "t1", "event_processing_finished": True},
     )
-    # codex R2-1: a rollback op's outcome is ALWAYS marker-fetched
+    # A rollback op's outcome is ALWAYS marker-fetched
     # (regardless of job status) — must mock get_job_events_for_task too
     # (WP3 R2b: job-events transport, anchored by task name), or the
     # (unmocked, real-network) fetch fails and the op fails closed to
@@ -393,7 +393,7 @@ def test_rollback_sync_creates_a_tracked_operation(monkeypatch):
         client.get("/auth/login", follow_redirects=False)
         resp = client.post(f"/api/runs/{RUN_ID}/rollback", json={"reason": "rollback please"})
         assert resp.status_code == 200, resp.text
-        assert resp.json()["operation_id"]  # codex R3-4
+        assert resp.json()["operation_id"]
 
         def _resolved():
             ops = client.app.state.operations.list_all()
@@ -407,11 +407,11 @@ def test_rollback_sync_creates_a_tracked_operation(monkeypatch):
     assert ops[0].target == RUN_ID
     assert ops[0].job_id == 4242
     assert ops[0].request_id == resp.json()["request_id"]
-    assert ops[0].run_id == resp.json()["request_id"]  # codex R3-3
+    assert ops[0].run_id == resp.json()["request_id"]
 
 
 def test_rollback_async_extra_vars_contract_uses_the_dispatch_request_id(monkeypatch, awx_spy):
-    # codex R2-7: l3_request_id is the DISPATCHING op's own request_id (the
+    # l3_request_id is the DISPATCHING op's own request_id (the
     # audited/echoed C5 one), NOT a fresh mint at launch time — a prior
     # WP2-B draft minted a fresh id here, causing the launcher-side
     # extra_vars and the console's own audited request_id to diverge for no
@@ -434,8 +434,7 @@ def test_rollback_async_extra_vars_contract_uses_the_dispatch_request_id(monkeyp
 
 
 # ---------------------------------------------------------------------------
-# Advisory facility lock — wired into deploy, teardown, AND rollback (codex
-# R2-6; a prior WP2-B draft exempted teardown entirely)
+# Advisory facility lock — wired into deploy, teardown, AND rollback (a prior WP2-B draft exempted teardown entirely)
 # ---------------------------------------------------------------------------
 
 
@@ -465,7 +464,7 @@ def test_facility_busy_blocks_cross_entry_rollback(awx_spy):
 
 
 def test_facility_check_blocks_teardown_on_cross_target_running_deploy(awx_spy):
-    # codex R2-6: teardown dispatch now ALSO gets the facility check — a
+    # Teardown dispatch now ALSO gets the facility check — a
     # non-terminal cross-target deploy blocks it just like it would block a
     # new deploy/rollback elsewhere.
     with TestClient(create_app(settings=_settings(OPERATOR, autoscale=True))) as client:
@@ -479,7 +478,7 @@ def test_facility_check_blocks_teardown_on_cross_target_running_deploy(awx_spy):
 
 
 def test_facility_check_teardown_vs_teardown_cross_target_now_blocks(awx_spy):
-    # codex R3-5: the prior R2-6(c) teardown-vs-teardown exemption is
+    # The prior teardown-vs-teardown exemption is
     # REMOVED — plan §4.5 is one run at a time, full stop.
     with TestClient(create_app(settings=_settings(OPERATOR, autoscale=True))) as client:
         client.get("/auth/login", follow_redirects=False)
@@ -513,7 +512,7 @@ def test_facility_check_ignores_terminal_ops(awx_spy):
 
 
 # ---------------------------------------------------------------------------
-# Dirty-facility model (codex R2-6): FAILED_ROLLBACK_REQUIRED/
+# Dirty-facility model: FAILED_ROLLBACK_REQUIRED/
 # ROLLBACK_INCOMPLETE are terminal for dedupe/GC but still BLOCK a cross-
 # target dispatch, and a dirty run's own matching rollback is exempt.
 # ---------------------------------------------------------------------------
@@ -543,7 +542,7 @@ def test_facility_check_dirty_state_blocks_cross_target_teardown(awx_spy):
 
 
 def test_facility_check_rollback_of_its_own_dirty_run_is_not_blocked(awx_spy):
-    # codex R2-6(d), corrected by R4-1: a rollback of run_id R must never
+    # A rollback of run_id R must never
     # be blocked by the very deploy op that R is rolling back — even
     # though that op is DIRTY (FAILED_ROLLBACK_REQUIRED) and targets a
     # DIFFERENT catalog key than the run_id. The exemption compares
@@ -559,7 +558,7 @@ def test_facility_check_rollback_of_its_own_dirty_run_is_not_blocked(awx_spy):
 
 
 def test_facility_check_rollback_matches_on_hydrated_run_id_not_dispatch_request_id(awx_spy):
-    # codex R4-1's exact probe, at HTTP level: a REATTACHED deploy op whose
+    # At HTTP level: a REATTACHED deploy op whose
     # request_id (this console's own dispatch bookkeeping) differs from its
     # run_id (hydrated from the AWX job's own extra_vars). A rollback of
     # the run_id must pass.
@@ -603,7 +602,7 @@ def test_facility_check_retry_rollback_of_incomplete_run_passes(awx_spy):
 
 
 def test_facility_busy_check_performs_no_network_io_before_refusing(monkeypatch):
-    # codex #202 WP2 §4.5 P2-2 TEST-CRITICAL: strict mocks that raise on any
+    # TEST-CRITICAL: strict mocks that raise on any
     # AWX/Prometheus call, a cross-entry RUNNING deploy op pre-seeded, a new
     # deploy for ANOTHER entry -> 409 facility-busy, mocks never touched.
     def boom(*a, **k):
@@ -645,7 +644,7 @@ def test_facility_busy_check_performs_no_network_io_before_refusing_rollback(mon
 
 
 def test_facility_busy_check_performs_no_network_io_before_refusing_teardown(monkeypatch):
-    # codex R2-6: teardown gets the same TEST-CRITICAL no-network-IO
+    # Teardown gets the same TEST-CRITICAL no-network-IO
     # guarantee now that it's wired into the facility check.
     def boom(*a, **k):
         raise AssertionError("no AWX call may happen before a facility-busy refusal on teardown")

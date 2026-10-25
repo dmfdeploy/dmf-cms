@@ -117,7 +117,7 @@ describe('Workspace AdminPanels (post IA cut)', () => {
   })
 })
 
-// fix-round 5 (PR #81, codex sibling sweep): this component is currently
+// This component is currently
 // unreferenced (see pages/Workspace/index.tsx), but fixed alongside
 // Admin.tsx rather than left as a landmine for a future re-wire — see its
 // own doc comment.

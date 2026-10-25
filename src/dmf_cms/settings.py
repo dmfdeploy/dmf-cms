@@ -430,7 +430,7 @@ def _parse_str_set(raw: str | None, default: frozenset[str]) -> frozenset[str]:
 def _parse_int_set(raw: str | None, default: frozenset[int]) -> frozenset[int]:
     """Comma/space-separated int allowlist; blank/absent -> default.
 
-    Fail-closed for a *security* allowlist (codex WP-D P3): non-integer tokens
+    Fail-closed for a *security* allowlist: non-integer tokens
     are dropped, and an explicit-but-all-invalid value yields an EMPTY set
     (every live view goes dark — a loud, visible failure the operator fixes)
     rather than silently re-enabling the default. Only a genuinely blank/absent

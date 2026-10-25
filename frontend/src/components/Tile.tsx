@@ -25,9 +25,9 @@ import { Link } from 'react-router-dom'
  * prop, scoped to one component instance, with no cross-tree registration to
  * guard.
  *
- * CLICK-SURFACE PARITY (lkirc round-4 finding, and the reason for the split
+ * CLICK-SURFACE PARITY (the reason for the split
  * below — read this before changing which element carries which class).
- * Round-4's FIRST attempt at this component put ALL of `card`'s styling
+ * An earlier version of this component put ALL of `card`'s styling
  * (background/border/rounded corners/padding/hover) on the OUTER container,
  * reasoning that the container is what a reader perceives as "the tile".
  * That was wrong: `card` (index.css) bundles `p-4` (1rem) AND a 1px border,
@@ -37,8 +37,7 @@ import { Link } from 'react-router-dom'
  * spanned the FULL padded+bordered box (the outer div's own box), but that
  * ~17px ring around every tile LOOKED like part of the tile while not being
  * part of the anchor at all — a real, silent shrink of the click/tap target
- * versus the pre-refactor single-`<Link>` shape, caught by lkirc's review
- * (a rendered-layout defect neither codex's review method nor this file's
+ * versus the pre-refactor single-`<Link>` shape (a rendered-layout defect this file's
  * own render-based tests could catch, since jsdom has no real layout engine
  * to observe box geometry with — see tile.test.tsx for what IS and isn't
  * testable here). A `-m-4 p-4` compensating margin on the Link closed the
@@ -66,7 +65,7 @@ import { Link } from 'react-router-dom'
  * needed at all, and no residual gap of any width, because there's no
  * second element's box model to reconcile against in the first place.
  *
- * CONTRACT (codex P2-1, dmfdeploy/dmfdeploy#347 WP-4, rounds 1-3): `children`
+ * CONTRACT (dmfdeploy/dmfdeploy#347 WP-4): `children`
  * is the tile's non-interactive visible face — it renders INSIDE the primary
  * Link, so it must never itself contain an interactive element. Anything
  * that needs to be its OWN click/keyboard target belongs in `actions`, which

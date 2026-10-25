@@ -187,7 +187,7 @@ type DemandSummary =
  * presenting the partial sum as complete — a workload with 2 of 3
  * templates undeclared says so, in those terms.
  *
- * WHY THIS TAKES THE QUERY AND NOT AN ENTRY LIST (operator review, PR #66).
+ * WHY THIS TAKES THE QUERY AND NOT AN ENTRY LIST.
  * It used to receive `catalog.data?.entries ?? []` plus `isLoading` alone,
  * and that pairing cannot express the outcome that matters. A FAILED
  * /api/catalog read leaves data undefined and loading false, so the list

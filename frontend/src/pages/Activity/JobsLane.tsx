@@ -20,7 +20,7 @@ interface PendingOperation {
 // per-page hero it used to also own was retired — umbrella #347 WO-D1 spec
 // C). Launch outcomes stay anchored on the card (hard gate 2).
 export default function JobsLane() {
-  // fix-round 6 (PR #81, umbrella #385 codex sweep): `!user?.awx_configured`
+  // (umbrella #385) `!user?.awx_configured`
   // used to be the FIRST branch checked below, before loading/error were
   // even considered — `user` is `undefined` on every first render and on
   // every failed read, so both cases misread as the false claim "AWX API
@@ -251,7 +251,7 @@ function OperationMonitor({
   onLaunched: (jobId: number) => void
   onError: () => void
 }) {
-  // fix-round 6 (PR #81, umbrella #385 codex sweep): same shape as
+  // (umbrella #385) Same shape as
   // JobProgress.tsx's OperationStatusLine — a settled failed refetch
   // retained the last-good `operation` with no notice. `failed` distinguishes
   // "still querying" (silent, as before) from "the read itself failed" and
@@ -318,7 +318,7 @@ function OperationMonitor({
 }
 
 function JobStatus({ jobId, onComplete }: { jobId: number; onComplete: () => void }) {
-  // fix-round 6: same shape as OperationMonitor above.
+  // Same shape as OperationMonitor above.
   const { data: jobStatus, failed } = settleQuery(useWorkflowJobStatus(jobId))
 
   const isTerminal = jobStatus ? ['successful', 'failed', 'error', 'canceled'].includes(jobStatus.status) : false
@@ -363,7 +363,7 @@ function JobStatus({ jobId, onComplete }: { jobId: number; onComplete: () => voi
 }
 
 function JobMonitor({ workflowName, jobId, onComplete }: { workflowName: string; jobId: number; onComplete: () => void }) {
-  // fix-round 6: same shape as OperationMonitor/JobStatus above.
+  // Same shape as OperationMonitor/JobStatus above.
   const { data: jobStatus, failed } = settleQuery(useWorkflowJobStatus(jobId))
 
   const isTerminal = jobStatus ? ['successful', 'failed', 'error', 'canceled'].includes(jobStatus.status) : false

@@ -23,9 +23,9 @@
   --color-muted: #9a9aa2;
   --color-text: #e8e8ea;
 
-  /* SHARED SELECTION FACE (dmfdeploy/dmfdeploy#512 visual parity fix round,
-   * operator ruling, decided off a rendered A/B/C comparison board — see
-   * pages/Dev/SelectionOptionsHarness.tsx in this round's git history, since
+  /* SHARED SELECTION FACE (dmfdeploy/dmfdeploy#512 visual parity,
+   * decided off a rendered A/B/C comparison board — see
+   * pages/Dev/SelectionOptionsHarness.tsx in git history, since
    * that harness is deleted before the PR). ONE token, TWO consumers —
    * Sidebar.tsx's selected nav tile and LifecycleStrip.tsx's selected rail
    * key — deliberately sharing this literal rather than each computing its
@@ -209,7 +209,7 @@
      for the full arc if more detail is ever needed.
 
      --color-rail-fill (below) went through several intermediate designs
-     within the dmfdeploy/dmfdeploy#512 visual parity fix round before
+     within the dmfdeploy/dmfdeploy#512 visual parity work before
      landing on its final shape — none of those intermediate figures are
      reproduced here (git history has the full account if ever needed);
      what follows describes what actually ships.
@@ -317,8 +317,8 @@
   }
 }
 
-/* dmf-cms#128 fix round — LifecycleStrip's narrow-width stacked layout
-   (LifecycleStrip.tsx's own docstring, "NARROW-WIDTH FIX ROUND", has the
+/* LifecycleStrip's narrow-width stacked layout
+   (LifecycleStrip.tsx's own docstring, "NARROW-WIDTH LAYOUT", has the
    full mechanism). Below ~390px the rail drops the notch for a plain
    rounded rectangle per key — sequence is carried by vertical order instead
    of the chevron's interlock. `clip-path`/`transform` are set as INLINE
@@ -336,18 +336,18 @@
   .lifecycle-rail-chevron {
     clip-path: none !important;
     border-radius: 8px !important; /* BOX_RADIUS, LifecycleStrip.tsx — 6 ->
-      8 in the #512 visual parity fix round (28px -> 40px key). Kept in
+      8 in the #512 visual parity work (28px -> 40px key). Kept in
       sync by hand, same as CONTENT_OFFSET_PX's own test-side literal
       (lifecycleStrip.test.tsx). Applies to key-edge (the full-size,
       unshrunk box); key-fill overrides it below. */
   }
 
-  /* CODEX GATE P2 (dmfdeploy/dmfdeploy#512): key-fill used to share
+  /* (dmfdeploy/dmfdeploy#512) key-fill used to share
      .lifecycle-rail-chevron's own 8px radius unchanged here, on a box
      shrunk by RING_INSET via `inset-[2px]` — two SAME-radius rounded
      corners with centres offset by RING_INSET in both x and y separate by
      RING_INSET·√2 at the 45° point (≈2.83px for RING_INSET=2), not
-     RING_INSET, reproduced against codex's own arithmetic on a real
+     RING_INSET, reproduced by arithmetic on a real
      render. Fixed the same way LifecycleStrip.tsx's shape()'d path was:
      key-fill is inset-0 now (the SAME box as key-edge, see
      LifecycleStrip.tsx's own `chevronInnerStyle`), and its OWN radius
@@ -419,9 +419,9 @@
     @apply px-3 py-2 rounded-lg font-medium transition-colors border border-transparent;
   }
 
-  /* GATE FINDING (umbrella #444 review round 1): the `border border-
+  /* (umbrella #444) The `border border-
      transparent` above is a deliberate, measured geometry change, not an
-     accident of the disabled-state reservation below. Before this round
+     accident of the disabled-state reservation below. Before this change
      `.btn-secondary` alone carried a real border; `.btn-primary` and
      `.btn-danger` had none. Auto-sized elements grow by their border width
      regardless of box-sizing (border-box only governs how an EXPLICIT

@@ -17,9 +17,9 @@ import { usePageTitle } from '@/hooks/usePageTitle'
 // lives (pages/Facility/Detail.tsx).
 export default function Facility() {
   usePageTitle('Facilities')
-  // fix-round 6 (PR #81, umbrella #385): retrofitted onto settleQuery — the
+  // (umbrella #385): retrofitted onto settleQuery — the
   // `.isError`/`.data` field names below are kept via the settled result so
-  // every branch reads exactly as it did in fix-round 4.
+  // every branch reads exactly as before.
   const summary = settleQuery(useFacilitySummary())
   const loading = summary.loading
 
@@ -38,7 +38,7 @@ export default function Facility() {
         </div>
       )}
 
-      {/* fix-round 4 (PR #81, codex sibling sweep): `isError` was ignored
+      {/* `isError` was once ignored
           entirely — a settled failed read with NO retained data (first
           load, or a query that never succeeded) fell through
           FacilityEntry's whole reason ladder to `!site`, which reads

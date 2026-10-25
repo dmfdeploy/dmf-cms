@@ -1,5 +1,5 @@
 /**
- * GATE-D1.4 (operator review round 2, PR #70): every piece of the wizard's
+ * Every piece of the wizard's
  * per-workload state must NOT bleed from one workload to another when the
  * operator navigates /media-workloads/A/setup -> /media-workloads/B/setup —
  * same route, only the :slug param changes, which React does not remount
@@ -9,7 +9,7 @@
  * tests prove that holds for the three concrete failure modes the review
  * named: selection, the job-in-flight lock, and hash-focus consumption.
  *
- * GUARD LABEL (dmfdeploy#414 gate, round 1): every test in this file is a
+ * GUARD LABEL (dmfdeploy#414): every test in this file is a
  * GUARD pinning the pre-#414 GATE-D1.4 remount contract described above,
  * unchanged by this arc — only the mount route moved, from the bare slug
  * to /setup. Baseline: the pre-#414 commit on `main`, where these same

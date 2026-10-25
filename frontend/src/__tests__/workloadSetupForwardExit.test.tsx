@@ -19,7 +19,7 @@
  * workloadSetupWizard.test.tsx already follow: each file defines its own
  * local fixtures rather than importing another test file's.
  *
- * GUARD LABEL (dmfdeploy#414 gate, round 1): every test in this file is a
+ * GUARD LABEL (dmfdeploy#414): every test in this file is a
  * GUARD pinning dmfdeploy#412's classifyForwardExit contract, unchanged by
  * #414 except for the one migration noted above (the destination href).
  * Baseline: the pre-#414 commit on `main` — where these same assertions
@@ -147,7 +147,7 @@ async function selectStep(label: string): Promise<HTMLElement> {
   return stageSection(label)
 }
 
-// FIX ROUND (dmfdeploy#412 gate, round 2 — P3): this comment previously
+// (dmfdeploy#412) This comment previously
 // described expectNoSuccessAffordance below as asserting "by name ... via
 // getByRole('link', {name: ...})" — that is what the POSITIVE tests below do
 // (screen.findByRole('link', {name: /pattern/})), never what this negative
@@ -219,7 +219,7 @@ describe('dmfdeploy#412: what Configure offers instead, state by state', () => {
     const link = await screen.findByRole('link', { name: /View workload status/ })
     expect(link.getAttribute('href')).toBe('/media-workloads/studio-a')
     expect(screen.queryByText(/Open live view/)).toBeNull()
-    // FIX ROUND (dmfdeploy#412 gate, round 2): the classifier has no
+    // (dmfdeploy#412) The classifier has no
     // job-outcome input, so nothing here may claim a deploy "succeeded" —
     // this position is reached by active intent alone (backend ADR-0046),
     // which can equally mean a deploy that hasn't converged, one that
@@ -245,7 +245,7 @@ describe('dmfdeploy#412: what Configure offers instead, state by state', () => {
     expectNoSuccessAffordance()
   })
 
-  // FIX ROUND (dmfdeploy#412 adversarial gate): instance.live_view is
+  // (dmfdeploy#412) instance.live_view is
   // sidecar-URL RESOLVABILITY (media_workloads.py's sidecar_base_url — an
   // SSRF-allowlist check on stamped NetBox coordinates, never a probe),
   // never a preview fact — see classifyForwardExit's own docstring. An
@@ -293,7 +293,7 @@ describe('dmfdeploy#412: what Configure offers instead, state by state', () => {
   })
 })
 
-// FIX ROUND 3 (review on PR #99, commit 1e3ed9d): FORWARD_STEPS omits
+// FORWARD_STEPS omits
 // Finalise, so nextStep is null on BOTH Configure and Finalise & Review —
 // the shared FlowStep footer fallback used to say "This is the last step."
 // on both, which is only true on the latter. Worst exactly when

@@ -42,8 +42,7 @@ export function isOperation(result: any): result is Operation {
 
 /**
  * `enabled` defaults to `true` — every existing call site (every one of
- * them calls this with no arguments) is unaffected. FIX ROUND (dmf-cms#391,
- * codex gate — D): added specifically so App.tsx can pass `false` on the
+ * them calls this with no arguments) is unaffected. Added specifically so App.tsx can pass `false` on the
  * dev-harness route, so that route makes genuinely zero network calls
  * rather than firing an unstubbed /api/me it never reads the result of.
  * Safe because callers share ['user'] as a cache key regardless of their

@@ -503,7 +503,7 @@ def test_dispatched_operation_reaches_run_complete_with_purge_verified_at(monkey
 
 
 def test_p1_1_invisible_running_member_refuses_members_unverifiable(monkeypatch):
-    # codex's exact GATE-A2b.3 P1 fixture: a bootstrapped member that still
+    # A bootstrapped member that still
     # CLAIMS a monitoring identity (custom_fields.cluster_service set), but
     # Prometheus's own overlay reports a running sample under a DIFFERENT,
     # well-formed identity — the join never matches, so the member's own
@@ -722,7 +722,7 @@ def test_p1_2_post_job_residue_check_finds_survivor_across_pagination():
 
 
 def test_p2_1_invalid_multiple_target_in_second_tag_position_refuses_422(monkeypatch):
-    # codex's exact GATE-A2b.3 P2 fixture: a service tagged workload:other-
+    # A service tagged workload:other-
     # workload FIRST, then workload:studio-a SECOND. _workload_assignment
     # only ever reports the FIRST tag, so the old "skip on member_slug !=
     # slug, check invalid-multiple only after" ordering silently omitted
@@ -758,7 +758,7 @@ def test_p2_1_invalid_multiple_target_in_second_tag_position_refuses_422(monkeyp
 
 
 def test_p2_2_string_id_from_netbox_refuses_source_inconsistent(monkeypatch):
-    # codex's exact GATE-A2b.3 P2 fixture: a NetBox id surfacing as the
+    # A NetBox id surfacing as the
     # numeric STRING '11' instead of the int 11. The launcher's own frozen
     # contract (playbooks/finalise-purge.yml) asserts
     # purge_expected_service_ids are plain ints — dmf-cms must refuse
@@ -812,7 +812,7 @@ _MISSING = object()
 
 @pytest.mark.parametrize("bad_count", [_MISSING, True, 1.0, -1])
 def test_p1r_malformed_count_refuses_source_read_incomplete(monkeypatch, bad_count):
-    # codex's exact GATE-A2b.3R probes: count entirely absent, count=True
+    # Cases: count entirely absent, count=True
     # (a bool — Python's `1 != True` is False, so a naive numeric compare
     # would have silently accepted it), count=1.0 (a float, same silent-
     # accept risk), and a negative count. Every one must refuse — never
@@ -869,12 +869,12 @@ def test_p1r_cross_page_count_mismatch_refuses_source_read_incomplete(monkeypatc
 
 
 def test_p1r_malformed_instance_identity_refuses_observability_unavailable(monkeypatch):
-    # codex's original GATE-A2b.3R probe used a bare hyphenated string
+    # An early version used a bare hyphenated string
     # ("totally-not-a-valid-probe-target") as its "malformed" exemplar —
-    # GATE-A2b.3R2 found that exact shape is actually a LEGITIMATE
+    # but that exact shape is actually a LEGITIMATE
     # dmf-promsd target (a bare single-label hostname, same shape as that
     # repo's own "device-one"-style records with no cluster_service), so
-    # FIX-A2b.6 reclassifies it as ignorable, not malformed (see
+    # it is classified as ignorable, not malformed (see
     # test_p1r_ignorable_non_cluster_service_targets_never_refuse below).
     # A genuinely malformed instance — one that doesn't even look like a
     # valid host[:port][/path] target at all (a bare space is invalid in
@@ -898,7 +898,7 @@ def test_p1r_malformed_instance_identity_refuses_observability_unavailable(monke
 
 
 def test_p1r_nan_sample_refuses_observability_unavailable(monkeypatch):
-    # codex's exact GATE-A2b.3R probe: float("nan") parses cleanly via
+    # float("nan") parses cleanly via
     # float(), and min(1.0, nan) == 1.0 in Python (NaN comparisons are
     # always False, so min() picks the non-NaN operand) — silently
     # classifying as "running" regardless of the real sample. A non-finite
@@ -933,7 +933,7 @@ def test_p1r_nan_sample_refuses_observability_unavailable(monkeypatch):
 
 
 def test_p1r2_ignorable_non_cluster_service_targets_never_refuse(monkeypatch, awx_spy):
-    # codex's exact GATE-A2b.3R2 finding 1: dmf-promsd legitimately emits
+    # dmf-promsd legitimately emits
     # "dmf.example.com:9100" (a service/VM with a metrics port, no
     # cluster_service) and bare "dmf.example.com" (an SNMP-only device) —
     # see ../dmf-promsd/src/dmf_promsd/sd.py's own tests/test_sd.py
@@ -964,7 +964,7 @@ def test_p1r2_ignorable_non_cluster_service_targets_never_refuse(monkeypatch, aw
 
 
 def test_p1r2_joinable_target_with_port_zero_refuses_observability_unavailable(monkeypatch):
-    # codex's exact GATE-A2b.3R2 finding 2: "svc.ns.svc.cluster.local:0"
+    # "svc.ns.svc.cluster.local:0"
     # parsed as a joinable cluster-service identity ("svc") with the
     # digits-only port pattern accepting "0" — an invalid port (1-65535)
     # masquerading as a legitimate identity. Looks like it's attempting to
@@ -989,7 +989,7 @@ def test_p1r2_joinable_target_with_port_zero_refuses_observability_unavailable(m
 
 
 def test_p1r2_trailing_newline_cannot_smuggle_garbage_past_the_anchor(monkeypatch):
-    # codex's exact GATE-A2b.3R2 finding 3: a bare `.match()` against a
+    # A bare `.match()` against a
     # `...$`-terminated pattern is satisfiable just before an embedded
     # newline, so "<valid-target>\nGARBAGE" would still "match" — anything
     # after the newline rides along unexamined. \A/\Z + fullmatch must
@@ -1162,7 +1162,7 @@ def test_p1_7_unscoped_caller_tag_only_residue_still_dispatches(monkeypatch, awx
     # is the SAME scenario test_happy_path_empty_members_tag_only_residue_
     # is_a_valid_purge_target already pins (mode="single" -> tenant_slugs
     # is None throughout this whole file); restated explicitly here as
-    # this fix round's own dedicated regression.
+    # this fix's own dedicated regression.
     def fake_netbox(*args, **kwargs):
         path = args[2]
         if "/api/extras/tags/" in path:
@@ -1386,7 +1386,7 @@ def test_p1_8_scoped_operator_own_operation_reattach_still_returns_full_dict(mon
 
 
 def test_p1_9_out_of_scope_member_second_workload_tag_is_not_missed(monkeypatch):
-    # codex's exact probe: the out-of-scope service's slug is its SECOND
+    # The out-of-scope service's slug is its SECOND
     # workload:* tag. The old _workload_assignment()-based true-membership
     # computation only ever reported the FIRST tag ("other"), silently
     # dropping this member from true_ids and letting scoped_ids == true_ids

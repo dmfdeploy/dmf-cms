@@ -19,7 +19,7 @@ _CONTROL_ESCAPES = {"\n": "\\n", "\r": "\\r", "\t": "\\t"}
 def sanitize_audit_field(value: str | None) -> str:
     """Escape control characters out of a value bound for a log line.
 
-    umbrella dmf-cms#108 fix-round 1: every externally-influenced field in
+    Every externally-influenced field in
     ``_audit_awx_write``'s record — ``target`` (a raw, unvalidated path
     parameter on several routes — e.g. ``workflow_name``/catalog ``key`` —
     reaching this call on early-return audit paths BEFORE the value is

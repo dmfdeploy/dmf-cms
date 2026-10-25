@@ -3,13 +3,13 @@ import { useEffect, useState } from 'react'
 /**
  * Live-view polling bounds for the Media Workloads tile grid (WP-C).
  *
- * Codex P2: live polling must be cheap and bounded — it runs only in grid view,
+ * Live polling must be cheap and bounded — it runs only in grid view,
  * only while the tab is visible, and only for the first LIVE_TILE_CAP tiles that
  * actually resolve a sidecar. Tiles beyond the cap show their last frame plus an
  * explicit Refresh affordance. The fast 200ms cadence exists only inside the one
  * open modal.
  *
- * Codex P3: prefers-reduced-motion pauses the automatic thumbnail churn while
+ * Prefers-reduced-motion pauses the automatic thumbnail churn while
  * keeping the explicit Refresh and Open-preview affordances working.
  */
 
@@ -23,7 +23,7 @@ export const PREVIEW_TICK_MS = 1500
 // Modal cadences (the single open detail view is allowed to be lively). Both
 // the preview image AND the flow stats / head index tick at 200ms so the modal
 // reads as genuinely live — matching the retired MXL Flows page cadence. This
-// fast rate is bounded to the one open modal (codex P2).
+// fast rate is bounded to the one open modal.
 export const MODAL_STATUS_POLL_MS = 200
 export const MODAL_PREVIEW_TICK_MS = 200
 

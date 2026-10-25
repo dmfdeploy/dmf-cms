@@ -1,4 +1,4 @@
-"""umbrella #202 WP3 R5b (codex round-4 P2-2) — cross-repo L3 outcome-token
+"""umbrella #202 WP3 — cross-repo L3 outcome-token
 registry test.
 
 Codex round-4's exact finding: the console's ``_KV_DETAIL_TOKENS`` enum

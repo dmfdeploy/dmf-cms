@@ -157,12 +157,12 @@ def test_reachable_forgejo_with_no_repos_is_a_genuine_empty(monkeypatch):
 
 
 # ---------------------------------------------------------------------------
-# fix-round P1-2 (PR #81): the per-repo commits/pulls call used to be wrapped
+# The per-repo commits/pulls call used to be wrapped
 # in its own bare `except Exception: pass` — a failure there was invisible
 # to BOTH the UI (this handler still answered `reason: ""` as long as
 # `list_repos` itself succeeded, which the widget reads as "genuinely
 # empty") AND to monitoring (no log line at all). Both tests below fail
-# against the pre-fix-round head: it returns `{"repos": [], "reason": ""}` /
+# against the pre-fix head: it returns `{"repos": [], "reason": ""}` /
 # `{"pulls": [], "reason": ""}` off a fully-failed read, and logs nothing.
 # ---------------------------------------------------------------------------
 
@@ -193,7 +193,7 @@ def test_pulls_all_repos_fail_is_unreachable_never_a_silent_empty(monkeypatch, c
 
 
 def test_commits_per_repo_failure_log_line_sanitizes_hostile_full_name_and_body(monkeypatch, caplog):
-    # umbrella dmf-cms#108 fix-round 4: full_name is Forgejo response
+    # full_name is Forgejo response
     # content (whoever can create a repo in the configured org/user names
     # it), and ForgejoAPIError.body is Forgejo's own raw response body.
     # Both are upstream response content, both land in this per-repo
@@ -274,7 +274,7 @@ def test_pulls_mixed_success_is_partial_and_keeps_the_successful_rows(monkeypatc
     assert sum("dmfdeploy/dmfdeploy" in r.message for r in caplog.records) >= 1
 
 
-# fix-round P2 (PR #81, second pass): pulls aggregation used to choose
+# Pulls aggregation used to choose
 # forgejo-partial vs forgejo-unreachable off `all_pulls` truthiness (item
 # COUNT), not off how many repos were actually READ. A repo can be
 # successfully read and legitimately return zero PRs, contributing no items

@@ -22,9 +22,9 @@ export default function MxlDetailPanel() {
   const visible = useDocumentVisible()
   const reducedMotion = usePrefersReducedMotion()
   const active = visible && !reducedMotion
-  // fix-round 6 (PR #81, umbrella #385): retrofitted onto settleQuery — the
+  // (umbrella #385) retrofitted onto settleQuery — the
   // `isLoading`/`isError` names are kept at the destructure so every branch
-  // below reads exactly as it did in fix-round 5.
+  // below reads exactly as before.
   const { data, loading: isLoading, failed: isError } = settleQuery(useMxlStatus({ active }))
 
   // Cache-bust the preview ~5/s so the clock overlay visibly ticks.
@@ -54,7 +54,7 @@ export default function MxlDetailPanel() {
     return <div className="p-4 text-sm text-muted">Loading live view…</div>
   }
 
-  // fix-round 5 (PR #81, codex sibling sweep): checked BEFORE
+  // Checked BEFORE
   // `!data?.configured`, same reasoning as the paused-state guard above —
   // a settled failed read with nothing ever retained left `data` undefined
   // exactly like a disabled query does, and `!data?.configured` cannot tell
@@ -99,7 +99,7 @@ export default function MxlDetailPanel() {
           and reduced motion is off.
         </div>
       )}
-      {/* fix-round 5: a settled failed poll while ACTIVE retains the last
+      {/* A settled failed poll while ACTIVE retains the last
           successful payload — everything below (head index, latency, node
           list, the preview image) is real but not confirmed current. Same
           "held frame must say it is held" reasoning as the paused banner

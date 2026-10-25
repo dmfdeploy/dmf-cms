@@ -1,6 +1,6 @@
 /**
  * settleQuery — the shared "isError wins unconditionally" primitive
- * (fix-round 6, PR #81, umbrella #385). Direct unit coverage of the one
+ * (umbrella #385). Direct unit coverage of the one
  * rule the whole isError-gating bug arc kept re-discovering by hand.
  */
 import { describe, expect, it } from 'vitest'

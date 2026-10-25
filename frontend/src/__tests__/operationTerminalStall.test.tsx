@@ -19,7 +19,7 @@
  * T4 pins the shared component's label table directly, mirroring
  * jobProgressHonesty.test.tsx's own style for OperationStatusLine.
  *
- * GUARD LABEL (dmfdeploy#414 gate, round 1): every test in this file is a
+ * GUARD LABEL (dmfdeploy#414): every test in this file is a
  * GUARD pinning the pre-#414 umbrella #403 fix described above, unchanged
  * by this arc — only T1-T3's mount route moved, from the bare slug to
  * /setup. Baseline: the pre-#414 commit on `main`, where these same

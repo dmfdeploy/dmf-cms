@@ -219,7 +219,7 @@ export default function CreateWorkload() {
   // already applies to the real workload's Plan stage.
   const hasFacility = !facilityLoading && !facilityFailed && sites.length === 1
   const resolvedFacilityName = hasFacility ? sites[0].name : null
-  // FIX ROUND (WP-3 spec D gate, P2-4): the boolean classifyDraftFlow reads
+  // (WP-3 spec D) The boolean classifyDraftFlow reads
   // is derived HERE, by comparing the CONFIRMED identity to the CURRENTLY
   // resolved one — not read straight off the store. A confirmation for a
   // facility the live read has since stopped returning (or that stopped
@@ -397,7 +397,7 @@ export default function CreateWorkload() {
     // job — design work on a wizard surface with a known replacement,
     // tracked at dmfdeploy/dmfdeploy#405.
     //
-    // FIX ROUND (codex gate item 6, still true, unrelated to this reversal):
+    // Separately from the above:
     // this value alone is NOT what keeps a LOCKED step's Next neutral — it
     // only ever judges whether a step's own action is offered, which has
     // nothing to do with whether that step is actually reachable yet. This
@@ -443,7 +443,7 @@ export default function CreateWorkload() {
             failed={facilityFailed}
             sites={sites}
             confirmed={facilityConfirmed}
-            // FIX ROUND P2-4: stores the IDENTITY the operator confirmed
+            // Stores the IDENTITY the operator confirmed
             // (resolvedFacilityName is only non-null here in the first
             // place because onConfirm is only reachable from PlanAssignment's
             // own exactly-one-site branch), not a bare "yes".
@@ -558,7 +558,7 @@ function IdentityStep({
           // why that's structurally true rather than a convention to keep).
           focusOnMount
         />
-        {/* umbrella #432 §G (gate round 2, finding B2): this name is never
+        {/* umbrella #432 §G: this name is never
             recorded anywhere — see the amber note below — it only DERIVES
             the field beneath it (draftWorkload.ts's deriveSlug, live as you
             type unless the field below has been hand-edited). Stated here
@@ -592,7 +592,7 @@ function IdentityStep({
           </p>
         )}
 
-        {/* umbrella #432 §G (gate round 2, finding B2): "nothing about it is
+        {/* umbrella #432 §G: "nothing about it is
             recorded anywhere until then" overclaimed — handleProvisionConfirm
             sends only `trimmedSlug` to the deploy mutation (`workload:
             trimmedSlug`, no name field), so the studio name is discarded on
@@ -859,8 +859,8 @@ function ProvisionSection({
   onConfirm: (reason: string) => void
 }) {
   const templateName = entry?.display_name ?? 'the selected template'
-  // THE GUARD THAT DID NOT TRAVEL WITH THE SEAM (operator review, PR #66),
-  // plus the one the guard itself needed (GATE-B7).
+  // THE GUARD THAT DID NOT TRAVEL WITH THE SEAM,
+  // plus the one the guard itself needed.
   //
   // `deployed` — ProvisionStage.tsx offers its deploy only for a non-active
   // entry; this page reused that page's deploy seam and left the condition

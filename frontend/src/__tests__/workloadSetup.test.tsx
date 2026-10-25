@@ -23,9 +23,9 @@
  * renamed from workloadDetailWizard.test.tsx) — that file is this WO's
  * required Acceptance Criterion 1 test.
  *
- * GUARD LABEL (dmfdeploy#414 gate, round 1): every test in this file is a
+ * GUARD LABEL (dmfdeploy#414): every test in this file is a
  * GUARD pinning pre-#414 wizard behaviour (umbrella #347 WO-D1 and the
- * fix-round history each test's own comment cites) that dmfdeploy#414 did
+ * history each test's own comment cites) that dmfdeploy#414 did
  * not change — only the mount route moved, from the bare slug to /setup.
  * Baseline: the pre-#414 commit on `main` (immediately before this arc's
  * own branch), where these same assertions passed identically against
@@ -188,7 +188,7 @@ interface FetchOpts {
   groupedDelayAfter?: number
   groupedGate?: Promise<unknown>
   /**
-   * Gate /api/me reads while armed (umbrella #378b fix round) — a FLAG
+   * Gate /api/me reads while armed (umbrella #378b) — a FLAG
    * rather than a call-count threshold (unlike groupedDelayAfter/
    * groupedGate above) because useCurrentUser() is called from more than
    * one mounted component (WorkloadWizard, FinaliseStage, ProvisionStage)
@@ -346,7 +346,7 @@ function renderDetail(slug = 'studio-a') {
     </QueryClientProvider>,
   )
   // Returned so a test can drive a background refetch itself (umbrella
-  // #378b fix round) — every other caller in this file already ignores it.
+  // #378b) — every other caller in this file already ignores it.
   return queryClient
 }
 
@@ -380,7 +380,7 @@ async function openDesiredState(section: HTMLElement) {
 
 /** Clicks the rail chip for `label` and returns the newly-mounted section.
  *
- *  dmfdeploy#405 FIX ROUND: the parenthetical this docstring used to carry
+ *  dmfdeploy#405: the parenthetical this docstring used to carry
  *  here — "must be openable — a locked step has no button to click, by
  *  design" — stopped being true the moment #405 shipped: every key, locked
  *  included, is now a reachable <button> WHEN NO JOB IS IN FLIGHT
@@ -483,7 +483,7 @@ describe('the rail is exactly the five orchestration steps (dmfdeploy#414)', () 
     // "getByText finds nothing" — a whole-DOM query would pass whether the
     // disclosure is closed OR ripped out entirely, and would silently stop
     // proving anything the moment it is (exactly the "a whole-DOM grep
-    // cannot express this" trap the work order names). It asserts the
+    // cannot express this" trap). It asserts the
     // actual DOM property a real browser's accessibility computation keys
     // off: the <details> element is present, contains the taxonomy text,
     // and its own `.open` is false by default — and that it is reachable
@@ -571,7 +571,7 @@ describe('the rail is exactly the five orchestration steps (dmfdeploy#414)', () 
 // redundant with the RAIL's own position marker at the time (aria-current
 // "step" + PositionTally, mounted directly above via the header slot).
 //
-// FIX ROUND (orchestrator/codex gate, redesign): that rail-side position
+// REDESIGN: that rail-side position
 // marker this comment used to point to is GONE — removed entirely, not
 // restyled (see LifecycleStrip.tsx's own docstring point B: the backend
 // can never derive design/plan/finalise as a position, so a marker could
@@ -633,7 +633,7 @@ describe('the honest undetermined flow (backend lifecycle=unknown)', () => {
     // both report no current step, and the page must not blur them.
     expect(screen.queryByText(/This workload is operating/)).toBeNull()
 
-    // dmfdeploy#405 FIX ROUND: the three runtime steps are locked, but a
+    // dmfdeploy#405: the three runtime steps are locked, but a
     // locked key is now a real, reachable <button> (LifecycleStrip.tsx's
     // P1/P2) sharing the OPEN key's own accessible name — a bare
     // `queryByRole('button', { name: label })).toBeNull()` no longer proves
@@ -724,7 +724,7 @@ describe('a locked step is reachable and explains itself, but a stage control ne
     // step never mounts a stage control OF ITS OWN KIND — the KEY itself is
     // now a control (see below), but its stage body never is.
     //
-    // dmfdeploy#405 FIX ROUND: the discriminator used to be a bare
+    // dmfdeploy#405: the discriminator used to be a bare
     // `queryByRole('button', { name: label })).toBeNull()` plus a click on
     // the separate "Why <label> is locked" disclosure toggle — both gone.
     // #405 made the key ITSELF the disclosure: every rail key, locked
@@ -899,7 +899,7 @@ describe('Provision: deploy click path', () => {
     })
   })
 
-  // fix-round 5 (PR #81, codex sibling sweep): a failed /api/catalog read
+  // A failed /api/catalog read
   // left `entries` empty exactly like a genuinely-empty catalog would, and
   // this stage announced a confident "No catalog templates matched this
   // workload's functions" manufactured out of an unhandled error path —
@@ -1044,8 +1044,7 @@ describe('Finalise & Review: teardown click path', () => {
     expect(JSON.parse(teardown[0].init?.body as string)).toEqual({ reason: 'decommission' })
   })
 
-  // umbrella #432, FIX ROUND (operator: "a large friendly message is
-  // missing for teardown, that it takes a while and so on"). ADDITIVE —
+  // umbrella #432: a large friendly message for teardown, saying it takes a while. ADDITIVE —
   // the pre-existing job-progress line ("job #502", from JobStatusLine)
   // must still render alongside the new loud layer, not in its place.
   it('shows the loud in-progress message and both links once the teardown job is in flight', async () => {
@@ -1083,7 +1082,7 @@ describe('Finalise & Review: teardown click path', () => {
     expect(await within(finaliseSection).findByText(/job #502/)).toBeTruthy()
   })
 
-  // codex adversarial review (feat/390-throbber, T2/G4): the running count
+  // The running count
   // must NEVER render next to a terminal result. The claim that callers
   // "stop rendering the notice once resolved" was contradicted by the
   // code — track.opId (and therefore `inFlight`/the mounted notice) can
@@ -1183,7 +1182,7 @@ describe('Finalise & Review: teardown click path', () => {
     expect(teardown.className.split(/\s+/)).not.toContain('btn-danger-outline')
   })
 
-  // fix-round 5 (PR #81, codex sibling sweep): same fix as Provision's
+  // Same fix as Provision's
   // identical gap above — see that test for the full reasoning.
   it('a failed catalog read names the real cause, never "No catalog templates matched"', async () => {
     vi.stubGlobal(
@@ -1226,7 +1225,7 @@ describe('Finalise & Review: teardown click path', () => {
 // the rail's own note, the Previous span, the Next span, and the View-live
 // exit — not the two (Previous + View-live) the originating report caught.
 //
-// GATE ROUND 2, FINDING A2: the first pass here fixed only Finalise & Review
+// An earlier version fixed only Finalise & Review
 // and left Provision and Configure at THREE copies each (rail, Next, View
 // live) — worse than the shipped case, because an outsider walking the demo
 // reaches Provision and Configure BEFORE Finalise. Per-owner matrix below,
@@ -1241,7 +1240,7 @@ describe('Finalise & Review: teardown click path', () => {
 // job clears); View live names only what IT adds (leaving is blocked),
 // never which job.
 //
-// SHELL ROUND 2 (dmfdeploy#481, folding in dmfdeploy#499's acceptance
+// SHELL REDESIGN (dmfdeploy#481, folding in dmfdeploy#499's acceptance
 // criteria): the rail's OWN copy of the sentence is now GONE outright, not
 // relocated — "with a real job in flight, the lifecycle band contains zero
 // status text." Previous/Next/View-live's OWN wording was already silent
@@ -1266,7 +1265,7 @@ describe('umbrella #481/#499: the rail states no job-in-progress sentence at all
     fireEvent.click(within(provisionSection).getByRole('button', { name: 'Confirm deploy' }))
 
     // THE discriminating assertion: zero on-screen copies of the rail's old
-    // sentence — dmfdeploy#481 removed it outright (Shell Round 2), it does
+    // sentence — dmfdeploy#481 removed it outright, it does
     // not merely move to exactly one surface any more.
     await waitFor(() => {
       expect(screen.queryAllByText(/A Provision job is in progress/).length).toBe(0)
@@ -1285,7 +1284,7 @@ describe('umbrella #481/#499: the rail states no job-in-progress sentence at all
 
   it('Configure: nothing on this page states "A Configure job is in progress" — Next and View live each say something else instead', async () => {
     const wl = viewerWorkload()
-    // umbrella #432 G3 (gate round 2): the switch mock resolves near-
+    // umbrella #432 G3: the switch mock resolves near-
     // instantly by default — a plain `waitFor` after clicking Confirm can
     // land AFTER the job already settled, observing the idle state rather
     // than the in-flight one and passing for the wrong reason (this is
@@ -1341,8 +1340,7 @@ describe('umbrella #481/#499: the rail states no job-in-progress sentence at all
     fireEvent.click(within(finaliseSection).getByRole('button', { name: 'Confirm teardown' }))
 
     // THE discriminating assertion: zero on-screen copies of the sentence —
-    // pre-#481 this settled at one (the rail alone), pre-fix (round 1
-    // baseline) it settled at four.
+    // pre-#481 this settled at one (the rail alone), before the original fix it settled at four.
     await waitFor(() => {
       // No trailing period in the regex — this isolates the COUNT claim
       // from G2's wording change, so it discriminates on dedup alone.
@@ -1424,7 +1422,7 @@ describe('a job in flight suppresses navigation everywhere, not just its own sta
 
     // The switch is now pending (fetch is held open) — every rail selector
     // goes inert, not just Configure's own, and the mounted panel's own
-    // Next/Previous do too. dmfdeploy#481 (Shell Round 2) removed the
+    // Next/Previous do too. dmfdeploy#481 (shell redesign) removed the
     // rail's own "A Configure job is in progress" note outright — the
     // suppression itself (every key demoted to a non-button) is what this
     // asserts now, not a repeated sentence.
@@ -1561,7 +1559,7 @@ describe('a #configure deep link when Configure is locked (GATE-D1 P2.6)', () =>
     // the one real caller of this hash (now aimed at /setup#configure,
     // dmfdeploy#414).
     //
-    // dmfdeploy#405 FIX ROUND: this test used to prove a stale/crafted hash
+    // dmfdeploy#405: this test used to prove a stale/crafted hash
     // aimed at a locked step COULD NOT reach it — the wizard fell back to
     // the backend position (Provision) and announced the refusal via a
     // separate banner (role="status"). #405 inverted that on purpose
@@ -1626,12 +1624,11 @@ describe('a #configure deep link when Configure is locked (GATE-D1 P2.6)', () =>
   })
 })
 
-// dmfdeploy#414 gate, round 1 (P2): the locked case above proves the hash
+// dmfdeploy#414: the locked case above proves the hash
 // CANNOT reach a closed gate — it says nothing about what happens when the
 // gate is open, so the deep link's own happy path was unpinned.
 //
-// dmfdeploy#414 gate, round 2 (P2): GUARD, relabelled — round 1 called this
-// a "NEW test", which overstated it. The hash-selection ladder itself
+// This is a GUARD, not a new-behaviour test. The hash-selection ladder itself
 // (FLOW_STEPS membership, the initial-selection precedence, the hash-focus
 // contract) is pre-#414 behaviour, unowned by this change — it lived on
 // WorkloadDetail.tsx before the rename and #414 did not touch it. What IS
@@ -1745,7 +1742,7 @@ describe('the "View live" setup exit', () => {
     await waitFor(() => {
       expect(screen.queryByRole('link', { name: 'View live' })).toBeNull()
       expect(screen.queryByRole('button', { name: 'View live' })).toBeNull()
-      // umbrella #432 G3 (gate round 2, finding A2): View live states its
+      // umbrella #432 G3: View live states its
       // own affordance's unavailability, not which job — the rail (still
       // showing "A Provision job is in progress.") already said that.
       // umbrella #499: that reason is on demand (title + sr-only text) now,
@@ -1908,7 +1905,7 @@ describe('a successful clear closes its own loop', () => {
 
 describe("clearing one sibling never strands the other (GATE-S1-RV3 P1)", () => {
   it('keeps the second bootstrapped instance clearable after the first is cleared', async () => {
-    // Codex's exact scenario. Clearing one member flips the backend
+    // Clearing one member flips the backend
     // derivation to configure (any_active wins), which used to withdraw the
     // clear affordance from the rail and strand the remaining sibling with
     // no path forward at all.
@@ -2024,7 +2021,7 @@ describe('failure and loop-closure are visible and atomic', () => {
 // stageActions() can offer at Finalise while lifecycle=provision, withdrawing
 // it also drops the whole step to 'locked' (nothing else makes it openable).
 //
-// dmfdeploy#405 FIX ROUND: the discriminator used to be "the rail loses its
+// dmfdeploy#405: the discriminator used to be "the rail loses its
 // Finalise button" — a locked step rendered as an inert, non-interactive
 // <div>, so a bare `queryByRole('button', { name: 'Finalise & Review' }))
 // .toBeNull()` proved withholding on its own. #405 made every rail key —
@@ -2137,7 +2134,7 @@ describe('delete-permanently gate: authorization (umbrella dmfdeploy/dmfdeploy#3
     }
   })
 
-  // umbrella #378b fix round: !isError && !isFetching is #343's discipline
+  // umbrella #378b: !isError && !isFetching is #343's discipline
   // for membersDataTrustworthy — TanStack Query retains the PREVIOUS payload
   // during a refetch and after a failed one, so `data` alone never proves
   // freshness. Reachable via useSetViewAs(), which invalidates every query
@@ -2174,7 +2171,7 @@ describe('delete-permanently gate: authorization (umbrella dmfdeploy/dmfdeploy#3
     // while lifecycle=provision, so withdrawing it (here: the identity read
     // going untrustworthy mid-refetch) drops the WHOLE step to locked.
     //
-    // dmfdeploy#405 FIX ROUND: unlike the sibling gate tests above, this one
+    // dmfdeploy#405: unlike the sibling gate tests above, this one
     // starts the operator ALREADY selected on Finalise, and #405
     // (WorkloadSetup.tsx:571-577) means a SELECTED step is no longer
     // abandoned for becoming locked — "a selection is no longer abandoned

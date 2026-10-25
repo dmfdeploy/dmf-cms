@@ -49,7 +49,7 @@ topology_params:
 
 # The exact object load_topology_instance should return for J1_INSTANCE
 # above, with ONLY target_facility resolved to the mocked NetBox site slug
-# — used for whole-object equality assertions (codex P1): a seam that
+# — used for whole-object equality assertions: a seam that
 # drops/rewrites any field (a source's flow_id, its pattern, the viewer's
 # id) must fail these tests, not just a truthiness/field-sample check.
 EXPECTED_RESOLVED_J1_TOPOLOGY_PARAMS = {
@@ -144,7 +144,7 @@ def test_sync_deploy_with_topology_ref_injects_resolved_topology_params(
     assert extra_vars is not None
     tp = extra_vars.get("topology_params")
     assert tp  # non-empty, per the WP3a gate
-    # Whole-object equality (codex P1) — a seam that drops/rewrites any
+    # Whole-object equality — a seam that drops/rewrites any
     # field must fail this test, not just a truthiness/field-sample check.
     assert tp == EXPECTED_RESOLVED_J1_TOPOLOGY_PARAMS
 
@@ -181,7 +181,7 @@ def test_async_deploy_with_topology_ref_injects_resolved_topology_params(
     extra_vars = awx_spy[-1]["extra_vars"]
     tp = extra_vars.get("topology_params")
     assert tp
-    # Whole-object equality (codex P1), same as the sync-flow assertion above.
+    # Whole-object equality, same as the sync-flow assertion above.
     assert tp == EXPECTED_RESOLVED_J1_TOPOLOGY_PARAMS
 
 
@@ -235,10 +235,10 @@ def test_deploy_with_missing_topology_ref_file_refused_no_awx_call(monkeypatch, 
     assert awx_spy == []
 
 
-# ── (c-continued) codex P1/P2 probe cases refused at the consumer parser ─
+# ── (c-continued) probe cases refused at the consumer parser ─
 # (the loader's own exhaustive coverage lives in test_topology_params.py;
 # these confirm the SAME refusals surface through the live deploy endpoint,
-# with no AWX call, matching WO6 fix-round instruction #3's requirement)
+# with no AWX call)
 
 
 def test_deploy_invalid_flow_id_uuid_refused_no_awx_call(monkeypatch, tmp_path, awx_spy):
@@ -293,7 +293,7 @@ def test_deploy_duplicate_flow_ids_refused_no_awx_call(monkeypatch, tmp_path, aw
 
 
 def test_deploy_duplicate_flow_ids_different_case_refused_no_awx_call(monkeypatch, tmp_path, awx_spy):
-    # codex P1 re-gate: same probe as the catalog-layer test, through the
+    # Same probe as the catalog-layer test, through the
     # live deploy endpoint — a case-different spelling of the identical
     # UUID must refuse, not launch with a silently-collapsed source.
     lower = "5fbec3b1-1b0f-417d-9059-8b94a47197ed"

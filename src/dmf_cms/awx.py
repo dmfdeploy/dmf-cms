@@ -161,7 +161,7 @@ def _request(
     return decoded
 
 
-# codex R3-6: fixed, not configurable — see _request_text's docstring.
+# Fixed, not configurable — see _request_text's docstring.
 _TEXT_READ_CHUNK_BYTES = 8 * 1024
 _TEXT_TAIL_BYTES = 64 * 1024
 
@@ -561,7 +561,7 @@ def get_job(
     )
 
 
-# Kept as a public-ish alias of _request_text's own bound (codex R2-9/R3-6)
+# Kept as a public-ish alias of _request_text's own bound
 # so callers/tests that think in terms of "a job's stdout" don't need to
 # know _request_text is the layer that actually enforces it.
 _STDOUT_TAIL_BYTES = _TEXT_TAIL_BYTES

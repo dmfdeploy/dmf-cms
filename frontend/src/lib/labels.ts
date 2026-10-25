@@ -150,7 +150,7 @@ const ACTION_VERBS: Record<'deploy' | 'remove', Record<string, string>> = {
 //   eso-openbao-health-check, anything           → "Eso openbao health check" (humanised, no verb)
 //
 // `outcome` is a PARAMETER, not something this function derives from a raw
-// status — fix-round 3 (codex gate, umbrella #432 §F): the previous shape
+// status (umbrella #432 §F): the previous shape
 // took the raw AWX status and called jobOutcome() internally, while callers
 // separately called jobOutcome() again for the badge. Both calls always
 // agreed for jobOutcome's own 5 named outcomes (same pure function, same

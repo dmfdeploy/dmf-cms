@@ -219,7 +219,7 @@ describe('AVAILABLE IFF ACTION-BEARING', () => {
 
 describe('a bootstrapped member always has a reachable clear path', () => {
   it('keeps Provision offering clear after the position moves to configure', () => {
-    // GATE-S1-RV3 P1, codex's exact scenario: clearing the first of two
+    // Scenario: clearing the first of two
     // siblings flips the backend derivation to configure (any_active wins).
     // Reading the affordance off position alone stranded the second sibling
     // PERMANENTLY — the reachability principle turned on my own placement.

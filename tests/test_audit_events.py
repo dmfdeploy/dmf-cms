@@ -168,7 +168,7 @@ def test_forgery_resistance_cannot_attribute_the_row_to_a_different_actor():
 
 
 # ----------------------------------------------------------------------
-# dmf-cms#140 (lkirc/codex, across many review rounds) — forgery
+# dmf-cms#140 — forgery
 # resistance on the fmt=2 grammar. The per-field boundary-GUESSING
 # mechanism this section used to regression-test (duplicate-marker
 # ambiguity checks, glued-marker detection, legacy quote-vs-plain
@@ -219,7 +219,7 @@ def test_property_a_genuine_job_watch_linked_request_id_still_parses():
 
 
 def test_property_a_genuine_reattach_linked_request_id_still_parses():
-    # gate round 5 (lkirc): the trailing field's THIRD narrowly-scoped
+    # The trailing field's THIRD narrowly-scoped
     # case — a reattach row correlating to its run's own stable identity.
     # Gated on outcome, not actor/role: a reattach is genuinely
     # user-initiated (a real actor, a real role, never "system").
@@ -236,8 +236,8 @@ def test_property_a_genuine_reattach_linked_request_id_still_parses():
 
 
 def test_property_a_genuine_already_active_linked_request_id_still_parses():
-    # gate round 6 (lkirc): the SAME permission, the outcome token round
-    # 5's own version of this check was missing — REFERENCES_EXISTING_
+    # The SAME permission, for the outcome token the reattach version of
+    # this check was missing — REFERENCES_EXISTING_
     # OPERATION_TOKENS covers both, so this can't happen a third time by
     # enumerating outcome tokens by hand at this call site again.
     for action in ("deploy", "teardown"):
@@ -280,7 +280,7 @@ def test_a_linked_request_id_on_a_non_qualifying_action_actor_pair_is_rejected()
 
 
 def test_gate_round_1_codex_p1_a_reserved_actor_with_a_real_user_role_still_rejects_the_trailing_field():
-    # THE fix for codex's P1 finding, at the parser layer: actor alone
+    # THE fix, at the parser layer: actor alone
     # used to be sufficient to permit the trailing field -- a real user
     # whose subject collides with a reserved literal (role != "system",
     # since a real user's role can never be "system") must still fail the
@@ -322,17 +322,16 @@ def test_property_a_legitimate_reason_mentioning_marker_like_text_still_parses()
 
 
 # ----------------------------------------------------------------------
-# dmfdeploy/dmf-cms#140 — the format-marker dispatch (codex's
-# eighth-round finding): the reader stops GUESSING per field which
+# dmfdeploy/dmf-cms#140 — the format-marker dispatch: the reader stops GUESSING per field which
 # grammar a line uses and dispatches on an explicit `fmt=2` marker
-# instead. codex's P1 finding (a genuinely new-format quoted field
-# legitimately containing marker-shaped text) is pinned directly below.
-# codex's companion P2 finding was about the now-deleted legacy grammar
-# and was retired along with it (operator decision, 2026-09-03).
+# instead. A genuinely new-format quoted field legitimately containing
+# marker-shaped text is pinned directly below. The companion case about
+# the now-deleted legacy grammar was retired along with it (operator
+# decision, 2026-09-03).
 # ----------------------------------------------------------------------
 
 def test_dmf_cms_140_p1_a_new_format_quoted_workload_containing_reason_marker_text_parses():
-    # codex P1: a genuinely NEW-format, properly quoted workload whose
+    # A genuinely NEW-format, properly quoted workload whose
     # own value legitimately contains "reason='...'" text used to trip
     # the legacy reason-ambiguity check, which had no way to know it was
     # looking inside an already-safely-bounded quoted span. Under the
@@ -402,7 +401,7 @@ def test_property_an_actor_forging_classification_fields_cannot_alter_the_parse_
 
 
 # ----------------------------------------------------------------------
-# dmfdeploy/dmf-cms#140, EIGHTH round (lkirc, 2026-09-04) — PROVENANCE, a
+# dmfdeploy/dmf-cms#140 — PROVENANCE, a
 # different mechanism from everything above. Every test above proves a
 # genuine record's FIELDS can't be forged; none of them say anything
 # about whether a "record" came from the writer at all. main.py's AWX-
@@ -425,7 +424,7 @@ def test_property_an_actor_forging_classification_fields_cannot_alter_the_parse_
 # ----------------------------------------------------------------------
 
 def test_a_reflected_body_with_a_forged_actor_and_outcome_produces_no_row():
-    # The exact shape lkirc reported: an upstream error body containing a
+    # The exact shape of the original bug: an upstream error body containing a
     # COMPLETE, well-formed fmt=2 payload -- forged actor AND forged
     # outcome, so if this ever parsed, it would read as a real dispatch
     # by "mallory" rather than the refusal it actually was -- reflected
@@ -558,7 +557,7 @@ limits_config:
 
 
 def test_retention_equal_priority_tie_takes_the_shorter_period():
-    # codex R496-A F2a: Loki resolves an equal-priority tie by taking the
+    # Loki resolves an equal-priority tie by taking the
     # SHORTER period, not whichever rule this code happened to encounter
     # first in the list. Rule order below is deliberately the OPPOSITE of
     # the expected answer (720h listed first) so a "first encountered"
@@ -581,7 +580,7 @@ limits_config:
 
 
 def test_retention_selector_missing_label_treated_as_empty_string():
-    # codex R496-A F2b: Prometheus/Loki matcher semantics treat an absent
+    # Prometheus/Loki matcher semantics treat an absent
     # label as present-with-value-"" — so a negative matcher on a label the
     # query never carries legitimately MATCHES. _LABELS has no "container"
     # key at all; the old (buggy) behaviour treated a missing label as an
@@ -694,7 +693,7 @@ def test_classify_job_watch_actor_never_gets_its_own_row():
 
 
 def test_gate_round_1_codex_p1_a_colliding_actor_with_a_real_user_role_is_never_suppressed():
-    # THE fix for codex's P1 finding: actor alone used to be sufficient,
+    # THE fix: actor alone used to be sufficient,
     # so a real user whose IdP subject happened to equal a reserved
     # literal would have their own genuine row silently dropped (job-watch)
     # or reclassified into a wider audience (auto-rollback). A real user's
@@ -738,11 +737,11 @@ def test_gate_excluded_classes_pass_for_nobody():
 # ----------------------------------------------------------------------
 
 def test_a_blank_outcome_is_unknown_not_failed_for_every_watched_action():
-    # codex R496-C P1-2: the property this test is named for. A blank
+    # The property this test is named for. A blank
     # outcome means the record's outcome field was lost (unrecoverable),
     # not that the action failed — rendering it as a definite failure
     # would be this lane claiming knowledge it does not have, the same
-    # defect the whole round exists to remove, opposite sign. Covers
+    # defect this lane exists to remove, opposite sign. Covers
     # every action resolve_outcome_state actually branches on, including
     # switch-source (which has its own separate "== active" check that
     # must not see a blank outcome fall through to its else-failed arm).
@@ -793,7 +792,7 @@ def test_reattach_shaped_acceptance_outcomes_are_also_in_flight():
 
 
 def test_already_active_other_run_is_a_refusal_not_an_acceptance():
-    # codex R496-A F3's concrete proof case: rollback's identity-mismatch
+    # Concrete proof case: rollback's identity-mismatch
     # branch (main.py:5315) never dispatches THIS run's rollback — a
     # DIFFERENT run's job was found active, and the request is refused
     # (409). Textually similar to "already-active" but semantically its
@@ -803,7 +802,7 @@ def test_already_active_other_run_is_a_refusal_not_an_acceptance():
 
 
 def test_an_unenumerated_refusal_token_is_terminal_not_in_flight():
-    # codex R496-A F3: the fix must be allowlist-shaped, not "add the
+    # The fix must be allowlist-shaped, not "add the
     # missing tokens to a denylist" — main.py emits far more refusal
     # tokens than any denylist could enumerate (confirmation-mismatch,
     # conflict-active-job, entry-not-found, invalid-run-id, ... the list
@@ -901,7 +900,7 @@ def test_failed_rollback_required_is_a_failed_verdict_not_a_dirty_third_state():
 
 
 def test_rollback_incomplete_is_a_failed_verdict_not_the_honest_unknown_shape():
-    # #560 round 5 (lkirc): a CONFIRMED-incomplete automatic rollback (the
+    # #560: a CONFIRMED-incomplete automatic rollback (the
     # AWX job terminalized, but never earned a clean rollback_complete
     # marker — and, absent WP4 drain-verification's later promotion, that
     # reading is final) used to fall through this mapping's default and
@@ -932,15 +931,15 @@ def test_run_status_unknown_is_the_honest_unknown_shape_never_a_verdict():
 
 
 def test_an_unrecognised_terminal_state_token_fails_closed_to_unknown_never_a_guess():
-    # Same fail-closed-to-honest-doubt posture as a blank dispatch outcome
-    # (codex R496-C P1-2) -- a future state this mapping was never
+    # Same fail-closed-to-honest-doubt posture as a blank dispatch outcome:
+    # a future state this mapping was never
     # extended for must never render as a silent success OR failure.
     result = audit_events.build_terminal_join_outcome("some-future-state-nobody-mapped-yet")
     assert result["state"] == "unknown"
 
 
 # ----------------------------------------------------------------------
-# _age_stale_in_flight -- dmfdeploy/dmfdeploy#419, gate round 1, codex P2:
+# _age_stale_in_flight -- dmfdeploy/dmfdeploy#419:
 # a dispatch row with no terminal join at all must not claim in_flight
 # forever once it has provably outlived any watcher.
 # ----------------------------------------------------------------------

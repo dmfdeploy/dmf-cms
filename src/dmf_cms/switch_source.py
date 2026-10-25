@@ -267,7 +267,7 @@ class SwitchActuator(Protocol):
         ...
 
 
-# umbrella #201 WP4 (claude1/#201 addendum, condition 1): the AWX job
+# umbrella #201 WP4: the AWX job
 # template name the coarse reconnect actuator launches. NOTE — flagged
 # prominently, NOT fixed here (WP4b's own job): the console's grant-
 # reconciler (umbrella #697) matches job template names against
@@ -578,7 +578,7 @@ class ReconnectViaAwxActuator:
                 extra_vars=extra_vars,
             )
         except Exception as exc:  # noqa: BLE001 - actuator-level failure, not a crash
-            # umbrella dmf-cms#108 fix-round 4: exc may be AWXAPIError
+            # exc may be AWXAPIError
             # (from launch_job), whose str() embeds AWX's own raw response
             # body — upstream response content. command.command_id is a
             # server-generated uuid4, not sanitized (same classification
@@ -633,8 +633,7 @@ class ReconnectViaAwxActuator:
                     # cleared on the CLUSTER side (WP4b's own playbook
                     # responsibility) and is reported here as
                     # failed_rollback_required for operator retry/rollback
-                    # — "no new rollback logic in WP4" (claude1/#201
-                    # addendum condition 4): this actuator's only job is to
+                    # — "no new rollback logic in WP4" (umbrella #201): this actuator's only job is to
                     # report the state accurately, never to auto-remediate.
                     #
                     # umbrella #320: classify the sanitized outcome from the
@@ -774,7 +773,7 @@ async def dispatch_switch_source(
             f"'{source_instance}' does not reference a known sources[].id {source_ids}",
         )
 
-    # umbrella #320/#321 fix-round: previous_source must reflect what was
+    # umbrella #320/#321: previous_source must reflect what was
     # ACTUALLY running, never the catalog's own (possibly stale)
     # viewer.source_selection — the same "declared intent, not live truth"
     # bug the read path fixed. The HTTP endpoint (main.py) always resolves

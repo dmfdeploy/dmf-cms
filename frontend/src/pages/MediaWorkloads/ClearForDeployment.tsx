@@ -17,14 +17,14 @@ import { Textarea } from '../../components/FormField'
  * after one clear (GATE-S1-RV2 P1). Ownership belongs above the gate; this
  * component just collects a reason and calls back.
  *
- * umbrella #432, FIX ROUND: same type-scale bump as ReasonConfirm.tsx's own
+ * umbrella #432: same type-scale bump as ReasonConfirm.tsx's own
  * "too much small text" fix — this is a separate component (duplicates the
  * shell rather than rendering ReasonConfirm) but reads as the identical
  * confirm-popover affordance to an operator, so it gets the same sizes for
  * the same reason: text-xs -> text-sm, off `density="xs"` onto the field
  * primitive's own base size, min-w-64 -> min-w-80, p-3 -> p-4.
  *
- * FIX ROUND (0.28.0 walk finding): same `max-w-sm` cap as ReasonConfirm.tsx
+ * Same `max-w-sm` cap as ReasonConfirm.tsx
  * — see that component's own docstring for the full reasoning
  * (min-w-80 is a floor, not a ceiling; this panel mounts as a bare block
  * inside a wide stage row with nothing else to constrain it, and stretched

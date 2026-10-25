@@ -111,8 +111,8 @@ const BADGE_TITLE: Record<LifecycleBadge['grammar'], (label: string) => string> 
  * details disclosure below, same convention as this page's own EBU-jargon
  * treatment in Catalog's EntryCard.
  *
- * Shared with Facility Detail's media-workloads count panel (fix-round
- * P2-4) — that panel reads the SAME grouped endpoint and was piping these
+ * Shared with Facility Detail's media-workloads count panel.
+ * That panel reads the SAME grouped endpoint and was piping these
  * exact tokens through ITS OWN reason vocabulary (facilityReasonCopy),
  * which does not define them (its nearest entry is the differently-spelled
  * "netbox-unreadable") and so fell through to a generic "this section
@@ -174,9 +174,9 @@ function representativeInstance(wl: MediaWorkload): MediaWorkloadInstance | null
 
 export default function MediaWorkloads() {
   usePageTitle('Media Workloads')
-  // fix-round 6 (PR #81, umbrella #385): retrofitted onto settleQuery — the
+  // (umbrella #385) retrofitted onto settleQuery — the
   // `isLoading`/`isError` names are kept at the destructure so every branch
-  // below reads exactly as it did in fix-round 1-2, only now expressed
+  // below reads exactly as before, only now expressed
   // through the shared primitive.
   const { data, loading: isLoading, failed: isError } = settleQuery(useMediaWorkloadsGrouped())
   const visible = useDocumentVisible()
@@ -219,7 +219,7 @@ export default function MediaWorkloads() {
   // *console* fetch with its own honest, non-overclaiming text, so this
   // stays reason-scoped rather than duplicating that banner.
   const sourceUnreachable = Boolean(data?.degraded && data?.reason)
-  // fix-round P1-1: `degraded` is the COMPLETENESS gate on its own — the
+  // `degraded` is the COMPLETENESS gate on its own — the
   // OTHER way it can be true, invalid workload:* tags excluding members from
   // `workloads` on an otherwise-successful read, carries no `reason` token
   // but is EQUALLY not evidence of absence (media_workloads.py: excluded,
@@ -227,7 +227,7 @@ export default function MediaWorkloads() {
   // `reason` only ever selects WHICH honest explanation to show, never
   // whether one is owed.
   //
-  // fix-round P2-3: `isError` extends the same gate to a SETTLED failed
+  // `isError` extends the same gate to a SETTLED failed
   // refetch. TanStack Query retains the last-good `data` across a failed
   // background refetch, so `data?.degraded` alone would silently fall back
   // to a stale, previously-honest `false` and re-license an absence claim

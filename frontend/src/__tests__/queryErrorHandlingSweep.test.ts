@@ -1,7 +1,7 @@
 /**
- * Cheap, mechanical regression net for the isError-gating defect shape this
- * whole fix arc (PR #81, umbrella #385, 8 rounds) kept re-discovering by
- * hand: a component reads `.data` off a TanStack Query read-hook and never
+ * Cheap, mechanical regression net for the isError-gating defect shape
+ * (umbrella #385) that kept being re-discovered by hand: a component
+ * reads `.data` off a TanStack Query read-hook and never
  * once considers `isError`/`.failed`/settleQuery for THAT SPECIFIC call, so
  * a settled failed refetch with data retained silently re-authorizes an
  * absence/count/status claim the CURRENT read never established.
@@ -9,10 +9,9 @@
  * DISCLOSED SCOPE — read this before trusting a green run here. This is
  * regex-over-source-text, not an AST/type checker; every "verify" in this
  * file means "verify what this specific mechanism can see", not "verify
- * every consumer everywhere is provably safe". Two hardening rounds
- * (7 and 8) each closed a real hole codex found by deliberately trying to
- * defeat it; the shapes below are what survived that adversarial process,
- * not a completeness guarantee.
+ * every consumer everywhere is provably safe". The shapes below are what
+ * survived deliberate attempts to defeat this net, not a completeness
+ * guarantee.
  *
  *   COVERED:
  *     - const { data, isError } = useHook()             (own destructure key)
@@ -23,7 +22,7 @@
  *     - const q = useHook(); q.isError / q.failed / q.isFetching  (direct
  *       property access on the SAME bound variable)
  *
- *   NOT COVERED (round 8, codex adversarial pass — accepted, not fixed):
+ *   NOT COVERED (accepted, not fixed):
  *     - A hook called through an intermediate wrapper function, e.g.
  *       `function useSettingsUser() { return useCurrentUser() }` then
  *       `const { data } = useSettingsUser()` — findCallSites only matches
@@ -35,7 +34,7 @@
  *       real data-flow analysis and was explicitly judged disproportionate
  *       to build for a regression test in one PR.
  *
- * fix-round 7 (codex gate on round 6): the FIRST version of this net was a
+ * DESIGN NOTE: the first version of this net was a
  * per-FILE textual heuristic ("does the file mention isError/settleQuery/
  * isFetching ANYWHERE") — defeated on the first real attempt by an aliased
  * destructure (Settings.tsx: `{ data: user, isLoading }`, no isError) and,
@@ -45,8 +44,7 @@
  * `const <LHS> = useHookName(...)` statement and ask, for THAT call alone,
  * whether error state reaches it.
  *
- * fix-round 8 (codex adversarial pass on round 7): codex defeated the
- * call-site version twice more —
+ * DESIGN NOTE: the call-site version was then defeated twice more —
  *   (a) an intermediate wrapper function (see NOT COVERED above — accepted);
  *   (b) DEAD-CODE delegation: `if (false) settleQuery(q)` inside a
  *       classifier's body still contains the literal text `settleQuery(`,
@@ -60,9 +58,9 @@
  *       replace behavior), calls the classifier with realistic input, and
  *       asserts the spy was actually invoked.
  *
- * fix-round 9 (codex adversarial pass on round 8): "settleQuery was called"
- * is an IMPLEMENTATION-DETAIL assertion, not a correctness one — codex
- * proved a classifier can stay "verified" while being actively broken:
+ * DESIGN NOTE: "settleQuery was called"
+ * is an IMPLEMENTATION-DETAIL assertion, not a correctness one — a
+ * classifier can stay "verified" while being actively broken:
  *   (a) call settleQuery on a HARMLESS non-error COPY of the input, use
  *       that wrong result — the spy still sees a call, the output is wrong;
  *   (b) call settleQuery(q) correctly, then DISCARD the result and use an
@@ -137,8 +135,8 @@ function readQueryHookNames(): string[] {
  *  settleQuery(...) AND whose name fits the delegate calling convention
  *  pattern 4 actually looks for (`delegateName(someBareQueryVariable)`, a
  *  PLAIN function call — never JSX, never a hook consumed via its own
- *  props/args) — a CANDIDATE for delegation, NOT trust by itself (round 8
- *  proved text presence alone is gameable via dead code). Used only as a
+ *  props/args) — a CANDIDATE for delegation, NOT trust by itself (text
+ *  presence alone is gameable via dead code). Used only as a
  *  coverage nudge: see the "every candidate is a registered, runtime-
  *  verified delegate" test below, which fails loudly if this list ever
  *  finds a name KNOWN_DELEGATES hasn't accounted for.
@@ -214,7 +212,7 @@ const FAILED_QUERY_FIXTURE = { isLoading: false, isError: true, data: undefined 
 
 // The delegate REGISTRY — deliberately hand-maintained, unlike the hook
 // list above. Auto-deriving a list to TRUST by scanning source text is
-// exactly what round 8 proved unsound (dead code contains the same tokens
+// exactly what is unsound (dead code contains the same tokens
 // as live code); proving a function is safe to delegate to requires
 // actually CALLING it, which requires knowing its real call signature —
 // something only a human adding an entry here can assert honestly. Adding
@@ -295,8 +293,8 @@ function fileOffenses(src: string, hookNames: string[], delegateNames: string[])
 }
 
 // Files verified NOT to need isError-awareness, each with why — checked by
-// hand at the time this net was built (fix-round 6) and re-checked under
-// every later hardening round. The bar for adding an entry is a real
+// hand at the time this net was built and re-checked under
+// every later change. The bar for adding an entry is a real
 // reason, not a red test.
 const EXEMPT: Record<string, string> = {
   'components/Topbar.tsx':
@@ -311,7 +309,7 @@ const EXEMPT: Record<string, string> = {
 }
 
 describe('regression net: known delegate classifiers actually call settleQuery at runtime', () => {
-  // fix-round 8 — the direct codex ask: proof of EXECUTION, not text
+  // Proof of EXECUTION, not text
   // matching. If a classifier is ever refactored to skip settleQuery (dead
   // code, an early return, a rewritten fast path — any shape), this fails
   // here, by name, rather than silently letting every caller trusting it
@@ -336,7 +334,7 @@ describe('regression net: known delegate classifiers actually call settleQuery a
 })
 
 describe('regression net: known delegate classifiers produce the CORRECT OUTPUT for a failed-with-retained-data input', () => {
-  // fix-round 9 — the direct codex ask: a BLACK-BOX behavioral assertion per
+  // A BLACK-BOX behavioral assertion per
   // classifier, not "was settleQuery called". Each fixture is isError:true
   // WITH a realistic, non-empty retained payload — the exact shape a
   // harmless-copy or discard-and-substitute mutation would get wrong, and

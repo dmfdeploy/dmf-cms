@@ -4,8 +4,7 @@ import Topbar from './Topbar'
 import Sidebar from './Sidebar'
 
 /**
- * FIX ROUND (umbrella #515, gate P1 — the fixed row's height was assumed,
- * not measured). The first attempt kept the header-slot row `position:
+ * umbrella #515: the fixed row's height was assumed, not measured. An earlier version kept the header-slot row `position:
  * fixed` and offset `<main>` by a constant `mt-14` (56px) matching that
  * row's height at ONE viewport (1440px wide, LifecycleStrip on a single
  * line). Below ~390px the strip wraps into a 5-key single column (5 keys at

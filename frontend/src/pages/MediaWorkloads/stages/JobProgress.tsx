@@ -101,17 +101,17 @@ export function OperationStatusLine({
    */
   onTerminal?: (operation: Operation) => void
   /**
-   * dmfdeploy#414 gate, round 2 (P1): the raw "has this operation reached
+   * dmfdeploy#414: the raw "has this operation reached
    * error or any OPERATION_TERMINAL_STATES" fact, reported the instant it is
    * known — the operation-level twin of JobStatusLine's own `onDoneChange`
    * below, and for the identical reason. onError/onTerminal above are
    * deliberately PACED (1-3s: "long enough to actually read before the line
    * clears", per the comment on that timer) so a human watching THIS line
    * has time to read "Error"/"Rollback required"/… before whatever consumes
-   * the callback reacts to it. Round 1 fixed the JOB half of this arc's own
-   * defect class (a job-navigation lock reading a display-paced signal) but
-   * left the OPERATION half of the same lock reading onError/onTerminal
-   * directly — so a genuinely-terminal operation left the lock engaged
+   * the callback reacts to it. A job-navigation lock must not read a
+   * display-paced signal: JobStatusLine's onDoneChange covers the JOB half,
+   * and this callback covers the OPERATION half. Reading onError/onTerminal
+   * directly left a genuinely-terminal operation's lock engaged
    * (claiming a launch was still in flight) for up to 3 more seconds after
    * the label right next to it had already switched to "Error" or "Failed".
    * Same fix shape as onDoneChange: a separate effect, no setTimeout, so it
@@ -120,7 +120,7 @@ export function OperationStatusLine({
    */
   onDoneChange?: (done: boolean) => void
 }) {
-  // fix-round 6 (PR #81, umbrella #385 codex sweep): this polls every 3s
+  // (umbrella #385) This polls every 3s
   // while non-terminal, and `data` was the only thing read — a settled
   // failed refetch retained the last-good `operation` with no notice, so a
   // stuck/failing poll silently kept showing e.g. "Launching job" as
@@ -164,7 +164,7 @@ export function OperationStatusLine({
     }
   }, [operation, operationId, onLaunched, onError, onTerminal])
 
-  // dmfdeploy#414 gate, round 2 (P1): see onDoneChange's own docstring above.
+  // dmfdeploy#414: see onDoneChange's own docstring above.
   // Deliberately its own effect, not folded into the one above — that one
   // schedules the display's PACED handoff and must keep doing exactly that,
   // unchanged; this one reports the unpaced fact as soon as `operation`
@@ -221,7 +221,7 @@ export function JobStatusLine({
   // Catalog just lets the line disappear. Optional so Provision (which has
   // no review copy to keep) is unaffected.
   onStatusChange,
-  // dmfdeploy#414 gate, round 1 (P1): the raw `is_done` fact, reported the
+  // dmfdeploy#414: the raw `is_done` fact, reported the
   // instant it changes — deliberately NOT the same signal as `onComplete`
   // below, which fires only after a 2s deliberate read-the-outcome pacing
   // delay. A caller gating a job-navigation LOCK (WorkloadMaterializing's
@@ -237,7 +237,7 @@ export function JobStatusLine({
   onStatusChange?: (status: string) => void
   onDoneChange?: (done: boolean) => void
 }) {
-  // fix-round 6 (PR #81, umbrella #385 codex sweep): same shape as
+  // (umbrella #385) Same shape as
   // OperationStatusLine above — a settled failed refetch (this polls every
   // 2s) used to keep showing the last-good status with no notice.
   const { data: jobStatus, failed } = settleQuery(useCatalogJobStatus(entryKey, jobId))

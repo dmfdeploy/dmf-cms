@@ -510,7 +510,7 @@ export function lifecycleBadge(input: WorkloadLifecycleInput): LifecycleBadge {
  *                     anyMemberObservedRunning; no deploy result among them
  *                     — so it must not guess at one.
  *
- *                     FIX ROUND (dmfdeploy#412 gate, round 2): an earlier
+ *                     (dmfdeploy#412) An earlier
  *                     version of this line and its matching UI copy said
  *                     "the deploy succeeded" — a claim this function cannot
  *                     support and, per the backend's own docstring on
@@ -520,7 +520,7 @@ export function lifecycleBadge(input: WorkloadLifecycleInput): LifecycleBadge {
  *                     asserts ONLY the operating position — never a preview
  *                     claim, in either direction.
  *
- * FIX ROUND (dmfdeploy#412 adversarial gate): an earlier version of this
+ * (dmfdeploy#412) An earlier version of this
  * function split the operating case into 'live-view'/'live-status', keyed on
  * whether any instance's `live_view` was true, and the UI worded the
  * false branch as "a preview is not [available]". That was a defect of
@@ -607,7 +607,7 @@ export function classifyForwardExit(input: WorkloadLifecycleInput): ForwardExit 
  *
  * "Trusted" reused classifyForwardExit's and store/headerSlot.ts's TRUST
  * side table's notion of trust (WorkloadLifecycleInput.membersDataTrustworthy)
- * until umbrella #432's fix round — checked FIRST (Art. 9, unhappy path
+ * until umbrella #432 — checked FIRST (Art. 9, unhappy path
  * first), same discipline as classifyForwardExit. It now gates on the
  * DISTINCT `membersDataRetained` instead; see that field's own docstring in
  * workloadLifecycle.ts for exactly why this classifier alone made that
@@ -626,7 +626,7 @@ export function classifyForwardExit(input: WorkloadLifecycleInput): ForwardExit 
 export type HomeState = 'live' | 'setup' | 'unresolved'
 
 /**
- * umbrella #432 fix round (item 3): gated on `membersDataRetained`, NOT
+ * umbrella #432: gated on `membersDataRetained`, NOT
  * `membersDataTrustworthy`. The two differ only in whether an in-flight
  * background poll of an otherwise-unchanged, error-free payload counts —
  * `membersDataTrustworthy` says no (it fail-closes a mutation gate and a

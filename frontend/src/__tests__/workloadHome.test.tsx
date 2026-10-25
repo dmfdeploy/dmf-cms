@@ -112,8 +112,8 @@ interface FetchOpts {
   workloadAfter?: { reads: number; workload: MediaWorkload | null }
   /** After this many grouped-inventory reads, subsequent reads 500 — models a BACKGROUND refetch that fails after an initial success, with react-query retaining the stale `data` alongside the new `error` (same after-N-reads shape as topologyFailAfter; PR #90 review, dmf-cms#391 header-rail regression coverage). */
   groupedFailAfter?: number
-  /** FIX ROUND P2-3: /api/me response — defaults to a bare {} (no role),
-   *  which isPurgeAuthorized fails closed on, matching every pre-fix-round
+  /** /api/me response — defaults to a bare {} (no role),
+   *  which isPurgeAuthorized fails closed on, matching every earlier
    *  test in this file (they never exercised delete-permanently). Override
    *  to prove this route's rail now reads purge-eligibility consistently with
    *  WorkloadSetup's. */
@@ -397,10 +397,10 @@ describe('legacy hash redirect (dmfdeploy#414 H2)', () => {
     },
   )
 
-  // dmfdeploy#414 gate, round 2 (P2): GUARD, relabelled — round 1 added the
-  // getByTestId('location') assertions in both tests below and reported
-  // them as new-behaviour evidence for "left alone means PRESERVED, not
-  // merely didn't-navigate". On re-check that framing doesn't hold: home
+  // dmfdeploy#414: GUARD, not new-behaviour evidence. The
+  // getByTestId('location') assertions in both tests below could read as
+  // evidence for "left alone means PRESERVED, not merely didn't-navigate",
+  // but that framing doesn't hold: home
   // never calls `navigate`/`<Navigate>` on these two paths at all, and a
   // MemoryRouter's location is untouched by construction unless something
   // explicitly navigates it — the hash surviving is a property of NOT
@@ -516,7 +516,7 @@ describe('active source', () => {
   })
 
   it('withdraws the stale row when a refetch fails after an earlier success', async () => {
-    // The defect the operator caught on PR #66 (fix round 2, 2026-08-02):
+    // The defect:
     // InstanceActiveSource derived `has` from topology.data alone, so once
     // the first read succeeded, a later refetch failure left react-query's
     // retained previous payload looking exactly like a fresh, current one —
@@ -551,7 +551,7 @@ describe('active source', () => {
   })
 
   it('unmounts the Active source panel when its only topology-bearing instance leaves the inventory', async () => {
-    // The defect the operator caught on PR #66 (fix round 3, 2026-08-02):
+    // The defect:
     // ActiveSourceSection's hasTopology map is never pruned when an instance
     // leaves `instances` — the wrapper used to read the whole map, so a
     // departed instance's stale `true` kept outvoting every current row
@@ -651,7 +651,7 @@ describe('request configuration change', () => {
 })
 
 // ---------------------------------------------------------------------------
-// FIX ROUND (WP-3 spec B gate, P2-3): this route used to build its rail
+// (WP-3 spec B) This route used to build its rail
 // input with only lifecycle/hasBootstrappedMembers set, leaving
 // allMembersBootstrapped/anyMemberObservedRunning/membersDataTrustworthy/
 // purgeAuthorized/isPurgeableEntity all silently absent — read as
@@ -695,7 +695,7 @@ describe('FIX ROUND P2-3: the rail agrees with WorkloadSetup for a purge-eligibl
     // this test actually concerns.
     const strip = await screen.findByRole('navigation', { name: 'Media workload lifecycle' })
     const finaliseChip = within(strip).getByRole('button', { name: 'Finalise & Review' })
-    // dmfdeploy#405 FIX ROUND: this used to assert the chip's tag name —
+    // dmfdeploy#405: this used to assert the chip's tag name —
     // "a locked chip renders as an inert <div>, never a <button>" — which
     // was a real proof of not-locked before #405 (a locked chip's
     // getByRole('button', ...) call above would have thrown). #405 made
@@ -723,7 +723,7 @@ describe('FIX ROUND P2-3: the rail agrees with WorkloadSetup for a purge-eligibl
     // so the chip reads as locked — the fail-closed default, not a missing
     // field silently producing the same visual result for the wrong reason.
     //
-    // dmfdeploy#405 FIX ROUND: the chip stays an interactive <button> whether
+    // dmfdeploy#405: the chip stays an interactive <button> whether
     // locked or not (LifecycleStrip.tsx P1/P2: `interactive = !jobInFlight`,
     // `aria-label={STEP_LABEL[id]}`) — the DOM-tag-name check this test used
     // before #405 no longer discriminates. Unlike WorkloadSetup's own gate
@@ -767,7 +767,7 @@ describe('the header rail during a failed background refetch (PR #90 review, dmf
     await screen.findByText(/The monitoring surface for this workload/)
 
     // First (successful) read settles — the rail is present, with real
-    // keys rendered (Shell Round 2, dmfdeploy#481, removed the row-end
+    // keys rendered (the shell redesign, dmfdeploy#481, removed the row-end
     // running-count readout Pass 1 added — the band renders no status text
     // at all now; a real key is the thing that must not survive into the
     // error state below instead).

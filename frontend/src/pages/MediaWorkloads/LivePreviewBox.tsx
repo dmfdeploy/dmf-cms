@@ -10,7 +10,7 @@ import StaticPatternCard, { hasStaticPattern } from './StaticPatternCard'
  *
  * Extracted from WorkloadTile (S1, umbrella #285) so the workload entry tile
  * and the Operate stage share ONE implementation. Two surfaces each growing
- * their own copy of the cadence rules is how the codex P2/P3 bounds below
+ * their own copy of the cadence rules is how the cadence bounds below
  * quietly stop applying on one of them.
  *
  * The bounds are load-bearing, not decoration:
@@ -29,7 +29,7 @@ export interface LivePreviewBoxProps {
   motionAllowed: boolean
   /**
    * Cadence override for the one surface allowed to be lively: the open
-   * modal (codex P2 — the fast rate is bounded to a single view). The
+   * modal (the fast rate is bounded to a single view). The
    * BOUNDS still apply there; only the rate differs. Defaults to the tile
    * cadence.
    */
@@ -79,7 +79,7 @@ export function useLivePreview({
     refetchInterval: canPoll && motionAllowed ? statusPollMs : false,
   })
 
-  // fix-round 6 (PR #81, umbrella #385 codex sweep): `status.isError` was
+  // (umbrella #385) `status.isError` was
   // never checked — a settled failed refetch after a successful
   // available+preview read kept the "Live · sidecar preview" caption, the
   // live dot, and the rendered image with no notice that the current poll
@@ -114,7 +114,7 @@ export function useLivePreview({
 
   const showImage = canPoll && hasPreview && !imgError
 
-  // umbrella #452 fix-round r1 (codex P1): showStaticCard is driven by the
+  // umbrella #452: showStaticCard is driven by the
   // SAME condition as the tick effect's gate above — `!hasPreview` — never
   // `!showImage`. `showImage` also flips false on an ordinary <img> load
   // failure (imgError) while the sidecar still advertises preview:true; under

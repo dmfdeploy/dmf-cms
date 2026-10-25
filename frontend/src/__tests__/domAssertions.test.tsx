@@ -1,6 +1,6 @@
 /**
- * testUtils/domAssertions.ts's `assertNoInteractiveDescendant` (codex rounds
- * 2-3, umbrella dmfdeploy/dmfdeploy#347 WP-4). Round 1's inline check in the
+ * testUtils/domAssertions.ts's `assertNoInteractiveDescendant`
+ * (umbrella dmfdeploy/dmfdeploy#347 WP-4). The original inline check in the
  * two Tile call-site tests only rejected `button`/`a`/`[role="button"]` —
  * narrower than Tile.tsx's own contract ("no interactive element / anything
  * with an interactive role"). This file proves the broader set the helper
@@ -17,8 +17,8 @@ function elementWith(html: string): HTMLDivElement {
 }
 
 describe('assertNoInteractiveDescendant', () => {
-  // Each of these would have PASSED round 1's button/a/[role="button"]-only
-  // check — that's the exact gap codex named.
+  // Each of these would have PASSED the original button/a/[role="button"]-only
+  // check — that's the exact gap.
   it.each([
     ['a native <input>', '<input type="text" />'],
     ['a native <select>', '<select><option>x</option></select>'],
@@ -30,7 +30,7 @@ describe('assertNoInteractiveDescendant', () => {
     expect(() => assertNoInteractiveDescendant(elementWith(html))).toThrow()
   })
 
-  // The two round-1 cases stay caught too — broadening the set didn't drop
+  // The two original cases stay caught too — broadening the set didn't drop
   // coverage of what was already checked.
   it.each([
     ['a <button>', '<button type="button">x</button>'],
@@ -45,7 +45,7 @@ describe('assertNoInteractiveDescendant', () => {
     ).not.toThrow()
   })
 
-  // codex round 3: [role="x"] is an EXACT match and misses ARIA's
+  // [role="x"] is an EXACT match and misses ARIA's
   // space-separated fallback role lists — this is the real bug, not just a
   // coverage gap, so it gets its own discriminating case rather than
   // folding into the it.each above.
@@ -55,7 +55,7 @@ describe('assertNoInteractiveDescendant', () => {
     ).toThrow()
   })
 
-  // codex round 3: the concretely-named additions to the role list, plus
+  // The concretely-named additions to the role list, plus
   // contenteditable — a real, common way to make something interactively
   // editable without [tabindex].
   it.each([

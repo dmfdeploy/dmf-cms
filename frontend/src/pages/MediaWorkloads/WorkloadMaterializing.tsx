@@ -153,7 +153,7 @@ export default function WorkloadMaterializing({
   const [jobId, setJobId] = useState<number | null>(launch.jobId ?? null)
   const [jobStatus, setJobStatus] = useState<string | null>(null)
   const [operationFailed, setOperationFailed] = useState(false)
-  // dmfdeploy#414 gate, round 1 (P1): whether JobStatusLine's own poll has
+  // dmfdeploy#414: whether JobStatusLine's own poll has
   // observed a terminal `is_done` yet — the raw fact, not paced by
   // handleJobComplete's deliberate 2s read-the-outcome delay below. Feeds
   // ViewLiveExit's job-navigation lock: the launch job IS a mutation in
@@ -166,14 +166,14 @@ export default function WorkloadMaterializing({
   // first poll yet either way, so fail-closed (locked) is correct from the
   // first render.
   const [jobDone, setJobDone] = useState(false)
-  // dmfdeploy#414 gate, round 2 (P1): the operation-level twin of jobDone
+  // dmfdeploy#414: the operation-level twin of jobDone
   // above — whether OperationStatusLine's own poll has observed the
   // operation reach error or any terminal state yet, reported live via its
   // onDoneChange (see that prop's docstring in JobProgress.tsx), NOT via
   // operationFailed below, which stays driven by the PACED onError/onTerminal
   // callbacks and is left alone for the display purpose it already serves
-  // (the failure copy branch, the job-id handoff). Round 1 fixed jobDone;
-  // this is the other half of the same lock that round 1 missed — while an
+  // (the failure copy branch, the job-id handoff). jobDone covers the job;
+  // this is the other half of the same lock — while an
   // operation had already gone terminal, the exit stayed locked for up to
   // 3 more seconds because operationFailed (paced) was the only signal
   // jobInFlight read. Sticky once true: OperationStatusLine unmounts the
@@ -223,11 +223,11 @@ export default function WorkloadMaterializing({
   const failed = operationFailed || jobFailed
   const jobSucceeded = jobStatus === 'successful'
 
-  // dmfdeploy#414 gate, round 1+2 (P1): locked while the launch job is
+  // dmfdeploy#414: locked while the launch job is
   // genuinely still being polled — unlocked the moment EITHER layer reports
   // a terminal outcome. `operationDone` covers the operation's own raw
-  // error/terminal fact (round 2 — see its docstring above); `jobDone`
-  // covers the job's own raw `is_done` fact (round 1). Deliberately OR, not
+  // error/terminal fact (see its docstring above); `jobDone`
+  // covers the job's own raw `is_done` fact. Deliberately OR, not
   // a branch on which of jobId/operationId is currently set: an operation
   // that goes terminal WITH a job id attached (e.g. run_complete) reports
   // operationDone=true immediately, then hands `jobId` off a beat later
@@ -305,10 +305,8 @@ export default function WorkloadMaterializing({
           </div>
         ) : (
           <div className="space-y-3 text-sm">
-            {/* umbrella #432, FIX ROUND (operator feedback, verbatim: "if you
-                must keep all the small text just add large friendly message,
-                i am quite sure the users will ignore all the small text").
-                ADDITIVE, per the operator's own amendment — the paragraph
+            {/* umbrella #432: a large, friendly message alongside the small text,
+                because readers tend to skip small text. ADDITIVE — the paragraph
                 below is untouched, §G-pinned wording and all. This is the
                 loud, actionable layer for whoever reads nothing else on the
                 page; that paragraph stays the quiet, honest record of the
@@ -319,10 +317,8 @@ export default function WorkloadMaterializing({
                 instructs — the links ARE the "watch it" the operator asked
                 for, worded as facts rather than commands.
 
-                umbrella #432, FIX ROUND (teardown never got this layer —
-                the operator's original feedback named all four actions,
-                this half of the order only ever covered the deploy path):
-                lifted into AutomationInProgressNotice so FinaliseStage.tsx's
+                umbrella #432: lifted into AutomationInProgressNotice (teardown
+                needs this layer too) so FinaliseStage.tsx's
                 own teardown in-flight state can reuse the SAME visual
                 treatment — see that component's own docstring for why the
                 wording itself is NOT shared (this sentence is true of
