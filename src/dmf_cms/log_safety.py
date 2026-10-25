@@ -37,7 +37,7 @@ def sanitize_audit_field(value: str | None) -> str:
     (``repr``) at their call sites; every OTHER free-text-ish field routes
     through here instead.
 
-    fix-round 4: the same reasoning extends past request-influenced
+    The same reasoning extends past request-influenced
     values to UPSTREAM RESPONSE CONTENT — a raw HTTP response body from
     Authentik/AWX/NetBox/Forgejo/Prometheus/PromSD (every ``*APIError``
     subclass in this codebase carries one, and it rides straight into
@@ -57,7 +57,7 @@ def sanitize_audit_field(value: str | None) -> str:
     and pass through completely UNCHANGED, so the many existing tests
     asserting exact unquoted ``field=%s`` shapes are unaffected.
 
-    PER-SITE, NOT A LOGGING FILTER (fix-round 3, evaluated and rejected
+    PER-SITE, NOT A LOGGING FILTER (evaluated and rejected
     explicitly): a ``logging.Filter`` that control-character-escaped every
     record's formatted message, installed once on the "dmf_cms" handler,
     would look like it closes this whole class in one place instead of

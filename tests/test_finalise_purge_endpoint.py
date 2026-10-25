@@ -618,7 +618,7 @@ def test_p1_1_member_with_no_monitoring_identity_is_acceptable_unknown(monkeypat
 
 
 def _paginated_netbox(*, page1_results, page2_results, count, page2_next=None):
-    """A 2-page NetBox ipam/services response — codex's exact GATE-A2b.3
+    """A 2-page NetBox ipam/services response — the GATE-A2b.3
     P1-2 fixture shape: count=1, non-null next, empty first page, the
     survivor sitting on the page a non-completeness-verified fetch would
     never follow to."""
@@ -1018,7 +1018,7 @@ def test_p1r2_trailing_newline_cannot_smuggle_garbage_past_the_anchor(monkeypatc
 
 
 class _IntSubclass(int):
-    """codex's exact GATE-A2b.3R2 finding 4 fixture: a custom int subclass
+    """Fixture (GATE-A2b.3R2 finding 4): a custom int subclass
     — isinstance(x, int) is True for this, but type(x) is int is False."""
 
 

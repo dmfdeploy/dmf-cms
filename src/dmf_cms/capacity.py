@@ -24,7 +24,7 @@ Quantity grammar comes in two strictnesses:
   Ki/Mi/Gi. Fail-closed on both sides; a quantity that parses to zero is
   refused everywhere, since zero can never be a real workload demand.
 
-Node supply accounting (§3.2, revised codex WP1 R2 round — "conservative
+Node supply accounting (§3.2, revised — "conservative
 overcount", not the scheduler's own max formula): per-pod demand =
 app-container sum + init-container sum + pod overhead (when present).
 kube-state-metrics cannot distinguish a *sequential* init container (real
@@ -179,7 +179,7 @@ def read_entry_demand(entry_provision: dict | None) -> tuple[tuple[int, int] | N
     type-checked before being indexed/``.get()``'d, so a catalog entry with
     a structurally malformed ``provision`` block (e.g. ``resources`` being a
     list, not a mapping) is a clean ``invalid-budget`` refusal, not an
-    unhandled exception (codex R2-6).
+    unhandled exception.
     """
     if not isinstance(entry_provision, dict) or not entry_provision:
         return None, "missing-budget"
@@ -277,7 +277,7 @@ def read_ee_reserve(
 
     Sums declared ``resources.requests`` over EVERY container in the
     Container Group's ``pod_spec_override`` (not just one named "worker" —
-    codex R2-4: a worker-only read undercounts any sidecar the pod spec
+    a worker-only read undercounts any sidecar the pod spec
     grows) plus every initContainer plus pod ``overhead`` when present —
     the same conservative sum-not-max posture as ``read_node_supply``, for
     the same reason (KSM/the pod spec can't tell a sequential init from a
@@ -346,7 +346,7 @@ def _pod_key(metric: dict) -> tuple[str, str]:
     """Extract the (namespace, pod) key from a Prometheus result's metric labels.
 
     Raises KeyError if either label is absent — caught by the fail-closed
-    boundary in ``read_node_supply`` (codex R2-2b: a malformed row must
+    boundary in ``read_node_supply`` (a malformed row must
     abort the whole read, never be silently dropped).
     """
     return metric["namespace"], metric["pod"]
@@ -357,7 +357,7 @@ def _row_value(row: dict) -> float:
 
     Raises on a missing/malformed ``value`` field, or one that is negative
     or non-finite (NaN/±Inf) — caught by the fail-closed boundary in
-    ``read_node_supply``. Codex R4-1: a demand/allocatable metric can never
+    ``read_node_supply``. A demand/allocatable metric can never
     legitimately be negative; taking one at face value would silently
     INCREASE headroom (e.g. an eligible pod reporting app cpu=-1 would
     SUBTRACT from already-requested) instead of refusing. Zero remains
@@ -380,8 +380,7 @@ def _sentinel_pod_keys(rows: list[dict]) -> set[tuple[str, str]]:
     are boolean-presence signals — a RETURNED row is only meaningful if its
     value is finite AND strictly positive. Building the key set from
     labels alone (ignoring the value entirely, the pre-R5-1 bug) let a
-    NaN/0/negative-valued row still count as "this pod is live" — codex's
-    repro: pod_info value=NaN still satisfied liveness. With the phase
+    NaN/0/negative-valued row still count as "this pod is live" — repro: pod_info value=NaN still satisfied liveness. With the phase
     query's own ``== 1`` filter, a returned phase row can never
     legitimately be anything but 1 — so a 0/negative/NaN value there is
     itself a malformed-row signal, not a real "not running" case (those
@@ -456,7 +455,7 @@ def read_node_supply(*, prom_url: str) -> NodeSupply | str:
     ``'budget-unavailable'`` for every other failure mode — empty/missing
     allocatable data, an empty liveness sentinel, a malformed row, or ANY
     exception (PrometheusAPIError, a bare transport error, ...). Fail-closed
-    end to end: no data is never treated as fit (codex R2-2).
+    end to end: no data is never treated as fit.
     """
     try:
         return _read_node_supply(prom_url)
@@ -711,8 +710,7 @@ def evaluate_preflight(
     Both CPU and memory must fit; either breach is NO-FIT (§3.2 — CPU is
     the bound today but the check stays symmetric).
 
-    ``facility`` in the report/text is always ``supply.node_name`` (codex
-    R2-8): until ``topology_params`` lands, the node IS the standing
+    ``facility`` in the report/text is always ``supply.node_name``: until ``topology_params`` lands, the node IS the standing
     facility's only honest identity — the catalog entry key belongs in the
     demand line items, not as a stand-in facility name.
     """

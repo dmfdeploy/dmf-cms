@@ -193,7 +193,7 @@ def _num_or_none(value):
 
 
 def shape_status(instance: str, data: dict) -> dict:
-    """Bounded public status payload from raw sidecar JSON (codex WP-D P2/R2).
+    """Bounded public status payload from raw sidecar JSON.
 
     The sidecar is our own in-cluster workload, but a compromised/buggy one
     could stuff a URL/coord/IP into a string field — even a SHORT one that a

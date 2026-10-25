@@ -178,7 +178,7 @@ def _collect_audit_lines(
 
     Keeps draining for ``quiet_grace`` seconds of silence AFTER the first
     match rather than returning immediately on it — umbrella dmf-cms#108
-    fix-round 1 (DECIDE+DOCUMENT — propagate): a double-emission bug would
+    (DECIDE+DOCUMENT — propagate): a double-emission bug would
     show up as a SECOND matching line arriving right behind the first, and
     a helper that stops at "found one" can never see that.
     """

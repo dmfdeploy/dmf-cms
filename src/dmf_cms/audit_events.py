@@ -38,10 +38,10 @@ closed, short, server-chosen set of tokens). Every line also carries an
 explicit ``fmt=2`` marker immediately after the "awx write: " prefix.
 
 LEGACY LINES ARE NOT RENDERED, and this is an operator decision, not an
-implementation shortcut. lkirc's review said it plainly, twice: "The
+implementation shortcut. The rule: "The
 writer fix protects future records but cannot make retained ones
 trustworthy; fail closed/drop or otherwise authenticate legacy records
-before rendering them" — correct on principle, since a forged legacy line
+before rendering them" — correct, since a forged legacy line
 and a legitimate one were PROVEN byte-identical, so no reader-side check
 could ever authenticate one. ``parse_awx_write_line`` below drops any line
 without a valid ``fmt=2`` marker at its first check — not parsed by a
@@ -70,8 +70,7 @@ they must be reasoned about independently, not as one "closed" property:
 
 2. PROVENANCE — "this record came from the writer at all, not from
    caller/upstream content that happened to be reflected, verbatim, into
-   some UNRELATED log call on the same stdout stream." lkirc's EIGHTH
-   finding (2026-09-04) proved mechanism 1 has nothing to say about this:
+   some UNRELATED log call on the same stdout stream." Mechanism 1 has nothing to say about this:
    quoting a forged line's fields perfectly does not prove the line was
    never forged in the first place, if an attacker can get their own
    well-formed ``awx write: fmt=2 ...`` text echoed inside e.g. an AWX
@@ -95,9 +94,7 @@ they must be reasoned about independently, not as one "closed" property:
    already spent seven rounds learning not to make one level down.
 
 Historical record of the seven FIELD-BOUNDARY vectors mechanism 1 closes
-(found by codex across several review rounds, and for the sixth, by a
-human reviewer codex's own pass had missed; each mutation-tested at the
-time): a caller-controlled field's raw text hijacking a later field's
+(each mutation-tested at the time): a caller-controlled field's raw text hijacking a later field's
 boundary; detection and extraction disagreeing about what a marker even
 is; over-correcting into rejecting legitimate rows whose own text
 happened to contain marker-shaped substrings; a truncated genuine reason
@@ -701,8 +698,8 @@ def classify_record(action: str, actor: str, role: str) -> str | None:
     comment on `_JOB_WATCH_ACTOR` and `list_audit_events`'
     `terminal_by_request_id` join).
 
-    gate round 1 (codex P1): `actor` ALONE used to be enough for both
-    checks below — but `actor` is main.py's `_audit_awx_write` writing
+    `actor` ALONE is not enough for both
+    checks below — `actor` is main.py's `_audit_awx_write` writing
     `user.subject` (an unvalidated IdP claim) verbatim, so a real user
     whose subject happens to collide with a reserved literal would
     otherwise have their own genuine row silently reclassified (dropped
@@ -714,7 +711,7 @@ def classify_record(action: str, actor: str, role: str) -> str | None:
     literal closes that specific gap rather than layering a second
     heuristic on top of the first.
 
-    gate round 2 (codex F1): this still depends on the session cookie's
+    This still depends on the session cookie's
     own integrity — `role` reaches here only via whatever Starlette's
     signed session carried, so the property above holds only for as long
     as that signing actually resists tampering end to end. Not this
@@ -837,10 +834,9 @@ def resolve_outcome_state(action: str, outcome: str) -> str:
     """'in_flight' | 'succeeded' | 'failed' | 'unknown', per plan §4.4's table.
 
     'unknown' is a THIRD case, never a member of "an unenumerated token is
-    terminal" — that rule stays exactly as it was (F3, re-confirmed
-    codex R496-B/C) for any REAL, non-blank token. A blank outcome is
+    terminal" — that rule stays exactly as it was (F3) for any REAL, non-blank token. A blank outcome is
     different in kind: it means the record's outcome field is blank on an
-    otherwise complete, parseable line — codex R496-C P1-2's finding.
+    otherwise complete, parseable line.
     dmfdeploy/dmfdeploy#553: NOT a truncated/corrupted line — that fails
     one of _parse_new_format_line's required-quoted-field checks and is
     dropped by the caller (`if fields is None: continue`) before this

@@ -179,7 +179,7 @@ def _request_text(
     plain text, not JSON — ``_request``'s ``json.loads`` would raise on
     that body. Used by ``get_job_stdout`` (umbrella #202 WP2).
 
-    codex R3-6: streams the response body in fixed ``_TEXT_READ_CHUNK_BYTES``
+    Streams the response body in fixed ``_TEXT_READ_CHUNK_BYTES``
     reads into a rolling buffer that retains only the last
     ``_TEXT_TAIL_BYTES`` — the full body is NEVER materialized in memory,
     regardless of how large the underlying AWX job's stdout actually is (a
@@ -191,7 +191,7 @@ def _request_text(
     on the final decode — the outcome marker contract only needs the tail
     to be readable, not byte-exact.
 
-    codex R4-5: the HTTPError path is bounded too — a fixed-size PREFIX
+    The HTTPError path is bounded too — a fixed-size PREFIX
     read (``_TEXT_READ_CHUNK_BYTES``, the same constant as the success
     path's chunk size, reused rather than adding a near-duplicate) via
     ``exc.read(size)``, not the success path's rolling tail-window. An
@@ -586,7 +586,7 @@ def get_job_stdout(
     Only the last ``_STDOUT_TAIL_BYTES`` (== ``_request_text``'s own
     ``_TEXT_TAIL_BYTES``) ever reach the caller — callers must never see
     (or forward into an API response) more of a job's raw log than that
-    fixed bound. codex R3-6: the bound is enforced by ``_request_text``
+    fixed bound. The bound is enforced by ``_request_text``
     streaming the read itself, not by slicing an already-fully-fetched
     string here.
     """
@@ -616,7 +616,7 @@ def get_job_events_for_task(
 ) -> list[dict]:
     """Fetch every job event for one specific task name (umbrella #202 WP3
     R2b — the outcome marker transport moved OFF stdout onto AWX job
-    events, anchored to task name, per codex P1-2: stdout always ends
+    events, anchored to task name: stdout always ends
     with ansible's own PLAY RECAP epilogue after the launcher's last debug
     line, which made a stdout-tail contract unreliable; job events bound
     to a specific, dedicated task NAME are structural, not textual).

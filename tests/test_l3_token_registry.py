@@ -1,7 +1,7 @@
 """umbrella #202 WP3 — cross-repo L3 outcome-token
 registry test.
 
-Codex round-4's exact finding: the console's ``_KV_DETAIL_TOKENS`` enum
+The problem: the console's ``_KV_DETAIL_TOKENS`` enum
 (``src/dmf_cms/main.py``) had SILENTLY drifted behind dmf-runbooks' own
 emitted ``detail=<x>`` kv values twice in a row now — first missing
 snapshot-race/helm-values-fetch-failed/reserved-var-run-id after R4a, then

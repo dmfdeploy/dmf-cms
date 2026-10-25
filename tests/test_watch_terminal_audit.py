@@ -1,7 +1,7 @@
 """The terminal-outcome join write (dmfdeploy/dmfdeploy#419/#554) —
 main.py's ``_audit_watch_terminal``, both as a direct round-trip against
 the real parser (same convention as test_audit_events_endpoint.py's
-writer-fix round-trip tests) and as an integration through
+round-trip tests for the writer fix) and as an integration through
 ``_watch_job_operation`` itself (mirrors test_operations_lifecycle.py's
 own ``_fake_app``/``_run_watcher`` pattern — deliberately NOT shared via
 import, same as test_finalise_purge_watcher.py's own local copy).

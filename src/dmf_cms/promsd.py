@@ -31,7 +31,7 @@ def _strip_to_host(target: object) -> Optional[str]:
     ``foo-bar`` (A10) — full-string comparison against the drain-set hosts
     is what guarantees that, not a prefix/substring check here.
 
-    codex round-1 F7 (REJECTED, kept host-only): matching stays host-only,
+    Kept host-only (a port/path-aware alternative was rejected): matching stays host-only,
     deliberately not port/path-aware. Being port/path-aware would require
     the caller to independently DERIVE the expected port/probe path — a
     wrong derivation would make a live target invisible to the drain check
@@ -44,7 +44,7 @@ def _strip_to_host(target: object) -> Optional[str]:
     one host would see drain verification block on the wrong one's
     presence rather than silently confirm the other drained.
 
-    codex round-4 (F1/F2): lives here, not in drain.py, because it is now
+    Lives here, not in drain.py, because it is now
     the single shared authority for "is this candidate string a usable
     target identity" — both this module's own ``list_probe_targets`` and
     drain.py's Prometheus row validation must reject a string using the
@@ -70,7 +70,7 @@ def _strip_to_host(target: object) -> Optional[str]:
 def _request(url: str, path: str) -> Any:
     """Make a GET request to the PromSD API (no auth required).
 
-    codex round-2 F3: an EMPTY response body raises too — ``b""`` is not
+    An EMPTY response body raises too — ``b""`` is not
     valid JSON, and this seam is drain-only (no other caller needs a
     lenient "empty body means empty result" fallback), so a
     malformed/truncated read must never silently degrade to "no data".
@@ -93,14 +93,13 @@ def list_probe_targets(*, url: str) -> list[dict]:
     """List the ``probe`` lane's current scrape-target groups.
 
     Returns the raw ``/sd/probe`` JSON: a list of Prometheus file_sd groups
-    ``{"targets": [...], "labels": {...}}``. codex round-1 F3a + round-2
-    F3: validates BOTH the top level AND the nested shape — every group
+    ``{"targets": [...], "labels": {...}}``. Validates BOTH the top level AND the nested shape — every group
     must be a dict, its ``targets`` must be a LIST. A bare string is
     iterable in Python, so ``{"targets": "not-a-list"}`` would otherwise
     get silently scanned character-by-character by drain.py's
     host-matching loop instead of raising here.
 
-    codex round-4 F2: each target must be USABLE by that same matching
+    Each target must be USABLE by that same matching
     loop, not merely a non-empty string — ``_strip_to_host(t)`` must
     itself yield a non-empty host (``":"`` is a non-empty string but
     parses to ``None``, so a truthiness-only check let it through while
@@ -126,13 +125,13 @@ def ready(*, url: str) -> bool:
     error (non-2xx, unreachable, ...) OR a malformed/contradictory 200
     body means "not ready" (fail-closed).
 
-    codex round-1 F3a: a cold PromSD adapter (or one whose initial NetBox
+    A cold PromSD adapter (or one whose initial NetBox
     refresh failed) serves HTTP 200 ``[]`` on ``/sd/probe`` while
     ``/readyz`` still reports 503 (dmf-promsd main.py:74-86,
     cache.py:115-119,134-147) — callers MUST check this in the same poll
     cycle before trusting ``/sd/probe``'s emptiness as real drain evidence.
 
-    codex round-3 F2: an any-200-that-decodes check isn't enough — the
+    An any-200-that-decodes check isn't enough — the
     real server's own ``ready_payload()`` (dmf-promsd cache.py:134-148)
     is ``{"status": "ready"|"stale", "ready": bool, ...}`` with
     ``status_code = 200 if ready else 503``, so ``ready``/``status``

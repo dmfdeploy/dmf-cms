@@ -61,7 +61,7 @@ class OperationState(str, Enum):
     are all "terminal" for dedupe/GC purposes (a retry can create a fresh
     op for the same target once one lands) but are additionally treated as
     DIRTY by ``_facility_busy_check`` — a dirty op still blocks new
-    dispatches to OTHER targets (and, since codex R3-1, even the SAME
+    dispatches to OTHER targets (and even the SAME
     target) even though it's no longer "in flight" from the ops store's
     own point of view.
 
@@ -119,7 +119,7 @@ DIRTY_STATES = frozenset({
 def terminal_states(action: str) -> frozenset[OperationState]:
     """Return the terminal-state set for a given operation action.
 
-    codex #202 WP2: terminality is action-aware, not a single global set.
+    Terminality is action-aware, not a single global set.
     ``deploy``/``teardown``/``rollback`` ops get a job-terminal watcher
     (main.py ``_watch_job_operation``) and terminate at RUN_COMPLETE /
     RUN_FAILED / FAILED_ROLLBACK_REQUIRED / ERROR — LAUNCHED is a
@@ -517,9 +517,9 @@ class OperationStore:
                 RUN_STATUS_UNKNOWN)
             l3_outcome: Parsed launcher-side outcome token (#202 WP2-B).
                 The RAW token — never overwritten by auto-trigger
-                bookkeeping (codex R2-3; see ``auto_rollback``) — with
+                bookkeeping (see ``auto_rollback``) — with
                 exactly ONE console-originated exception, scoped to a
-                SINGLE op (codex round-2 R2b-2, tightened by F4): WP4 drain
+                SINGLE op: WP4 drain
                 verification may finalize the directly-verified rollback
                 op's own outcome to ``rollback_complete`` when its
                 ``rollback_incomplete`` marker is confirmed clean, paired
@@ -529,8 +529,8 @@ class OperationStore:
                 l3_outcome is left exactly as the launcher last reported
                 it (see ``Operation.l3_outcome``'s own comment).
             auto_rollback: Auto-trigger status, kept separate from
-                l3_outcome (codex R2-3)
-            run_id: This op's run identity (codex R3-3) — set once, at
+                l3_outcome
+            run_id: This op's run identity — set once, at
                 LAUNCHED time (fresh dispatch or reattach hydration); never
                 explicitly cleared back to None via this call (a caller
                 passing ``run_id=None`` is "nothing to set this round", the

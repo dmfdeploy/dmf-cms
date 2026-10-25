@@ -13,7 +13,7 @@ Mocking convention: ``load_catalog_entries``/``load_topology_instance`` are
 monkeypatched directly on the ``switch_source`` module (not ``catalog``) —
 switch_source.py imports them by name (``from .catalog import ...``), a
 name-bound copy that does NOT re-resolve through the catalog module, and
-(codex-relevant gotcha) ``CATALOG_DIR`` is baked into
+(a gotcha) ``CATALOG_DIR`` is baked into
 ``resolve_topology_for_receiver``/``dispatch_switch_source`` as a DEFAULT
 ARGUMENT VALUE at import time — monkeypatching the constant after import
 would silently not take effect, so the loader FUNCTIONS are patched
