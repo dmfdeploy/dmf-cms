@@ -508,7 +508,7 @@ export default function WorkloadHome() {
         render where it renders at all, so React matches it up and preserves
         the subtree; the notices above are separate, genuinely-conditional
         siblings, and do not affect this slot's identity either way.
-        (Fix round: after item 3's fix, `homeState` itself no longer flips on
+        (After item 3's fix, `homeState` itself no longer flips on
         an in-flight background poll of unchanged data — see
         classifyHomeState's own docstring — so this slot mechanism now only
         has to survive the transitions that are still real: an error, a
@@ -526,7 +526,7 @@ export default function WorkloadHome() {
         assert something about the current moment a read that has left
         'live' cannot stand behind.
 
-        GATE ROUND 3 CORRECTION — read this before assuming "claims do not
+        CORRECTION — read this before assuming "claims do not
         persist" applies to an in-flight poll: it does not. `homeState`
         itself stays 'live' through an ordinary background poll of retained,
         error-free, non-degraded data (classifyHomeState gates on
@@ -552,7 +552,7 @@ export default function WorkloadHome() {
               {/* umbrella #432: "Live view" unqualified is
                   false on an unresolved-but-retained read — the tiles below
                   are the last observation this page HAS, not a claim about
-                  this instant. Gate round 4 correction: that observation is
+                  this instant. Correction: that observation is
                   not always a previously-CONFIRMED one either — a degraded
                   FIRST response has no prior settled read behind it at all,
                   and is itself already known-incomplete (some members

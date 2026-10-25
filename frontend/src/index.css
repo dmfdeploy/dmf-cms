@@ -186,7 +186,7 @@
      kept unused for reversibility (stagePalette.ts's own docstring).
 
      ONE shared neutral fill for all five keys — no per-stage hue anywhere
-     on the rail. Two prior fix rounds tried hue as a full fill, then as a
+     on the rail. Two earlier attempts tried hue as a full fill, then as a
      bottom-edge line, and measured both: a full-fill hue could not clear
      4.5:1 against one ink AND 3:1 against the achromatic selected fill at
      once for the light-zone stages (structural, not a tuning gap); a line
@@ -216,9 +216,9 @@
 
      --color-rail-fill: #2c2c2e, Y=0.0253 — the rail key's face, at every
      state (LifecycleStrip.tsx's `key-fill`, eroded 2px inward from
-     `key-edge`'s own shape — CODEX GATE P3, dmfdeploy/dmfdeploy#512: an
+     `key-edge`'s own shape — dmfdeploy/dmfdeploy#512: an
      earlier version of this line said "inset 2px inside key-edge," which
-     described a physically smaller box; the CODEX GATE P2 fix made
+     described a physically smaller box; the follow-up fix made
      `key-fill` the SAME full-size box as `key-edge`, `inset-0` in both the
      `shape()` and fallback paths, with the 2px expressed geometrically —
      see LifecycleStrip.tsx's `chevronInnerStyle`/`RING_INSET`).
@@ -355,7 +355,7 @@
      own `chevronInnerStyle` for the `shape()`-mode fallback (`clip-path:
      inset(...)`) using the identical BOX_RADIUS - RING_INSET value.
 
-     LKIRC GATE ROUND 2 (dmfdeploy/dmfdeploy#512), REPRODUCED AND WORSE
+     Follow-up (dmfdeploy/dmfdeploy#512), REPRODUCED AND WORSE
      THAN REPORTED. The fix above only restored the RADIUS (border-radius:
      6px), not the INSET — `.lifecycle-rail-chevron`'s own `clip-path: none
      !important` (needed so key-EDGE drops its shape() notch for a plain

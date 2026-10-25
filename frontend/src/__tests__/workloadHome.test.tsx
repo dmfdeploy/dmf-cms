@@ -186,7 +186,7 @@ function renderHome(slug = 'studio-a') {
         {/* Test-only stand-in for Topbar's own header-slot rendering — see
             HeaderSlotProbe's own docstring. Existing tests in this file never
             queried the rail (they only assert on the page body), so this is
-            a no-op for them; the FIX ROUND P2-3 tests below are the first
+            a no-op for them; the P2-3 tests below are the first
             to need it. */}
         <HeaderSlotProbe />
       </MemoryRouter>

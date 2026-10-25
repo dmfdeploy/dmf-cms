@@ -256,7 +256,7 @@ function SpecimenRow({ specimen }: { specimen: Specimen }) {
 
       {/* Reproduces Topbar's real header-slot row (header bg + the row's own
           border/padding) so what renders here matches what actually ships —
-          not a bare, unstyled mount. VISUAL PARITY FIX ROUND (#512): kept in
+          not a bare, unstyled mount. VISUAL PARITY (#512): kept in
           sync with Topbar.tsx's own className change — bg-sidebar, no
           border-b — so this harness previews the real merged-with-the-nav
           look, not the pre-fix seam. */}
