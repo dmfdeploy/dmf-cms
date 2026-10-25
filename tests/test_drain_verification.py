@@ -1,7 +1,7 @@
 """L3 monitoring drain verification — main.py integration (umbrella #202
 WP4). Covers the watcher classification hook (D1), the bounded poll +
 finalize continuation (D6), mode parity (D7/A8), the manual re-verify
-endpoint (D7/A9), and the codex round-1 facility-coherence + ambiguity
+endpoint (D7/A9), and the facility-coherence + ambiguity
 fixes (F1/F5/F6/F9/F10) end-to-end. Pure decision-core coverage
 (is_eligible, resolve_drain_targets, check_drained, exact-host matching,
 F2-F5 fail-closed boundaries) lives in test_drain.py.

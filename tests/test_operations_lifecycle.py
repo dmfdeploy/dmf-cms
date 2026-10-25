@@ -999,7 +999,7 @@ def test_get_job_stdout_returns_text_via_request_text(monkeypatch):
 
 
 class _FakeHTTPResponse:
-    """A file-like fake matching urllib's response object — codex R3-6:
+    """A file-like fake matching urllib's response object:
     ``read(size)`` is chunk-aware (mirrors a real socket-backed response,
     which never has to return exactly ``size`` bytes on the last chunk) and
     records every call's ``size`` argument so a test can assert

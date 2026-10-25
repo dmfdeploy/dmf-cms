@@ -27,7 +27,7 @@ def _exact_query_dispatcher(expr_to_rows):
     """expr_to_rows: dict mapping the EXACT PromQL expr string to its mocked
     rows. Any expr not present raises AssertionError.
 
-    Deliberately exact-match, not substring (codex R3-1): a substring
+    Deliberately exact-match, not substring: a substring
     matcher let a wrong/missing label matcher (kube_pod_overhead_* wrongly
     filtered by node=) silently pass because the mock matched on
     "kube_pod_overhead_cpu_cores" being IN the expr regardless of what else

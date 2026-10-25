@@ -3,13 +3,12 @@
 Two surfaces:
 * ``POST /api/runs/{run_id}/rollback`` — role/reason/run_id validation,
   async dedupe/reattach, jt-not-registered, the exact extra_vars contract
-  (both sync and async — codex R2-7: the async one now proves l3_request_id
+  (both sync and async — the async one now proves l3_request_id
   is the SAME as the dispatch's own C5 request_id, not a fresh mint).
 * ``_facility_busy_check``, wired into deploy, teardown, AND rollback
-  dispatch (codex R2-6 — a prior draft exempted teardown entirely). codex
-  R3-1 removed the old blanket same-target skip entirely (a dirty run now
-  blocks a new dispatch to its OWN target too) and R3-5 removed R2-6's
-  narrow teardown-vs-teardown cross-target exemption — plan §4.5 is one
+  dispatch (an earlier draft exempted teardown entirely). There is no blanket
+  same-target skip (a dirty run now blocks a new dispatch to its OWN target
+  too) and no narrow teardown-vs-teardown cross-target exemption — plan §4.5 is one
   run at a time, full stop. Cross-entry non-terminal ops block,
   same-entry/clean-terminal ops don't, DIRTY terminal ops
   (FAILED_ROLLBACK_REQUIRED/ROLLBACK_INCOMPLETE/RUN_STATUS_UNKNOWN) block

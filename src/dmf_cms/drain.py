@@ -110,7 +110,7 @@ def is_eligible_for_drain_verification(
 
 def _parse_surfaces(kv: Optional[str]) -> Optional[frozenset[str]]:
     """Parse the marker's ``surfaces=`` kv. Returns ``None`` if the key is
-    absent OR appears more than once (codex round-1 F2: the sanitizer
+    absent OR appears more than once (the sanitizer
     preserves duplicate valid keys verbatim — ``surfaces=monitoring
     surfaces=netbox`` would otherwise resolve to whichever occurrence this
     function happened to scan first). A duplicate key is an ambiguous
@@ -132,8 +132,7 @@ def _parse_surfaces(kv: Optional[str]) -> Optional[frozenset[str]]:
 def find_deploy_ops_for_run(operations: list[Operation], run_id: str) -> Optional[list[Operation]]:
     """Recover ALL deploy ops correlated to a rollback's run_id.
 
-    ``OperationStore`` does not enforce run_id uniqueness (codex round-1
-    F6) — a reattach, a concurrent dispatch, or a manually-tracked job can
+    ``OperationStore`` does not enforce run_id uniqueness — a reattach, a concurrent dispatch, or a manually-tracked job can
     each mint a deploy Operation carrying the same run_id. Returns ``None``
     (unrecoverable, fail-closed) when there are ZERO matches (as before),
     or when the matches do not all agree on the SAME catalog target —
@@ -204,7 +203,7 @@ def _netbox_service_specs(entry: CatalogEntry) -> list[dict]:
     catalog entry authors it as a single dict; design for N services per
     entry (D2) even though J1 has 1.
 
-    codex round-3 F3: a declared LIST must never partially normalize —
+    A declared LIST must never partially normalize —
     filtering out non-dict members and resolving just the valid subset
     would silently drop a malformed service from the drain set entirely
     (a partial catalog declaration reading as trivially clean). If EVERY
@@ -248,7 +247,7 @@ def _spec_override(spec: dict, key: str, default: Optional[str]) -> tuple[Option
     here (never silently ignored or silently defaulted). Does NOT validate
     DNS-label shape itself — callers apply ``_is_dns_label`` to the
     resolved value uniformly, whichever source (override or default) it
-    came from (codex round-1 F4).
+    came from.
     """
     if key not in spec:
         return default, False
@@ -259,7 +258,7 @@ def _spec_override(spec: dict, key: str, default: Optional[str]) -> tuple[Option
 
 
 def _validate_netbox_list_envelope(result: object) -> Optional[list[dict]]:
-    """Validate a NetBox list-endpoint envelope (codex round-2 F2).
+    """Validate a NetBox list-endpoint envelope.
 
     ``{"count": <int>, "next": ..., "previous": ..., "results": [...]}`` is
     the DRF pagination shape every NetBox list endpoint uses. Blindly
@@ -438,8 +437,8 @@ def _check_drained(drain_targets: list[DrainTarget], *, promsd_url: str, prometh
 
 
 def _strict_prometheus_active_targets(prometheus_url: str) -> list[dict]:
-    """Drain-local strict validation over Prometheus's targets envelope
-    (codex round-1 F3b/F3c, round-3 F1) — deliberately NOT folded into the
+    """Drain-local strict validation over Prometheus's targets envelope,
+    deliberately NOT folded into the
     shared ``prometheus.list_targets`` seam, which also backs the lenient
     ``/api/monitoring/targets`` UI endpoint (main.py) and must keep
     treating a missing/empty envelope as "no targets to show", not an
@@ -450,7 +449,7 @@ def _strict_prometheus_active_targets(prometheus_url: str) -> list[dict]:
     Prometheus (it always scrapes at least itself) and therefore a
     liveness-sentinel failure, not drain evidence.
 
-    codex round-3 F1: the liveness-sentinel non-empty check ALONE isn't
+    The liveness-sentinel non-empty check ALONE isn't
     enough — a list containing only unreadable rows (e.g. ``[{}]``)
     satisfies "non-empty" while contributing no candidate host to match
     against, so the drain check below would silently see nothing and

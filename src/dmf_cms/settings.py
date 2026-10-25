@@ -16,7 +16,7 @@ def _env_bool(name: str, default: bool) -> bool:
 
 
 def _env_strict_bool_fail_safe_on(name: str, default: bool = True) -> bool:
-    """Shared strict tri-state parser for kill-switch-style booleans (codex R3-3).
+    """Shared strict tri-state parser for kill-switch-style booleans.
 
     Deliberately narrower than the generic ``_env_bool`` above — that
     helper treats ANY unrecognized token as False, so a typo'd 'tru' would
@@ -46,7 +46,7 @@ def _env_strict_bool_fail_safe_on(name: str, default: bool = True) -> bool:
 
 
 def _env_l3_enabled(name: str, default: bool = True) -> bool:
-    """Strict tri-state parser for the L3 kill switch (codex #202 WP1 R3-3).
+    """Strict tri-state parser for the L3 kill switch.
 
     Thin wrapper over ``_env_strict_bool_fail_safe_on`` — kept as its own
     named function since it's referenced directly by name in tests and by
@@ -283,15 +283,15 @@ class L3Settings:
     an AWX EE job pod reserve against node allocatable, over
     ``prometheus.query()`` (no k8s client in the console).
 
-    ``enabled`` is THE one documented kill switch (codex R2-1) — an
+    ``enabled`` is THE one documented kill switch — an
     explicit, operator-chosen "this tier does not run here". Setting it
     False is fail-OPEN by design: every deploy proceeds exactly as it did
     pre-#202. It is NOT the same knob as an unconfigured ``prometheus`` —
     with ``enabled=True`` but Prometheus unconfigured, the handler refuses
     (fail-CLOSED, 409 ``budget-unavailable``), because the console tier has
     exactly one seam to supply data and "enabled but can't read supply"
-    must never silently pass as a no-op. Loaded via ``_env_l3_enabled``
-    (codex R3-3): a KILL SWITCH must fail safe-ON — an unrecognized env
+    must never silently pass as a no-op. Loaded via ``_env_l3_enabled``:
+    a KILL SWITCH must fail safe-ON — an unrecognized env
     token (a typo like ``'tru'``) logs a loud warning and stays enabled,
     never silently disables the gate the way the generic ``_env_bool``
     would.
@@ -390,7 +390,7 @@ class MXLSettings:
       fields; the console only ever composes an in-cluster URL when the namespace
       and port are in these allowlists AND ``cluster_service`` equals the
       instance's own service name — so arbitrary coords can't turn the console
-      into an in-cluster proxy (codex WP-D P1).
+      into an in-cluster proxy.
     """
 
     endpoints: tuple[MXLEndpoint, ...] = ()

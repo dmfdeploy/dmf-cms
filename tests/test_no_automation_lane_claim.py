@@ -11,12 +11,12 @@ automatically. The false claim was also persisted verbatim into the
 console's own Activity audit record (frontend/src/store/activity.ts),
 outliving the page that wrote it.
 
-Fix-round 1 widened this from a single literal-phrase grep after a survivor
+The guard was widened from a single literal-phrase grep after a survivor
 was found: a docstring in ``media_workloads.py`` named a *different* actor
 ("the AWX lane") and a *different* claim shape ("convergence is the ...
 drift-detection loop's job") that the original single-phrase guard could not
-see. Fix-round 2 widened it again after the gate found four more evasions
-against fix-round 1's matcher — a modal ("AWX will converge it"), a bare
+see. It was widened again after four more evasions
+against that matcher were found — a modal ("AWX will converge it"), a bare
 verb with a different object ("... will converge the desired state"), an
 unlisted verb ("the AWX service applies it automatically"), and a
 negation-window blind spot (a negation word sitting in an earlier CLAUSE of
@@ -44,15 +44,15 @@ established.
   construction. The actual defence against a NOVEL false claim is code
   review, not this file, and this file does not substitute for it.
 
-  This is FIX-ROUND 2's LAST widening for this issue, by the gate's own
-  ruling: further evasions are known-possible and are not being chased
+  This is the LAST widening for this issue, by decision:
+  further evasions are known-possible and are not being chased
   here. Three acknowledged, deliberately uncovered examples: a claim spread
   across more than two clauses with the negation in a THIRD clause back
   (this guard only looks one clause back); a claim where the actor noun
   itself implies automatic action without any of this file's listed verbs
   ("the reconciler" + a verb never enumerated here, e.g. "settles" or
-  "syncs"); and — fix-round 3 — the verb forms "apply"/"handles"/
-  "resolves"/"reconciles" specifically. Fix-round 2 briefly included all
+  "syncs"); and the verb forms "apply"/"handles"/
+  "resolves"/"reconciles" specifically. An earlier version included all
   four; none of the four evasions the gate actually demonstrated needed
   them, and keeping them cost four unrelated prose edits in files this
   issue has no business touching (DNS-resolution comments in an AWX
@@ -63,7 +63,7 @@ established.
   plausibly in-class phrasings a truly novel claim could still use — noting
   that here is more honest than covering it at that cost.
 
-  Fix-round 4: a LIVE instance of this defect survived rounds 1–3 in a file
+  A LIVE instance of this defect survived the earlier widenings in a file
   this branch had already touched — media_workloads.py's reconcile_pending
   comment said "the AWX drift lane exists to converge (ADR-0037 §4)",
   contradicting reconcile_pending's own derivation two lines below it, the

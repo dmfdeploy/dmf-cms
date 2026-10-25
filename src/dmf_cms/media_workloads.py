@@ -59,13 +59,13 @@ def sidecar_base_url(
     Reads the ADR-0038 Amendment-A coords the catalog launcher stamps
     (``cluster_service``/``cluster_namespace``/``cluster_port`` custom fields)
     and composes ``http://<svc>.<ns>.svc.cluster.local:<port>`` — byte-for-byte
-    the dmf-promsd contract. The SSRF gate (codex WP-D P1) is the whole point:
+    the dmf-promsd contract. The SSRF gate is the whole point:
 
     * ``cluster_service`` and ``cluster_namespace`` must be RFC1123 DNS labels;
     * ``cluster_namespace`` must be in the configured allowlist (default {mxl});
     * ``cluster_port`` must be in the configured allowlist (default {9000});
     * ``cluster_service`` must equal THIS instance's own service name — the
-      concrete identity, not merely the same app family (codex R2 note) — so a
+      concrete identity, not merely the same app family — so a
       NetBox writer stamping arbitrary coords cannot retarget the proxy at
       ``authentik``/``netbox``/``kubernetes.default`` or a peer workload.
 
@@ -877,7 +877,7 @@ def resolve_purge_target(
     slug: str,
 ) -> dict[str, Any]:
     """Fresh finalise-purge preflight read (umbrella #347 WO-A2b-2, operator
-    ruling 2026-08-02; hardened by fix round FIX-A2b.4 / GATE-A2b.3).
+    ruling 2026-08-02; hardened under FIX-A2b.4 / GATE-A2b.3).
 
     NEVER a cached snapshot: every call re-reads NetBox (the tagged Service
     members + the standalone workload Tag object) and re-queries Prometheus,
