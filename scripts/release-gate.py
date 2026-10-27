@@ -179,6 +179,7 @@ def _read_version_at(sha: str) -> str:
 
 def validate_event() -> dict[str, str]:
     _repo()
+    _release_tag_creation_is_restricted()
     event_path = os.environ.get("GITHUB_EVENT_PATH")
     if not event_path:
         raise GateError("GITHUB_EVENT_PATH is required")
@@ -215,6 +216,44 @@ def validate_event() -> dict[str, str]:
     info["dispatch_started_at"] = str(run.get("created_at", ""))
     _parse_time(info["dispatch_started_at"])
     return info
+
+
+def _release_tag_creation_is_restricted() -> None:
+    """Require the documented v* creation ruleset before any release work."""
+    rulesets = _public_api_pages(f"repos/{REPOSITORY}/rulesets?per_page=100")
+    if any(not isinstance(item, dict) for item in rulesets):
+        raise GateError("public tag-ruleset list contains a malformed item")
+    matches = [
+        item for item in rulesets
+        if item.get("name") == "tags-release-create"
+        and item.get("enforcement") == "active"
+        and item.get("target") == "tag"
+        and item.get("source_type") == "Repository"
+        and item.get("source") == REPOSITORY
+    ]
+    if len(matches) != 1:
+        raise GateError("exactly one active tags-release-create ruleset is required")
+    ruleset = _public_api(f"repos/{REPOSITORY}/rulesets/{matches[0]['id']}")
+    if not isinstance(ruleset, dict) or ruleset.get("enforcement") != "active":
+        raise GateError("release tag creation ruleset is missing or inactive")
+    conditions = ruleset.get("conditions")
+    refs = conditions.get("ref_name") if isinstance(conditions, dict) else None
+    if (not isinstance(refs, dict)
+            or refs.get("include") != ["refs/tags/v*"]
+            or refs.get("exclude") != []):
+        raise GateError("release tag creation ruleset must target only refs/tags/v*")
+    rules = ruleset.get("rules")
+    if not isinstance(rules, list) or not any(
+        isinstance(rule, dict) and rule.get("type") == "creation" for rule in rules
+    ):
+        raise GateError("release tag creation ruleset must enable the creation rule")
+    bypass = ruleset.get("bypass_actors")
+    if (not isinstance(bypass, list) or len(bypass) != 1
+            or not isinstance(bypass[0], dict)
+            or bypass[0].get("actor_id") != 15368
+            or bypass[0].get("actor_type") != "Integration"
+            or bypass[0].get("bypass_mode") != "always"):
+        raise GateError("release tag creation ruleset must allow only the GitHub Actions integration")
 
 
 def _write_output(info: dict[str, str]) -> None:

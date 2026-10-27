@@ -121,6 +121,9 @@ jobs:
         env:
           RELEASE_TOKEN: ${{ github.token }}
           GHCR_USER: ${{ github.actor }}
+          # GitHub-hosted Ubuntu provides Docker on the standard socket. The
+          # shared helper otherwise defaults to an operator's Colima socket.
+          DOCKER_HOST: unix:///var/run/docker.sock
           DMFDEPLOY_UMBRELLA: ${{ github.workspace }}/dmfdeploy
           DMF_CMS_RELEASE_SHA: ${{ steps.release.outputs.sha }}
         run: |

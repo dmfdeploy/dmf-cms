@@ -2,8 +2,8 @@ from __future__ import annotations
 
 import importlib.util
 import os
-from pathlib import Path
 import subprocess
+from pathlib import Path
 
 import pytest
 
@@ -211,6 +211,62 @@ def test_duplicate_live_rule_context_fails_closed(monkeypatch):
         gate._ruleset_contexts()
 
 
+def _tag_creation_ruleset(**changes):
+    result = {
+        "id": 24,
+        "name": "tags-release-create",
+        "target": "tag",
+        "enforcement": "active",
+        "source_type": "Repository",
+        "source": gate.REPOSITORY,
+    }
+    result.update(changes)
+    return result
+
+
+def _tag_creation_detail(**changes):
+    result = {
+        "enforcement": "active",
+        "conditions": {"ref_name": {"include": ["refs/tags/v*"], "exclude": []}},
+        "rules": [{"type": "creation"}],
+        "bypass_actors": [{"actor_id": 15368, "actor_type": "Integration", "bypass_mode": "always"}],
+    }
+    result.update(changes)
+    return result
+
+
+def _install_tag_ruleset(monkeypatch, listing=None, detail=None):
+    monkeypatch.setattr(gate, "_public_api_pages", lambda _path: [_tag_creation_ruleset()] if listing is None else listing)
+    monkeypatch.setattr(gate, "_public_api", lambda _path: _tag_creation_detail() if detail is None else detail)
+
+
+def test_release_tag_creation_ruleset_accepts_only_actions_bypass(monkeypatch):
+    _install_tag_ruleset(monkeypatch)
+    gate._release_tag_creation_is_restricted()
+
+
+@pytest.mark.parametrize(
+    ("listing", "detail", "message"),
+    [
+        ([], None, "exactly one active tags-release-create"),
+        ([_tag_creation_ruleset(enforcement="disabled")], None, "exactly one active tags-release-create"),
+        ([_tag_creation_ruleset(enforcement="evaluate")], None, "exactly one active tags-release-create"),
+        ([_tag_creation_ruleset(target="branch")], None, "exactly one active tags-release-create"),
+        (None, _tag_creation_detail(conditions={"ref_name": {"include": ["~ALL"], "exclude": []}}), "must target only refs/tags/v"),
+        (None, _tag_creation_detail(conditions={"ref_name": {"include": ["refs/tags/v*"], "exclude": ["refs/tags/v0.*"]}}), "must target only refs/tags/v"),
+        (None, _tag_creation_detail(rules=[]), "must enable the creation rule"),
+        (None, _tag_creation_detail(bypass_actors=[]), "must allow only the GitHub Actions integration"),
+        (None, _tag_creation_detail(bypass_actors=[{"actor_id": 1, "actor_type": "User", "bypass_mode": "always"}]), "must allow only the GitHub Actions integration"),
+        (None, _tag_creation_detail(bypass_actors=[{"actor_id": 15368, "actor_type": "Integration", "bypass_mode": "always"}, {"actor_id": 1, "actor_type": "Team", "bypass_mode": "always"}]), "must allow only the GitHub Actions integration"),
+        (None, _tag_creation_detail(bypass_actors=[{"actor_id": 15368, "actor_type": "Integration", "bypass_mode": "always_except_pull_requests"}]), "must allow only the GitHub Actions integration"),
+    ],
+)
+def test_release_tag_creation_ruleset_mismatch_fails_closed(monkeypatch, listing, detail, message):
+    _install_tag_ruleset(monkeypatch, listing, detail)
+    with pytest.raises(gate.GateError, match=message):
+        gate._release_tag_creation_is_restricted()
+
+
 def test_stale_check_run_cannot_satisfy_release(monkeypatch):
     _install_complete_fake_api(monkeypatch)
     original = gate._gh_api
@@ -318,6 +374,7 @@ def test_release_event_binds_to_a_trusted_repository_dispatch_run(tmp_path, monk
     monkeypatch.setenv("GITHUB_SHA", SHA)
     output = tmp_path / "output"
     monkeypatch.setenv("GITHUB_OUTPUT", str(output))
+    monkeypatch.setattr(gate, "_release_tag_creation_is_restricted", lambda: None)
     calls = []
 
     def api(path, method="GET", fields=None):
@@ -352,6 +409,7 @@ def test_release_event_rejects_wrong_workflow_run(tmp_path, monkeypatch):
     monkeypatch.setenv("GITHUB_REPOSITORY", gate.REPOSITORY)
     monkeypatch.setenv("GITHUB_RUN_ID", "12345")
     monkeypatch.setenv("GITHUB_SHA", SHA)
+    monkeypatch.setattr(gate, "_release_tag_creation_is_restricted", lambda: None)
     monkeypatch.setattr(gate, "_read_version_at", lambda _sha: VERSION)
 
     def api(path, method="GET", fields=None):
@@ -385,6 +443,6 @@ def test_publish_wrapper_refuses_local_invocation():
         "DMF_CMS_RELEASE_GATE_PASSED", "DMF_CMS_RELEASE_SHA",
     ):
         env.pop(name, None)
-    result = subprocess.run(["bash", str(script)], env=env, text=True, capture_output=True)
+    result = subprocess.run(["bash", str(script)], check=False, env=env, text=True, capture_output=True)
     assert result.returncode != 0
     assert "restricted to the verified DMF CMS Release workflow" in result.stderr
