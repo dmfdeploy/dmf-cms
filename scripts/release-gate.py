@@ -233,9 +233,23 @@ def _release_tag_creation_is_restricted() -> None:
     ]
     if len(matches) != 1:
         raise GateError("exactly one active tags-release-create ruleset is required")
-    ruleset = _public_api(f"repos/{REPOSITORY}/rulesets/{matches[0]['id']}")
-    if not isinstance(ruleset, dict) or ruleset.get("enforcement") != "active":
+    selected = matches[0]
+    selected_id = selected.get("id")
+    if isinstance(selected_id, bool) or not isinstance(selected_id, int) or selected_id < 1:
+        raise GateError("release tag creation ruleset has no valid ID")
+    ruleset = _public_api(f"repos/{REPOSITORY}/rulesets/{selected_id}")
+    if not isinstance(ruleset, dict):
         raise GateError("release tag creation ruleset is missing or inactive")
+    identity = {
+        "id": selected_id,
+        "name": "tags-release-create",
+        "target": "tag",
+        "enforcement": "active",
+        "source_type": "Repository",
+        "source": REPOSITORY,
+    }
+    if any(ruleset.get(key) != value for key, value in identity.items()):
+        raise GateError("release tag creation ruleset detail does not match its active repository entry")
     conditions = ruleset.get("conditions")
     refs = conditions.get("ref_name") if isinstance(conditions, dict) else None
     if (not isinstance(refs, dict)
@@ -243,10 +257,9 @@ def _release_tag_creation_is_restricted() -> None:
             or refs.get("exclude") != []):
         raise GateError("release tag creation ruleset must target only refs/tags/v*")
     rules = ruleset.get("rules")
-    if not isinstance(rules, list) or not any(
-        isinstance(rule, dict) and rule.get("type") == "creation" for rule in rules
-    ):
-        raise GateError("release tag creation ruleset must enable the creation rule")
+    if (not isinstance(rules, list) or len(rules) != 1
+            or not isinstance(rules[0], dict) or rules[0].get("type") != "creation"):
+        raise GateError("release tag creation ruleset must contain only the creation rule")
     bypass = ruleset.get("bypass_actors")
     if (not isinstance(bypass, list) or len(bypass) != 1
             or not isinstance(bypass[0], dict)

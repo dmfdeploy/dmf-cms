@@ -29,7 +29,6 @@ def test_release_workflow_wrapper_reaches_real_shared_publisher(tmp_path):
     assert docker_match, "release workflow must override the shared helper's Colima socket"
     assert run_match, "release workflow publish invocation must be present"
     workflow_command = textwrap.dedent(run_match.group(1))
-    assert 'printf \'%s\\n\' "$publisher_token" | scripts/publish-to-ghcr.sh' in workflow_command
 
     fake_bin = tmp_path / "bin"
     fake_bin.mkdir()

@@ -226,7 +226,12 @@ def _tag_creation_ruleset(**changes):
 
 def _tag_creation_detail(**changes):
     result = {
+        "id": 24,
+        "name": "tags-release-create",
+        "target": "tag",
         "enforcement": "active",
+        "source_type": "Repository",
+        "source": gate.REPOSITORY,
         "conditions": {"ref_name": {"include": ["refs/tags/v*"], "exclude": []}},
         "rules": [{"type": "creation"}],
         "bypass_actors": [{"actor_id": 15368, "actor_type": "Integration", "bypass_mode": "always"}],
@@ -252,9 +257,16 @@ def test_release_tag_creation_ruleset_accepts_only_actions_bypass(monkeypatch):
         ([_tag_creation_ruleset(enforcement="disabled")], None, "exactly one active tags-release-create"),
         ([_tag_creation_ruleset(enforcement="evaluate")], None, "exactly one active tags-release-create"),
         ([_tag_creation_ruleset(target="branch")], None, "exactly one active tags-release-create"),
+        (None, _tag_creation_detail(id=25), "detail does not match"),
+        (None, _tag_creation_detail(name="tags-release-protect"), "detail does not match"),
+        (None, _tag_creation_detail(target="branch"), "detail does not match"),
+        (None, _tag_creation_detail(source_type="Organization"), "detail does not match"),
+        (None, _tag_creation_detail(source="dmfdeploy/other"), "detail does not match"),
+        (None, _tag_creation_detail(enforcement="disabled"), "detail does not match"),
         (None, _tag_creation_detail(conditions={"ref_name": {"include": ["~ALL"], "exclude": []}}), "must target only refs/tags/v"),
         (None, _tag_creation_detail(conditions={"ref_name": {"include": ["refs/tags/v*"], "exclude": ["refs/tags/v0.*"]}}), "must target only refs/tags/v"),
-        (None, _tag_creation_detail(rules=[]), "must enable the creation rule"),
+        (None, _tag_creation_detail(rules=[]), "must contain only the creation rule"),
+        (None, _tag_creation_detail(rules=[{"type": "creation"}, {"type": "update"}]), "must contain only the creation rule"),
         (None, _tag_creation_detail(bypass_actors=[]), "must allow only the GitHub Actions integration"),
         (None, _tag_creation_detail(bypass_actors=[{"actor_id": 1, "actor_type": "User", "bypass_mode": "always"}]), "must allow only the GitHub Actions integration"),
         (None, _tag_creation_detail(bypass_actors=[{"actor_id": 15368, "actor_type": "Integration", "bypass_mode": "always"}, {"actor_id": 1, "actor_type": "Team", "bypass_mode": "always"}]), "must allow only the GitHub Actions integration"),
@@ -264,6 +276,45 @@ def test_release_tag_creation_ruleset_accepts_only_actions_bypass(monkeypatch):
 def test_release_tag_creation_ruleset_mismatch_fails_closed(monkeypatch, listing, detail, message):
     _install_tag_ruleset(monkeypatch, listing, detail)
     with pytest.raises(gate.GateError, match=message):
+        gate._release_tag_creation_is_restricted()
+
+
+def test_release_tag_creation_public_list_rejects_pagination(monkeypatch):
+    class Response:
+        def __init__(self):
+            self.headers = {"Link": '<https://api.github.com/next>; rel="next"'}
+
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *_args):
+            return False
+
+        def read(self):
+            return b"[]"
+
+    monkeypatch.setattr(gate, "urlopen", lambda *_args, **_kwargs: Response())
+    with pytest.raises(gate.GateError, match="single-page bound"):
+        gate._public_api_pages(f"repos/{gate.REPOSITORY}/rulesets?per_page=100")
+
+
+def test_release_tag_creation_public_list_fails_closed_on_api_error(monkeypatch):
+    def fail(*_args, **_kwargs):
+        raise OSError("network unavailable")
+
+    monkeypatch.setattr(gate, "urlopen", fail)
+    with pytest.raises(gate.GateError, match="could not read public main-protection ruleset list"):
+        gate._public_api_pages(f"repos/{gate.REPOSITORY}/rulesets?per_page=100")
+
+
+def test_release_tag_creation_detail_api_error_fails_closed(monkeypatch):
+    _install_tag_ruleset(monkeypatch)
+
+    def fail(_path):
+        raise gate.GateError("detail fetch failed")
+
+    monkeypatch.setattr(gate, "_public_api", fail)
+    with pytest.raises(gate.GateError, match="detail fetch failed"):
         gate._release_tag_creation_is_restricted()
 
 
