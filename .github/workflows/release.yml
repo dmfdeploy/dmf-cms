@@ -125,6 +125,6 @@ jobs:
           DMF_CMS_RELEASE_SHA: ${{ steps.release.outputs.sha }}
         run: |
           set -eu
-          release_token="$RELEASE_TOKEN"
+          publisher_token="$RELEASE_TOKEN"
           unset RELEASE_TOKEN
-          printf '%s' "$release_token" | scripts/publish-to-ghcr.sh
+          printf '%s' "$publisher_token" | scripts/publish-to-ghcr.sh
