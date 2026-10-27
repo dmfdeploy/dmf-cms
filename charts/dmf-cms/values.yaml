@@ -1,5 +1,9 @@
 replicaCount: 1
 
+# Optional existing Kubernetes ServiceAccount for the CMS pod. The bootstrap
+# setup-receipt role sets this to its narrowly scoped request-writer identity.
+serviceAccountName: ""
+
 image:
   repository: registry.dmf.example.com/dmf-cms
   tag: "0.39.0"
@@ -29,6 +33,12 @@ env:
     existingSecretName: dmf-cms-runtime
     key: secretKey
   devLoginEnabled: "false"
+
+setupRequests:
+  # Both bindings must be supplied by trusted deployment inventory. Blank
+  # values keep the one-shot setup receipt endpoint disabled.
+  envId: ""
+  clusterUid: ""
 
 oidc:
   enabled: true
