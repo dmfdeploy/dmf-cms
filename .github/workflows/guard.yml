@@ -4,6 +4,16 @@ on:
     branches: [main]
   push:
     branches: [main]
+  workflow_dispatch:
+    inputs:
+      expected_sha:
+        description: Exact merged release commit to check
+        required: true
+        type: string
+      release_pr:
+        description: Merged release PR number
+        required: true
+        type: string
 permissions:
   contents: read
 concurrency:
@@ -14,6 +24,16 @@ jobs:
     runs-on: ubuntu-24.04
     timeout-minutes: 10
     steps:
+      - name: Validate exact-SHA release dispatch
+        if: github.event_name == 'workflow_dispatch'
+        env:
+          EXPECTED_SHA: ${{ inputs.expected_sha }}
+          RELEASE_PR: ${{ inputs.release_pr }}
+        run: |
+          set -eu
+          [ "$GITHUB_REF" = refs/heads/main ]
+          [ "$GITHUB_SHA" = "$EXPECTED_SHA" ]
+          printf '%s' "$RELEASE_PR" | grep -qE '^[1-9][0-9]*$'
       - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683  # v4.2.2 — full history for the PR commit range
         with:
           fetch-depth: 0
@@ -59,14 +79,26 @@ jobs:
     permissions:
       contents: read
       pull-requests: read
-    if: github.event_name == 'pull_request'
+    if: github.event_name == 'pull_request' || github.event_name == 'workflow_dispatch'
     steps:
       - name: Conventional Commits check (inline, PR commits API)
         env:
           GH_TOKEN: ${{ github.token }}
-          COMMITS_URL: ${{ github.event.pull_request.commits_url }}
+          COMMITS_URL: ${{ github.event_name == 'pull_request' && github.event.pull_request.commits_url || format('https://api.github.com/repos/{0}/pulls/{1}/commits', github.repository, inputs.release_pr) }}
+          EXPECTED_SHA: ${{ inputs.expected_sha }}
+          RELEASE_PR: ${{ inputs.release_pr }}
+          EVENT_NAME: ${{ github.event_name }}
         run: |
           set -eu
+          if [ "$EVENT_NAME" = workflow_dispatch ]; then
+            [ "$GITHUB_REF" = refs/heads/main ]
+            [ "$GITHUB_SHA" = "$EXPECTED_SHA" ]
+            printf '%s' "$RELEASE_PR" | grep -qE '^[1-9][0-9]*$'
+            pr="$(gh api "repos/$GITHUB_REPOSITORY/pulls/$RELEASE_PR")"
+            jq -e --arg sha "$EXPECTED_SHA" \
+              '.merged == true and .base.ref == "main" and .merge_commit_sha == $sha' \
+              <<<"$pr" >/dev/null
+          fi
           bad=0
           re='^(feat|fix|docs|chore|refactor|test|build|ci|perf|revert|style)(\([a-z0-9._-]+\))?!?: .+'
           page=1
@@ -89,6 +121,16 @@ jobs:
     runs-on: ubuntu-24.04
     timeout-minutes: 15
     steps:
+      - name: Validate exact-SHA release dispatch
+        if: github.event_name == 'workflow_dispatch'
+        env:
+          EXPECTED_SHA: ${{ inputs.expected_sha }}
+          RELEASE_PR: ${{ inputs.release_pr }}
+        run: |
+          set -eu
+          [ "$GITHUB_REF" = refs/heads/main ]
+          [ "$GITHUB_SHA" = "$EXPECTED_SHA" ]
+          printf '%s' "$RELEASE_PR" | grep -qE '^[1-9][0-9]*$'
       - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683  # v4.2.2
         with:
           persist-credentials: false
@@ -107,6 +149,16 @@ jobs:
     runs-on: ubuntu-24.04
     timeout-minutes: 5
     steps:
+      - name: Validate exact-SHA release dispatch
+        if: github.event_name == 'workflow_dispatch'
+        env:
+          EXPECTED_SHA: ${{ inputs.expected_sha }}
+          RELEASE_PR: ${{ inputs.release_pr }}
+        run: |
+          set -eu
+          [ "$GITHUB_REF" = refs/heads/main ]
+          [ "$GITHUB_SHA" = "$EXPECTED_SHA" ]
+          printf '%s' "$RELEASE_PR" | grep -qE '^[1-9][0-9]*$'
       - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683  # v4.2.2
         with:
           persist-credentials: false

@@ -1,10 +1,10 @@
 #!/usr/bin/env bash
-# End-to-end release: bump version, sync, commit, tag, build (local only).
+# Prepare a release bump: sync VERSION, commit, and build locally.
 #
 # Does NOT push the image. Per the 2026-05-19 ADR-0025 convergence, GHCR is
 # the canonical public source and workstation→Zot pushes were removed. After
-# this script finishes, publish to GHCR with scripts/publish-to-ghcr.sh, then
-# mirror via playbook 630 and deploy via playbook 650.
+# publication is handled by the exact-SHA GitHub Actions release workflow after
+# the bump PR merges and its required checks pass.
 #
 # Usage:
 #   scripts/release.sh patch      # 0.2.2 → 0.2.3
@@ -17,9 +17,8 @@
 #   2. Compute new version
 #   3. Run sync-version.sh to update all version files
 #   4. Commit "chore(release): vX.Y.Z" (conventional + DCO sign-off)
-#   5. git tag vX.Y.Z
-#   6. Build image locally via build-image.sh --no-push
-#   7. Print next-step commands (does NOT auto-publish or deploy)
+#   5. Build image locally via build-image.sh --no-push
+#   6. Print the PR and post-merge release-dispatch steps
 
 set -euo pipefail
 
@@ -34,21 +33,16 @@ cd "$REPO_ROOT"
 
 usage() {
     cat <<EOF
-Usage: $0 (patch|minor|major|X.Y.Z) [--tag] [--no-deploy-hint]
+Usage: $0 (patch|minor|major|X.Y.Z) [--no-deploy-hint]
 
   patch | minor | major   Bump the corresponding component
   X.Y.Z                   Set explicit version
-  --tag                   Also create the v<NEW> tag now, before the bump is
-                          merged. OFF by default: main is protected here, so the
-                          bump lands via a PR, and this repo is rebase-merge
-                          only — a tag cut now points at a commit the merge
-                          replaces. Only useful on an unprotected branch.
   --no-deploy-hint        Suppress the next-step instructions at the end
 
 Cannot run with uncommitted changes.
 
-This script builds locally only. To publish + deploy, run
-scripts/publish-to-ghcr.sh, then playbooks 630 + 650 (see the hint at the end).
+This script prepares a release bump and builds locally. The verified release
+workflow tags and publishes after the PR merges and all required checks pass.
 EOF
     exit 1
 }
@@ -61,11 +55,10 @@ BUMP="$1"
 shift
 
 SHOW_DEPLOY_HINT=1
-CREATE_TAG=0
 for arg in "$@"; do
     case "$arg" in
-        --tag)             CREATE_TAG=1 ;;
         --no-deploy-hint)  SHOW_DEPLOY_HINT=0 ;;
+        --tag)             echo "ERROR: tags are created only by the verified release workflow." >&2; exit 1 ;;
         -h|--help)         usage ;;
         *)                 echo "Unknown arg: $arg" >&2; usage ;;
     esac
@@ -126,48 +119,11 @@ echo "[2/4] Committing version bump..."
 git add VERSION pyproject.toml frontend/package.json frontend/package-lock.json charts/dmf-cms/Chart.yaml charts/dmf-cms/values.yaml
 git commit -s -m "chore(release): v$NEW"
 
-# 5. Tag
+# 3. Defer the release tag until all required checks pass on the merged SHA.
 echo ""
-if [[ $CREATE_TAG -eq 1 ]]; then
-    echo "[3/4] Tagging v$NEW (--tag)..."
-    git tag -a "v$NEW" -m "Release v$NEW"
-else
-    echo "[3/4] Tagging deferred — the tag is created AFTER the bump merges."
-    echo "      main is protected, so the bump lands via a PR, and this repo is"
-    echo "      rebase-merge only: a tag cut now would point at a commit the"
-    echo "      merge replaces, leaving an orphan tag that is not on main."
-    echo "      Pass --tag to tag anyway (unprotected branches only)."
-    echo ""
-    echo "      The next step will warn that HEAD is not tagged v$NEW. That is"
-    echo "      expected here and not a problem: the tag does not exist yet, and"
-    echo "      build-image.sh uses it for that warning only — the image labels"
-    echo "      carry VERSION and the git SHA, never the tag."
-fi
+echo "[3/4] Tagging deferred to the verified release workflow."
 
-# NOTE — this block applies to the --tag path only; tagging is off by default
-# precisely because of what follows. A tag created here points at the commit
-# just made on the CURRENT branch. main is protected ('main-protection'), so
-# the bump cannot be pushed straight to main, and this repo is REBASE-MERGE
-# ONLY — merging the PR rewrites the commit to a new SHA, so the tag would
-# reference a commit that never lands on main.
-#
-# If you passed --tag and are releasing through a PR, delete that local tag,
-# merge, then re-create it on the MERGED commit:
-#     git tag -d "v$NEW"
-#     # ... open + merge the release PR ...
-#     git fetch origin
-#     git tag -a "v$NEW" -m "Release v$NEW" origin/main   # tag origin/main, NOT local main:
-#                                                        # local main still holds the
-#                                                        # pre-rebase commit and has diverged
-#     git push origin "v$NEW"
-#     git merge-base --is-ancestor "v$NEW^{commit}" origin/main   # prove it landed
-#     # realign local main afterwards — but LOOK FIRST, this script runs on any
-#     # clean branch and cannot know what else your local main carries:
-#     git checkout main && git log --oneline origin/main..main
-#     # expect only the pre-rebase bump; if so `git reset --hard origin/main`
-#     # is safe, and if anything else is listed, rebase it instead of resetting
-
-# 6. Build (local only — no push; publish happens via scripts/publish-to-ghcr.sh)
+# 6. Build (local only — publication happens only in the verified workflow)
 echo ""
 echo "[4/4] Building image locally..."
 "$REPO_ROOT/scripts/build-image.sh" --no-push --no-hint
@@ -182,64 +138,21 @@ if [[ $SHOW_DEPLOY_HINT -eq 1 ]]; then
   RELEASE v$NEW BUILT LOCALLY
 ═══════════════════════════════════════════════════
 
-Next steps (per the ADR-0025 GHCR-canonical / Zot-mirror flow).
+Next steps. The release workflow handles the tag and GHCR publication.
 NOTE: substitute <env-name> with the current Hetzner test env id —
 see STATUS.md in the umbrella repo.
 
-  1. Land the bump. main is PROTECTED, so it goes via a PR — and because this
-     repo is rebase-merge only, the tag must be created AFTER the merge or it
-     points at a commit that never reaches main:
-       git tag -d v$NEW                       # ONLY if you passed --tag;
-                                              # by default no tag exists yet
-       git branch --show-current              # expect release/$NEW, cut from
-                                              # origin/main BEFORE this script ran:
-                                              #   git fetch origin
-                                              #   git switch -c release/$NEW origin/main
+  1. Open the release bump PR from this branch. Include a fully qualified
+     umbrella issue reference in the PR body:
        git push -u origin release/$NEW
-       gh pr create --title "chore(release): v$NEW" --body "..."
-       # the PR body needs a qualified backlog ref, e.g.
-       #   Refs dmfdeploy/dmfdeploy#<N>
+       gh pr create --title "chore(release): v$NEW" --body "Refs dmfdeploy/dmfdeploy#<N>"
 
-     ...then, after the merge, tag origin/main DIRECTLY. Do not
-     \`git checkout main && git pull\` first: this script committed the bump on
-     whatever branch you were on (usually main), so local main still holds the
-     PRE-rebase commit while origin/main holds its rewritten twin. Those
-     histories have diverged — pull either refuses, or under a merge policy
-     builds a merge commit that is not in origin/main, and tagging that
-     recreates the exact bug this ordering exists to avoid.
-       git fetch origin
-       git tag -a v$NEW -m "Release v$NEW" origin/main
-       git push origin v$NEW
-       git merge-base --is-ancestor v$NEW^{commit} origin/main   # prove it landed
-
-     Only then realign local main, which is still carrying the stale commit.
-     LOOK BEFORE YOU RESET — this script runs on any clean branch and cannot
-     know what else is on your local main:
-       git checkout main
-       git log --oneline origin/main..main
-       # Expect exactly one commit: the pre-rebase "chore(release): v$NEW".
-       # If that is all it is, discarding it is safe — origin/main already has
-       # its rebased twin:
-       #   git reset --hard origin/main
-       # If ANYTHING else is listed, do not reset: rebase or cherry-pick that
-       # work onto origin/main instead. A --ff-only merge is no help here —
-       # the histories have genuinely diverged, so it always refuses.
-
-  2. Rebuild the image from the tagged commit, then publish it to GHCR
-     (canonical public source). The image built above carries the PRE-rebase
-     commit in its org.opencontainers.image.revision label, and
-     publish-to-ghcr.sh only re-tags and pushes the local image, so publishing
-     it would label v$NEW with a commit that never reached origin/main:
-       cd $CMS_HINT
-       git fetch origin
-       git switch --detach v$NEW              # requires a clean tree
-       scripts/build-image.sh --no-push
-       docker inspect --format '{{ index .Config.Labels "org.opencontainers.image.revision" }}' \\
-         registry.dmf.example.com/dmf-cms:$NEW    # must equal:
-       git rev-parse --short v$NEW^{commit}
-       gh auth token | GHCR_USER="<github-username>" scripts/publish-to-ghcr.sh
-       # needs write:packages — 'gh auth status' to check,
-       # 'gh auth refresh -s write:packages' if absent.
+  2. After merge, start the exact-SHA release gate with its PR number:
+       gh api repos/dmfdeploy/dmf-cms/dispatches \\
+         -f event_type=cms-release -f "client_payload[pr_number]=<PR-NUMBER>"
+     The workflow creates v$NEW and publishes only after all live required
+     checks pass on the merged commit. The publication wrapper refuses local
+     and other-workflow invocations.
 
   3. Mirror GHCR → cluster-internal Zot (playbook 630):
        cd $ENV_HINT

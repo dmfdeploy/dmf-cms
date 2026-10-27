@@ -90,11 +90,12 @@ def test_hint_block_prints_the_git_commands_without_running_them(tmp_path) -> No
     assert "moving from feature to" not in _git(repo, "reflog", "show", "HEAD")
     # The working tree holds no side effects of the hint.
     assert _git(repo, "status", "--porcelain").strip() == ""
-    # The warning reads whole, with the command printed literally.
-    assert "`git checkout main && git pull`" in r.stdout
+    # The post-merge trigger is printed literally and does not tag locally.
+    assert "client_payload[pr_number]" in r.stdout
+    assert "git tag -a" not in r.stdout
     # The deliberate interpolations still work.
     assert "RELEASE v0.1.1 BUILT LOCALLY" in r.stdout
-    assert 'git tag -a v0.1.1 -m "Release v0.1.1" origin/main' in r.stdout
+    assert "verified release workflow" in r.stdout
 
 
 def test_build_check_does_not_advise_a_pre_merge_tag_push(tmp_path) -> None:
@@ -117,45 +118,38 @@ def test_build_check_does_not_advise_a_pre_merge_tag_push(tmp_path) -> None:
     assert r.returncode == 0, r.stdout + r.stderr
     assert "HEAD is not tagged" in r.stdout
     assert "push --tags" not in r.stdout
-    assert "origin/main" in r.stdout
+    assert "verified release workflow" in r.stdout
 
 
-def test_hint_rebuilds_from_the_tagged_commit_before_publishing(tmp_path) -> None:
-    """The image built before the rebase merge carries an orphan revision label.
-
-    publish-to-ghcr.sh only re-tags the local image, so the hint must send the
-    operator to build from the tagged commit first, and must print the label
-    check literally.
-    """
+def test_release_hint_never_prints_a_manual_tag_or_publish_path(tmp_path) -> None:
+    """Only the exact-SHA workflow tags and publishes after required checks."""
     repo = make_scratch_repo(tmp_path)
     r = run_release(repo, "patch")
     assert r.returncode == 0, r.stderr
     out = r.stdout
-    detach = out.index("git switch --detach v0.1.1")
-    build = out.index("scripts/build-image.sh --no-push", detach)
-    label = out.index('"org.opencontainers.image.revision"', build)
-    publish = out.index("scripts/publish-to-ghcr.sh", label)
-    assert detach < build < label < publish
-    assert "git rev-parse --short v0.1.1^{commit}" in out
+    assert "gh api repos/dmfdeploy/dmf-cms/dispatches" in out
+    assert "gh auth token |" not in out
+    assert "git tag" not in out
 
 
-def test_numbered_procedure_rebuilds_before_publishing() -> None:
-    """The canonical numbered release procedure must rebuild from the tag first.
+def test_release_script_rejects_manual_tag_option_before_mutation(tmp_path) -> None:
+    repo = make_scratch_repo(tmp_path)
+    before = _git(repo, "rev-parse", "HEAD")
+    result = run_release(repo, "patch", "--tag")
+    assert result.returncode != 0
+    assert "tags are created only by the verified release workflow" in result.stderr
+    assert _git(repo, "rev-parse", "HEAD") == before
+    assert _git(repo, "status", "--porcelain") == ""
 
-    Anchored on the commands, not the prose: in the fenced block under the
-    "Release Procedure" heading, every line that runs publish-to-ghcr.sh needs an
-    earlier build-image.sh line and an earlier `git rev-parse` line in that block.
-    """
+
+def test_numbered_procedure_uses_release_workflow_and_has_no_manual_publish() -> None:
+    """The canonical release procedure delegates tag and image publication."""
     doc = (REPO_ROOT / "docs" / "DEVELOPMENT-AND-BUILD-RULES.md").read_text()
     section = doc.split("## 4. The Release Procedure", 1)[1].split("\n## ", 1)[0]
-    blocks = section.split("```")[1::2]
-    publishing = [b.splitlines() for b in blocks if "publish-to-ghcr.sh" in b]
-    assert publishing, "no fenced block in the release procedure runs publish-to-ghcr.sh"
-    for lines in publishing:
-        publish = next(i for i, ln in enumerate(lines) if "publish-to-ghcr.sh" in ln)
-        before = "\n".join(lines[:publish])
-        assert "scripts/build-image.sh" in before, "publish step has no earlier build-image.sh"
-        assert "git rev-parse" in before, "publish step has no earlier git rev-parse label check"
+    assert "client_payload[pr_number]" in section
+    assert "scripts/publish-to-ghcr.sh" not in section
+    assert "git tag -a" not in section
+    assert "exact-SHA" in doc
 
 
 PUBLISH_RECIPE_LINE = "1. Publish to GHCR:"
@@ -196,7 +190,7 @@ def test_release_path_prints_no_direct_publish_recipe(tmp_path) -> None:
     assert "RELEASE v0.1.1 BUILT LOCALLY" in r.stdout
 
 
-def test_plain_build_image_keeps_its_hint(tmp_path) -> None:
+def test_plain_build_image_hint_disallows_manual_publication(tmp_path) -> None:
     repo = make_scratch_repo(tmp_path)
     env = _use_real_build_image(repo)
 
@@ -208,9 +202,9 @@ def test_plain_build_image_keeps_its_hint(tmp_path) -> None:
 
     plain = run("--no-push")
     assert plain.returncode == 0, plain.stdout + plain.stderr
-    assert PUBLISH_RECIPE_LINE in plain.stdout
-    assert "rebuilt from the release tag" in plain.stdout
+    assert "exact-SHA release workflow" in plain.stdout
+    assert "publish-to-ghcr.sh" not in plain.stdout
     quiet = run("--no-push", "--no-hint")
     assert quiet.returncode == 0, quiet.stdout + quiet.stderr
     assert "BUILD COMPLETE" in quiet.stdout
-    assert PUBLISH_RECIPE_LINE not in quiet.stdout
+    assert "exact-SHA release workflow" not in quiet.stdout

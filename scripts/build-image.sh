@@ -2,10 +2,9 @@
 # Build the DMF Console image locally and tag it
 # registry.dmf.example.com/dmf-cms:<VERSION>.
 #
-# This script does NOT push. Per the 2026-05-19 ADR-0025 convergence the
-# canonical publish path is scripts/publish-to-ghcr.sh (image → GHCR), then
-# playbook 630-zot-seed-platform.yml mirrors GHCR → cluster-internal Zot.
-# Workstation→Zot pushes were removed in that convergence.
+# This script builds locally and does not push. The exact-SHA release workflow
+# builds the merged source, then publishes to GHCR; playbook 630 mirrors the
+# verified image to cluster-internal Zot.
 #
 # Reads VERSION from the repo root — never accepts a tag override.
 #
@@ -13,7 +12,7 @@
 #   scripts/build-image.sh           # build (no push)
 #   scripts/build-image.sh --no-push # synonym, kept for callers that still pass it
 #   scripts/build-image.sh --check   # verify versions in sync, no build
-#   scripts/build-image.sh --no-hint # build, but print no publish/deploy next steps
+#   scripts/build-image.sh --no-hint # build, but print no release/deploy next steps
 #
 # Refuses to run if:
 #   - VERSION is not in semver MAJOR.MINOR.PATCH form
@@ -40,12 +39,11 @@ Usage: $0 [--no-push] [--dirty] [--check] [--no-hint]
   --no-push    No-op, accepted for compatibility (this script never pushes)
   --dirty      Allow build with uncommitted changes (NOT for cluster deployment)
   --check      Verify version sync and git state, do not build
-  --no-hint    Do not print the publish/deploy next steps (release.sh passes this
+  --no-hint    Do not print the release/deploy next steps (release.sh passes this
                and prints its own post-merge steps)
 
 Environment:
-  DMF_CMS_REGISTRY     default: registry.dmf.example.com (local tag prefix only;
-                       publish-to-ghcr.sh re-tags this image for GHCR)
+  DMF_CMS_REGISTRY     default: registry.dmf.example.com (local tag prefix only)
   DMF_CMS_IMAGE_NAME   default: dmf-cms
   DMF_CMS_DOCKERFILE   default: Dockerfile
 EOF
@@ -99,12 +97,11 @@ else
 fi
 
 # Embed git SHA in image label for traceability
-GIT_SHA="$(git rev-parse --short HEAD)"
+GIT_SHA="$(git rev-parse HEAD)"
 GIT_TAG_EXACT="$(git describe --tags --exact-match 2>/dev/null || echo "")"
 if [[ "$GIT_TAG_EXACT" != "v$VERSION" && "$GIT_TAG_EXACT" != "$VERSION" ]]; then
     echo "  ⚠ HEAD is not tagged as v$VERSION or $VERSION (got: '${GIT_TAG_EXACT:-none}')"
-    echo "    Expected before the bump merges. Tag origin/main AFTER the merge, not local HEAD:"
-    echo "    git tag -a v$VERSION -m \"Release v$VERSION\" origin/main && git push origin v$VERSION"
+    echo "    The verified release workflow creates the tag after checks pass on the merged SHA."
 fi
 
 if [[ $CHECK_ONLY -eq 1 ]]; then
@@ -140,20 +137,16 @@ echo ""
 source "$REPO_ROOT/scripts/lib/hint-paths.sh"
 dmf_hint_paths "$REPO_ROOT"
 
-echo "The image is local only. To publish + deploy (ADR-0025 GHCR-canonical flow)."
-echo "A release image must be rebuilt from the release tag first: DEVELOPMENT-AND-BUILD-RULES.md section 4."
-echo "Substitute <env-name> with the current Hetzner test env id — see STATUS.md."
-echo "  1. Publish to GHCR:"
-echo "       cd $CMS_HINT"
-echo "       gh auth token | GHCR_USER='<github-username>' scripts/publish-to-ghcr.sh"
-echo "       # needs write:packages — 'gh auth status' to check,"
-echo "       # 'gh auth refresh -s write:packages' if absent."
-echo "  2. Mirror GHCR → Zot (playbook 630):"
+echo "The image is local only. GHCR publication is restricted to the exact-SHA release workflow."
+echo "Do not publish this local image; release.sh prepares a VERSION bump PR and the verified workflow builds the merged SHA."
+echo "See DEVELOPMENT-AND-BUILD-RULES.md for the release procedure."
+echo "After the verified workflow succeeds, substitute <env-name> from STATUS.md."
+echo "  1. Mirror GHCR → Zot (playbook 630):"
 echo "       cd $ENV_HINT"
 echo "       bin/run-playbook.sh <env-name> \\"
 echo "         ../dmf-infra/k3s-lab-bootstrap/playbooks/630-zot-seed-platform.yml"
-echo "  3. Helm-deploy (playbook 650):"
+echo "  2. Helm-deploy (playbook 650):"
 echo "       bin/run-playbook.sh <env-name> \\"
 echo "         ../dmf-infra/k3s-lab-bootstrap/playbooks/650-dmf-cms.yml"
-echo "  4. Verify:"
+echo "  3. Verify:"
 echo "       cd $CMS_HINT && scripts/verify-cluster.sh"

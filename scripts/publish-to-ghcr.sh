@@ -1,28 +1,12 @@
 #!/usr/bin/env bash
-# publish-to-ghcr.sh — push the locally-built dmf-cms image to GHCR.
+# publish-to-ghcr.sh — workflow-only publisher for the verified release image.
 #
-# Thin wrapper around the umbrella's bin/publish-image-to-ghcr.sh. The
-# umbrella script handles secrets (token via stdin, isolated DOCKER_CONFIG
-# with cleanup trap, never argv).
-#
-# Per the public container registry publishing plan §5.3: the IMAGE_TAG
-# must match the repo's VERSION file. This wrapper asserts that
-# precondition before invoking the umbrella push.
-#
-# Usage:
-#
-#   # From the gh CLI (token never typed, never in argv):
-#   gh auth token | GHCR_USER="<github-username>" \
-#     ~/repos/dmfdeploy/dmf-cms/scripts/publish-to-ghcr.sh
-#
-#   # Interactive:
-#   ~/repos/dmfdeploy/dmf-cms/scripts/publish-to-ghcr.sh
-#
-# The piped credential must be a token carrying write:packages
-# ('gh auth refresh -s write:packages' if 'gh auth status' does not list it).
-# An account password is not a substitute: GHCR rejects one with exactly the
-# same 'denied: denied' as a bad token, so the failure looks like a scope
-# problem and is not.
+# The exact-SHA DMF CMS Release workflow calls this wrapper after every current
+# main-protection check succeeds and image labels match the merged commit.
+# It forwards the short-lived workflow token to the umbrella helper on stdin.
+# Reject accidental local and alternate-workflow call paths. These environment
+# checks are defense in depth, not a security boundary against a package-write
+# token holder who can set arbitrary environment variables.
 #
 # Env knobs:
 #   GHCR_USER         GitHub username (default: prompt)
@@ -33,6 +17,39 @@
 #                     scripts/build-image.sh's local tag convention)
 
 set -euo pipefail
+
+# GHCR publication is performed by the exact-SHA release workflow after it has
+# verified every required check. Do not recreate the retired local PAT path.
+if [[ "${GITHUB_ACTIONS:-}" != "true" \
+  || "${GITHUB_WORKFLOW:-}" != "DMF CMS Release" \
+  || "${GITHUB_EVENT_NAME:-}" != "repository_dispatch" \
+  || "${GITHUB_REF:-}" != "refs/heads/main" \
+  || "${DMF_CMS_RELEASE_GATE_PASSED:-}" != "true" ]]; then
+  echo "ERROR: GHCR publication is restricted to the verified DMF CMS Release workflow." >&2
+  exit 1
+fi
+
+if [[ -z "${GITHUB_RUN_ID:-}" || -z "${GITHUB_SHA:-}" \
+  || "${DMF_CMS_RELEASE_SHA:-}" != "$GITHUB_SHA" ]]; then
+  echo "ERROR: release workflow identity or verified commit is missing." >&2
+  exit 1
+fi
+
+if ! command -v python3 >/dev/null 2>&1 || [[ ! -f "${GITHUB_EVENT_PATH:-}" ]]; then
+  echo "ERROR: cannot validate the release dispatch event." >&2
+  exit 1
+fi
+python3 - "$GITHUB_EVENT_PATH" <<'PY'
+import json
+import sys
+
+with open(sys.argv[1], encoding="utf-8") as event_file:
+    event = json.load(event_file)
+payload = event.get("client_payload")
+number = payload.get("pr_number") if isinstance(payload, dict) else None
+if event.get("action") != "cms-release" or not str(number or "").isdigit():
+    raise SystemExit("ERROR: only a validated cms-release dispatch may publish.")
+PY
 
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 REPO_ROOT="$(cd "$SCRIPT_DIR/.." && pwd)"

@@ -2,6 +2,16 @@ name: DCO
 on:
   pull_request:
     branches: [main]
+  workflow_dispatch:
+    inputs:
+      expected_sha:
+        description: Exact merged release commit to check
+        required: true
+        type: string
+      release_pr:
+        description: Merged release PR number
+        required: true
+        type: string
 permissions:
   contents: read
   pull-requests: read
@@ -12,9 +22,21 @@ jobs:
       - name: Verify Signed-off-by on every commit
         env:
           GH_TOKEN: ${{ github.token }}
-          COMMITS_URL: ${{ github.event.pull_request.commits_url }}
+          COMMITS_URL: ${{ github.event_name == 'pull_request' && github.event.pull_request.commits_url || format('https://api.github.com/repos/{0}/pulls/{1}/commits', github.repository, inputs.release_pr) }}
+          EXPECTED_SHA: ${{ inputs.expected_sha }}
+          RELEASE_PR: ${{ inputs.release_pr }}
+          EVENT_NAME: ${{ github.event_name }}
         run: |
           set -eu
+          if [ "$EVENT_NAME" = workflow_dispatch ]; then
+            [ "$GITHUB_REF" = refs/heads/main ]
+            [ "$GITHUB_SHA" = "$EXPECTED_SHA" ]
+            printf '%s' "$RELEASE_PR" | grep -qE '^[1-9][0-9]*$'
+            pr="$(gh api "repos/$GITHUB_REPOSITORY/pulls/$RELEASE_PR")"
+            jq -e --arg sha "$EXPECTED_SHA" \
+              '.merged == true and .base.ref == "main" and .merge_commit_sha == $sha' \
+              <<<"$pr" >/dev/null
+          fi
           missing=0
           # Page through the PR commits and check each message for the trailer.
           page=1

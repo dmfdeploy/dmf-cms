@@ -1,0 +1,130 @@
+name: DMF CMS Release
+
+on:
+  repository_dispatch:
+    types: [cms-release]
+
+permissions:
+  contents: read
+
+concurrency:
+  group: cms-release
+  cancel-in-progress: false
+
+jobs:
+  release:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 90
+    permissions:
+      actions: write
+      checks: read
+      contents: write
+      packages: write
+      pull-requests: read
+    steps:
+      - name: Checkout release workflow source
+        uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683  # v4.2.2
+        with:
+          ref: ${{ github.sha }}
+          fetch-depth: 0
+          persist-credentials: true
+
+      - name: Validate merged release request
+        id: release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: python3 scripts/release-gate.py validate-event
+
+      - name: Dispatch required checks on the merged SHA
+        env:
+          GH_TOKEN: ${{ github.token }}
+          RELEASE_SHA: ${{ steps.release.outputs.sha }}
+          RELEASE_PR: ${{ steps.release.outputs.pr_number }}
+        run: python3 scripts/release-gate.py dispatch --sha "$RELEASE_SHA" --pr "$RELEASE_PR"
+
+      - name: Wait for every live required check
+        env:
+          GH_TOKEN: ${{ github.token }}
+          RELEASE_SHA: ${{ steps.release.outputs.sha }}
+          RELEASE_PR: ${{ steps.release.outputs.pr_number }}
+          DISPATCH_STARTED_AT: ${{ steps.release.outputs.dispatch_started_at }}
+        run: |
+          python3 scripts/release-gate.py wait \
+            --sha "$RELEASE_SHA" \
+            --pr "$RELEASE_PR" \
+            --started-at "$DISPATCH_STARTED_AT"
+          echo "DMF_CMS_RELEASE_GATE_PASSED=true" >> "$GITHUB_ENV"
+
+      - name: Check version synchronization
+        run: scripts/sync-version.sh --check
+
+      - name: Build image from verified release commit
+        env:
+          DMF_CMS_RELEASE_SHA: ${{ steps.release.outputs.sha }}
+        run: |
+          set -eu
+          [ "$(git rev-parse HEAD)" = "$DMF_CMS_RELEASE_SHA" ]
+          scripts/build-image.sh --no-hint
+          version="$(tr -d '[:space:]' < VERSION)"
+          labels="$(docker image inspect "registry.dmf.example.com/dmf-cms:$version" \
+            --format '{{json .Config.Labels}}')"
+          python3 - "$labels" "$version" "$DMF_CMS_RELEASE_SHA" <<'PY'
+          import json
+          import sys
+
+          labels = json.loads(sys.argv[1])
+          expected_version, expected_revision = sys.argv[2:]
+          if labels.get("org.opencontainers.image.version") != expected_version:
+              raise SystemExit("image version label differs from VERSION")
+          if labels.get("org.opencontainers.image.revision") != expected_revision:
+              raise SystemExit("image revision label differs from the full release SHA")
+          if labels.get("org.opencontainers.image.source") != "https://github.com/dmfdeploy/dmf-cms":
+              raise SystemExit("image source label differs from this repository")
+          PY
+
+      - name: Check for an existing GHCR image
+        id: ghcr_image
+        env:
+          RELEASE_SHA: ${{ steps.release.outputs.sha }}
+          RELEASE_VERSION: ${{ steps.release.outputs.version }}
+        run: |
+          set -eu
+          exists="$(python3 scripts/release-gate.py inspect-ghcr \
+            --version "$RELEASE_VERSION" --sha "$RELEASE_SHA")"
+          echo "exists=$exists" >> "$GITHUB_OUTPUT"
+
+      - name: Create or verify immutable release tag
+        env:
+          RELEASE_SHA: ${{ steps.release.outputs.sha }}
+          RELEASE_VERSION: ${{ steps.release.outputs.version }}
+        run: |
+          set -eu
+          tag="v$RELEASE_VERSION"
+          if git show-ref --verify --quiet "refs/tags/$tag"; then
+            [ "$(git rev-parse "$tag^{commit}")" = "$RELEASE_SHA" ]
+          else
+            git tag -a "$tag" -m "Release $tag" "$RELEASE_SHA"
+            git push origin "refs/tags/$tag"
+          fi
+
+      - name: Checkout GHCR publication helper
+        uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683  # v4.2.2
+        with:
+          repository: dmfdeploy/dmfdeploy
+          ref: 6536e4d441c95038d3eb6c19e309267eb2f93ee7
+          path: dmfdeploy
+          token: ${{ github.token }}
+          persist-credentials: false
+
+      - name: Publish the verified image to GHCR
+        if: steps.ghcr_image.outputs.exists != 'true'
+        env:
+          RELEASE_TOKEN: ${{ github.token }}
+          GHCR_USER: ${{ github.actor }}
+          DMFDEPLOY_UMBRELLA: ${{ github.workspace }}/dmfdeploy
+          DMF_CMS_RELEASE_SHA: ${{ steps.release.outputs.sha }}
+        run: |
+          set -eu
+          release_token="$RELEASE_TOKEN"
+          unset RELEASE_TOKEN
+          printf '%s' "$release_token" | scripts/publish-to-ghcr.sh
