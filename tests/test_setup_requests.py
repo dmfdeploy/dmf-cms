@@ -1,13 +1,13 @@
 from __future__ import annotations
 
 import copy
-import pytest
 
+import pytest
 from fastapi.testclient import TestClient
 
-import dmf_cms.main as main
+from dmf_cms import main
 from dmf_cms.main import create_app
-from dmf_cms.settings import OIDCSettings, SetupRequestSettings, Settings
+from dmf_cms.settings import OIDCSettings, Settings, SetupRequestSettings
 from dmf_cms.setup_requests import (
     ACTION,
     DATA_KEYS,
@@ -20,8 +20,8 @@ from dmf_cms.setup_requests import (
     validate_receipt,
 )
 
-
 OPERATOR_GROUPS = ["dmf-console-operator"]
+CLUSTER_UID = "4c6a1bca-4f03-4ec8-8f27-b92ddcb343e2"
 
 
 class MemoryWriter:
@@ -81,7 +81,7 @@ def _client(monkeypatch, *, groups=None, subject="ops", bindings=None):
 def test_make_receipt_has_exact_immutable_v1_schema_and_bounded_lifetime():
     receipt = make_receipt(
         env_id="sandbox-abcd",
-        cluster_uid="cluster-uid",
+        cluster_uid=CLUSTER_UID,
         actor="oidc-subject-1",
         role="operator",
         reason="Initial inventory setup",
@@ -101,7 +101,7 @@ def test_make_receipt_has_exact_immutable_v1_schema_and_bounded_lifetime():
         "request_id": "a" * 32,
         "action": ACTION,
         "env_id": "sandbox-abcd",
-        "cluster_uid": "cluster-uid",
+        "cluster_uid": CLUSTER_UID,
         "actor": "oidc-subject-1",
         "role": "operator",
         "reason": "Initial inventory setup",
@@ -111,7 +111,7 @@ def test_make_receipt_has_exact_immutable_v1_schema_and_bounded_lifetime():
 
 
 def test_receipt_validation_fails_closed_for_binding_schema_immutability_and_time():
-    bindings = SetupRequestBindings("sandbox-abcd", "cluster-uid")
+    bindings = SetupRequestBindings("sandbox-abcd", CLUSTER_UID)
     original = make_receipt(
         env_id=bindings.env_id,
         cluster_uid=bindings.cluster_uid,
@@ -123,6 +123,9 @@ def test_receipt_validation_fails_closed_for_binding_schema_immutability_and_tim
     )
     assert validate_receipt(original, bindings, now=101)
     cases = []
+    mutated = copy.deepcopy(original)
+    mutated["apiVersion"] = "example.invalid/v1"  # type: ignore[assignment]
+    cases.append(mutated)
     mutated = copy.deepcopy(original)
     mutated["immutable"] = False
     cases.append(mutated)
@@ -145,14 +148,19 @@ def test_receipt_validation_fails_closed_for_binding_schema_immutability_and_tim
     mutated["data"]["reason"] = "bad\nreason"  # type: ignore[index]
     cases.append(mutated)
     assert all(not validate_receipt(case, bindings, now=101) for case in cases)
-    assert not validate_receipt(original, SetupRequestBindings("other-env", "cluster-uid"), now=101)
+    assert not validate_receipt(original, SetupRequestBindings("other-env", CLUSTER_UID), now=101)
+    assert not validate_receipt(
+        original,
+        SetupRequestBindings("sandbox-abcd", "not-a-kubernetes-uid"),
+        now=101,
+    )
     assert not validate_receipt(original, bindings, now=100 + RECEIPT_TTL_SECONDS)
 
 
 def test_receipt_builder_rejects_bad_actor_role_reason_and_binding():
     base = {
         "env_id": "sandbox-abcd",
-        "cluster_uid": "cluster-uid",
+        "cluster_uid": CLUSTER_UID,
         "actor": "operator-1",
         "role": "operator",
         "reason": "setup",
@@ -167,6 +175,7 @@ def test_receipt_builder_rejects_bad_actor_role_reason_and_binding():
         {"reason": "x" * 241},
         {"env_id": " "},
         {"cluster_uid": ""},
+        {"cluster_uid": "cluster-uid"},
         {"request_id": "../../secret"},
     ):
         with pytest.raises(ValueError):
@@ -252,17 +261,18 @@ def test_setup_request_rejects_breakglass_extra_fields_and_bad_reasons(monkeypat
 
 
 def test_setup_request_is_disabled_without_both_server_bindings(monkeypatch):
-    client, writer, app = _client(
-        monkeypatch,
-        bindings=SetupRequestSettings(env_id="sandbox-abcd", cluster_uid=""),
-    )
-    response = client.post(
-        "/api/setup-requests/born-inventory-secretid-issue",
-        json={"reason": "setup"},
-        headers={"origin": "https://console.example.invalid"},
-    )
-    assert response.status_code == 503
-    assert writer.receipts == []
+    for bindings in (
+        SetupRequestSettings(env_id="sandbox-abcd", cluster_uid=""),
+        SetupRequestSettings(env_id="sandbox-abcd", cluster_uid="not-a-kubernetes-uid"),
+    ):
+        client, writer, _ = _client(monkeypatch, bindings=bindings)
+        response = client.post(
+            "/api/setup-requests/born-inventory-secretid-issue",
+            json={"reason": "setup"},
+            headers={"origin": "https://console.example.invalid"},
+        )
+        assert response.status_code == 503
+        assert writer.receipts == []
 
 
 def test_setup_request_never_acknowledges_storage_failure_or_claim_collision(monkeypatch):
