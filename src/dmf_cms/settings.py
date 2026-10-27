@@ -253,6 +253,7 @@ class MediaTenancySettings:
     mode: str = ""  # "" | "single" | "scoped"
     group_tenant_map: tuple[tuple[str, tuple[str, ...]], ...] = ()
 
+
     @property
     def configured(self) -> bool:
         return self.mode in ("single", "scoped")
@@ -273,6 +274,18 @@ class MediaTenancySettings:
                 if slug not in out:
                     out.append(slug)
         return tuple(out)
+
+
+@dataclass(frozen=True)
+class SetupRequestSettings:
+    """Deployment-derived bindings for the narrow bootstrap receipt action."""
+
+    env_id: str = ""
+    cluster_uid: str = ""
+
+    @property
+    def configured(self) -> bool:
+        return bool(self.env_id.strip() and self.cluster_uid.strip())
 
 
 @dataclass(frozen=True)
@@ -471,6 +484,7 @@ class Settings:
     forgejo: ForgejoSettings = field(default_factory=ForgejoSettings)
     mxl: MXLSettings = field(default_factory=MXLSettings)
     media_tenancy: MediaTenancySettings = field(default_factory=MediaTenancySettings)
+    setup_requests: SetupRequestSettings = field(default_factory=SetupRequestSettings)
 
 
 def _parse_group_tenant_map(raw: str | None) -> tuple[tuple[str, tuple[str, ...]], ...]:
@@ -582,5 +596,9 @@ def load_settings() -> Settings:
             group_tenant_map=_parse_group_tenant_map(
                 os.getenv("DMF_CONSOLE_MEDIA_GROUP_TENANT_MAP")
             ),
+        ),
+        setup_requests=SetupRequestSettings(
+            env_id=os.getenv("DMF_CONSOLE_SETUP_REQUEST_ENV_ID", ""),
+            cluster_uid=os.getenv("DMF_CONSOLE_SETUP_REQUEST_CLUSTER_UID", ""),
         ),
     )

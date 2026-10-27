@@ -34,6 +34,9 @@ spec:
         checksum/catalog-config: {{ include (print $.Template.BasePath "/configmap-catalog.yaml") . | sha256sum }}
       {{- end }}
     spec:
+      {{- if .Values.serviceAccountName }}
+      serviceAccountName: {{ .Values.serviceAccountName | quote }}
+      {{- end }}
       {{- with .Values.imagePullSecrets }}
       imagePullSecrets:
         {{- toYaml . | nindent 8 }}
@@ -79,6 +82,14 @@ spec:
               {{- end }}
             - name: DMF_CONSOLE_DEV_LOGIN_ENABLED
               value: {{ .Values.env.devLoginEnabled | quote }}
+            {{- if .Values.setupRequests.envId }}
+            - name: DMF_CONSOLE_SETUP_REQUEST_ENV_ID
+              value: {{ .Values.setupRequests.envId | quote }}
+            {{- end }}
+            {{- if .Values.setupRequests.clusterUid }}
+            - name: DMF_CONSOLE_SETUP_REQUEST_CLUSTER_UID
+              value: {{ .Values.setupRequests.clusterUid | quote }}
+            {{- end }}
             - name: DMF_CONSOLE_OIDC_ENABLED
               value: {{ .Values.oidc.enabled | quote }}
             - name: DMF_CONSOLE_OIDC_ISSUER_URL

@@ -165,6 +165,15 @@ from .security import (
     user_from_claims,
 )
 from .settings import Settings, load_settings
+from .setup_requests import (
+    ACTION as SETUP_REQUEST_ACTION,
+    RECEIPT_TTL_SECONDS,
+    KubernetesReceiptWriter,
+    ReceiptAlreadyExists,
+    ReceiptStoreError,
+    SetupRequestBindings,
+    make_receipt,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -255,6 +264,38 @@ class BasePathMiddleware:
 
 def _require_user(request: Request) -> bool:
     return session_user(request.session) is not None
+
+
+def _same_origin_post(request: Request) -> bool:
+    """Require an explicit Origin matching this console for cookie-auth writes."""
+    raw_origin = request.headers.get("origin", "")
+    if not raw_origin:
+        return False
+    try:
+        from urllib.parse import urlsplit
+
+        origin = urlsplit(raw_origin)
+        current = urlsplit(str(request.base_url))
+        if (
+            origin.scheme not in {"http", "https"}
+            or not origin.netloc
+            or origin.path not in {"", "/"}
+            or origin.query
+            or origin.fragment
+            or origin.username
+            or origin.password
+        ):
+            return False
+
+        def normalized(parts):
+            scheme = parts.scheme.lower()
+            host = (parts.hostname or "").lower()
+            port = parts.port or (443 if scheme == "https" else 80)
+            return scheme, host, port
+
+        return normalized(origin) == normalized(current)
+    except (ValueError, AttributeError):
+        return False
 
 
 def _require_min_role(request: Request, minimum: str) -> tuple[UserIdentity | None, JSONResponse | None]:
@@ -3515,6 +3556,7 @@ def create_app(settings: Settings | None = None, contract: AppContract | None = 
     )
     app.state.settings = settings
     app.state.contract = contract
+    app.state.setup_request_writer = KubernetesReceiptWriter()
     # Per-app 5s TTL cache of the scope-filtered service list, so the live-view
     # endpoints (polled per-tile) don't re-query NetBox on every tick (WP-D).
     scoped_service_cache = media_workloads.ScopedServiceCache()
@@ -3721,6 +3763,78 @@ def create_app(settings: Settings | None = None, contract: AppContract | None = 
                 _sanitize_audit_field(user.subject), _sanitize_audit_field(exc.body),
             )
             return JSONResponse({"error": "authentik API error"}, status_code=exc.status)
+
+    @app.post("/api/setup-requests/born-inventory-secretid-issue")
+    async def create_born_inventory_setup_request(request: Request):
+        """Persist one authenticated, immutable C5 receipt for setup-only 694."""
+        if not _same_origin_post(request):
+            return JSONResponse({"error": "same-origin request required"}, status_code=403)
+
+        settings = request.app.state.settings
+        if (
+            settings.runtime_mode != "cluster"
+            or settings.dev_login_enabled
+            or not settings.oidc.configured
+            or not settings.setup_requests.configured
+        ):
+            return JSONResponse({"error": "setup request action unavailable"}, status_code=503)
+
+        user, err = _require_min_role(request, "operator")
+        if err is not None:
+            return err
+        real_user = session_user(request.session)
+        if real_user is None:
+            return JSONResponse({"error": "unauthorized"}, status_code=401)
+        if real_user.subject == "akadmin" or "break-glass" in real_user.groups:
+            return JSONResponse({"error": "forbidden"}, status_code=403)
+
+        content_type = request.headers.get("content-type", "").split(";", 1)[0].strip().lower()
+        if content_type != "application/json":
+            return JSONResponse({"error": "application/json required"}, status_code=415)
+        try:
+            raw_body = await request.body()
+            if len(raw_body) > 4096:
+                return JSONResponse({"error": "request body too large"}, status_code=413)
+            body = json.loads(raw_body)
+        except (ValueError, json.JSONDecodeError):
+            return JSONResponse({"error": "invalid JSON"}, status_code=400)
+        if not isinstance(body, dict) or set(body) != {"reason"}:
+            return JSONResponse({"error": "request must contain only reason"}, status_code=400)
+        reason = body.get("reason")
+        if not isinstance(reason, str):
+            return JSONResponse({"error": "invalid reason"}, status_code=400)
+
+        try:
+            receipt = make_receipt(
+                env_id=settings.setup_requests.env_id,
+                cluster_uid=settings.setup_requests.cluster_uid,
+                actor=real_user.subject,
+                role=user.role,
+                reason=reason,
+            )
+        except ValueError as exc:
+            return JSONResponse({"error": str(exc)}, status_code=400)
+
+        try:
+            await asyncio.to_thread(
+                request.app.state.setup_request_writer.create_and_verify,
+                receipt,
+            )
+        except ReceiptAlreadyExists:
+            return JSONResponse({"error": "request id collision; retry"}, status_code=409)
+        except ReceiptStoreError:
+            return JSONResponse({"error": "setup request could not be recorded"}, status_code=503)
+
+        data = receipt["data"]
+        assert isinstance(data, dict)
+        return JSONResponse(
+            {
+                "request_id": data["request_id"],
+                "action": SETUP_REQUEST_ACTION,
+                "expires_at": int(data["expires_at"]),
+            },
+            status_code=201,
+        )
 
     # ------------------------------------------------------------------
     # Async operation tracking endpoints
