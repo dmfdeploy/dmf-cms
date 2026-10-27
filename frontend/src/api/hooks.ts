@@ -7,6 +7,7 @@ import type {
   WorkflowLaunchResult,
   WorkflowJobStatus,
   PasskeyInvitationResponse,
+  SetupRequestReceiptResponse,
   AdminHealthResponse,
   AdminUsersResponse,
   AdminJobsResponse,
@@ -160,6 +161,19 @@ export function useCreatePasskeyInvitation() {
       apiCall<PasskeyInvitationResponse>('/api/admin/invitations', {
         method: 'POST',
       }),
+  })
+}
+
+export function useCreateSetupRequestReceipt() {
+  return useMutation({
+    mutationFn: (reason: string) =>
+      apiCall<SetupRequestReceiptResponse>(
+        '/api/setup-requests/born-inventory-secretid-issue',
+        {
+          method: 'POST',
+          body: JSON.stringify({ reason }),
+        },
+      ),
   })
 }
 

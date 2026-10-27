@@ -1,6 +1,6 @@
 import { useState } from 'react'
 import { QRCodeSVG } from 'qrcode.react'
-import { useCurrentUser, useCreatePasskeyInvitation } from '../api/hooks'
+import { useCurrentUser, useCreatePasskeyInvitation, useCreateSetupRequestReceipt } from '../api/hooks'
 import { APIError } from '../api/client'
 import { settleQuery } from '../lib/queryState'
 import PageHeading from '../components/PageHeading'
@@ -34,9 +34,14 @@ export default function Settings() {
   // share that claim's copy (Art. 1).
   const unauthorized = userQuery.error instanceof APIError && userQuery.error.status === 401
   const invitationMutation = useCreatePasskeyInvitation()
+  const setupRequestMutation = useCreateSetupRequestReceipt()
   const [enrollmentUrl, setEnrollmentUrl] = useState('')
   const [expires, setExpires] = useState('')
   const [error, setError] = useState('')
+  const [setupReason, setSetupReason] = useState('')
+  const [setupRequestId, setSetupRequestId] = useState('')
+  const [setupRequestExpiry, setSetupRequestExpiry] = useState('')
+  const [setupRequestError, setSetupRequestError] = useState('')
 
   const handleCreateInvitation = async () => {
     setError('')
@@ -52,6 +57,27 @@ export default function Settings() {
 
   const handleCopy = () => {
     navigator.clipboard.writeText(enrollmentUrl)
+  }
+
+  const handleCreateSetupRequest = async () => {
+    setSetupRequestError('')
+    setSetupRequestId('')
+    try {
+      const result = await setupRequestMutation.mutateAsync(setupReason)
+      setSetupRequestId(result.request_id)
+      setSetupRequestExpiry(new Date(result.expires_at * 1000).toLocaleString())
+      setSetupReason('')
+    } catch (err: unknown) {
+      setSetupRequestError(err instanceof Error ? err.message : 'The request could not be recorded.')
+    }
+  }
+
+  const handleCopySetupRequestId = async () => {
+    try {
+      await navigator.clipboard.writeText(setupRequestId)
+    } catch {
+      setSetupRequestError('Could not copy the request id. Select and copy it from the field.')
+    }
   }
 
   if (isLoading) {
@@ -77,6 +103,9 @@ export default function Settings() {
   }
 
   const role = user.role || 'viewer'
+  const roleRank = { viewer: 0, operator: 1, engineer: 2, admin: 3 }[role] ?? -1
+  const canRequestBornInventorySetup =
+    roleRank >= 1 && user.subject !== 'akadmin' && !user.groups.includes('break-glass')
 
   return (
     <div className="flex-1 overflow-y-auto p-6">
@@ -180,6 +209,58 @@ export default function Settings() {
             )}
           </div>
         </div>
+
+        {canRequestBornInventorySetup && (
+          <div className="bg-panel border border-border rounded-lg mt-6">
+            <div className="p-4 border-b border-border">
+              <h2 className="font-bold text-sm text-text">Bootstrap inventory setup</h2>
+            </div>
+            <div className="p-4">
+              <p className="text-sm text-muted mb-4">
+                Create a one-use authorization receipt for the 694 inventory setup step. It expires in 15 minutes. Return to dmf-init and enter the id to continue bootstrap.
+              </p>
+              <label htmlFor="setup-request-reason" className="block text-xs text-muted mb-1">
+                Reason
+              </label>
+              <textarea
+                id="setup-request-reason"
+                value={setupReason}
+                onChange={(event) => setSetupReason(event.target.value)}
+                maxLength={240}
+                rows={3}
+                className="w-full rounded-lg border border-border bg-bg px-3 py-2 text-sm text-text"
+                placeholder="Why are you running the initial inventory setup?"
+              />
+              <button
+                type="button"
+                onClick={handleCreateSetupRequest}
+                disabled={setupRequestMutation.isPending || !setupReason.trim()}
+                className="mt-3 px-3 py-2 rounded-lg font-medium transition-colors bg-accent-blue text-bg hover:bg-accent-blue/90 text-sm disabled:opacity-60"
+              >
+                {setupRequestMutation.isPending ? 'Recording…' : 'Create setup receipt'}
+              </button>
+              {setupRequestError && (
+                <p role="alert" className="mt-3 text-sm text-red-300">{setupRequestError}</p>
+              )}
+              {setupRequestId && (
+                <div className="mt-4 rounded-lg border border-border bg-bg p-3">
+                  <p className="text-sm text-text">Request id — paste into the waiting dmf-init setup gate</p>
+                  <div className="mt-2 flex flex-wrap items-center gap-2">
+                    <code className="break-all font-mono text-sm text-text">{setupRequestId}</code>
+                    <button
+                      type="button"
+                      onClick={handleCopySetupRequestId}
+                      className="text-xs text-accent-blue hover:text-accent-blue/80"
+                    >
+                      Copy id
+                    </button>
+                  </div>
+                  <p className="mt-2 text-xs text-muted">Expires: {setupRequestExpiry}</p>
+                </div>
+              )}
+            </div>
+          </div>
+        )}
       </div>
     </div>
   )

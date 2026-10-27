@@ -133,6 +133,12 @@ export interface PasskeyInvitationResponse {
   expires: string
 }
 
+export interface SetupRequestReceiptResponse {
+  request_id: string
+  action: 'born-inventory-secretid-issue'
+  expires_at: number
+}
+
 export interface IntegrationStatus {
   connected: boolean
   latency_ms?: number
