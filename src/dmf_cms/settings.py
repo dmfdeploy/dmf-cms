@@ -1,9 +1,11 @@
 from __future__ import annotations
 
-from dataclasses import dataclass, field
-from pathlib import Path
 import logging
 import os
+from dataclasses import dataclass, field
+from pathlib import Path
+
+from .setup_requests import is_cluster_uid
 
 logger = logging.getLogger(__name__)
 
@@ -285,7 +287,7 @@ class SetupRequestSettings:
 
     @property
     def configured(self) -> bool:
-        return bool(self.env_id.strip() and self.cluster_uid.strip())
+        return bool(self.env_id.strip()) and is_cluster_uid(self.cluster_uid.strip())
 
 
 @dataclass(frozen=True)

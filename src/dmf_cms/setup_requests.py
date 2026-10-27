@@ -7,14 +7,13 @@ import os
 import re
 import ssl
 import time
-from pathlib import Path
 import urllib.error
 import urllib.parse
 import urllib.request
 import uuid
 from dataclasses import dataclass
+from pathlib import Path
 from typing import Protocol
-
 
 NAMESPACE = "dmf-setup-requests"
 ACTION = "born-inventory-secretid-issue"
@@ -38,6 +37,17 @@ DATA_KEYS = frozenset(
 )
 
 
+def is_cluster_uid(value: object) -> bool:
+    """Return whether value is a canonical Kubernetes namespace UID."""
+    if not isinstance(value, str):
+        return False
+    try:
+        parsed = uuid.UUID(value)
+    except (AttributeError, ValueError):
+        return False
+    return str(parsed) == value
+
+
 class ReceiptStoreError(RuntimeError):
     """The receipt store could not persist and verify a request."""
 
@@ -57,7 +67,7 @@ class SetupRequestBindings:
 
     @property
     def configured(self) -> bool:
-        return bool(self.env_id.strip() and self.cluster_uid.strip())
+        return bool(self.env_id.strip()) and is_cluster_uid(self.cluster_uid.strip())
 
 
 def _safe_c5_value(value: str, *, field: str, max_length: int) -> str:
@@ -83,6 +93,8 @@ def make_receipt(
         raise ValueError("invalid request id")
     env_id = _safe_c5_value(env_id, field="environment id", max_length=128)
     cluster_uid = _safe_c5_value(cluster_uid, field="cluster uid", max_length=128)
+    if not is_cluster_uid(cluster_uid):
+        raise ValueError("invalid cluster uid")
     actor = _safe_c5_value(actor, field="actor", max_length=256)
     role = _safe_c5_value(role, field="role", max_length=32)
     if role not in {"operator", "engineer", "admin"}:
@@ -119,7 +131,12 @@ def validate_receipt(
     data = receipt.get("data")
     if not isinstance(metadata, dict) or not isinstance(data, dict):
         return False
-    if receipt.get("kind") != "ConfigMap" or receipt.get("immutable") is not True:
+    if (
+        receipt.get("apiVersion") != "v1"
+        or receipt.get("kind") != "ConfigMap"
+        or receipt.get("immutable") is not True
+        or not bindings.configured
+    ):
         return False
     request_id = data.get("request_id")
     if not isinstance(request_id, str) or not REQUEST_ID_RE.fullmatch(request_id):
