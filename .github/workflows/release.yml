@@ -130,4 +130,4 @@ jobs:
           set -eu
           publisher_token="$RELEASE_TOKEN"
           unset RELEASE_TOKEN
-          printf '%s' "$publisher_token" | scripts/publish-to-ghcr.sh
+          printf '%s\n' "$publisher_token" | scripts/publish-to-ghcr.sh

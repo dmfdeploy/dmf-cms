@@ -4,6 +4,7 @@ import json
 import os
 import re
 import subprocess
+import textwrap
 from pathlib import Path
 
 
@@ -18,11 +19,17 @@ def test_release_workflow_wrapper_reaches_real_shared_publisher(tmp_path):
     repo = Path(__file__).resolve().parents[1]
     version = (repo / "VERSION").read_text(encoding="utf-8").strip()
     workflow = (repo / ".github/workflows/release.yml").read_text(encoding="utf-8")
-    publish_step = workflow.split("- name: Publish the verified image to GHCR", 1)[1]
+    publish_step = workflow.split("- name: Publish the verified image to GHCR", 1)[1].split(
+        "\n      - name:", 1
+    )[0]
     user_match = re.search(r"^\s+GHCR_USER:\s+\$\{\{\s*github\.actor\s*\}\}\s*$", publish_step, re.MULTILINE)
     docker_match = re.search(r"^\s+DOCKER_HOST:\s+(unix:///var/run/docker.sock)\s*$", publish_step, re.MULTILINE)
+    run_match = re.search(r"^        run: \|\n((?:^          .*\n)+)", publish_step, re.MULTILINE)
     assert user_match, "release workflow must pass GHCR_USER from github.actor"
     assert docker_match, "release workflow must override the shared helper's Colima socket"
+    assert run_match, "release workflow publish invocation must be present"
+    workflow_command = textwrap.dedent(run_match.group(1))
+    assert 'printf \'%s\\n\' "$publisher_token" | scripts/publish-to-ghcr.sh' in workflow_command
 
     fake_bin = tmp_path / "bin"
     fake_bin.mkdir()
@@ -51,6 +58,7 @@ def test_release_workflow_wrapper_reaches_real_shared_publisher(tmp_path):
         "HOME": str(tmp_path),
         "DOCKER_CALLS": str(calls),
         "DOCKER_TOKEN": str(received_token),
+        "RELEASE_TOKEN": "test-token-never-log",
         "DMFDEPLOY_UMBRELLA": str(umbrella),
         "GITHUB_ACTIONS": "true",
         "GITHUB_WORKFLOW": "DMF CMS Release",
@@ -65,7 +73,7 @@ def test_release_workflow_wrapper_reaches_real_shared_publisher(tmp_path):
         "DOCKER_HOST": docker_match.group(1),
     })
     result = subprocess.run(
-        ["bash", "scripts/publish-to-ghcr.sh"], input="test-token-never-log\n",
+        ["bash", "-e", "-o", "pipefail", "-c", workflow_command],
         text=True, capture_output=True, env=env, check=False,
     )
     assert result.returncode == 0, result.stderr
