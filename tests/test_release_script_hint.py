@@ -136,7 +136,9 @@ def test_hint_rebuilds_from_the_tagged_commit_before_publishing(tmp_path) -> Non
     label = out.index('"org.opencontainers.image.revision"', build)
     publish = out.index("scripts/publish-to-ghcr.sh", label)
     assert detach < build < label < publish
-    assert "git rev-parse --short v0.1.1^{commit}" in out
+    # The label holds the full SHA, so the comparison must print the full SHA.
+    assert "git rev-parse v0.1.1^{commit}" in out
+    assert "--short" not in out
 
 
 def test_numbered_procedure_rebuilds_before_publishing() -> None:
@@ -156,6 +158,28 @@ def test_numbered_procedure_rebuilds_before_publishing() -> None:
         before = "\n".join(lines[:publish])
         assert "scripts/build-image.sh" in before, "publish step has no earlier build-image.sh"
         assert "git rev-parse" in before, "publish step has no earlier git rev-parse label check"
+
+
+def test_hint_explains_the_unattended_flow_and_the_enable_variable(tmp_path) -> None:
+    """The workflow is inert until RELEASE_ENABLED is 'true'; the hint says both cases."""
+    repo = make_scratch_repo(tmp_path)
+    r = run_release(repo, "patch")
+    assert r.returncode == 0, r.stderr
+    out = r.stdout
+    check = out.index("gh variable get RELEASE_ENABLED -R dmfdeploy/dmf-cms")
+    assert "you must not tag or publish by hand" in out
+    # The check comes before the manual steps it gates.
+    assert check < out.index("1. Land the bump")
+    # Nothing in the hint tells the operator to dispatch a release.
+    assert "dispatches" not in out and "repository_dispatch" not in out
+    assert "`release`" in out  # printed literally, not run as a command
+
+
+def test_build_image_labels_the_image_with_the_full_commit_sha() -> None:
+    """The release workflow compares the revision label with the full SHA."""
+    script = (REPO_ROOT / "scripts" / "build-image.sh").read_text()
+    assert 'GIT_SHA="$(git rev-parse HEAD)"' in script
+    assert "rev-parse --short" not in script
 
 
 PUBLISH_RECIPE_LINE = "1. Publish to GHCR:"

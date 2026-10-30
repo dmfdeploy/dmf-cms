@@ -1,7 +1,7 @@
 # DMF Console — Development & Build Rules
 
 **Status:** Authoritative. Violations cause rollout drift. Read before any release.
-**Last update:** 2026-05-23 — rewritten for the ADR-0025 GHCR-canonical / Zot-mirror flow.
+**Last update:** 2026-10-30: unattended release workflow behind the `RELEASE_ENABLED` variable. Earlier: 2026-05-23, rewritten for the ADR-0025 GHCR-canonical / Zot-mirror flow.
 
 This document defines the **only** supported way to version, build, and ship dmf-cms.
 The `scripts/` directory in the repo root implements these rules; if you find yourself
@@ -83,16 +83,19 @@ scripts/build-image.sh --no-push        # build only (the normal mode)
 scripts/build-image.sh --check          # validate state, don't build
 ```
 
-Image labels embed `org.opencontainers.image.version` and `.revision` (git sha)
-for traceability.
+Image labels embed `org.opencontainers.image.version` and `.revision` for
+traceability. The revision label holds the full 40-character commit SHA. The
+release workflow compares it with the verified commit, so a short SHA would not
+match.
 
 ### `release.sh`
 
-End-to-end release: bump → sync → commit → build (local only). Refuses
+Prepares the release bump: bump → sync → commit → build (local only). Refuses
 dirty trees. Does **not** push, and does not tag unless you pass `--tag`.
-Run it on a release branch cut from `origin/main` (§4, step 4). Publishing the
-image is `publish-to-ghcr.sh`, and only after you rebuild from the release tag
-(§4, steps 6 to 8).
+Run it on a release branch cut from `origin/main` (§4). When the release
+workflow is enabled, it tags and publishes for you after the bump merges (§4,
+"Unattended release"). Until then, publishing is `publish-to-ghcr.sh`, and only
+after you rebuild from the release tag (§4, "Manual release").
 
 ```bash
 scripts/release.sh patch                # 0.2.2 → 0.2.3
@@ -106,15 +109,15 @@ The script will:
 2. Commit the bump as `chore(release): v<NEW>` (signed off)
 3. Build the Docker image locally as `registry.dmf.example.com/dmf-cms:<NEW>`
 
-That image is a pre-merge build. Rebuild it from the tagged commit after the
-release PR merges (see below) before you publish.
+That image is a pre-merge build. The release workflow builds the merged commit
+again. On the manual path, rebuild it from the tagged commit after the release
+PR merges (see below) before you publish.
 
 `--tag` creates the `v<NEW>` tag at that point. Leave it off. `main` is
 protected and merges are rebase-only, so a tag cut before the merge points at a
 commit that never reaches `main`.
 
-To complete the release, land the bump through a pull request, then tag the
-merged commit. Cut the release branch from `origin/main` before you run
+To complete the release, land the bump through a pull request. Cut the release branch from `origin/main` before you run
 `release.sh`. After the previous feature PR is rebase-merged, you are usually
 still on its pre-rebase branch, and `release.sh` commits on whatever branch is
 checked out. The release PR would then carry that stale feature commit, or
@@ -126,24 +129,23 @@ git switch -c release/0.4.0 origin/main
 scripts/release.sh 0.4.0
 git push -u origin release/0.4.0
 gh pr create --title "chore(release): v0.4.0" --body "Refs dmfdeploy/dmfdeploy#<N>"
-# ...wait for the required checks and the merge, then:
-git fetch origin
-git tag -a v0.4.0 -m "Release v0.4.0" origin/main   # origin/main, never local main
-git push origin v0.4.0
-git merge-base --is-ancestor v0.4.0^{commit} origin/main   # prove it landed
 ```
 
-Tag `origin/main`, not local `main`. Local `main` still holds the commit from
-before the rebase, so the two have diverged.
+After the merge, the release workflow takes over (§4). The PR title and body
+matter: the workflow accepts only a commit whose subject is exactly
+`chore(release): v<VERSION>` and that carries a fully qualified
+`dmfdeploy/dmfdeploy#<N>` reference on the commit or on its merged pull
+request.
 
-**The tag push is one-shot.** Two rulesets guard tags on this repo:
+**A release tag is one-shot.** Two rulesets guard tags on this repo:
 `tags-nonrelease-block` blocks creating, updating or deleting any tag that does
 not match `v*`, and `tags-release-protect` blocks updating or deleting a `v*`
 tag once it exists. You cannot correct a wrong tag. You can only cut a new
-version. Before you push, confirm that `origin/main` is the merged commit you
-mean.
+version. The release workflow refuses to tag a version below an existing tag, or
+over a tag at another commit.
 
-**Rebuild the image from the tagged commit before you publish.** The image
+**On the manual path, rebuild the image from the tagged commit before you
+publish.** The image
 that `release.sh` built carries the pre-rebase commit of the bump in its
 `org.opencontainers.image.revision` label, and that commit never reaches
 `origin/main`. `publish-to-ghcr.sh` only re-tags and pushes the image that
@@ -157,7 +159,7 @@ git switch --detach v0.4.0              # clean tree; builds the tagged commit
 scripts/build-image.sh --no-push
 docker inspect --format '{{ index .Config.Labels "org.opencontainers.image.revision" }}' \
   registry.dmf.example.com/dmf-cms:0.4.0   # must equal:
-git rev-parse --short v0.4.0^{commit}
+git rev-parse v0.4.0^{commit}
 ```
 
 Then publish and deploy:
@@ -180,8 +182,9 @@ bin/run-playbook.sh <env-name> \
 ### `publish-to-ghcr.sh`
 
 Thin wrapper around `dmfdeploy/bin/publish-image-to-ghcr.sh`. Asserts
-`IMAGE_TAG == VERSION`, then delegates the actual push. The umbrella helper
-handles secrets safely:
+`IMAGE_TAG == VERSION`, then delegates the actual push. The release workflow
+calls it with the job token on standard input; an operator calls it only on the
+manual path. The umbrella helper handles secrets safely:
 
 - Token via **stdin only**, never argv
 - Isolated `DOCKER_CONFIG` (not `~/.docker/config.json`)
@@ -219,7 +222,8 @@ cd frontend && npm install && npm run dev
 
 ## 3. Publish + Mirror Procedure
 
-The release path has two registries:
+The release path has two registries. The unattended release workflow (§4)
+publishes to GHCR; playbook 630 mirrors from there:
 
 | Registry | Role | Auth |
 |---|---|---|
@@ -227,12 +231,13 @@ The release path has two registries:
 | `registry.dmf.example.com/dmf-cms:<VERSION>` | Cluster-internal Zot mirror | OpenBao-managed admin creds (used by playbook 630 only) |
 
 The 2026-05-19 ADR-0025 convergence retired direct workstation→Zot pushes.
-Operators publish to GHCR; **playbook 630 mirrors GHCR → Zot** using credentials
+GHCR publication comes from the release workflow, or from an operator on the
+manual path; **playbook 630 mirrors GHCR → Zot** using credentials
 it pulls from OpenBao. Playbook 650 only HEAD-checks Zot and Helm-deploys.
 
-### Publishing to GHCR (the operator path)
+### Publishing to GHCR (the manual path)
 
-Run this only after you rebuild from the tagged commit and check the revision
+Use this only while the release workflow is not enabled (§4). Run it only after you rebuild from the tagged commit and check the revision
 label, as step 6 and 7 of [the release procedure](#4-the-release-procedure)
 describe. Use `scripts/publish-to-ghcr.sh`. It delegates to the umbrella helper which:
 
@@ -290,7 +295,76 @@ file (role default), so 630 always mirrors whatever the operator just published.
 > env id from the umbrella's `STATUS.md` (env ids rotate; this doc stays
 > env-agnostic).
 
-For every change that needs to land in the cluster:
+`VERSION` drives every release. Bump it with `scripts/release.sh`, land the bump
+through a pull request, and the release follows. You do not start the release
+run and you do not pass it a pull request number.
+
+### Unattended release
+
+The `release` workflow (`.github/workflows/release.yml`) starts when `CI`,
+`guard`, `DCO` or `issue-link` completes on a push to `main`. It has no manual
+trigger, no inputs and no user-selected ref. It reads the commit from the
+completed run (`workflow_run.head_sha`), never from the head of `main`.
+
+**The workflow is inert until you enable it.** It runs only when the repository
+variable `RELEASE_ENABLED` is `true`. An owner sets that variable at the end of
+the rollout in the exact-SHA release gate plan
+([dmfdeploy/dmfdeploy#568](https://github.com/dmfdeploy/dmfdeploy/issues/568)),
+after the release GitHub App, the `release` environment, its secrets and the
+`tags-release-create` ruleset exist. While the variable is unset or has any
+other value, every run is skipped and nothing is built, published or tagged.
+Check it with:
+
+```bash
+gh variable get RELEASE_ENABLED -R dmfdeploy/dmf-cms
+```
+
+The workflow has two jobs:
+
+1. `verify` has read-only permissions, no environment and no concurrency group.
+   It decides whether the commit is ready. A push that is not a release bump
+   ends here with a notice. So does a run that is not the last required
+   workflow to complete, and the notice names the contexts still pending.
+   The run that finishes last continues.
+2. `release` runs only when `verify` reports ready. It is the only job with
+   write permissions, the `release` environment and the job-level concurrency
+   group, so releases run one at a time and a run in progress is never
+   cancelled. It takes only the commit SHA from `verify`, then checks again:
+   1. The commit is reachable from `main`.
+   2. The commit is a release bump: the subject is `chore(release): v<VERSION>`,
+      it changes `VERSION`, `VERSION` reads that version, and a qualified
+      `dmfdeploy/dmfdeploy#<N>` reference is on the commit or its merged pull
+      request.
+   3. Every context in the live `main-protection` ruleset has exactly one
+      completed `success` check run from GitHub Actions, produced by a push
+      run of its workflow on this commit. Missing, skipped, neutral, stale,
+      duplicate and foreign-app results fail.
+   4. No existing `v*` tag is higher than `VERSION`. An equal tag is accepted
+      only at this commit, and then tag creation is skipped.
+
+   It then mints the release App token, builds the image from the exact commit
+   with `scripts/build-image.sh`, checks the version and revision labels before
+   any push, publishes through `scripts/publish-to-ghcr.sh`, creates a
+   build-provenance attestation for the image digest, and creates the
+   `v<VERSION>` tag last, as the release App.
+
+Recovery:
+
+- A required check fails or is cancelled on a release commit: no tag and no
+  image. The failed run shows in Actions. Fix forward with a new release PR.
+- The App token cannot be minted: the run fails before any build or push.
+  Re-running the failed run from the Actions page is safe, because a re-run
+  repeats every check and takes no input.
+- The image exists but the tag does not, or the tag exists but the image does
+  not: re-run. The run verifies what exists, never overwrites a mismatched image
+  and completes the missing half.
+- A tag at another commit, or a higher tag: the run fails and changes nothing.
+  Rollback is a new version, not a moved tag.
+
+### Manual release (only while `RELEASE_ENABLED` is not `true`)
+
+Once the workflow is enabled, do not tag or publish by hand. Until then, use
+these steps:
 
 ```
 1.  Develop on a feature branch.
@@ -314,8 +388,16 @@ For every change that needs to land in the cluster:
 7.  Confirm the revision label names the tag:
     docker inspect --format '{{ index .Config.Labels "org.opencontainers.image.revision" }}' \
       registry.dmf.example.com/dmf-cms:<NEW>  (must equal the next line)
-    git rev-parse --short v<NEW>^{commit}
+    git rev-parse v<NEW>^{commit}
 8.  scripts/publish-to-ghcr.sh                (push image to GHCR; same checkout)
+```
+
+### Mirror and deploy (both paths)
+
+The workflow, or step 8 above, ends at GHCR. Mirroring and deploying stay
+operator-run:
+
+```
 9.  cd $DMFDEPLOY_UMBRELLA/dmf-env
     bin/run-playbook.sh <env-name> \
         ../dmf-infra/k3s-lab-bootstrap/playbooks/630-zot-seed-platform.yml
@@ -328,7 +410,8 @@ For every change that needs to land in the cluster:
 Steps 4–10 are not optional. Skipping any of them produces the drift this
 document exists to prevent. Step 8 (publish) is the step introduced by
 the 2026-05-19 ADR-0025 convergence; pre-pivot drafts of this doc that
-combined push + deploy into a single playbook are stale.
+combined push + deploy into a single playbook are stale. On the unattended path
+the workflow replaces the tag, rebuild, label check and publish (steps 5 to 8).
 
 ### What can go wrong (and where)
 
@@ -360,6 +443,7 @@ dmf-cms/
 │   ├── sync-version.sh
 │   ├── build-image.sh
 │   ├── release.sh
+│   ├── release-gate.py               ← gate logic for the release workflow
 │   ├── publish-to-ghcr.sh
 │   └── verify-cluster.sh
 ├── src/dmf_cms/                      ← FastAPI source (Python)
@@ -397,8 +481,9 @@ dmf-cms/
   `release/<NEW>` for a release as described in §4). Each one is rebase-merged
   into `main`.
 
-A merge to `main` requires the PR to pass `sync-version.sh --check`. A push of
-a `vX.Y.Z` tag triggers (manually, today) the deploy playbook run.
+A merge to `main` requires the PR to pass `sync-version.sh --check`. A `vX.Y.Z`
+tag does not start a deploy; the operator runs playbooks 630 and 650 after the
+tag exists.
 
 ---
 
