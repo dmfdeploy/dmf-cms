@@ -1,48 +1,72 @@
 name: automerge
+# Arms rebase auto-merge, or merges a pull request that is already clean, with
+# a GitHub App installation token. Merges made with GITHUB_TOKEN start no
+# push workflows (dmfdeploy/dmfdeploy#568); merges made for an App do.
+#
+# Both triggers run from the default branch, so the `automerge` environment
+# (limited to main) can release the App key. The workflow never checks out or
+# runs pull request code: scripts/automerge.py reads each pull request through
+# the API. Labels, draft state and head SHA are never taken from an event
+# payload.
+#
+# - workflow_run: acts on the pull request whose head is the finished run's SHA.
+# - schedule: sweeps open pull requests. It covers changes that start no CI
+#   run (a draft marked ready, a removed hold label), so a pull request waits
+#   at most one interval. GitHub can delay scheduled runs under load.
 on:
-  pull_request_target:
-    types: [opened, reopened, ready_for_review, labeled, unlabeled]
+  workflow_run:
+    workflows: [CI]
+    types: [completed]
+  schedule:
+    # Every 10 minutes, off the top of the hour, when scheduled runs queue up.
+    - cron: "3,13,23,33,43,53 * * * *"
 permissions:
-  contents: write
-  pull-requests: write
+  contents: read
 concurrency:
-  group: automerge-${{ github.event.pull_request.number }}
+  # One event run per head SHA; one sweep at a time. Runs never cancel, so a
+  # started merge call finishes.
+  group: automerge-${{ github.event.workflow_run.head_sha || 'sweep' }}
+  cancel-in-progress: false
 jobs:
   automerge:
-    # Metadata-only — no checkout, never executes PR code, and under
-    # pull_request_target the BASE branch's workflow definition runs, so a PR
-    # cannot alter this job to its own advantage. It only arms GitHub-native
-    # rebase auto-merge: the actual merge happens when (and only when) the
-    # branch ruleset is satisfied — CODEOWNERS approval + every required
-    # status check green. Working-model mechanism: dmfdeploy/dmfdeploy#34.
+    # Skip push runs of CI: they have no pull request to act on.
+    if: github.event_name == 'schedule' || github.event.workflow_run.event == 'pull_request'
     runs-on: ubuntu-24.04
-    timeout-minutes: 5
+    timeout-minutes: 10
+    environment: automerge
+    permissions:
+      # GITHUB_TOKEN only lists Actions runs. Every write uses the App token.
+      actions: read
     steps:
-      - name: Arm rebase auto-merge (hold label disarms)
+      - name: Mint App installation token
+        id: app-token
+        uses: actions/create-github-app-token@bcd2ba49218906704ab6c1aa796996da409d3eb1  # v3.2.0
+        with:
+          client-id: ${{ secrets.AUTOMERGE_APP_CLIENT_ID }}
+          private-key: ${{ secrets.AUTOMERGE_APP_PRIVATE_KEY }}
+          permission-contents: write
+          permission-pull-requests: write
+      # No checkout. The script comes from the default branch via the
+      # GitHub API, pinned to the commit this run executes.
+      - name: Fetch automerge script
         env:
-          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-          PR_URL: ${{ github.event.pull_request.html_url }}
+          GH_TOKEN: ${{ github.token }}
+          SCRIPT_SHA: ${{ github.sha }}
         run: |
           set -eu
-          # Decide from the PR's labels and draft state as they are now, not
-          # from the event payload, which is a snapshot: `gh pr create --label`
-          # fires `opened` without the label, and a late `opened` run would
-          # arm a held PR (#439). If the read fails, exit non-zero without
-          # touching auto-merge, so a failed read never arms. The same holds
-          # for a reply that is not a boolean isDraft and named labels.
-          pr=$(gh pr view "${PR_URL}" --json labels,isDraft)
-          jq -e '(.isDraft | type == "boolean") and (.labels | type == "array")
-            and all(.labels[]; (.name | type) == "string")' <<<"${pr}" >/dev/null
-          labels=$(jq -r '[.labels[].name] | join(" ")' <<<"${pr}")
-          draft=$(jq -r '.isDraft' <<<"${pr}")
-          case " ${labels} " in *" hold "*)
-            gh pr merge --disable-auto "${PR_URL}" || true
-            echo "hold label present — auto-merge disarmed"
-            exit 0 ;;
-          esac
-          if [ "${draft}" = "true" ]; then
-            echo "draft PR — skipping"
-            exit 0
-          fi
-          gh pr merge --auto --rebase "${PR_URL}"
-          echo "auto-merge (rebase) armed — merges when approval + required checks are satisfied"
+          gh api -H 'Accept: application/vnd.github.raw+json' \
+            "repos/${GITHUB_REPOSITORY}/contents/scripts/automerge.py?ref=${SCRIPT_SHA}" \
+            > "${RUNNER_TEMP}/automerge.py"
+      - name: Arm or merge (workflow_run)
+        if: github.event_name == 'workflow_run'
+        env:
+          GH_TOKEN: ${{ steps.app-token.outputs.token }}
+          GH_READ_TOKEN: ${{ github.token }}
+          RUN_HEAD_SHA: ${{ github.event.workflow_run.head_sha }}
+        run: python3 "${RUNNER_TEMP}/automerge.py" event --sha "${RUN_HEAD_SHA}"
+      - name: Arm or merge (sweep)
+        if: github.event_name == 'schedule'
+        env:
+          GH_TOKEN: ${{ steps.app-token.outputs.token }}
+          GH_READ_TOKEN: ${{ github.token }}
+        run: python3 "${RUNNER_TEMP}/automerge.py" sweep
