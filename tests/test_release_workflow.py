@@ -247,13 +247,15 @@ def test_the_app_key_appears_only_as_an_input_of_the_pinned_token_action(release
     for filename, workflow in all_workflows().items():
         for job_name, job in workflow["jobs"].items():
             for step in job.get("steps", []):
-                if "RELEASE_APP" in yaml.safe_dump(step):
+                if "RELEASE_APP" in yaml.safe_dump(step) or "app-id" in yaml.safe_dump(step):
                     holders.append((filename, job_name, step))
     assert len(holders) == 1
     filename, job_name, step = holders[0]
     assert (filename, job_name) == ("release.yml", "release")
     assert step["uses"].startswith("actions/create-github-app-token@")
-    assert set(step["with"]) >= {"app-id", "private-key", "permission-contents"}
+    assert set(step["with"]) == {"client-id", "private-key", "permission-contents"}
+    assert "app-id" not in step["with"]  # deprecated input; the Client ID is the identity
+    assert step["with"]["client-id"] == "${{ secrets.RELEASE_APP_CLIENT_ID }}"
     assert step["with"]["private-key"] == "${{ secrets.RELEASE_APP_PRIVATE_KEY }}"
     assert step["with"]["permission-contents"] == "write"
     assert "env" not in step
@@ -263,7 +265,15 @@ def test_no_other_workflow_references_the_release_app_secrets():
     for filename, workflow in all_workflows().items():
         if filename == "release.yml":
             continue
-        assert "RELEASE_APP" not in yaml.safe_dump(workflow), filename
+        dumped = yaml.safe_dump(workflow)
+        for name in ("RELEASE_APP_CLIENT_ID", "RELEASE_APP_PRIVATE_KEY", "RELEASE_APP"):
+            assert name not in dumped, f"{filename} references {name}"
+
+
+def test_the_release_workflow_names_only_the_two_documented_secrets():
+    text = RELEASE.read_text(encoding="utf-8")
+    used = set(re.findall(r"secrets\.(\w+)", text))
+    assert used == {"RELEASE_APP_CLIENT_ID", "RELEASE_APP_PRIVATE_KEY"}
 
 
 def test_every_action_in_the_release_workflow_is_pinned_by_commit_sha(release):
@@ -322,3 +332,23 @@ def test_the_publish_step_skips_an_image_that_already_exists(release):
     publish = next(s for s in steps(release["jobs"]["release"])
                    if s.get("name", "").startswith("Publish the verified image"))
     assert publish["if"] == "steps.ghcr_image.outputs.exists != 'true'"
+
+
+def test_every_umbrella_checkout_is_pinned_by_full_sha_and_holds_no_credentials():
+    found = 0
+    for filename, workflow in all_workflows().items():
+        for job in workflow["jobs"].values():
+            for step in job.get("steps", []):
+                with_ = step.get("with") or {}
+                if with_.get("repository") != "dmfdeploy/dmfdeploy":
+                    continue
+                if filename == "ci.yml" and with_.get("path") == ".umbrella" and \
+                        not re.fullmatch(r"[0-9a-f]{40}", str(with_.get("ref"))):
+                    # The working-model job tracks the umbrella template by ref on purpose.
+                    continue
+                found += 1
+                assert re.fullmatch(r"[0-9a-f]{40}", str(with_.get("ref"))), (filename, with_)
+                assert with_.get("persist-credentials") is False, (filename, with_)
+                assert "token" not in with_ and "ssh-key" not in with_, (filename, with_)
+                assert "secrets." not in yaml.safe_dump(step), (filename, step)
+    assert found >= 2  # the release job and the ci.yml handoff test
