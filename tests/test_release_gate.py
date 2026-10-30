@@ -69,6 +69,14 @@ class World:
                 "enforcement": "active",
             },
             {
+                "id": 16,
+                "name": "tags-release-create",
+                "target": "tag",
+                "source_type": "Repository",
+                "source": REPO,
+                "enforcement": "active",
+            },
+            {
                 "id": 15,
                 "name": "tags-release-protect",
                 "target": "tag",
@@ -82,6 +90,20 @@ class World:
             for c in sorted(gate.REQUIRED_CONTEXTS)
         ]
         self.status_rule_ruleset_id = 14
+        # Detail of tags-release-create as GET rulesets/16 returns it to a
+        # caller without write access: no "bypass_actors" field.
+        self.tag_ruleset: dict[str, Any] | None = {
+            "id": 16,
+            "name": "tags-release-create",
+            "target": "tag",
+            "source_type": "Repository",
+            "source": REPO,
+            "enforcement": "active",
+            "conditions": {"ref_name": {"include": ["refs/tags/v*"], "exclude": []}},
+            "rules": [{"type": "creation"}],
+            "current_user_can_bypass": "never",
+        }
+        self.tag_ruleset_error = False
         self.runs: list[dict[str, Any]] = []
         self.check_runs: list[dict[str, Any]] = []
         self.tags: list[dict[str, Any]] = []
@@ -211,6 +233,10 @@ class World:
                 "encoding": "base64",
                 "content": base64.b64encode(self.version_file.encode()).decode(),
             }
+        if route == f"repos/{REPO}/rulesets/16":
+            if self.tag_ruleset_error:
+                raise gate.GateError("HTTP 500")
+            return self.tag_ruleset
         if route.startswith(f"repos/{REPO}/git/tags/"):
             return self.annotated[route.rsplit("/", 1)[1]]
         raise AssertionError(f"unexpected route {route}")
@@ -828,3 +854,132 @@ def test_the_gate_refuses_to_run_in_another_repository(monkeypatch, api):
     monkeypatch.setenv("GITHUB_REPOSITORY", "someone/else")
     with pytest.raises(gate.GateError, match="unexpected repository"):
         gate.evaluate(api, SHA)
+
+
+# ------------------------------- tag-creation authority (tags-release-create)
+
+
+def _list_entry(world: World) -> dict[str, Any]:
+    return next(r for r in world.rulesets if r["name"] == "tags-release-create")
+
+
+def test_the_gate_passes_without_a_bypass_actors_field_and_never_reads_it(world, api):
+    class NoBypassRead(dict):
+        def get(self, key, default=None):
+            assert key != "bypass_actors", "the gate must not read bypass_actors"
+            return super().get(key, default)
+
+        def __getitem__(self, key):
+            assert key != "bypass_actors", "the gate must not read bypass_actors"
+            return super().__getitem__(key)
+
+    assert "bypass_actors" not in world.tag_ruleset
+    world.tag_ruleset = NoBypassRead(world.tag_ruleset)
+    gate.check_tag_creation_rule(api)
+    assert gate.evaluate(api, SHA).ready
+    # A caller with write access would see the field. It is still ignored.
+    world.tag_ruleset = NoBypassRead({**world.tag_ruleset, "bypass_actors": []})
+    gate.check_tag_creation_rule(api)
+
+
+def test_a_repository_with_only_tags_release_protect_fails_closed(world, api):
+    # The live repository before rollout step 4: update and deletion blocked,
+    # creation not restricted.
+    world.rulesets = [r for r in world.rulesets if r["name"] != "tags-release-create"]
+    world.tag_ruleset = None
+    with pytest.raises(gate.GateError, match="exactly one tags-release-create.*found 0"):
+        gate.evaluate(api, SHA)
+    with pytest.raises(gate.GateError, match="found 0"):
+        gate.create_tag(api, SHA)
+    assert world.posts == []
+
+
+def test_two_tags_release_create_rulesets_fail(world, api):
+    world.rulesets.append({**_list_entry(world), "id": 77})
+    with pytest.raises(gate.GateError, match="found 2"):
+        gate.check_tag_creation_rule(api)
+
+
+@pytest.mark.parametrize(
+    ("list_changes", "detail_changes", "message"),
+    [
+        ({"enforcement": "disabled"}, {"enforcement": "disabled"}, "active ruleset"),
+        ({"enforcement": "evaluate"}, {"enforcement": "evaluate"}, "active ruleset"),
+        ({"target": "branch"}, {"target": "branch"}, "target 'tag'"),
+        ({}, {"enforcement": "disabled"}, "does not match its list entry"),
+        ({}, {"name": "something-else"}, "does not match its list entry"),
+        ({}, {"id": 99}, "does not match its list entry"),
+        ({}, {"conditions": {"ref_name": {"include": ["refs/tags/*"], "exclude": []}}}, "exactly refs/tags/v\\*"),
+        ({}, {"conditions": {"ref_name": {"include": ["~ALL"], "exclude": []}}}, "exactly refs/tags/v"),
+        ({}, {"conditions": {"ref_name": {"include": ["refs/tags/v*"], "exclude": ["refs/tags/v1.*"]}}}, "exclude nothing"),
+        ({}, {"conditions": {"ref_name": {"include": ["refs/tags/v*", "refs/tags/x"], "exclude": []}}}, "exactly"),
+        ({}, {"conditions": {"ref_name": {"include": ["refs/tags/v*"]}}}, "no readable ref_name"),
+        ({}, {"conditions": None}, "no readable ref_name"),
+        ({}, {"conditions": {}}, "no readable ref_name"),
+        ({}, {"rules": []}, "creation rule"),
+        ({}, {"rules": [{"type": "deletion"}, {"type": "update"}]}, "creation rule"),
+        ({}, {"rules": None}, "creation rule"),
+        ({}, {"rules": ["creation"]}, "creation rule"),
+    ],
+)
+def test_a_missing_or_drifted_creation_rule_fails_closed(world, api, list_changes, detail_changes, message):
+    _list_entry(world).update(list_changes)
+    world.tag_ruleset.update(detail_changes)
+    with pytest.raises(gate.GateError, match=message):
+        gate.check_tag_creation_rule(api)
+    with pytest.raises(gate.GateError):
+        gate.create_tag(api, SHA)
+    assert world.posts == []
+
+
+def test_a_list_entry_with_no_valid_id_fails(world, api):
+    _list_entry(world)["id"] = "16"
+    with pytest.raises(gate.GateError, match="no valid id"):
+        gate.check_tag_creation_rule(api)
+
+
+@pytest.mark.parametrize("bad", [None, [], "text"])
+def test_a_malformed_detail_response_fails_closed(world, api, bad):
+    world.tag_ruleset = bad
+    with pytest.raises(gate.GateError, match="malformed"):
+        gate.check_tag_creation_rule(api)
+
+
+def test_an_api_error_reading_the_ruleset_fails_closed(world, api):
+    world.tag_ruleset_error = True
+    with pytest.raises(gate.GateError, match="HTTP 500"):
+        gate.create_tag(api, SHA)
+    assert world.posts == []
+
+
+def test_a_ruleset_list_item_that_is_not_an_object_is_ignored_not_trusted(world, api):
+    world.rulesets.insert(0, "tags-release-create")
+    gate.check_tag_creation_rule(api)
+
+
+def test_the_rule_is_checked_for_every_release_verdict_and_before_the_tag_post(world, api):
+    world.tag_ruleset["rules"] = []
+    with pytest.raises(gate.GateError, match="creation rule"):
+        gate.evaluate(api, SHA)  # verify and check both go through evaluate
+    order = []
+    original = gate.check_tag_creation_rule
+
+    def spy(a):
+        order.append("rule")
+        return original(a)
+
+    world.tag_ruleset["rules"] = [{"type": "creation"}]
+    world.on_post = lambda: order.append("post")
+    gate.check_tag_creation_rule, saved = spy, original
+    try:
+        gate.create_tag(api, SHA)
+    finally:
+        gate.check_tag_creation_rule = saved
+    assert order[-2:] == ["rule", "post"] and order.count("post") == 1
+
+
+def test_an_ordinary_push_is_still_a_quiet_no_op_without_the_rule(world, api, tmp_path):
+    world.subject = "fix(auth): handle an empty claim"
+    world.tag_ruleset = None
+    world.rulesets = [r for r in world.rulesets if r["name"] != "tags-release-create"]
+    assert gate.run_verify(api, SHA, str(_event(tmp_path)))["ready"] == "false"
