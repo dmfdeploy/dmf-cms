@@ -352,3 +352,15 @@ def test_every_umbrella_checkout_is_pinned_by_full_sha_and_holds_no_credentials(
                 assert "token" not in with_ and "ssh-key" not in with_, (filename, with_)
                 assert "secrets." not in yaml.safe_dump(step), (filename, step)
     assert found >= 2  # the release job and the ci.yml handoff test
+
+
+def test_the_gate_runs_before_the_build_and_again_inside_the_tag_step(release):
+    job_steps = steps(release["jobs"]["release"])
+    check = next(i for i, s in enumerate(job_steps) if "release-gate.py check " in s.get("run", ""))
+    build = next(i for i, s in enumerate(job_steps) if s.get("name", "").startswith("Build the image"))
+    assert check < build  # `check` includes the tag-creation rule check
+    source = (REPO_ROOT / "scripts" / "release-gate.py").read_text(encoding="utf-8")
+    body = source.split("def create_tag(", 1)[1].split("\n# ----", 1)[0]
+    assert body.index("check_tag_creation_rule(api)") < body.index("api.post(")
+    evaluate = source.split("def evaluate(", 1)[1].split("\n# ----", 1)[0]
+    assert "check_tag_creation_rule(api)" in evaluate

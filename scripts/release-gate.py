@@ -14,6 +14,9 @@ Checks, in the order the plan numbers them:
 3. Every context that the live "main-protection" ruleset requires has exactly
    one fresh, completed "success" check run from GitHub Actions on this SHA,
    produced by a push run of the owning workflow on main.
+   The commit also needs creation of "v*" tags restricted by an active
+   "tags-release-create" ruleset (the sole-bypass-actor property is verified
+   by an owner at rollout; the job cannot read it).
 4. No existing "v*" tag is higher than VERSION. An equal tag is accepted only
    at this SHA.
 
@@ -49,6 +52,8 @@ SOURCE_URL = "https://github.com/dmfdeploy/dmf-cms"
 IMAGE = "ghcr.io/dmfdeploy/dmf-cms"
 CHECK_APP_ID = 15368  # The GitHub Actions integration.
 REQUIRED_RULESET = "main-protection"
+TAG_CREATE_RULESET = "tags-release-create"
+RELEASE_TAG_PATTERN = "refs/tags/v*"
 
 SEMVER = r"(?:0|[1-9][0-9]*)\.(?:0|[1-9][0-9]*)\.(?:0|[1-9][0-9]*)"
 SEMVER_RE = re.compile(rf"^{SEMVER}$")
@@ -390,7 +395,63 @@ def evaluate(api: GitHub, sha: str) -> Verdict:
     _require_sha(sha)
     version = check_release_bump(api, sha)
     check_reachable(api, sha)
+    check_tag_creation_rule(api)
     return Verdict(version=version, pending=check_contexts(api, sha))
+
+
+# ------------------------------------------- tag-creation authority (rollout)
+
+
+def check_tag_creation_rule(api: GitHub) -> None:
+    """Fail closed unless creating a v* tag is restricted by tags-release-create.
+
+    Without the rule, any repository writer can create a v* tag outside this
+    gate. The job can read the ruleset list and detail with GITHUB_TOKEN. It
+    cannot read `bypass_actors`, which GitHub returns only to a caller with
+    write access to the ruleset, so this check neither reads nor requires that
+    field. That the release App is the sole bypass actor, and that no other
+    ruleset grants a bypass, is verified by an owner at rollout (plan step 4).
+    """
+    repo = _repo()
+    named = [
+        r
+        for r in api.pages(f"repos/{repo}/rulesets?per_page=100")
+        if isinstance(r, dict) and r.get("name") == TAG_CREATE_RULESET
+    ]
+    if len(named) != 1:
+        raise GateError(
+            f"exactly one {TAG_CREATE_RULESET} ruleset is required to restrict v* tag "
+            f"creation, found {len(named)}"
+        )
+    listed = named[0]
+    ruleset_id = listed.get("id")
+    if isinstance(ruleset_id, bool) or not isinstance(ruleset_id, int):
+        raise GateError(f"{TAG_CREATE_RULESET} ruleset has no valid id")
+    if listed.get("enforcement") != "active" or listed.get("target") != "tag":
+        raise GateError(f"{TAG_CREATE_RULESET} must be an active ruleset with target 'tag'")
+
+    detail = _as_dict(api.get(f"repos/{repo}/rulesets/{ruleset_id}"), TAG_CREATE_RULESET)
+    if (
+        detail.get("id") != ruleset_id
+        or detail.get("name") != TAG_CREATE_RULESET
+        or detail.get("enforcement") != "active"
+        or detail.get("target") != "tag"
+    ):
+        raise GateError(f"{TAG_CREATE_RULESET} detail does not match its list entry")
+    conditions = detail.get("conditions")
+    refs = conditions.get("ref_name") if isinstance(conditions, dict) else None
+    if not isinstance(refs, dict) or not isinstance(refs.get("include"), list) \
+            or not isinstance(refs.get("exclude"), list):
+        raise GateError(f"{TAG_CREATE_RULESET} has no readable ref_name include and exclude")
+    if refs["include"] != [RELEASE_TAG_PATTERN] or refs["exclude"] != []:
+        raise GateError(
+            f"{TAG_CREATE_RULESET} must include exactly {RELEASE_TAG_PATTERN} and exclude nothing"
+        )
+    rules = detail.get("rules")
+    if not isinstance(rules, list) or not any(
+        isinstance(r, dict) and r.get("type") == "creation" for r in rules
+    ):
+        raise GateError(f"{TAG_CREATE_RULESET} does not contain the creation rule")
 
 
 # ---------------------------------------------------------------- check 4
@@ -443,10 +504,11 @@ def create_tag(api: GitHub, sha: str) -> tuple[str, str]:
 
     Returns (version, 'created' or 'exists').
     """
-    verdict = evaluate(api, sha)
+    verdict = evaluate(api, sha)  # includes the tag-creation rule check
     if not verdict.ready:
         raise GateError("required checks are still pending: " + ", ".join(verdict.pending))
     version = verdict.version
+    check_tag_creation_rule(api)  # again, immediately before the ref is created
     if version_state(api, sha, version) == "exists":
         return version, "exists"
     try:
