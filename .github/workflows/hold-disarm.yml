@@ -1,0 +1,28 @@
+name: hold-disarm
+# The `hold` label is the brake that stops a merge. Adding it disarms
+# auto-merge at once. The automerge workflow's triggers never fire on label
+# events, so this workflow covers them.
+#
+# It uses only GITHUB_TOKEN: no checkout, no environment, no secrets. For a
+# pull request from a fork, this event gets a read-only token, so the call
+# fails. That is acceptable, because automerge arms only pull requests whose
+# head is in this repository, so a fork pull request is never armed by it.
+# The automerge sweep also disarms held pull requests within one interval.
+# A failed disarm fails the run so it shows in Actions.
+on:
+  pull_request:
+    types: [labeled]
+permissions: {}
+jobs:
+  disarm:
+    if: github.event.label.name == 'hold'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    permissions:
+      pull-requests: write
+    steps:
+      - name: Disable auto-merge
+        env:
+          GH_TOKEN: ${{ github.token }}
+          PR_URL: ${{ github.event.pull_request.html_url }}
+        run: gh pr merge --disable-auto "${PR_URL}"
