@@ -2,9 +2,11 @@
 # End-to-end release: bump version, sync, commit, tag, build (local only).
 #
 # Does NOT push the image. Per the 2026-05-19 ADR-0025 convergence, GHCR is
-# the canonical public source and workstation→Zot pushes were removed. After
-# this script finishes, publish to GHCR with scripts/publish-to-ghcr.sh, then
-# mirror via playbook 630 and deploy via playbook 650.
+# the canonical public source and workstation→Zot pushes were removed. When
+# the repository variable RELEASE_ENABLED is 'true', the release workflow
+# tags and publishes after the bump merges. While it is unset, publish with
+# scripts/publish-to-ghcr.sh by hand. Then mirror via playbook 630 and deploy
+# via playbook 650.
 #
 # Usage:
 #   scripts/release.sh patch      # 0.2.2 → 0.2.3
@@ -47,8 +49,10 @@ Usage: $0 (patch|minor|major|X.Y.Z) [--tag] [--no-deploy-hint]
 
 Cannot run with uncommitted changes.
 
-This script builds locally only. To publish + deploy, run
-scripts/publish-to-ghcr.sh, then playbooks 630 + 650 (see the hint at the end).
+This script builds locally only. When the repository variable RELEASE_ENABLED
+is 'true', the release workflow tags and publishes after the bump merges and
+its required checks pass; then run playbooks 630 + 650. While the variable is
+unset, the workflow does nothing. The hint at the end covers both cases.
 EOF
     exit 1
 }
@@ -186,6 +190,17 @@ Next steps (per the ADR-0025 GHCR-canonical / Zot-mirror flow).
 NOTE: substitute <env-name> with the current Hetzner test env id —
 see STATUS.md in the umbrella repo.
 
+  0. Check how this repository releases. The unattended release workflow runs
+     only when the repository variable RELEASE_ENABLED is 'true':
+       gh variable get RELEASE_ENABLED -R dmfdeploy/dmf-cms
+     If it is 'true', do step 1 and stop. After the merge, the workflow builds
+     the merged commit, publishes the image, attests it and creates the
+     v$NEW tag once every required check passes on that exact commit. Nobody
+     starts it, and you must not tag or publish by hand. Watch the \`release\`
+     workflow in Actions, then continue at step 3.
+     If the variable is unset, the workflow does nothing. Follow steps 1 to 2
+     as written; they are the manual path and go away when the rollout ends.
+
   1. Land the bump. main is PROTECTED, so it goes via a PR — and because this
      repo is rebase-merge only, the tag must be created AFTER the merge or it
      points at a commit that never reaches main:
@@ -236,7 +251,7 @@ see STATUS.md in the umbrella repo.
        scripts/build-image.sh --no-push
        docker inspect --format '{{ index .Config.Labels "org.opencontainers.image.revision" }}' \\
          registry.dmf.example.com/dmf-cms:$NEW    # must equal:
-       git rev-parse --short v$NEW^{commit}
+       git rev-parse v$NEW^{commit}
        gh auth token | GHCR_USER="<github-username>" scripts/publish-to-ghcr.sh
        # needs write:packages — 'gh auth status' to check,
        # 'gh auth refresh -s write:packages' if absent.
