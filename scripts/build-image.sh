@@ -98,8 +98,9 @@ else
     echo "  ✓ working tree clean"
 fi
 
-# Embed git SHA in image label for traceability
-GIT_SHA="$(git rev-parse --short HEAD)"
+# Embed the full git SHA in the image label. The release workflow compares it
+# with the verified commit, so a short SHA would not match.
+GIT_SHA="$(git rev-parse HEAD)"
 GIT_TAG_EXACT="$(git describe --tags --exact-match 2>/dev/null || echo "")"
 if [[ "$GIT_TAG_EXACT" != "v$VERSION" && "$GIT_TAG_EXACT" != "$VERSION" ]]; then
     echo "  ⚠ HEAD is not tagged as v$VERSION or $VERSION (got: '${GIT_TAG_EXACT:-none}')"
