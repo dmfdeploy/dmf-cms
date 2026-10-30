@@ -31,8 +31,9 @@ import os
 import re
 import subprocess
 import sys
+from collections.abc import Callable
 from dataclasses import dataclass
-from typing import Any, Callable
+from typing import Any
 
 BASE_BRANCH = "main"
 HOLD_LABEL = "hold"
