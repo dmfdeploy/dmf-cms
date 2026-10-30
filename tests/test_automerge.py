@@ -63,6 +63,7 @@ class FakeGitHub:
         self.clean: set[int] = set()  # PRs whose checks already passed
         self.arm_errors: dict[int, list[am.GhError]] = {}
         self.merge_errors: dict[int, list[am.GhError]] = {}
+        self.disarm_errors: dict[int, list[am.GhError]] = {}
         self.before_write = None  # hook(number) run before arm or merge
         self.after_read = None  # hook(number) run after a live PR read
         self.after_arm_attempt = None  # hook(number) after a clean-status arm
@@ -109,6 +110,11 @@ class FakeGitHub:
         self.calls.append(("GRAPHQL", query, dict(variables)))
         pr = next(p for p in self.prs.values() if p["node_id"] == variables["id"])
         n = pr["number"]
+        if "disablePullRequestAutoMerge" in query:
+            if self.disarm_errors.get(n):
+                raise self.disarm_errors[n].pop(0)
+            pr["auto_merge"] = None
+            return {"disablePullRequestAutoMerge": {"pullRequest": {"number": n}}}
         if self.before_write:
             self.before_write(n)
         if self.arm_errors.get(n):
@@ -456,3 +462,62 @@ def test_ci_lookup_uses_read_token_only():
 def test_report_with_nothing_to_do_succeeds(capsys):
     assert am.report([]) == 0
     assert "no pull requests" in capsys.readouterr().out
+
+
+# ---- hold disarms ----------------------------------------------------
+
+def armed(pr_number=1, **over):
+    return make_pr(pr_number, auto_merge={"merge_method": "rebase"}, **over)
+
+
+def test_sweep_disarms_armed_pr_with_hold():
+    gh = FakeGitHub()
+    gh.add(armed(labels=[{"name": "hold"}]))
+    results = gh.sweep()
+    assert actions(results) == {1: "disarmed"}
+    assert gh.prs[1]["auto_merge"] is None
+    assert "disablePullRequestAutoMerge" in gh.writes()[0][1]
+    assert am.report(results) == 0
+
+
+def test_sweep_disarms_held_pr_even_without_green_ci():
+    gh = FakeGitHub()
+    gh.add(armed(labels=[{"name": "hold"}]), ci=False)
+    assert actions(gh.sweep()) == {1: "disarmed"}
+
+
+def test_sweep_leaves_armed_pr_without_hold_alone():
+    gh = FakeGitHub()
+    gh.add(armed())
+    results = gh.sweep()
+    assert actions(results) == {1: "already-armed"}
+    assert gh.writes() == []
+
+
+def test_sweep_hold_disarm_is_idempotent():
+    gh = FakeGitHub()
+    gh.add(armed(labels=[{"name": "hold"}]))
+    gh.sweep()
+    gh.calls.clear()
+    assert actions(gh.sweep()) == {1: "skipped"}
+    assert gh.writes() == []
+
+
+def test_sweep_disarm_error_is_isolated_and_fails_the_run():
+    gh = FakeGitHub()
+    gh.add(armed(1, labels=[{"name": "hold"}]))
+    gh.add(make_pr(2))
+    gh.disarm_errors[1] = [am.GhError(500, "Server Error")]
+    results = gh.sweep()
+    assert actions(results) == {1: "error", 2: "armed"}
+    assert am.report(results) == 1
+
+
+def test_event_path_never_arms_or_disarms_held_pr():
+    gh = FakeGitHub()
+    gh.add(make_pr(1, labels=[{"name": "hold"}]))
+    assert actions(gh.event(sha(1))) == {1: "skipped"}
+    assert gh.writes() == []
+    gh.add(armed(2, labels=[{"name": "hold"}]))
+    gh.event(sha(2))
+    assert gh.writes() == []

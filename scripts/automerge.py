@@ -49,6 +49,14 @@ mutation($id: ID!, $head: GitObjectID!) {
 }
 """.strip()
 
+DISARM_MUTATION = """
+mutation($id: ID!) {
+  disablePullRequestAutoMerge(input: {pullRequestId: $id}) {
+    pullRequest { number }
+  }
+}
+""".strip()
+
 
 class GhError(Exception):
     """A GitHub call failed. `status` is the HTTP status, or 0 if unknown."""
@@ -68,7 +76,7 @@ Graphql = Callable[[str, "dict[str, str]"], Any]
 @dataclass
 class Result:
     number: int
-    action: str  # armed, merged, already-armed, skipped, stale, error
+    action: str  # armed, merged, already-armed, disarmed, skipped, stale, error
     detail: str = ""
 
     @property
@@ -247,6 +255,17 @@ def arm_or_merge(
         raise
 
 
+def _is_held_and_armed(pr: dict[str, Any]) -> bool:
+    labels = pr.get("labels")
+    return (
+        pr.get("state") == "open"
+        and (pr.get("base") or {}).get("ref") == BASE_BRANCH
+        and bool(pr.get("auto_merge"))
+        and isinstance(labels, list)
+        and any((label or {}).get("name") == HOLD_LABEL for label in labels)
+    )
+
+
 def handle_pr(
     api: Api,
     graphql: Graphql,
@@ -255,11 +274,18 @@ def handle_pr(
     expected_head: str,
     require_ci: bool,
 ) -> Result:
-    """Process one pull request. Never raises: errors become Result("error")."""
+    """Process one pull request. Never raises: errors become Result("error").
+
+    The sweep (require_ci) also disarms a held pull request that has
+    auto-merge enabled; `hold` is the brake that stops a merge.
+    """
     try:
+        pr = api("GET", f"repos/{repo}/pulls/{number}")
+        if require_ci and _is_held_and_armed(pr):
+            graphql(DISARM_MUTATION, {"id": pr["node_id"]})
+            return Result(number, "disarmed", "hold label")
         if require_ci and not ci_succeeded(api, repo, expected_head):
             return Result(number, "skipped", "no completed CI success for head")
-        pr = api("GET", f"repos/{repo}/pulls/{number}")
         reason = ineligible_reason(pr, repo)
         if reason:
             return Result(number, "skipped", reason)
