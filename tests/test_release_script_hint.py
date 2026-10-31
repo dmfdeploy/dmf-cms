@@ -238,3 +238,29 @@ def test_plain_build_image_keeps_its_hint(tmp_path) -> None:
     assert quiet.returncode == 0, quiet.stdout + quiet.stderr
     assert "BUILD COMPLETE" in quiet.stdout
     assert PUBLISH_RECIPE_LINE not in quiet.stdout
+
+
+def test_build_image_passes_an_explicit_arm64_platform_by_default(tmp_path) -> None:
+    """The build host must not pick the image platform (v0.40.1 came out amd64)."""
+    repo = make_scratch_repo(tmp_path)
+    env = _use_real_build_image(repo)
+    log = tmp_path / "docker-args"
+    (repo.parent / "fakebin" / "docker").write_text(
+        f'#!/usr/bin/env bash\necho "$@" >> {log}\nexit 0\n'
+    )
+
+    def build(*args: str, extra_env: dict | None = None) -> subprocess.CompletedProcess:
+        return subprocess.run(
+            ["bash", str(repo / "scripts" / "build-image.sh"), "--no-hint", *args],
+            check=False, cwd=repo, capture_output=True, text=True, env={**env, **(extra_env or {})},
+        )
+
+    assert build().returncode == 0
+    assert "--platform linux/arm64" in log.read_text()
+    log.write_text("")
+    assert build("--platform", "linux/amd64").returncode == 0
+    assert "--platform linux/amd64" in log.read_text()
+    log.write_text("")
+    assert build(extra_env={"DMF_CMS_PLATFORM": "linux/arm64"}).returncode == 0
+    assert build("--platform", "windows/amd64").returncode != 0
+    assert build("--platform").returncode != 0

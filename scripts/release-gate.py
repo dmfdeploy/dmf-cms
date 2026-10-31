@@ -27,7 +27,8 @@ Subcommands:
     check           Checks 1 to 3 for the release job. Not ready fails.
     version-rule    Check 4 only. Reports whether the tag exists.
     tag             Checks 1 to 4 again, then creates the tag if it is absent.
-    check-labels    Compares image labels (JSON on stdin) with VERSION and SHA.
+    check-labels    Compares image labels (JSON on stdin) with VERSION and SHA,
+                    and the image platform with linux/arm64.
     inspect-ghcr    Reports whether the published image exists, and verifies
                     its labels when it does.
     digest          Reads RepoDigests (JSON on stdin) and prints the digest.
@@ -60,6 +61,8 @@ SEMVER_RE = re.compile(rf"^{SEMVER}$")
 RELEASE_SUBJECT_RE = re.compile(rf"^chore\(release\): v(?P<version>{SEMVER})$")
 SHA_RE = re.compile(r"^[0-9a-f]{40}$")
 QUALIFIED_ISSUE_RE = re.compile(r"(?<![\w/])dmfdeploy/dmfdeploy#[1-9][0-9]*(?![0-9])")
+# The k3s nodes are ARM64. An image for any other platform must never publish.
+EXPECTED_PLATFORM = "linux/arm64"
 DIGEST_RE = re.compile(r"^sha256:[0-9a-f]{64}$")
 
 # Workflow file -> (display name, the contexts its jobs produce). The display
@@ -524,7 +527,15 @@ def create_tag(api: GitHub, sha: str) -> tuple[str, str]:
 # ------------------------------------------------------- image helpers
 
 
-def check_labels(labels: Any, version: str, sha: str) -> None:
+def check_platform(platform: str) -> None:
+    """The image must be linux/arm64: `docker image inspect` Os/Architecture."""
+    if platform != EXPECTED_PLATFORM:
+        raise GateError(f"image platform is {platform!r}, expected {EXPECTED_PLATFORM!r}")
+
+
+def check_labels(labels: Any, version: str, sha: str, platform: str | None = None) -> None:
+    if platform is not None:
+        check_platform(platform)
     if not isinstance(labels, dict):
         raise GateError("image has no label map")
     if labels.get("org.opencontainers.image.version") != version:
@@ -545,18 +556,20 @@ def inspect_existing_image(version: str, sha: str) -> bool:
             return False
         raise GateError("could not safely determine whether the GHCR image tag exists")
     inspect = subprocess.run(
-        ["docker", "image", "inspect", image, "--format", "{{json .Config.Labels}}"],
+        ["docker", "image", "inspect", image, "--format",
+         "{{.Os}}/{{.Architecture}} {{json .Config.Labels}}"],
         check=False,
         capture_output=True,
         text=True,
     )
     if inspect.returncode:
         raise GateError("could not read labels from the existing GHCR image")
+    platform, _, raw_labels = inspect.stdout.strip().partition(" ")
     try:
-        labels = json.loads(inspect.stdout)
+        labels = json.loads(raw_labels)
     except json.JSONDecodeError as exc:
         raise GateError("existing GHCR image labels are malformed") from exc
-    check_labels(labels, version, sha)
+    check_labels(labels, version, sha, platform)
     return True
 
 
@@ -641,6 +654,8 @@ def main(argv: list[str] | None = None) -> int:
         cmd = sub.add_parser(name)
         cmd.add_argument("--version", required=True)
         cmd.add_argument("--sha", required=True)
+        if name == "check-labels":
+            cmd.add_argument("--platform", required=True, help="Os/Architecture of the image")
     sub.add_parser("digest")
     args = parser.parse_args(argv)
 
@@ -666,7 +681,7 @@ def main(argv: list[str] | None = None) -> int:
                 raise GateError("version must be strict MAJOR.MINOR.PATCH")
             _require_sha(args.sha)
             if args.command == "check-labels":
-                check_labels(json.load(sys.stdin), args.version, args.sha)
+                check_labels(json.load(sys.stdin), args.version, args.sha, args.platform)
             else:
                 exists = inspect_existing_image(args.version, args.sha)
                 _write_output({"exists": "true" if exists else "false"})

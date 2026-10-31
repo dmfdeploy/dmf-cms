@@ -59,12 +59,15 @@ jobs:
         run: python3 scripts/release-gate.py verify --sha "$RELEASE_SHA"
 
   release:
+    # Runs on GitHub's hosted arm64 runner so the build is native linux/arm64,
+    # the platform of the k3s nodes. Do not move it to an amd64 runner: the image
+    # would be amd64 (the first unattended release, v0.40.1, was).
     # The only job with write permissions, the release environment, and the
     # concurrency group. It takes the SHA from `verify` and nothing else, then
     # repeats checks 1 to 3 from that SHA.
     needs: verify
     if: needs.verify.outputs.ready == 'true'
-    runs-on: ubuntu-24.04
+    runs-on: ubuntu-24.04-arm
     timeout-minutes: 60
     environment: release
     concurrency:
@@ -132,17 +135,18 @@ jobs:
         run: |
           set -eu
           [ "$(git rev-parse HEAD)" = "$RELEASE_SHA" ]
-          scripts/build-image.sh --no-hint
+          scripts/build-image.sh --no-hint --platform linux/arm64
 
-      - name: Check the image labels against VERSION and the commit
+      - name: Check the image platform and labels before any push
         env:
           RELEASE_VERSION: ${{ steps.gate.outputs.version }}
         run: |
           set -eu
-          docker image inspect "registry.dmf.example.com/dmf-cms:$RELEASE_VERSION" \
-            --format '{{json .Config.Labels}}' \
+          image="registry.dmf.example.com/dmf-cms:$RELEASE_VERSION"
+          platform="$(docker image inspect "$image" --format '{{.Os}}/{{.Architecture}}')"
+          docker image inspect "$image" --format '{{json .Config.Labels}}' \
             | python3 tools/scripts/release-gate.py check-labels \
-                --version "$RELEASE_VERSION" --sha "$RELEASE_SHA"
+                --version "$RELEASE_VERSION" --sha "$RELEASE_SHA" --platform "$platform"
 
       - name: Check for an existing GHCR image
         id: ghcr_image

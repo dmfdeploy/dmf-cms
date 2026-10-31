@@ -364,3 +364,30 @@ def test_the_gate_runs_before_the_build_and_again_inside_the_tag_step(release):
     assert body.index("check_tag_creation_rule(api)") < body.index("api.post(")
     evaluate = source.split("def evaluate(", 1)[1].split("\n# ----", 1)[0]
     assert "check_tag_creation_rule(api)" in evaluate
+
+
+def test_the_release_job_runs_on_the_hosted_arm64_runner(release):
+    # The image platform follows the build host. An amd64 runner produced an
+    # amd64 image for v0.40.1, and the k3s nodes are ARM64.
+    assert release["jobs"]["release"]["runs-on"] == "ubuntu-24.04-arm"
+
+
+def test_the_build_step_names_the_platform_explicitly(release):
+    build = next(s for s in steps(release["jobs"]["release"]) if s.get("name", "").startswith("Build the image"))
+    assert "scripts/build-image.sh" in build["run"]
+    assert "--platform linux/arm64" in build["run"]
+
+
+def test_the_platform_is_checked_after_the_build_and_before_any_push(release):
+    job_steps = steps(release["jobs"]["release"])
+    build = next(i for i, s in enumerate(job_steps) if s.get("name", "").startswith("Build the image"))
+    check = next(i for i, s in enumerate(job_steps) if "check-labels" in s.get("run", ""))
+    publish = next(i for i, s in enumerate(job_steps) if s.get("name", "").startswith("Publish the verified image"))
+    assert build < check < publish
+    run = job_steps[check]["run"]
+    assert "{{.Os}}/{{.Architecture}}" in run
+    assert '--platform "$platform"' in run
+
+
+def test_gate_expects_linux_arm64():
+    assert gate.EXPECTED_PLATFORM == "linux/arm64"
