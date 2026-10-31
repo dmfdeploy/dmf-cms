@@ -485,6 +485,32 @@ A merge to `main` requires the PR to pass `sync-version.sh --check`. A `vX.Y.Z`
 tag does not start a deploy; the operator runs playbooks 630 and 650 after the
 tag exists.
 
+### How pull requests merge
+
+You do not merge a pull request by hand. The `automerge` workflow
+(`.github/workflows/automerge.yml`) does it with a GitHub App, so the merge
+starts the push workflows and the merged commit gets its own checks. A merge
+made with `GITHUB_TOKEN` does not.
+
+- **Triggers.** The workflow runs when `CI` completes (`workflow_run`) and on a
+  sweep every 10 minutes (`schedule`). The sweep covers changes that start no
+  `CI` run, such as a draft marked ready or a removed `hold` label. An eligible
+  pull request waits at most one sweep interval, plus any delay GitHub adds to
+  scheduled runs.
+- **What it does.** For a pull request that is open, ready for review, based on
+  `main`, from a branch in this repository, and without the `hold` label, the
+  `dmf-cms-automerge` App arms rebase auto-merge. If all required checks and the
+  review are already done, it merges the pull request directly. Both calls name
+  the head commit they read, so a push that lands in between changes nothing.
+  The ruleset still requires the checks and the code-owner review.
+- **Key.** The App key lives only in the `automerge` environment, which is
+  limited to `main`. The workflow checks out no code and never runs pull request
+  code. The old `pull_request_target` flow is gone.
+- **Stop a merge with `hold`.** Add the `hold` label. The `hold-disarm` workflow
+  (`.github/workflows/hold-disarm.yml`) disarms auto-merge at once for a pull
+  request from this repository. For any other pull request, the next sweep
+  disarms it. Removing the label lets the next run arm the pull request again.
+
 ---
 
 ## 6. Build Reproducibility Rules
