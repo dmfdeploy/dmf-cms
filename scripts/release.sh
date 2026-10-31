@@ -4,9 +4,10 @@
 # Does NOT push the image. Per the 2026-05-19 ADR-0025 convergence, GHCR is
 # the canonical public source and workstation→Zot pushes were removed. When
 # the repository variable RELEASE_ENABLED is 'true', the release workflow
-# tags and publishes after the bump merges. While it is unset, publish with
-# scripts/publish-to-ghcr.sh by hand. Then mirror via playbook 630 and deploy
-# via playbook 650.
+# tags and publishes after the bump merges. While it is unset, wait: a
+# single-platform image published by hand at the version tag would block the
+# required two-platform index, because version tags are immutable. Then mirror
+# via playbook 630 and deploy via playbook 650.
 #
 # Usage:
 #   scripts/release.sh patch      # 0.2.2 → 0.2.3
@@ -52,7 +53,7 @@ Cannot run with uncommitted changes.
 This script builds locally only. When the repository variable RELEASE_ENABLED
 is 'true', the release workflow tags and publishes after the bump merges and
 its required checks pass; then run playbooks 630 + 650. While the variable is
-unset, the workflow does nothing. The hint at the end covers both cases.
+unset, the workflow does nothing and you wait: never publish by hand.
 EOF
     exit 1
 }
@@ -155,23 +156,11 @@ fi
 # ONLY — merging the PR rewrites the commit to a new SHA, so the tag would
 # reference a commit that never lands on main.
 #
-# If you passed --tag and are releasing through a PR, delete that local tag,
-# merge, then re-create it on the MERGED commit:
-#     git tag -d "v$NEW"
-#     # ... open + merge the release PR ...
-#     git fetch origin
-#     git tag -a "v$NEW" -m "Release v$NEW" origin/main   # tag origin/main, NOT local main:
-#                                                        # local main still holds the
-#                                                        # pre-rebase commit and has diverged
-#     git push origin "v$NEW"
-#     git merge-base --is-ancestor "v$NEW^{commit}" origin/main   # prove it landed
-#     # realign local main afterwards — but LOOK FIRST, this script runs on any
-#     # clean branch and cannot know what else your local main carries:
-#     git checkout main && git log --oneline origin/main..main
-#     # expect only the pre-rebase bump; if so `git reset --hard origin/main`
-#     # is safe, and if anything else is listed, rebase it instead of resetting
+# If you passed --tag and are releasing through a PR, delete that local tag
+# before you push (git tag -d "v$NEW"). The release workflow creates the tag on
+# the merged commit; do not push a tag by hand.
 
-# 6. Build (local only — no push; publish happens via scripts/publish-to-ghcr.sh)
+# 6. Build (local only — no push; the release workflow publishes)
 echo ""
 echo "[4/4] Building image locally..."
 "$REPO_ROOT/scripts/build-image.sh" --no-push --no-hint
@@ -190,20 +179,19 @@ Next steps (per the ADR-0025 GHCR-canonical / Zot-mirror flow).
 NOTE: substitute <env-name> with the current Hetzner test env id —
 see STATUS.md in the umbrella repo.
 
-  0. Check how this repository releases. The unattended release workflow runs
-     only when the repository variable RELEASE_ENABLED is 'true':
-       gh variable get RELEASE_ENABLED -R dmfdeploy/dmf-cms
-     If it is 'true', do step 1 and stop. After the merge, the workflow builds
-     the merged commit, publishes the image, attests it and creates the
-     v$NEW tag once every required check passes on that exact commit. Nobody
-     starts it, and you must not tag or publish by hand. Watch the \`release\`
-     workflow in Actions, then continue at step 3.
-     If the variable is unset, the workflow does nothing. Follow steps 1 to 2
-     as written; they are the manual path and go away when the rollout ends.
+  0. The release workflow is the only supported way to publish a release
+     image. This script prepares the release bump and builds locally; it
+     never publishes, and you must not tag or publish by hand: a single-platform
+     image at v$NEW would block the required two-platform index, because
+     version tags are immutable.
 
-  1. Land the bump. main is PROTECTED, so it goes via a PR — and because this
-     repo is rebase-merge only, the tag must be created AFTER the merge or it
-     points at a commit that never reaches main:
+     The workflow runs only when the repository variable RELEASE_ENABLED is
+     'true':
+       gh variable get RELEASE_ENABLED -R dmfdeploy/dmf-cms
+     If the variable is unset, the workflow does nothing. Land the bump, then
+     wait until an owner enables the workflow. Do not publish in the meantime.
+
+  1. Land the bump. main is PROTECTED, so it goes via a PR:
        git tag -d v$NEW                       # ONLY if you passed --tag;
                                               # by default no tag exists yet
        git branch --show-current              # expect release/$NEW, cut from
@@ -215,21 +203,20 @@ see STATUS.md in the umbrella repo.
        # the PR body needs a qualified backlog ref, e.g.
        #   Refs dmfdeploy/dmfdeploy#<N>
 
-     ...then, after the merge, tag origin/main DIRECTLY. Do not
-     \`git checkout main && git pull\` first: this script committed the bump on
-     whatever branch you were on (usually main), so local main still holds the
-     PRE-rebase commit while origin/main holds its rewritten twin. Those
-     histories have diverged — pull either refuses, or under a merge policy
-     builds a merge commit that is not in origin/main, and tagging that
-     recreates the exact bug this ordering exists to avoid.
-       git fetch origin
-       git tag -a v$NEW -m "Release v$NEW" origin/main
-       git push origin v$NEW
-       git merge-base --is-ancestor v$NEW^{commit} origin/main   # prove it landed
+     After the merge, the workflow builds the merged commit, publishes both
+     platform images and the verified index, attests it, and creates the
+     v$NEW tag once every required check passes on that exact commit. Nobody
+     starts it. Watch the \`release\` workflow in Actions, then continue at
+     step 2.
 
-     Only then realign local main, which is still carrying the stale commit.
-     LOOK BEFORE YOU RESET — this script runs on any clean branch and cannot
-     know what else is on your local main:
+     Then realign local main, which is still carrying the stale commit.
+     This script committed the bump on whatever branch you were on (usually
+     main), so local main holds the PRE-rebase commit while origin/main holds
+     its rewritten twin. Do not \`git checkout main && git pull\`: those
+     histories have diverged, so pull either refuses or builds a merge commit
+     that is not in origin/main. LOOK BEFORE YOU RESET — this script runs on
+     any clean branch and cannot know what else is on your local main:
+       git fetch origin
        git checkout main
        git log --oneline origin/main..main
        # Expect exactly one commit: the pre-rebase "chore(release): v$NEW".
@@ -240,21 +227,7 @@ see STATUS.md in the umbrella repo.
        # work onto origin/main instead. A --ff-only merge is no help here —
        # the histories have genuinely diverged, so it always refuses.
 
-  2. Rebuild the image from the tagged commit, then publish it to GHCR
-     (canonical public source). The image built above carries the PRE-rebase
-     commit in its org.opencontainers.image.revision label, and
-     publish-to-ghcr.sh only re-tags and pushes the local image, so publishing
-     it would label v$NEW with a commit that never reached origin/main:
-       cd $CMS_HINT
-       git fetch origin
-       git switch --detach v$NEW              # requires a clean tree
-       scripts/build-image.sh --no-push
-       docker inspect --format '{{ index .Config.Labels "org.opencontainers.image.revision" }}' \\
-         registry.dmf.example.com/dmf-cms:$NEW    # must equal:
-       git rev-parse v$NEW^{commit}
-       gh auth token | GHCR_USER="<github-username>" scripts/publish-to-ghcr.sh
-       # needs write:packages — 'gh auth status' to check,
-       # 'gh auth refresh -s write:packages' if absent.
+  2. Continue only after the workflow run succeeds and the v$NEW tag exists.
 
   3. Mirror GHCR → cluster-internal Zot (playbook 630):
        cd $ENV_HINT

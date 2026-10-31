@@ -68,7 +68,8 @@ Run `--check` in CI on every PR; if it fails, the PR has broken the contract.
 ### `build-image.sh`
 
 Builds the image locally and tags it `registry.dmf.example.com/dmf-cms:<VERSION>`.
-This is the *local* tag — `publish-to-ghcr.sh` re-tags and pushes it to GHCR.
+This is the *local* tag. The release workflow builds with `--tag-suffix` and
+`publish-to-ghcr.sh` re-tags and pushes each platform image to GHCR.
 The legacy workstation-to-Zot push was removed in the 2026-05-19 ADR-0025
 convergence; `--no-push` is the default that `release.sh` uses.
 
@@ -105,10 +106,10 @@ and CSS do not depend on the CPU architecture.
 
 Prepares the release bump: bump → sync → commit → build (local only). Refuses
 dirty trees. Does **not** push, and does not tag unless you pass `--tag`.
-Run it on a release branch cut from `origin/main` (§4). When the release
-workflow is enabled, it tags and publishes for you after the bump merges (§4,
-"Unattended release"). Until then, publishing is `publish-to-ghcr.sh`, and only
-after you rebuild from the release tag (§4, "Manual release").
+Run it on a release branch cut from `origin/main` (§4). The release workflow
+is the only supported way to publish a release image: it tags and publishes
+after the bump merges (§4, "Unattended release"). `release.sh` only prepares
+the release-bump PR. If the workflow is disabled, wait until it is enabled.
 
 ```bash
 scripts/release.sh patch                # 0.2.2 → 0.2.3
@@ -122,9 +123,8 @@ The script will:
 2. Commit the bump as `chore(release): v<NEW>` (signed off)
 3. Build the Docker image locally as `registry.dmf.example.com/dmf-cms:<NEW>`
 
-That image is a pre-merge build. The release workflow builds the merged commit
-again. On the manual path, rebuild it from the tagged commit after the release
-PR merges (see below) before you publish.
+That image is a pre-merge build for local testing. The release workflow builds
+the merged commit again; you never publish the local image.
 
 `--tag` creates the `v<NEW>` tag at that point. Leave it off. `main` is
 protected and merges are rebase-only, so a tag cut before the merge points at a
@@ -157,37 +157,21 @@ tag once it exists. You cannot correct a wrong tag. You can only cut a new
 version. The release workflow refuses to tag a version below an existing tag, or
 over a tag at another commit.
 
-**On the manual path, rebuild the image from the tagged commit before you
-publish.** The image
-that `release.sh` built carries the pre-rebase commit of the bump in its
-`org.opencontainers.image.revision` label, and that commit never reaches
-`origin/main`. `publish-to-ghcr.sh` only re-tags and pushes the image that
-already exists locally, so publishing it would label the release with a commit
-that `v<NEW>` does not name. Check out the tag, build there, and confirm the
-label before you publish:
+**Do not publish a release image by hand.** Version tags are immutable. A
+single-platform image published at `<VERSION>` would block the required
+two-platform index for good, because the workflow never replaces a published
+version tag. Only the release workflow publishes a release image, and only in
+the form of the verified index.
+
+After the workflow finishes, mirror and deploy:
 
 ```bash
-git fetch origin
-git switch --detach v0.4.0              # clean tree; builds the tagged commit
-scripts/build-image.sh --no-push
-docker inspect --format '{{ index .Config.Labels "org.opencontainers.image.revision" }}' \
-  registry.dmf.example.com/dmf-cms:0.4.0   # must equal:
-git rev-parse v0.4.0^{commit}
-```
-
-Then publish and deploy:
-
-```bash
-# 1. Publish to GHCR (the canonical public source). Run it from the same
-#    detached checkout, so the image you just built is the one it pushes.
-gh auth token | GHCR_USER="<github-username>" scripts/publish-to-ghcr.sh
-
-# 2. Mirror GHCR → cluster-internal Zot
+# 1. Mirror GHCR → cluster-internal Zot
 cd $DMFDEPLOY_UMBRELLA/dmf-env
 bin/run-playbook.sh <env-name> \
   ../dmf-infra/k3s-lab-bootstrap/playbooks/630-zot-seed-platform.yml
 
-# 3. Helm-deploy via 650 (HEAD-checks Zot, then Helm upgrade)
+# 2. Helm-deploy via 650 (HEAD-checks Zot, then Helm upgrade)
 bin/run-playbook.sh <env-name> \
   ../dmf-infra/k3s-lab-bootstrap/playbooks/650-dmf-cms.yml
 ```
@@ -196,17 +180,14 @@ bin/run-playbook.sh <env-name> \
 
 Thin wrapper around `dmfdeploy/bin/publish-image-to-ghcr.sh`. Asserts
 `IMAGE_TAG == VERSION`, then delegates the actual push. The release workflow
-calls it with the job token on standard input; an operator calls it only on the
-manual path. The umbrella helper handles secrets safely:
+calls it with the job token on standard input and `IMAGE_TAG_SUFFIX` set to a
+platform suffix (`-arm64`, `-amd64`). The script refuses to push the bare
+version tag: it exits non-zero when `IMAGE_TAG_SUFFIX` is empty. The umbrella
+helper handles secrets safely:
 
 - Token via **stdin only**, never argv
 - Isolated `DOCKER_CONFIG` (not `~/.docker/config.json`)
 - Cleanup via `trap` even on failure
-
-```bash
-# Token from the gh CLI (nothing typed into the terminal)
-gh auth token | GHCR_USER="<github-username>" scripts/publish-to-ghcr.sh
-```
 
 ### `verify-cluster.sh`
 
@@ -240,41 +221,24 @@ publishes to GHCR; playbook 630 mirrors from there:
 
 | Registry | Role | Auth |
 |---|---|---|
-| `ghcr.io/dmfdeploy/dmf-cms:<VERSION>` | Canonical public source | GHCR personal access token (operator workstation) |
+| `ghcr.io/dmfdeploy/dmf-cms:<VERSION>` | Canonical public source | Release App token, held by the release workflow |
 | `registry.dmf.example.com/dmf-cms:<VERSION>` | Cluster-internal Zot mirror | OpenBao-managed admin creds (used by playbook 630 only) |
 
 The 2026-05-19 ADR-0025 convergence retired direct workstation→Zot pushes.
-GHCR publication comes from the release workflow, or from an operator on the
-manual path; **playbook 630 mirrors GHCR → Zot** using credentials
+GHCR publication comes from the release workflow only; **playbook 630 mirrors GHCR → Zot** using credentials
 it pulls from OpenBao. Playbook 650 only HEAD-checks Zot and Helm-deploys.
 
-### Publishing to GHCR (the manual path)
+### Publishing to GHCR
 
-Use this only while the release workflow is not enabled (§4). Run it only after you rebuild from the tagged commit and check the revision
-label, as step 6 and 7 of [the release procedure](#4-the-release-procedure)
-describe. Use `scripts/publish-to-ghcr.sh`. It delegates to the umbrella helper which:
+The release workflow is the only supported way to publish a release image. It
+pushes a staging image per platform through `scripts/publish-to-ghcr.sh` and
+joins them into the index at `<VERSION>` (§4, "Unattended release"). Do not run
+`publish-to-ghcr.sh` yourself to publish a release. The script refuses a push
+without `IMAGE_TAG_SUFFIX`, and a staging push by hand does not produce the
+index. If the workflow is disabled, wait until it is enabled.
 
-- Sets up an isolated `DOCKER_CONFIG` (not `~/.docker/config.json`)
-- Reads the GHCR token **from stdin** — never argv (no shell history / `ps` leak)
-- Cleans up via `trap` even on failure
-
-```bash
-# Recommended: token from the gh CLI, never typed
-gh auth token | GHCR_USER="<github-username>" scripts/publish-to-ghcr.sh
-
-# Or interactive (umbrella helper prompts via `read -s`)
-GHCR_USER="<github-username>" scripts/publish-to-ghcr.sh
-```
-
-The piped credential must carry `write:packages`. Check with `gh auth status`
-and add it with `gh auth refresh -s write:packages`; a fine-grained PAT with
-that scope on `dmfdeploy/dmf-cms`, piped the same way, works equally well.
-
-**An account password is not a substitute for a token.** GHCR rejects one with
-exactly the same `denied: denied` as a bad or under-scoped token, so the
-failure reads as a scope problem and is not — which is why this flow names one
-credential source rather than leaving the operator to supply "the GHCR
-password" from a general-purpose store.
+For a local test build, run `scripts/build-image.sh --no-push`. It builds and
+tags the image on your machine and pushes nothing.
 
 ### Mirroring GHCR → Zot (playbook 630)
 
@@ -294,7 +258,7 @@ file (role default), so 630 always mirrors whatever the operator just published.
 
 | ❌ Don't | Why | ✅ Do instead |
 |---|---|---|
-| `docker push registry.dmf.example.com/dmf-cms:*` from workstation | Path removed 2026-05-19; no creds, will fail | `publish-to-ghcr.sh` + 630 |
+| `docker push registry.dmf.example.com/dmf-cms:*` from workstation | Path removed 2026-05-19; no creds, will fail | The release workflow, then 630 |
 | `docker login -u USER -p PASS …` | Password lands in shell history + `ps` | `--password-stdin` (umbrella helper already does this) |
 | `curl -d '{"password":"..."}' …` | Same argv leak | `--data @<(jq …)` or skip — `get-admin-cred.sh` handles it |
 | Curl OpenBao yourself for Zot creds | Burns the secret into the agent transcript | Let playbook 630 do it server-side |
@@ -392,10 +356,13 @@ Recovery:
 - A tag at another commit, or a higher tag: the run fails and changes nothing.
   Rollback is a new version, not a moved tag.
 
-### Manual release (only while `RELEASE_ENABLED` is not `true`)
+### While `RELEASE_ENABLED` is not `true`
 
-Once the workflow is enabled, do not tag or publish by hand. Until then, use
-these steps:
+There is no manual release. The release workflow is the only supported way to
+publish a release image, and `scripts/release.sh` only prepares the release-bump
+PR. If the workflow is disabled, land the bump and wait until an owner enables
+it. Publication of a single-platform image at `<VERSION>` would block the
+required two-platform index, because version tags are immutable.
 
 ```
 1.  Develop on a feature branch.
@@ -407,35 +374,21 @@ these steps:
 5.  Push the branch and open the PR:
     git push -u origin release/<NEW>
     gh pr create --title "chore(release): v<NEW>" --body "Refs dmfdeploy/dmfdeploy#<N>"
-    After the merge, tag the merged commit:
-    git fetch origin
-    git tag -a v<NEW> -m "Release v<NEW>" origin/main
-    git push origin v<NEW>                    (one-shot: v* tags cannot be moved)
-6.  Rebuild the image from the tagged commit (the image from step 4 carries
-    the pre-rebase commit in its revision label):
-    git fetch origin
-    git switch --detach v<NEW>                (clean tree; builds the tagged commit)
-    scripts/build-image.sh --no-push
-7.  Confirm the revision label names the tag:
-    docker inspect --format '{{ index .Config.Labels "org.opencontainers.image.revision" }}' \
-      registry.dmf.example.com/dmf-cms:<NEW>  (must equal the next line)
-    git rev-parse v<NEW>^{commit}
-8.  scripts/publish-to-ghcr.sh                (push image to GHCR; same checkout)
+6.  Merge the PR. The release workflow tags and publishes once it is enabled.
 ```
 
-### Mirror and deploy (both paths)
+### Mirror and deploy
 
-The workflow, or step 8 above, ends at GHCR. Mirroring and deploying stay
-operator-run:
+The workflow ends at GHCR. Mirroring and deploying stay operator-run:
 
 ```
-9.  cd $DMFDEPLOY_UMBRELLA/dmf-env
+7.  cd $DMFDEPLOY_UMBRELLA/dmf-env
     bin/run-playbook.sh <env-name> \
         ../dmf-infra/k3s-lab-bootstrap/playbooks/630-zot-seed-platform.yml
     bin/run-playbook.sh <env-name> \
         ../dmf-infra/k3s-lab-bootstrap/playbooks/650-dmf-cms.yml
-10. scripts/verify-cluster.sh
-11. curl -sk https://console.dmf.example.com/healthz
+8.  scripts/verify-cluster.sh
+9.  curl -sk https://console.dmf.example.com/healthz
 ```
 
 Steps 4–10 are not optional. Skipping any of them produces the drift this
@@ -648,8 +601,8 @@ Currently the workflow is a placeholder; wiring this up is the next CI task.
    - **Image missing from Zot** → re-run `630-zot-seed-platform.yml` (or
      `bootstrap-provision-post-seed.yml --tags zot-seed`).
    - **Image in Zot but pod on old tag** → re-run `650-dmf-cms.yml`.
-   - **Image not on GHCR either** → re-run `scripts/publish-to-ghcr.sh` first,
-     from the detached `v<VERSION>` checkout with the rebuilt image (§4, steps 6–8).
+   - **Image not on GHCR either** → check the `release` workflow run in
+     Actions. Re-run it if it failed (§4, "Recovery"). Do not publish by hand.
 
    All three are idempotent and read `cms_image_tag` from `dmf-cms/VERSION`.
 

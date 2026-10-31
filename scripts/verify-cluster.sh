@@ -161,7 +161,7 @@ echo "Cluster image:    $REMOTE_IMAGE"
 if [[ "$REMOTE_IMAGE" != "$EXPECTED" ]]; then
     echo ""
     echo "✗ DRIFT: cluster is not running the local VERSION."
-    echo "  Re-run the release flow: publish-to-ghcr.sh → playbook 630 → playbook 650."
+    echo "  Check that the release workflow published this version, then run playbook 630 → playbook 650."
     echo "  See dmf-cms/docs/DEVELOPMENT-AND-BUILD-RULES.md §4."
     exit 1
 fi
