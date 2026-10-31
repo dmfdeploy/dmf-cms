@@ -52,6 +52,16 @@ def steps(job: dict[str, Any]) -> list[dict[str, Any]]:
     return job["steps"]
 
 
+def named(job_steps: list[dict[str, Any]], prefix: str) -> list[dict[str, Any]]:
+    found = [s for s in job_steps if s.get("name", "").startswith(prefix)]
+    assert found, f"no step starts with {prefix!r}"
+    return found
+
+
+def index_of(job_steps: list[dict[str, Any]], step: dict[str, Any]) -> int:
+    return next(i for i, s in enumerate(job_steps) if s is step)
+
+
 def write_scopes(permissions: Any) -> set[str]:
     if permissions in (None, {}):
         return set()
@@ -297,10 +307,13 @@ def test_the_tag_is_created_last_and_with_the_app_token_not_github_token(release
     assert tag["env"]["GH_TOKEN"] == "${{ github.token }}"
     for step in job_steps[:-1]:
         assert "release-gate.py tag" not in step.get("run", "")
-    index = job_steps.index
     attest = next(s for s in job_steps if str(s.get("uses", "")).startswith("actions/attest-build-provenance@"))
-    publish = next(s for s in job_steps if s.get("name", "").startswith("Publish the verified image"))
-    assert index(publish) < index(attest) < index(tag)
+    join = named(job_steps, "Join the platforms")[0]
+    verify = named(job_steps, "Verify the published index")[0]
+    publishes = named(job_steps, "Publish the verified")
+    assert max(index_of(job_steps, x) for x in publishes) < index_of(job_steps, join)
+    assert index_of(job_steps, join) < index_of(job_steps, verify) < index_of(job_steps, attest)
+    assert index_of(job_steps, attest) < index_of(job_steps, tag)
 
 
 def test_the_token_is_minted_before_anything_is_built_or_pushed(release):
@@ -308,30 +321,34 @@ def test_the_token_is_minted_before_anything_is_built_or_pushed(release):
     names = [s.get("name", s.get("uses", "")) for s in job_steps]
     mint = next(i for i, s in enumerate(job_steps)
                 if str(s.get("uses", "")).startswith("actions/create-github-app-token@"))
-    build = next(i for i, n in enumerate(names) if n.startswith("Build the image"))
-    publish = next(i for i, n in enumerate(names) if n.startswith("Publish the verified image"))
-    assert mint < build < publish
+    builds = [i for i, n in enumerate(names) if n.startswith("Build the ")]
+    publishes = [i for i, n in enumerate(names) if n.startswith("Publish the verified")]
+    assert len(builds) == 2 and len(publishes) == 2
+    assert mint < min(builds) and max(builds) < min(publishes)
 
 
-def test_the_attestation_names_the_ghcr_image_and_the_published_digest(release):
-    attest = next(s for s in steps(release["jobs"]["release"])
-                  if str(s.get("uses", "")).startswith("actions/attest-build-provenance@"))
+def test_the_attestation_covers_the_verified_index_digest(release):
+    job_steps = steps(release["jobs"]["release"])
+    attest = next(s for s in job_steps if str(s.get("uses", "")).startswith("actions/attest-build-provenance@"))
+    verify = named(job_steps, "Verify the published index")[0]
     assert attest["with"]["subject-name"] == "ghcr.io/dmfdeploy/dmf-cms"
-    assert re.fullmatch(r"\$\{\{ steps\.\w+\.outputs\.digest \}\}", attest["with"]["subject-digest"])
+    assert attest["with"]["subject-digest"] == f"${{{{ steps.{verify['id']}.outputs.index_digest }}}}"
+    assert "verify-index" in verify["run"]
 
 
 def test_the_image_labels_are_checked_before_any_push(release):
     job_steps = steps(release["jobs"]["release"])
     labels = next(i for i, s in enumerate(job_steps) if "check-labels" in s.get("run", ""))
-    publish = next(i for i, s in enumerate(job_steps)
-                   if s.get("name", "").startswith("Publish the verified image"))
-    assert labels < publish
+    first_push = min(index_of(job_steps, s) for s in named(job_steps, "Publish the verified"))
+    assert labels < first_push
 
 
-def test_the_publish_step_skips_an_image_that_already_exists(release):
-    publish = next(s for s in steps(release["jobs"]["release"])
-                   if s.get("name", "").startswith("Publish the verified image"))
-    assert publish["if"] == "steps.ghcr_image.outputs.exists != 'true'"
+def test_every_push_step_skips_an_index_that_already_exists(release):
+    job_steps = steps(release["jobs"]["release"])
+    pushes = [*named(job_steps, "Publish the verified"), *named(job_steps, "Join the platforms")]
+    assert len(pushes) == 3
+    for step in pushes:
+        assert step["if"] == "steps.ghcr_image.outputs.exists != 'true'", step["name"]
 
 
 def test_every_umbrella_checkout_is_pinned_by_full_sha_and_holds_no_credentials():
@@ -357,7 +374,7 @@ def test_every_umbrella_checkout_is_pinned_by_full_sha_and_holds_no_credentials(
 def test_the_gate_runs_before_the_build_and_again_inside_the_tag_step(release):
     job_steps = steps(release["jobs"]["release"])
     check = next(i for i, s in enumerate(job_steps) if "release-gate.py check " in s.get("run", ""))
-    build = next(i for i, s in enumerate(job_steps) if s.get("name", "").startswith("Build the image"))
+    build = min(index_of(job_steps, s) for s in named(job_steps, "Build the "))
     assert check < build  # `check` includes the tag-creation rule check
     source = (REPO_ROOT / "scripts" / "release-gate.py").read_text(encoding="utf-8")
     body = source.split("def create_tag(", 1)[1].split("\n# ----", 1)[0]
@@ -367,27 +384,59 @@ def test_the_gate_runs_before_the_build_and_again_inside_the_tag_step(release):
 
 
 def test_the_release_job_runs_on_the_hosted_arm64_runner(release):
-    # The image platform follows the build host. An amd64 runner produced an
-    # amd64 image for v0.40.1, and the k3s nodes are ARM64.
+    # arm64 is the primary platform and builds natively; amd64 runs under QEMU.
+    # v0.40.1 came from an amd64 runner and was an amd64-only image.
     assert release["jobs"]["release"]["runs-on"] == "ubuntu-24.04-arm"
 
 
-def test_the_build_step_names_the_platform_explicitly(release):
-    build = next(s for s in steps(release["jobs"]["release"]) if s.get("name", "").startswith("Build the image"))
-    assert "scripts/build-image.sh" in build["run"]
-    assert "--platform linux/arm64" in build["run"]
-
-
-def test_the_platform_is_checked_after_the_build_and_before_any_push(release):
+def test_both_platforms_are_built_with_an_explicit_platform_and_suffix(release):
     job_steps = steps(release["jobs"]["release"])
-    build = next(i for i, s in enumerate(job_steps) if s.get("name", "").startswith("Build the image"))
+    runs = {s["name"]: s["run"] for s in named(job_steps, "Build the ")}
+    assert len(runs) == 2
+    arm = next(r for n, r in runs.items() if "arm64" in n)
+    amd = next(r for n, r in runs.items() if "amd64" in n)
+    assert "--platform linux/arm64 --tag-suffix -arm64" in arm
+    assert "--platform linux/amd64 --tag-suffix -amd64" in amd
+
+
+def test_qemu_is_set_up_before_the_amd64_build_and_pinned(release):
+    job_steps = steps(release["jobs"]["release"])
+    qemu = next(s for s in job_steps if str(s.get("uses", "")).startswith("docker/setup-qemu-action@"))
+    assert qemu["with"]["platforms"] == "amd64"
+    amd = named(job_steps, "Build the amd64")[0]
+    assert index_of(job_steps, qemu) < index_of(job_steps, amd)
+
+
+def test_each_image_is_checked_for_platform_labels_and_startup_before_any_push(release):
+    job_steps = steps(release["jobs"]["release"])
+    builds = [index_of(job_steps, s) for s in named(job_steps, "Build the ")]
     check = next(i for i, s in enumerate(job_steps) if "check-labels" in s.get("run", ""))
-    publish = next(i for i, s in enumerate(job_steps) if s.get("name", "").startswith("Publish the verified image"))
-    assert build < check < publish
+    first_push = min(index_of(job_steps, s) for s in named(job_steps, "Publish the verified"))
+    assert max(builds) < check < first_push
     run = job_steps[check]["run"]
     assert "{{.Os}}/{{.Architecture}}" in run
-    assert '--platform "$platform"' in run
+    assert '--platform "$platform" --expect "linux/$arch"' in run
+    assert "for arch in arm64 amd64" in run
+    assert "import dmf_cms" in run
 
 
-def test_gate_expects_linux_arm64():
-    assert gate.EXPECTED_PLATFORM == "linux/arm64"
+def test_the_index_is_joined_from_the_two_pushed_digests_only(release):
+    job_steps = steps(release["jobs"]["release"])
+    digests = named(job_steps, "Read the pushed platform digests")[0]
+    join = named(job_steps, "Join the platforms")[0]
+    assert "digest --name" in digests["run"] and "for arch in arm64 amd64" in digests["run"]
+    assert "publish-index-to-ghcr.sh --arm64" in join["run"]
+    assert join["env"]["ARM64_DIGEST"] == f"${{{{ steps.{digests['id']}.outputs.arm64 }}}}"
+    assert join["env"]["AMD64_DIGEST"] == f"${{{{ steps.{digests['id']}.outputs.amd64 }}}}"
+
+
+def test_the_staging_pushes_use_the_shared_helper_with_a_platform_suffix(release):
+    job_steps = steps(release["jobs"]["release"])
+    suffixes = {s["env"]["IMAGE_TAG_SUFFIX"] for s in named(job_steps, "Publish the verified")}
+    assert suffixes == {"-arm64", "-amd64"}
+    for step in named(job_steps, "Publish the verified"):
+        assert "scripts/publish-to-ghcr.sh" in step["run"]
+
+
+def test_gate_expects_exactly_arm64_and_amd64():
+    assert gate.EXPECTED_PLATFORMS == {"linux/arm64", "linux/amd64"}

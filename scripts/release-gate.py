@@ -27,11 +27,13 @@ Subcommands:
     check           Checks 1 to 3 for the release job. Not ready fails.
     version-rule    Check 4 only. Reports whether the tag exists.
     tag             Checks 1 to 4 again, then creates the tag if it is absent.
-    check-labels    Compares image labels (JSON on stdin) with VERSION and SHA,
-                    and the image platform with linux/arm64.
-    inspect-ghcr    Reports whether the published image exists, and verifies
-                    its labels when it does.
-    digest          Reads RepoDigests (JSON on stdin) and prints the digest.
+    check-labels    Compares one built image's labels (JSON on stdin) with
+                    VERSION and SHA, and its platform with --expect.
+    inspect-ghcr    Reports whether the version tag exists as an index, and
+                    verifies the whole index when it does.
+    verify-index    Verifies the published index: exactly linux/arm64 and
+                    linux/amd64, and every child labelled. Prints its digest.
+    digest          Reads RepoDigests (JSON on stdin) and prints one digest.
 
 Reads use GH_TOKEN. The tag POST uses RELEASE_TAG_TOKEN only, so the release
 App token is never used to read and GITHUB_TOKEN is never used to write a tag.
@@ -61,8 +63,16 @@ SEMVER_RE = re.compile(rf"^{SEMVER}$")
 RELEASE_SUBJECT_RE = re.compile(rf"^chore\(release\): v(?P<version>{SEMVER})$")
 SHA_RE = re.compile(r"^[0-9a-f]{40}$")
 QUALIFIED_ISSUE_RE = re.compile(r"(?<![\w/])dmfdeploy/dmfdeploy#[1-9][0-9]*(?![0-9])")
-# The k3s nodes are ARM64. An image for any other platform must never publish.
-EXPECTED_PLATFORM = "linux/arm64"
+# Every release publishes one index under the version tag with exactly these
+# platforms. arm64 is primary: the k3s nodes are ARM64. v0.40.1 was published
+# as a single linux/amd64 image, which the nodes cannot run.
+EXPECTED_PLATFORMS = frozenset({"linux/arm64", "linux/amd64"})
+INDEX_MEDIA_TYPES = frozenset(
+    {
+        "application/vnd.oci.image.index.v1+json",
+        "application/vnd.docker.distribution.manifest.list.v2+json",
+    }
+)
 DIGEST_RE = re.compile(r"^sha256:[0-9a-f]{64}$")
 
 # Workflow file -> (display name, the contexts its jobs produce). The display
@@ -527,15 +537,19 @@ def create_tag(api: GitHub, sha: str) -> tuple[str, str]:
 # ------------------------------------------------------- image helpers
 
 
-def check_platform(platform: str) -> None:
-    """The image must be linux/arm64: `docker image inspect` Os/Architecture."""
-    if platform != EXPECTED_PLATFORM:
-        raise GateError(f"image platform is {platform!r}, expected {EXPECTED_PLATFORM!r}")
+def check_platform(platform: str, expected: str) -> None:
+    """One built image: `docker image inspect` Os/Architecture must be `expected`."""
+    if expected not in EXPECTED_PLATFORMS:
+        raise GateError(f"{expected!r} is not a release platform")
+    if platform != expected:
+        raise GateError(f"image platform is {platform!r}, expected {expected!r}")
 
 
-def check_labels(labels: Any, version: str, sha: str, platform: str | None = None) -> None:
+def check_labels(
+    labels: Any, version: str, sha: str, platform: str | None = None, expected: str | None = None
+) -> None:
     if platform is not None:
-        check_platform(platform)
+        check_platform(platform, expected or "")
     if not isinstance(labels, dict):
         raise GateError("image has no label map")
     if labels.get("org.opencontainers.image.version") != version:
@@ -546,31 +560,83 @@ def check_labels(labels: Any, version: str, sha: str, platform: str | None = Non
         raise GateError("image source label differs from this repository")
 
 
-def inspect_existing_image(version: str, sha: str) -> bool:
-    """Return True when the GHCR tag exists and its labels match the release."""
-    image = f"{IMAGE}:{version}"
-    pull = subprocess.run(["docker", "pull", image], check=False, capture_output=True, text=True)
-    if pull.returncode:
-        output = f"{pull.stdout}\n{pull.stderr}".lower()
-        if "manifest unknown" in output or "manifest not found" in output:
-            return False
-        raise GateError("could not safely determine whether the GHCR image tag exists")
-    inspect = subprocess.run(
-        ["docker", "image", "inspect", image, "--format",
-         "{{.Os}}/{{.Architecture}} {{json .Config.Labels}}"],
-        check=False,
-        capture_output=True,
-        text=True,
-    )
-    if inspect.returncode:
-        raise GateError("could not read labels from the existing GHCR image")
-    platform, _, raw_labels = inspect.stdout.strip().partition(" ")
-    try:
-        labels = json.loads(raw_labels)
-    except json.JSONDecodeError as exc:
-        raise GateError("existing GHCR image labels are malformed") from exc
-    check_labels(labels, version, sha, platform)
-    return True
+def check_index(manifest: Any, images: Any, version: str, sha: str) -> str:
+    """Verify a published index and return its digest.
+
+    `manifest` is `docker buildx imagetools inspect --format '{{json .Manifest}}'`
+    and `images` is the same command with `{{json .Image}}`: for an index it
+    maps "os/arch" to each child's image config. The index must hold exactly
+    the release platforms, once each, and every child must carry the version,
+    revision and source labels. A single manifest (such as v0.40.1), a missing
+    platform, an extra entry (an attestation manifest shows as unknown/unknown)
+    and a child with a wrong label all fail.
+    """
+    manifest = _as_dict(manifest, "index manifest")
+    if manifest.get("mediaType") not in INDEX_MEDIA_TYPES:
+        raise GateError("image is a single manifest, not a multi-platform index")
+    digest = manifest.get("digest")
+    if not isinstance(digest, str) or not DIGEST_RE.fullmatch(digest):
+        raise GateError("index digest is missing or malformed")
+    children = manifest.get("manifests")
+    if not isinstance(children, list):
+        raise GateError("index lists no manifests")
+    listed: list[str] = []
+    for child in children:
+        platform = child.get("platform") if isinstance(child, dict) else None
+        if not isinstance(platform, dict):
+            raise GateError("index holds a manifest with no platform")
+        listed.append(f"{platform.get('os')}/{platform.get('architecture')}")
+    _require_platform_set(listed, "index")
+
+    images = _as_dict(images, "index image configs")
+    configs: list[str] = []
+    for config in images.values():
+        config = _as_dict(config, "child image config")
+        configs.append(f"{config.get('os')}/{config.get('architecture')}")
+        inner = config.get("config")
+        check_labels(inner.get("Labels") if isinstance(inner, dict) else None, version, sha)
+    _require_platform_set(configs, "child image configs")
+    return digest
+
+
+def _require_platform_set(found: list[str], what: str) -> None:
+    if len(found) != len(set(found)) or set(found) != EXPECTED_PLATFORMS:
+        raise GateError(
+            f"{what} platforms are {sorted(found)}, expected exactly {sorted(EXPECTED_PLATFORMS)}"
+        )
+
+
+def _docker(args: list[str]) -> subprocess.CompletedProcess:
+    return subprocess.run(["docker", *args], check=False, capture_output=True, text=True)
+
+
+def fetch_index(ref: str) -> tuple[Any, Any] | None:
+    """Return (manifest, images) for a published ref, or None when it is absent."""
+    results = []
+    for template in ("{{json .Manifest}}", "{{json .Image}}"):
+        result = _docker(["buildx", "imagetools", "inspect", ref, "--format", template])
+        if result.returncode:
+            output = f"{result.stdout}\n{result.stderr}".lower()
+            if not results and "not found" in output:
+                return None
+            raise GateError(f"could not safely inspect {ref}: {result.stderr.strip()[:200]}")
+        try:
+            results.append(json.loads(result.stdout))
+        except json.JSONDecodeError as exc:
+            raise GateError(f"{ref} inspect output is not JSON") from exc
+    return results[0], results[1]
+
+
+def inspect_existing_image(version: str, sha: str) -> str | None:
+    """Return the index digest when the version tag exists and passes, else None.
+
+    An existing tag that does not match the release is never overwritten: the
+    check fails and the run stops.
+    """
+    found = fetch_index(f"{IMAGE}:{version}")
+    if found is None:
+        return None
+    return check_index(found[0], found[1], version, sha)
 
 
 def pick_digest(repo_digests: Any) -> str:
@@ -650,13 +716,15 @@ def main(argv: list[str] | None = None) -> int:
     verify.add_argument("--event-path", default=os.environ.get("GITHUB_EVENT_PATH"))
     for name in ("check", "version-rule", "tag"):
         sub.add_parser(name).add_argument("--sha", required=True)
-    for name in ("check-labels", "inspect-ghcr"):
+    for name in ("check-labels", "inspect-ghcr", "verify-index"):
         cmd = sub.add_parser(name)
         cmd.add_argument("--version", required=True)
         cmd.add_argument("--sha", required=True)
         if name == "check-labels":
-            cmd.add_argument("--platform", required=True, help="Os/Architecture of the image")
-    sub.add_parser("digest")
+            cmd.add_argument("--platform", required=True, help="actual Os/Architecture of the image")
+            cmd.add_argument("--expect", required=True, help="the platform this build must be")
+    digest = sub.add_parser("digest")
+    digest.add_argument("--name", default="digest", help="name of the output to write")
     args = parser.parse_args(argv)
 
     api = GitHub()
@@ -675,16 +743,23 @@ def main(argv: list[str] | None = None) -> int:
             version, outcome = create_tag(api, _require_sha(args.sha))
             print(f"tag v{version}: {outcome}")
         elif args.command == "digest":
-            _write_output({"digest": pick_digest(json.load(sys.stdin))})
+            _write_output({args.name: pick_digest(json.load(sys.stdin))})
         else:
             if not SEMVER_RE.fullmatch(args.version):
                 raise GateError("version must be strict MAJOR.MINOR.PATCH")
             _require_sha(args.sha)
             if args.command == "check-labels":
-                check_labels(json.load(sys.stdin), args.version, args.sha, args.platform)
+                check_labels(
+                    json.load(sys.stdin), args.version, args.sha, args.platform, args.expect
+                )
+            elif args.command == "verify-index":
+                found = fetch_index(f"{IMAGE}:{args.version}")
+                if found is None:
+                    raise GateError(f"{IMAGE}:{args.version} does not exist")
+                _write_output({"index_digest": check_index(found[0], found[1], args.version, args.sha)})
             else:
-                exists = inspect_existing_image(args.version, args.sha)
-                _write_output({"exists": "true" if exists else "false"})
+                digest = inspect_existing_image(args.version, args.sha)
+                _write_output({"exists": "true" if digest else "false"})
     except GateError as exc:
         print(f"::error::release gate failed: {exc}")
         return 1
