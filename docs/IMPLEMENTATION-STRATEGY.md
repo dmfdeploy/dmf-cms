@@ -298,10 +298,10 @@ git fetch origin
 git switch -c release/<NEW> origin/main
 scripts/release.sh patch    # or minor / X.Y.Z — bumps VERSION + builds
 
-# Tag, rebuild from the tag, publish + deploy: see
-# DEVELOPMENT-AND-BUILD-RULES.md §4 (steps 5–9). Do not publish the image
-# that release.sh built; rebuild it from the tagged commit first.
-#   scripts/publish-to-ghcr.sh        (image → GHCR)
+# Publish + deploy: see DEVELOPMENT-AND-BUILD-RULES.md §4. The release
+# workflow is the only supported way to publish a release image; do not
+# publish the image that release.sh built.
+#   release workflow                  (image → GHCR)
 #   playbook 630-zot-seed-platform    (GHCR → Zot mirror)
 #   playbook 650-dmf-cms              (Helm deploy)
 ```
@@ -423,14 +423,11 @@ If continuing from context loss, prioritize in this order:
    scripts/release.sh patch   # bumps VERSION, builds (local only)
    ```
 
-7. **Publish + mirror + deploy** (post-ADR-0025 flow). Before you publish,
-   tag the merged commit and rebuild the image from it
-   (DEVELOPMENT-AND-BUILD-RULES.md §4, steps 5–7, after the release PR merges); the image that
-   `release.sh` built carries a pre-rebase revision label.
+7. **Publish + mirror + deploy** (post-ADR-0025 flow). The release workflow
+   publishes the image to GHCR after the release PR merges; it is the only
+   supported way to publish a release image
+   (DEVELOPMENT-AND-BUILD-RULES.md §4). Once it finishes:
    ```bash
-   # Publish to GHCR (canonical public source)
-   gh auth token | GHCR_USER="<github-username>" scripts/publish-to-ghcr.sh
-
    # Mirror GHCR → cluster Zot, then Helm-deploy
    cd $DMFDEPLOY_UMBRELLA/dmf-env
    bin/run-playbook.sh <env-name> \

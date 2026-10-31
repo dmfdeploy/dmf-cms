@@ -136,6 +136,59 @@ def test_the_step_pipes_the_token_with_a_terminating_newline(arch):
     assert "printf '%s\\n' \"$publisher_token\" | scripts/publish-to-ghcr.sh" in publish_step(arch)["run"]
 
 
+def run_wrapper(tmp_path: Path, suffix: str | None) -> tuple[subprocess.CompletedProcess, str]:
+    fake_bin = tmp_path / "bin"
+    fake_bin.mkdir()
+    calls = tmp_path / "docker-calls"
+    (fake_bin / "docker").write_text(FAKE_DOCKER, encoding="utf-8")
+    (fake_bin / "docker").chmod(0o755)
+    env = {k: v for k, v in os.environ.items() if k != "IMAGE_TAG_SUFFIX"}
+    env.update(
+        {
+            "PATH": f"{fake_bin}:{env['PATH']}",
+            "HOME": str(tmp_path),
+            "DOCKER_CALLS": str(calls),
+            "DOCKER_TOKEN": str(tmp_path / "received-token"),
+            "DMFDEPLOY_UMBRELLA": str(umbrella_dir()),
+            "GHCR_USER": "github-actions[bot]",
+        }
+    )
+    if suffix is not None:
+        env["IMAGE_TAG_SUFFIX"] = suffix
+    result = subprocess.run(
+        ["bash", str(REPO / "scripts" / "publish-to-ghcr.sh")],
+        input=FAKE_TOKEN + "\n", text=True, capture_output=True, env=env, cwd=REPO, check=False,
+    )
+    return result, (calls.read_text(encoding="utf-8") if calls.exists() else "")
+
+
+@pytest.mark.parametrize("suffix", [None, ""])
+def test_the_wrapper_refuses_to_push_the_bare_version_tag(tmp_path, suffix):
+    """A single-platform image at the version tag would block the two-platform
+    index for good, because version tags are immutable."""
+    version = (REPO / "VERSION").read_text(encoding="utf-8").strip()
+    result, docker_calls = run_wrapper(tmp_path, suffix)
+    assert result.returncode != 0
+    assert "refusing to push the version tag" in result.stderr
+    assert "release workflow" in result.stderr
+    assert docker_calls == ""  # no login, no tag, no push
+    assert f"push ghcr.io/dmfdeploy/dmf-cms:{version}" not in docker_calls
+
+
+def test_the_wrapper_still_pushes_a_staging_tag(tmp_path):
+    version = (REPO / "VERSION").read_text(encoding="utf-8").strip()
+    result, docker_calls = run_wrapper(tmp_path, "-arm64")
+    assert result.returncode == 0, result.stdout + result.stderr
+    assert f"push ghcr.io/dmfdeploy/dmf-cms:{version}-arm64|" in docker_calls
+
+
+@pytest.mark.parametrize("arch", ["arm64", "amd64"])
+def test_every_workflow_publish_step_sets_a_suffix(arch):
+    """The workflow never relies on the bare tag: both steps pass a suffix."""
+    step = publish_step(arch)
+    assert step["env"]["IMAGE_TAG_SUFFIX"] == f"-{arch}"
+
+
 # ------------------------------------------------ the index join (imagetools)
 
 ARM = "sha256:" + "1" * 64

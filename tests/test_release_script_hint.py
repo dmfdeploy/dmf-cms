@@ -94,7 +94,9 @@ def test_hint_block_prints_the_git_commands_without_running_them(tmp_path) -> No
     assert "`git checkout main && git pull`" in r.stdout
     # The deliberate interpolations still work.
     assert "RELEASE v0.1.1 BUILT LOCALLY" in r.stdout
-    assert 'git tag -a v0.1.1 -m "Release v0.1.1" origin/main' in r.stdout
+    # The hint never tells the operator to tag by hand.
+    assert "git tag -a" not in r.stdout
+    assert "git push origin v0.1.1" not in r.stdout
 
 
 def test_build_check_does_not_advise_a_pre_merge_tag_push(tmp_path) -> None:
@@ -120,44 +122,28 @@ def test_build_check_does_not_advise_a_pre_merge_tag_push(tmp_path) -> None:
     assert "origin/main" in r.stdout
 
 
-def test_hint_rebuilds_from_the_tagged_commit_before_publishing(tmp_path) -> None:
-    """The image built before the rebase merge carries an orphan revision label.
-
-    publish-to-ghcr.sh only re-tags the local image, so the hint must send the
-    operator to build from the tagged commit first, and must print the label
-    check literally.
-    """
+def test_hint_never_tells_the_operator_to_publish(tmp_path) -> None:
+    """A single-platform image at the version tag would block the two-platform
+    index, because version tags are immutable. The hint names the workflow as
+    the only way to publish and prints no publisher command."""
     repo = make_scratch_repo(tmp_path)
     r = run_release(repo, "patch")
     assert r.returncode == 0, r.stderr
     out = r.stdout
-    detach = out.index("git switch --detach v0.1.1")
-    build = out.index("scripts/build-image.sh --no-push", detach)
-    label = out.index('"org.opencontainers.image.revision"', build)
-    publish = out.index("scripts/publish-to-ghcr.sh", label)
-    assert detach < build < label < publish
-    # The label holds the full SHA, so the comparison must print the full SHA.
-    assert "git rev-parse v0.1.1^{commit}" in out
-    assert "--short" not in out
+    assert "publish-to-ghcr.sh" not in out
+    assert "GHCR_USER" not in out
+    assert "only supported way to publish a release" in out
+    assert "wait until an owner enables the workflow" in out
 
 
-def test_numbered_procedure_rebuilds_before_publishing() -> None:
-    """The canonical numbered release procedure must rebuild from the tag first.
-
-    Anchored on the commands, not the prose: in the fenced block under the
-    "Release Procedure" heading, every line that runs publish-to-ghcr.sh needs an
-    earlier build-image.sh line and an earlier `git rev-parse` line in that block.
-    """
+def test_numbered_procedure_has_no_manual_publish_step() -> None:
+    """The release procedure in the build rules runs no publisher by hand."""
     doc = (REPO_ROOT / "docs" / "DEVELOPMENT-AND-BUILD-RULES.md").read_text()
     section = doc.split("## 4. The Release Procedure", 1)[1].split("\n## ", 1)[0]
-    blocks = section.split("```")[1::2]
-    publishing = [b.splitlines() for b in blocks if "publish-to-ghcr.sh" in b]
-    assert publishing, "no fenced block in the release procedure runs publish-to-ghcr.sh"
-    for lines in publishing:
-        publish = next(i for i, ln in enumerate(lines) if "publish-to-ghcr.sh" in ln)
-        before = "\n".join(lines[:publish])
-        assert "scripts/build-image.sh" in before, "publish step has no earlier build-image.sh"
-        assert "git rev-parse" in before, "publish step has no earlier git rev-parse label check"
+    for block in section.split("```")[1::2]:
+        assert "publish-to-ghcr.sh" not in block
+        assert "GHCR_USER" not in block
+    assert "There is no manual release" in section
 
 
 def test_hint_explains_the_unattended_flow_and_the_enable_variable(tmp_path) -> None:
@@ -182,7 +168,7 @@ def test_build_image_labels_the_image_with_the_full_commit_sha() -> None:
     assert "rev-parse --short" not in script
 
 
-PUBLISH_RECIPE_LINE = "1. Publish to GHCR:"
+PUBLISH_RECIPE_LINE = "The image is local only. Do not publish it"
 
 
 def _use_real_build_image(repo: Path) -> dict:
@@ -204,9 +190,8 @@ def _use_real_build_image(repo: Path) -> dict:
 def test_release_path_prints_no_direct_publish_recipe(tmp_path) -> None:
     """The real build-image.sh runs before the release PR merges.
 
-    Its own publish recipe would send the operator to publish the image that
-    carries the pre-rebase commit, so release.sh must suppress it and print only
-    its own post-merge steps.
+    Its own next-steps text would repeat what release.sh prints, so release.sh
+    suppresses it and prints only its own steps.
     """
     repo = make_scratch_repo(tmp_path)
     env = _use_real_build_image(repo)
@@ -233,7 +218,8 @@ def test_plain_build_image_keeps_its_hint(tmp_path) -> None:
     plain = run("--no-push")
     assert plain.returncode == 0, plain.stdout + plain.stderr
     assert PUBLISH_RECIPE_LINE in plain.stdout
-    assert "rebuilt from the release tag" in plain.stdout
+    assert "release workflow is the only" in plain.stdout
+    assert "publish-to-ghcr.sh" not in plain.stdout
     quiet = run("--no-push", "--no-hint")
     assert quiet.returncode == 0, quiet.stdout + quiet.stderr
     assert "BUILD COMPLETE" in quiet.stdout

@@ -3,7 +3,7 @@
 # registry.dmf.example.com/dmf-cms:<VERSION>.
 #
 # This script does NOT push. Per the 2026-05-19 ADR-0025 convergence the
-# canonical publish path is scripts/publish-to-ghcr.sh (image → GHCR), then
+# canonical publish path is the release workflow (image → GHCR), then
 # playbook 630-zot-seed-platform.yml mirrors GHCR → cluster-internal Zot.
 # Workstation→Zot pushes were removed in that convergence.
 #
@@ -60,7 +60,7 @@ Environment:
   DMF_CMS_PLATFORM     default: linux/arm64 (same as --platform)
   DMF_CMS_TAG_SUFFIX   default: none (same as --tag-suffix)
   DMF_CMS_REGISTRY     default: registry.dmf.example.com (local tag prefix only;
-                       publish-to-ghcr.sh re-tags this image for GHCR)
+                       the release workflow re-tags this image for GHCR)
   DMF_CMS_IMAGE_NAME   default: dmf-cms
   DMF_CMS_DOCKERFILE   default: Dockerfile
 EOF
@@ -174,20 +174,16 @@ echo ""
 source "$REPO_ROOT/scripts/lib/hint-paths.sh"
 dmf_hint_paths "$REPO_ROOT"
 
-echo "The image is local only. To publish + deploy (ADR-0025 GHCR-canonical flow)."
-echo "A release image must be rebuilt from the release tag first: DEVELOPMENT-AND-BUILD-RULES.md section 4."
+echo "The image is local only. Do not publish it: the release workflow is the only"
+echo "supported way to publish a release image (DEVELOPMENT-AND-BUILD-RULES.md section 4)."
+echo "After the workflow publishes, deploy (ADR-0025 GHCR-canonical flow)."
 echo "Substitute <env-name> with the current Hetzner test env id — see STATUS.md."
-echo "  1. Publish to GHCR:"
-echo "       cd $CMS_HINT"
-echo "       gh auth token | GHCR_USER='<github-username>' scripts/publish-to-ghcr.sh"
-echo "       # needs write:packages — 'gh auth status' to check,"
-echo "       # 'gh auth refresh -s write:packages' if absent."
-echo "  2. Mirror GHCR → Zot (playbook 630):"
+echo "  1. Mirror GHCR → Zot (playbook 630):"
 echo "       cd $ENV_HINT"
 echo "       bin/run-playbook.sh <env-name> \\"
 echo "         ../dmf-infra/k3s-lab-bootstrap/playbooks/630-zot-seed-platform.yml"
-echo "  3. Helm-deploy (playbook 650):"
+echo "  2. Helm-deploy (playbook 650):"
 echo "       bin/run-playbook.sh <env-name> \\"
 echo "         ../dmf-infra/k3s-lab-bootstrap/playbooks/650-dmf-cms.yml"
-echo "  4. Verify:"
+echo "  3. Verify:"
 echo "       cd $CMS_HINT && scripts/verify-cluster.sh"
