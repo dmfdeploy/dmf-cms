@@ -6,7 +6,7 @@ serviceAccountName: ""
 
 image:
   repository: registry.dmf.example.com/dmf-cms
-  tag: "0.39.0"
+  tag: "0.40.0"
   pullPolicy: IfNotPresent
 
 imagePullSecrets:
