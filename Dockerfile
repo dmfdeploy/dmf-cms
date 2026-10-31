@@ -3,7 +3,9 @@ FROM node:22-slim as frontend-builder
 
 WORKDIR /build
 
-COPY frontend/package*.json ./
+# .npmrc carries legacy-peer-deps, which the lockfile needs; without it
+# npm 10 stops at an ERESOLVE peer conflict.
+COPY frontend/package*.json frontend/.npmrc ./
 RUN npm ci
 
 COPY frontend/src ./src
