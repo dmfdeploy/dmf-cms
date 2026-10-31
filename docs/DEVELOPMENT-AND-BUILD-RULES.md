@@ -88,14 +88,18 @@ traceability. The revision label holds the full 40-character commit SHA. The
 release workflow compares it with the verified commit, so a short SHA would not
 match.
 
-**The image must be `linux/arm64`.** The k3s nodes are ARM64, and an amd64 image
-does not run there. Docker builds for the platform of the build host unless you
+**Each release is a multi-platform index.** The k3s nodes are ARM64, and a
+developer or CI machine may be amd64, so every release publishes one index
+under the version tag with exactly `linux/arm64` and `linux/amd64`. arm64 is the
+primary platform. Docker builds for the platform of the build host unless you
 say otherwise, so `build-image.sh` always passes an explicit `--platform`. The
 default is `linux/arm64`; override it with `--platform` or `DMF_CMS_PLATFORM`.
 On Apple Silicon that is the native platform, so a local build does not change.
-The release workflow builds on GitHub's hosted arm64 runner (`ubuntu-24.04-arm`,
-free and unlimited for public repositories), so the build is native and needs no
-emulation.
+`--tag-suffix` (for example `-amd64`) keeps one checkout's builds apart. The
+build adds no provenance or SBOM attestation manifests to the image, because the
+release index must list exactly the two platforms. The frontend build stage runs
+natively on the build host (`FROM --platform=$BUILDPLATFORM`): its HTML, JavaScript
+and CSS do not depend on the CPU architecture.
 
 ### `release.sh`
 
@@ -352,18 +356,31 @@ The workflow has two jobs:
       only at this commit, and then tag creation is skipped.
 
    It then mints the release App token, builds the image from the exact commit
-   with `scripts/build-image.sh` on the hosted arm64 runner, checks that the
-   image is `linux/arm64` and that the version and revision labels match before
-   any push, publishes through `scripts/publish-to-ghcr.sh`, creates a
-   build-provenance attestation for the image digest, and creates the
-   `v<VERSION>` tag last, as the release App.
+   with `scripts/build-image.sh`. The job runs on GitHub's hosted arm64 runner
+   (`ubuntu-24.04-arm`, free and unlimited for public repositories), so arm64
+   builds natively and amd64 builds under QEMU. For each platform it checks the
+   image's platform, labels and start-up (`import dmf_cms`) before any push, then
+   pushes it through `scripts/publish-to-ghcr.sh` under a staging tag
+   (`<VERSION>-arm64`, `<VERSION>-amd64`). `scripts/publish-index-to-ghcr.sh`
+   joins the two digests into the index at `<VERSION>`, and the gate verifies
+   every child of the index: exactly the two platforms, each with the version,
+   revision and source labels. It creates a build-provenance attestation for the
+   index digest, and creates the `v<VERSION>` tag last, as the release App.
+
+   A re-run replaces a staging tag with a rebuild of the same verified commit.
+   It never replaces the version tag: if the index exists and passes, the push
+   steps are skipped. The attestation covers the index digest, so verify the
+   version tag. The per-platform digests have no attestation of their own, and
+   copying the image to another registry must keep the whole index (for example
+   `skopeo copy --all`) to keep that digest.
 
 Recovery:
 
-- The first unattended release, v0.40.1, was published as `linux/amd64`
-  because the job ran on an amd64 runner. That image stays as it is: the
-  workflow never overwrites a published image, and a tag cannot move. The fix
-  ships with the next release bump. Roll forward; do not re-run v0.40.1.
+- The first unattended release, v0.40.1, was published as a single
+  `linux/amd64` image because the job ran on an amd64 runner. That image stays
+  as it is: the workflow never overwrites a published image, and a tag cannot
+  move. The fix ships with the next release bump. Roll forward; do not re-run
+  v0.40.1.
 - A required check fails or is cancelled on a release commit: no tag and no
   image. The failed run shows in Actions. Fix forward with a new release PR.
 - The App token cannot be minted: the run fails before any build or push.

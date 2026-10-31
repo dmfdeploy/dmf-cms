@@ -130,36 +130,55 @@ jobs:
           private-key: ${{ secrets.RELEASE_APP_PRIVATE_KEY }}
           permission-contents: write
 
-      - name: Build the image from the verified commit
+      # The runner is arm64, so arm64 builds natively. QEMU supplies the foreign
+      # amd64 platform; the frontend stage always builds natively.
+      - name: Set up QEMU for the amd64 build
+        uses: docker/setup-qemu-action@99012661954931238ded8c8b007157a8430204e1  # v4.4.0
+        with:
+          platforms: amd64
+
+      - name: Build the arm64 image from the verified commit
         working-directory: src
         run: |
           set -eu
           [ "$(git rev-parse HEAD)" = "$RELEASE_SHA" ]
-          scripts/build-image.sh --no-hint --platform linux/arm64
+          scripts/build-image.sh --no-hint --platform linux/arm64 --tag-suffix -arm64
 
-      - name: Check the image platform and labels before any push
+      - name: Build the amd64 image from the verified commit
+        working-directory: src
+        run: scripts/build-image.sh --no-hint --platform linux/amd64 --tag-suffix -amd64
+
+      - name: Check each image's platform, labels and start-up before any push
         env:
           RELEASE_VERSION: ${{ steps.gate.outputs.version }}
         run: |
           set -eu
-          image="registry.dmf.example.com/dmf-cms:$RELEASE_VERSION"
-          platform="$(docker image inspect "$image" --format '{{.Os}}/{{.Architecture}}')"
-          docker image inspect "$image" --format '{{json .Config.Labels}}' \
-            | python3 tools/scripts/release-gate.py check-labels \
-                --version "$RELEASE_VERSION" --sha "$RELEASE_SHA" --platform "$platform"
+          for arch in arm64 amd64; do
+            image="registry.dmf.example.com/dmf-cms:$RELEASE_VERSION-$arch"
+            platform="$(docker image inspect "$image" --format '{{.Os}}/{{.Architecture}}')"
+            docker image inspect "$image" --format '{{json .Config.Labels}}' \
+              | python3 tools/scripts/release-gate.py check-labels \
+                  --version "$RELEASE_VERSION" --sha "$RELEASE_SHA" \
+                  --platform "$platform" --expect "linux/$arch"
+            docker run --rm --platform "linux/$arch" "$image" python -c 'import dmf_cms'
+          done
 
-      - name: Check for an existing GHCR image
+      - name: Check for an existing GHCR index
         id: ghcr_image
         env:
           RELEASE_VERSION: ${{ steps.gate.outputs.version }}
         run: python3 tools/scripts/release-gate.py inspect-ghcr --version "$RELEASE_VERSION" --sha "$RELEASE_SHA"
 
-      - name: Publish the verified image to GHCR
+      # Each platform goes up under a staging tag through the shared helper. A
+      # re-run replaces a staging tag with a rebuild of the same verified
+      # commit. The version tag is never replaced: it exists only as the index.
+      - name: Publish the verified arm64 image to GHCR
         if: steps.ghcr_image.outputs.exists != 'true'
         working-directory: src
         env:
           RELEASE_TOKEN: ${{ github.token }}
           GHCR_USER: ${{ github.actor }}
+          IMAGE_TAG_SUFFIX: -arm64
           # GitHub-hosted Ubuntu provides Docker on the standard socket. The
           # shared helper otherwise defaults to an operator's Colima socket.
           DOCKER_HOST: unix:///var/run/docker.sock
@@ -170,21 +189,64 @@ jobs:
           unset RELEASE_TOKEN
           printf '%s\n' "$publisher_token" | scripts/publish-to-ghcr.sh
 
-      - name: Read the published digest
-        id: digest
+      - name: Publish the verified amd64 image to GHCR
+        if: steps.ghcr_image.outputs.exists != 'true'
+        working-directory: src
+        env:
+          RELEASE_TOKEN: ${{ github.token }}
+          GHCR_USER: ${{ github.actor }}
+          IMAGE_TAG_SUFFIX: -amd64
+          DOCKER_HOST: unix:///var/run/docker.sock
+          DMFDEPLOY_UMBRELLA: ${{ github.workspace }}/umbrella
+        run: |
+          set -eu
+          publisher_token="$RELEASE_TOKEN"
+          unset RELEASE_TOKEN
+          printf '%s\n' "$publisher_token" | scripts/publish-to-ghcr.sh
+
+      - name: Read the pushed platform digests
+        id: platform_digests
+        if: steps.ghcr_image.outputs.exists != 'true'
         env:
           RELEASE_VERSION: ${{ steps.gate.outputs.version }}
         run: |
           set -eu
-          docker image inspect "ghcr.io/dmfdeploy/dmf-cms:$RELEASE_VERSION" \
-            --format '{{json .RepoDigests}}' \
-            | python3 tools/scripts/release-gate.py digest
+          for arch in arm64 amd64; do
+            docker image inspect "ghcr.io/dmfdeploy/dmf-cms:$RELEASE_VERSION-$arch" \
+              --format '{{json .RepoDigests}}' \
+              | python3 tools/scripts/release-gate.py digest --name "$arch"
+          done
 
-      - name: Attest build provenance for the digest
+      - name: Join the platforms into one index under the version tag
+        if: steps.ghcr_image.outputs.exists != 'true'
+        working-directory: src
+        env:
+          RELEASE_TOKEN: ${{ github.token }}
+          GHCR_USER: ${{ github.actor }}
+          ARM64_DIGEST: ${{ steps.platform_digests.outputs.arm64 }}
+          AMD64_DIGEST: ${{ steps.platform_digests.outputs.amd64 }}
+          DOCKER_HOST: unix:///var/run/docker.sock
+        run: |
+          set -eu
+          publisher_token="$RELEASE_TOKEN"
+          unset RELEASE_TOKEN
+          printf '%s\n' "$publisher_token" \
+            | scripts/publish-index-to-ghcr.sh --arm64 "$ARM64_DIGEST" --amd64 "$AMD64_DIGEST"
+
+      - name: Verify the published index
+        id: index
+        env:
+          RELEASE_VERSION: ${{ steps.gate.outputs.version }}
+        run: python3 tools/scripts/release-gate.py verify-index --version "$RELEASE_VERSION" --sha "$RELEASE_SHA"
+
+      # One attestation on the index digest. Verifying the version tag resolves
+      # to that digest. The per-platform digests carry no attestation of their
+      # own; copy the index whole (all platforms) to keep its digest.
+      - name: Attest build provenance for the index digest
         uses: actions/attest-build-provenance@4d101475d8b20a2381f78447822ac1eab6504dd8  # v4.2.2
         with:
           subject-name: ghcr.io/dmfdeploy/dmf-cms
-          subject-digest: ${{ steps.digest.outputs.digest }}
+          subject-digest: ${{ steps.index.outputs.index_digest }}
 
       # Last. The App token creates the tag; GITHUB_TOKEN only reads. This step
       # repeats checks 1 to 4 immediately before it creates the ref.

@@ -1,5 +1,8 @@
 # Stage 1: Build React frontend
-FROM node:22-slim as frontend-builder
+# The frontend build output (HTML, JS, CSS) does not depend on the CPU
+# architecture, so build it natively on the build host even when the image is
+# built for another platform under emulation.
+FROM --platform=$BUILDPLATFORM node:22-slim AS frontend-builder
 
 WORKDIR /build
 

@@ -781,33 +781,50 @@ GOOD_LABELS = {
 
 def test_labels_that_match_pass():
     gate.check_labels(GOOD_LABELS, VERSION, SHA)
-    gate.check_labels(GOOD_LABELS, VERSION, SHA, "linux/arm64")
+    gate.check_labels(GOOD_LABELS, VERSION, SHA, "linux/arm64", "linux/arm64")
+    gate.check_labels(GOOD_LABELS, VERSION, SHA, "linux/amd64", "linux/amd64")
 
 
-@pytest.mark.parametrize("platform", ["linux/amd64", "linux/arm", "darwin/arm64", "", "arm64", "linux/arm64/v8"])
-def test_an_image_that_is_not_linux_arm64_never_passes(platform):
-    # v0.40.1 was published as linux/amd64 from an amd64 runner.
-    with pytest.raises(gate.GateError, match="expected 'linux/arm64'"):
-        gate.check_labels(GOOD_LABELS, VERSION, SHA, platform)
-    with pytest.raises(gate.GateError, match="platform"):
-        gate.check_platform(platform)
+@pytest.mark.parametrize(
+    ("actual", "expected"),
+    [
+        ("linux/amd64", "linux/arm64"),  # an amd64 build where arm64 was expected
+        ("linux/arm64", "linux/amd64"),
+        ("linux/arm", "linux/arm64"),
+        ("darwin/arm64", "linux/arm64"),
+        ("", "linux/arm64"),
+        ("arm64", "linux/arm64"),
+        ("linux/arm64/v8", "linux/arm64"),
+        ("linux/riscv64", "linux/riscv64"),  # not a release platform at all
+    ],
+)
+def test_an_image_on_the_wrong_platform_never_passes(actual, expected):
+    with pytest.raises(gate.GateError, match="platform|release platform"):
+        gate.check_labels(GOOD_LABELS, VERSION, SHA, actual, expected)
+    with pytest.raises(gate.GateError):
+        gate.check_platform(actual, expected)
 
 
 def test_the_platform_is_checked_even_when_the_labels_are_wrong_too():
     with pytest.raises(gate.GateError, match="platform"):
-        gate.check_labels({}, VERSION, SHA, "linux/amd64")
+        gate.check_labels({}, VERSION, SHA, "linux/amd64", "linux/arm64")
 
 
-def test_check_labels_on_the_command_line_requires_the_platform(monkeypatch, capsys):
+def test_check_labels_on_the_command_line_requires_platform_and_expectation(monkeypatch):
     import io
-    monkeypatch.setattr("sys.stdin", io.StringIO(json.dumps(GOOD_LABELS)))
+
     argv = ["check-labels", "--version", VERSION, "--sha", SHA]
+
+    def run(*extra):
+        monkeypatch.setattr("sys.stdin", io.StringIO(json.dumps(GOOD_LABELS)))
+        return gate.main([*argv, *extra])
+
     with pytest.raises(SystemExit):
-        gate.main(argv)  # no --platform: argparse refuses
-    monkeypatch.setattr("sys.stdin", io.StringIO(json.dumps(GOOD_LABELS)))
-    assert gate.main([*argv, "--platform", "linux/arm64"]) == 0
-    monkeypatch.setattr("sys.stdin", io.StringIO(json.dumps(GOOD_LABELS)))
-    assert gate.main([*argv, "--platform", "linux/amd64"]) == 1
+        run()  # argparse refuses: no --platform, no --expect
+    with pytest.raises(SystemExit):
+        run("--platform", "linux/arm64")
+    assert run("--platform", "linux/arm64", "--expect", "linux/arm64") == 0
+    assert run("--platform", "linux/amd64", "--expect", "linux/arm64") == 1
 
 
 @pytest.mark.parametrize(
@@ -846,42 +863,193 @@ def test_a_missing_ambiguous_or_malformed_digest_fails(value):
         gate.pick_digest(value)
 
 
-def _docker(monkeypatch, pull_rc, pull_err, labels, platform="linux/arm64"):
-    def fake_run(command, **kwargs):
-        if command[:2] == ["docker", "pull"]:
-            return subprocess.CompletedProcess(command, pull_rc, "", pull_err)
-        # `{{.Os}}/{{.Architecture}} {{json .Config.Labels}}`
-        return subprocess.CompletedProcess(command, 0, f"{platform} {json.dumps(labels)}\n", "")
+# ------------------------------------------- the published multi-platform index
 
-    monkeypatch.setattr(gate.subprocess, "run", fake_run)
+INDEX_DIGEST = "sha256:" + "b" * 64
+ARM_DIGEST = "sha256:" + "1" * 64
+AMD_DIGEST = "sha256:" + "2" * 64
 
 
-def test_an_absent_image_is_reported_absent(monkeypatch):
-    _docker(monkeypatch, 1, "Error response from daemon: manifest unknown", {})
-    assert gate.inspect_existing_image(VERSION, SHA) is False
+def _child(arch: str, digest: str) -> dict[str, Any]:
+    return {
+        "mediaType": "application/vnd.oci.image.manifest.v1+json",
+        "digest": digest,
+        "size": 2194,
+        "platform": {"architecture": arch, "os": "linux"},
+    }
 
 
-def test_a_registry_error_is_not_mistaken_for_an_absent_image(monkeypatch):
-    _docker(monkeypatch, 1, "toomanyrequests: rate limited", {})
-    with pytest.raises(gate.GateError, match="safely determine"):
+def _config(arch: str, **label_changes: Any) -> dict[str, Any]:
+    labels = {**GOOD_LABELS, **label_changes}
+    return {
+        "created": "2026-10-31T10:12:37.727976813+01:00",
+        "architecture": arch,
+        "os": "linux",
+        "config": {"ExposedPorts": {"8000/tcp": {}}, "Cmd": ["uvicorn"], "Labels": labels},
+        "rootfs": {"type": "layers", "diff_ids": ["sha256:" + "a" * 64]},
+    }
+
+
+class Registry:
+    """`docker buildx imagetools inspect` for one ref, as the CLI prints it."""
+
+    def __init__(self) -> None:
+        self.manifest: Any = {
+            "schemaVersion": 2,
+            "mediaType": "application/vnd.oci.image.index.v1+json",
+            "digest": INDEX_DIGEST,
+            "size": 856,
+            "manifests": [_child("arm64", ARM_DIGEST), _child("amd64", AMD_DIGEST)],
+        }
+        self.images: Any = {"linux/arm64": _config("arm64"), "linux/amd64": _config("amd64")}
+        self.error: str | None = None
+        self.calls: list[list[str]] = []
+
+    def install(self, monkeypatch) -> None:
+        def fake_run(command, **kwargs):
+            self.calls.append(command)
+            if self.error:
+                return subprocess.CompletedProcess(command, 1, "", self.error)
+            template = command[command.index("--format") + 1]
+            body = self.manifest if template == "{{json .Manifest}}" else self.images
+            return subprocess.CompletedProcess(command, 0, json.dumps(body, indent=2), "")
+
+        monkeypatch.setattr(gate.subprocess, "run", fake_run)
+
+
+@pytest.fixture
+def registry(monkeypatch) -> Registry:
+    reg = Registry()
+    reg.install(monkeypatch)
+    return reg
+
+
+def test_an_index_with_both_platforms_and_good_labels_passes(registry):
+    found = gate.fetch_index(f"{gate.IMAGE}:{VERSION}")
+    assert gate.check_index(*found, VERSION, SHA) == INDEX_DIGEST
+    assert gate.inspect_existing_image(VERSION, SHA) == INDEX_DIGEST
+    assert registry.calls[0][:4] == ["docker", "buildx", "imagetools", "inspect"]
+
+
+def test_the_docker_manifest_list_media_type_is_also_an_index(registry):
+    registry.manifest["mediaType"] = "application/vnd.docker.distribution.manifest.list.v2+json"
+    assert gate.inspect_existing_image(VERSION, SHA) == INDEX_DIGEST
+
+
+def test_an_absent_version_tag_is_reported_absent(registry):
+    registry.error = f"ERROR: {gate.IMAGE}:{VERSION}: not found"
+    assert gate.inspect_existing_image(VERSION, SHA) is None
+    # verify-index runs after the join, so an absent tag there is a failure.
+    assert gate.main(["verify-index", "--version", VERSION, "--sha", SHA]) == 1
+
+
+def test_a_registry_error_is_not_mistaken_for_an_absent_tag(registry):
+    registry.error = "ERROR: failed to do request: Head: 502 Bad Gateway"
+    with pytest.raises(gate.GateError, match="could not safely inspect"):
         gate.inspect_existing_image(VERSION, SHA)
 
 
-def test_an_existing_image_with_matching_labels_is_accepted(monkeypatch):
-    _docker(monkeypatch, 0, "", GOOD_LABELS)
-    assert gate.inspect_existing_image(VERSION, SHA) is True
-
-
-def test_an_existing_amd64_image_is_not_accepted(monkeypatch):
-    _docker(monkeypatch, 0, "", GOOD_LABELS, platform="linux/amd64")
-    with pytest.raises(gate.GateError, match="platform"):
+def test_an_index_missing_a_platform_fails(registry):
+    registry.manifest["manifests"] = [_child("arm64", ARM_DIGEST)]
+    registry.images = {"linux/arm64": _config("arm64")}
+    with pytest.raises(gate.GateError, match="expected exactly"):
         gate.inspect_existing_image(VERSION, SHA)
 
 
-def test_an_existing_image_with_a_mismatched_revision_is_never_overwritten(monkeypatch):
-    _docker(monkeypatch, 0, "", {**GOOD_LABELS, "org.opencontainers.image.revision": OTHER_SHA})
+def test_an_index_with_an_extra_platform_fails(registry):
+    registry.manifest["manifests"].append(_child("riscv64", "sha256:" + "3" * 64))
+    registry.images["linux/riscv64"] = _config("riscv64")
+    with pytest.raises(gate.GateError, match="expected exactly"):
+        gate.inspect_existing_image(VERSION, SHA)
+
+
+def test_an_attestation_manifest_in_the_index_counts_as_an_extra_entry(registry):
+    registry.manifest["manifests"].append(
+        {**_child("unknown", "sha256:" + "4" * 64), "platform": {"architecture": "unknown", "os": "unknown"}}
+    )
+    with pytest.raises(gate.GateError, match="unknown/unknown"):
+        gate.inspect_existing_image(VERSION, SHA)
+
+
+def test_a_duplicated_platform_fails(registry):
+    registry.manifest["manifests"] = [_child("arm64", ARM_DIGEST), _child("arm64", AMD_DIGEST)]
+    with pytest.raises(gate.GateError, match="expected exactly"):
+        gate.inspect_existing_image(VERSION, SHA)
+
+
+@pytest.mark.parametrize("arch", ["arm64", "amd64"])
+def test_a_child_whose_revision_label_differs_fails(registry, arch):
+    registry.images[f"linux/{arch}"] = _config(arch, **{"org.opencontainers.image.revision": OTHER_SHA})
     with pytest.raises(gate.GateError, match="revision label"):
         gate.inspect_existing_image(VERSION, SHA)
+
+
+@pytest.mark.parametrize("arch", ["arm64", "amd64"])
+def test_a_child_without_labels_fails(registry, arch):
+    registry.images[f"linux/{arch}"]["config"].pop("Labels")
+    with pytest.raises(gate.GateError, match="no label map"):
+        gate.inspect_existing_image(VERSION, SHA)
+
+
+def test_a_child_config_for_the_wrong_architecture_fails(registry):
+    # The index says amd64, but the child's own config says arm64.
+    registry.images["linux/amd64"] = _config("arm64")
+    with pytest.raises(gate.GateError, match="child image configs platforms"):
+        gate.inspect_existing_image(VERSION, SHA)
+
+
+def test_a_single_amd64_manifest_like_v0_40_1_fails(registry):
+    # v0.40.1: one linux/amd64 manifest. The index template then returns a bare
+    # config, not a platform map.
+    registry.manifest = {
+        "schemaVersion": 2,
+        "mediaType": "application/vnd.oci.image.manifest.v1+json",
+        "digest": "sha256:c88cb03bd7ea10268d6cda99c37791b5adbccc70025b5f58718afb4733c26910",
+        "size": 2194,
+    }
+    registry.images = _config("amd64")
+    with pytest.raises(gate.GateError, match="single manifest"):
+        gate.inspect_existing_image("0.40.1", SHA)
+
+
+def test_a_one_entry_index_holding_only_amd64_fails(registry):
+    registry.manifest["manifests"] = [_child("amd64", AMD_DIGEST)]
+    registry.images = {"linux/amd64": _config("amd64")}
+    with pytest.raises(gate.GateError, match="expected exactly"):
+        gate.inspect_existing_image(VERSION, SHA)
+
+
+@pytest.mark.parametrize("digest", [None, "sha256:short", "md5:abc"])
+def test_an_index_with_a_bad_digest_fails(registry, digest):
+    registry.manifest["digest"] = digest
+    with pytest.raises(gate.GateError, match="digest"):
+        gate.inspect_existing_image(VERSION, SHA)
+
+
+def test_malformed_inspect_output_fails_closed(registry, monkeypatch):
+    monkeypatch.setattr(
+        gate.subprocess, "run",
+        lambda command, **kw: subprocess.CompletedProcess(command, 0, "not json", ""),
+    )
+    with pytest.raises(gate.GateError, match="not JSON"):
+        gate.inspect_existing_image(VERSION, SHA)
+
+
+def test_the_verify_index_command_prints_the_index_digest(registry, tmp_path, monkeypatch):
+    out = tmp_path / "out"
+    monkeypatch.setenv("GITHUB_OUTPUT", str(out))
+    assert gate.main(["verify-index", "--version", VERSION, "--sha", SHA]) == 0
+    assert f"index_digest={INDEX_DIGEST}" in out.read_text()
+
+
+def test_the_digest_command_names_its_output(monkeypatch, tmp_path):
+    import io
+
+    out = tmp_path / "out"
+    monkeypatch.setenv("GITHUB_OUTPUT", str(out))
+    monkeypatch.setattr("sys.stdin", io.StringIO(json.dumps([f"{gate.IMAGE}@{ARM_DIGEST}"])))
+    assert gate.main(["digest", "--name", "arm64"]) == 0
+    assert f"arm64={ARM_DIGEST}" in out.read_text()
 
 
 def test_the_gate_refuses_to_run_in_another_repository(monkeypatch, api):

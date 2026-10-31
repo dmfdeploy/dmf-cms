@@ -264,3 +264,30 @@ def test_build_image_passes_an_explicit_arm64_platform_by_default(tmp_path) -> N
     assert build(extra_env={"DMF_CMS_PLATFORM": "linux/arm64"}).returncode == 0
     assert build("--platform", "windows/amd64").returncode != 0
     assert build("--platform").returncode != 0
+
+
+def test_build_image_tag_suffix_and_attestation_flags(tmp_path) -> None:
+    """One checkout holds a build per platform, and the images carry no
+    attestation manifests: the release index must list exactly two platforms."""
+    repo = make_scratch_repo(tmp_path)
+    env = _use_real_build_image(repo)
+    log = tmp_path / "docker-args"
+    (repo.parent / "fakebin" / "docker").write_text(
+        f'#!/usr/bin/env bash\necho "$@" >> {log}\nexit 0\n'
+    )
+
+    def build(*args: str) -> subprocess.CompletedProcess:
+        return subprocess.run(
+            ["bash", str(repo / "scripts" / "build-image.sh"), "--no-hint", *args],
+            check=False, cwd=repo, capture_output=True, text=True, env=env,
+        )
+
+    assert build("--platform", "linux/amd64", "--tag-suffix", "-amd64").returncode == 0
+    text = log.read_text()
+    assert "registry.dmf.example.com/dmf-cms:0.1.0-amd64" in text
+    assert "--provenance=false" in text and "--sbom=false" in text
+    log.write_text("")
+    assert build().returncode == 0
+    assert "-t registry.dmf.example.com/dmf-cms:0.1.0 " in log.read_text()
+    for bad in ("amd64", "-AMD", "-a b", "--x"):
+        assert build("--tag-suffix", bad).returncode != 0

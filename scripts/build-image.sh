@@ -40,10 +40,11 @@ ALLOW_DIRTY=0
 CHECK_ONLY=0
 PRINT_HINT=1
 PLATFORM="${DMF_CMS_PLATFORM:-linux/arm64}"
+TAG_SUFFIX="${DMF_CMS_TAG_SUFFIX:-}"
 
 usage() {
     cat <<EOF
-Usage: $0 [--no-push] [--dirty] [--check] [--no-hint] [--platform OS/ARCH]
+Usage: $0 [--no-push] [--dirty] [--check] [--no-hint] [--platform OS/ARCH] [--tag-suffix SUFFIX]
 
   --no-push    No-op, accepted for compatibility (this script never pushes)
   --dirty      Allow build with uncommitted changes (NOT for cluster deployment)
@@ -52,9 +53,12 @@ Usage: $0 [--no-push] [--dirty] [--check] [--no-hint] [--platform OS/ARCH]
                and prints its own post-merge steps)
 
   --platform   Target platform for the image (default: linux/arm64)
+  --tag-suffix Append SUFFIX to the local tag (for example -amd64), so one
+               checkout can hold a build per platform. Default: none.
 
 Environment:
   DMF_CMS_PLATFORM     default: linux/arm64 (same as --platform)
+  DMF_CMS_TAG_SUFFIX   default: none (same as --tag-suffix)
   DMF_CMS_REGISTRY     default: registry.dmf.example.com (local tag prefix only;
                        publish-to-ghcr.sh re-tags this image for GHCR)
   DMF_CMS_IMAGE_NAME   default: dmf-cms
@@ -72,6 +76,9 @@ while [[ $# -gt 0 ]]; do
         --platform)
             [[ $# -ge 2 ]] || { echo "ERROR: --platform needs a value" >&2; usage; }
             PLATFORM="$2"; shift ;;
+        --tag-suffix)
+            [[ $# -ge 2 ]] || { echo "ERROR: --tag-suffix needs a value" >&2; usage; }
+            TAG_SUFFIX="$2"; shift ;;
         -h|--help)  usage ;;
         *)          echo "Unknown arg: $1" >&2; usage ;;
     esac
@@ -90,7 +97,11 @@ if [[ ! "$VERSION" =~ $SEMVER_RE ]]; then
     exit 1
 fi
 
-IMAGE_TAG="$REGISTRY/$IMAGE_NAME:$VERSION"
+if [[ ! "$TAG_SUFFIX" =~ ^(-[a-z0-9]+)?$ ]]; then
+    echo "ERROR: tag suffix '$TAG_SUFFIX' must be empty or -<lowercase letters and digits>" >&2
+    exit 1
+fi
+IMAGE_TAG="$REGISTRY/$IMAGE_NAME:$VERSION$TAG_SUFFIX"
 
 echo "═══════════════════════════════════════════════════"
 echo "  DMF Console Build"
@@ -139,6 +150,7 @@ echo ""
 echo "[3/3] Building image..."
 docker build \
     --platform "$PLATFORM" \
+    --provenance=false --sbom=false \
     --label "org.opencontainers.image.version=$VERSION" \
     --label "org.opencontainers.image.revision=$GIT_SHA" \
     --label "org.opencontainers.image.source=https://github.com/dmfdeploy/dmf-cms" \

@@ -28,6 +28,10 @@
 #   GHCR_USER         GitHub username (default: prompt)
 #   GHCR_NAMESPACE    GHCR namespace (default: dmfdeploy)
 #   IMAGE_TAG         Tag (default: read from ./VERSION)
+#   IMAGE_TAG_SUFFIX  Appended to the source and destination tag, for a
+#                     per-platform staging tag such as -arm64 (default: none).
+#                     The release workflow joins the staging tags into one
+#                     index under the version tag (publish-index-to-ghcr.sh).
 #   SOURCE_REGISTRY   Local registry prefix
 #                     (default: registry.dmf.example.com — matches
 #                     scripts/build-image.sh's local tag convention)
@@ -99,6 +103,12 @@ fi
 
 # Delegate to umbrella ---------------------------------------------------
 
+IMAGE_TAG_SUFFIX="${IMAGE_TAG_SUFFIX:-}"
+if [[ ! "$IMAGE_TAG_SUFFIX" =~ ^(-[a-z0-9]+)?$ ]]; then
+  echo "ERROR: IMAGE_TAG_SUFFIX must be empty or -<lowercase letters and digits>." >&2
+  exit 1
+fi
+
 exec "${UMBRELLA_DIR}/bin/publish-image-to-ghcr.sh" \
-  "${SOURCE_REGISTRY}/dmf-cms:${IMAGE_TAG}" \
-  "ghcr.io/${GHCR_NAMESPACE}/dmf-cms:${IMAGE_TAG}"
+  "${SOURCE_REGISTRY}/dmf-cms:${IMAGE_TAG}${IMAGE_TAG_SUFFIX}" \
+  "ghcr.io/${GHCR_NAMESPACE}/dmf-cms:${IMAGE_TAG}${IMAGE_TAG_SUFFIX}"
