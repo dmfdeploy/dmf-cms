@@ -781,6 +781,33 @@ GOOD_LABELS = {
 
 def test_labels_that_match_pass():
     gate.check_labels(GOOD_LABELS, VERSION, SHA)
+    gate.check_labels(GOOD_LABELS, VERSION, SHA, "linux/arm64")
+
+
+@pytest.mark.parametrize("platform", ["linux/amd64", "linux/arm", "darwin/arm64", "", "arm64", "linux/arm64/v8"])
+def test_an_image_that_is_not_linux_arm64_never_passes(platform):
+    # v0.40.1 was published as linux/amd64 from an amd64 runner.
+    with pytest.raises(gate.GateError, match="expected 'linux/arm64'"):
+        gate.check_labels(GOOD_LABELS, VERSION, SHA, platform)
+    with pytest.raises(gate.GateError, match="platform"):
+        gate.check_platform(platform)
+
+
+def test_the_platform_is_checked_even_when_the_labels_are_wrong_too():
+    with pytest.raises(gate.GateError, match="platform"):
+        gate.check_labels({}, VERSION, SHA, "linux/amd64")
+
+
+def test_check_labels_on_the_command_line_requires_the_platform(monkeypatch, capsys):
+    import io
+    monkeypatch.setattr("sys.stdin", io.StringIO(json.dumps(GOOD_LABELS)))
+    argv = ["check-labels", "--version", VERSION, "--sha", SHA]
+    with pytest.raises(SystemExit):
+        gate.main(argv)  # no --platform: argparse refuses
+    monkeypatch.setattr("sys.stdin", io.StringIO(json.dumps(GOOD_LABELS)))
+    assert gate.main([*argv, "--platform", "linux/arm64"]) == 0
+    monkeypatch.setattr("sys.stdin", io.StringIO(json.dumps(GOOD_LABELS)))
+    assert gate.main([*argv, "--platform", "linux/amd64"]) == 1
 
 
 @pytest.mark.parametrize(
@@ -819,11 +846,12 @@ def test_a_missing_ambiguous_or_malformed_digest_fails(value):
         gate.pick_digest(value)
 
 
-def _docker(monkeypatch, pull_rc, pull_err, labels):
+def _docker(monkeypatch, pull_rc, pull_err, labels, platform="linux/arm64"):
     def fake_run(command, **kwargs):
         if command[:2] == ["docker", "pull"]:
             return subprocess.CompletedProcess(command, pull_rc, "", pull_err)
-        return subprocess.CompletedProcess(command, 0, json.dumps(labels), "")
+        # `{{.Os}}/{{.Architecture}} {{json .Config.Labels}}`
+        return subprocess.CompletedProcess(command, 0, f"{platform} {json.dumps(labels)}\n", "")
 
     monkeypatch.setattr(gate.subprocess, "run", fake_run)
 
@@ -842,6 +870,12 @@ def test_a_registry_error_is_not_mistaken_for_an_absent_image(monkeypatch):
 def test_an_existing_image_with_matching_labels_is_accepted(monkeypatch):
     _docker(monkeypatch, 0, "", GOOD_LABELS)
     assert gate.inspect_existing_image(VERSION, SHA) is True
+
+
+def test_an_existing_amd64_image_is_not_accepted(monkeypatch):
+    _docker(monkeypatch, 0, "", GOOD_LABELS, platform="linux/amd64")
+    with pytest.raises(gate.GateError, match="platform"):
+        gate.inspect_existing_image(VERSION, SHA)
 
 
 def test_an_existing_image_with_a_mismatched_revision_is_never_overwritten(monkeypatch):

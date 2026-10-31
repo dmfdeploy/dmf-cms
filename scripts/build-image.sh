@@ -14,6 +14,13 @@
 #   scripts/build-image.sh --no-push # synonym, kept for callers that still pass it
 #   scripts/build-image.sh --check   # verify versions in sync, no build
 #   scripts/build-image.sh --no-hint # build, but print no publish/deploy next steps
+#   scripts/build-image.sh --platform linux/arm64   # the default; see below
+#
+# The target platform is ARM64 (the k3s nodes), so the build always passes an
+# explicit --platform. The default is linux/arm64; DMF_CMS_PLATFORM or
+# --platform overrides it. On Apple Silicon this is the native platform, so a
+# local build is unchanged. On an amd64 host without an arm64 daemon the build
+# fails or emulates; the release workflow runs on an arm64 runner.
 #
 # Refuses to run if:
 #   - VERSION is not in semver MAJOR.MINOR.PATCH form
@@ -32,10 +39,11 @@ DOCKERFILE="${DMF_CMS_DOCKERFILE:-Dockerfile}"
 ALLOW_DIRTY=0
 CHECK_ONLY=0
 PRINT_HINT=1
+PLATFORM="${DMF_CMS_PLATFORM:-linux/arm64}"
 
 usage() {
     cat <<EOF
-Usage: $0 [--no-push] [--dirty] [--check] [--no-hint]
+Usage: $0 [--no-push] [--dirty] [--check] [--no-hint] [--platform OS/ARCH]
 
   --no-push    No-op, accepted for compatibility (this script never pushes)
   --dirty      Allow build with uncommitted changes (NOT for cluster deployment)
@@ -43,7 +51,10 @@ Usage: $0 [--no-push] [--dirty] [--check] [--no-hint]
   --no-hint    Do not print the publish/deploy next steps (release.sh passes this
                and prints its own post-merge steps)
 
+  --platform   Target platform for the image (default: linux/arm64)
+
 Environment:
+  DMF_CMS_PLATFORM     default: linux/arm64 (same as --platform)
   DMF_CMS_REGISTRY     default: registry.dmf.example.com (local tag prefix only;
                        publish-to-ghcr.sh re-tags this image for GHCR)
   DMF_CMS_IMAGE_NAME   default: dmf-cms
@@ -52,16 +63,24 @@ EOF
     exit 1
 }
 
-for arg in "$@"; do
-    case "$arg" in
+while [[ $# -gt 0 ]]; do
+    case "$1" in
         --no-push)  ;;  # accepted for compatibility; no-op
         --dirty)    ALLOW_DIRTY=1 ;;
         --check)    CHECK_ONLY=1 ;;
         --no-hint)  PRINT_HINT=0 ;;
+        --platform)
+            [[ $# -ge 2 ]] || { echo "ERROR: --platform needs a value" >&2; usage; }
+            PLATFORM="$2"; shift ;;
         -h|--help)  usage ;;
-        *)          echo "Unknown arg: $arg" >&2; usage ;;
+        *)          echo "Unknown arg: $1" >&2; usage ;;
     esac
+    shift
 done
+if [[ ! "$PLATFORM" =~ ^linux/[a-z0-9]+$ ]]; then
+    echo "ERROR: platform '$PLATFORM' is not linux/<arch>" >&2
+    exit 1
+fi
 
 VERSION="$(tr -d '[:space:]' < VERSION)"
 SEMVER_RE='^[0-9]+\.[0-9]+\.[0-9]+$'
@@ -77,6 +96,7 @@ echo "════════════════════════�
 echo "  DMF Console Build"
 echo "  Version:  $VERSION"
 echo "  Image:    $IMAGE_TAG"
+echo "  Platform: $PLATFORM"
 echo "═══════════════════════════════════════════════════"
 
 # Check 1: versions in sync
@@ -118,6 +138,7 @@ fi
 echo ""
 echo "[3/3] Building image..."
 docker build \
+    --platform "$PLATFORM" \
     --label "org.opencontainers.image.version=$VERSION" \
     --label "org.opencontainers.image.revision=$GIT_SHA" \
     --label "org.opencontainers.image.source=https://github.com/dmfdeploy/dmf-cms" \

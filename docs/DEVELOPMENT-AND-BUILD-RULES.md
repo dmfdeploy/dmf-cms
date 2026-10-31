@@ -88,6 +88,15 @@ traceability. The revision label holds the full 40-character commit SHA. The
 release workflow compares it with the verified commit, so a short SHA would not
 match.
 
+**The image must be `linux/arm64`.** The k3s nodes are ARM64, and an amd64 image
+does not run there. Docker builds for the platform of the build host unless you
+say otherwise, so `build-image.sh` always passes an explicit `--platform`. The
+default is `linux/arm64`; override it with `--platform` or `DMF_CMS_PLATFORM`.
+On Apple Silicon that is the native platform, so a local build does not change.
+The release workflow builds on GitHub's hosted arm64 runner (`ubuntu-24.04-arm`,
+free and unlimited for public repositories), so the build is native and needs no
+emulation.
+
 ### `release.sh`
 
 Prepares the release bump: bump → sync → commit → build (local only). Refuses
@@ -343,13 +352,18 @@ The workflow has two jobs:
       only at this commit, and then tag creation is skipped.
 
    It then mints the release App token, builds the image from the exact commit
-   with `scripts/build-image.sh`, checks the version and revision labels before
+   with `scripts/build-image.sh` on the hosted arm64 runner, checks that the
+   image is `linux/arm64` and that the version and revision labels match before
    any push, publishes through `scripts/publish-to-ghcr.sh`, creates a
    build-provenance attestation for the image digest, and creates the
    `v<VERSION>` tag last, as the release App.
 
 Recovery:
 
+- The first unattended release, v0.40.1, was published as `linux/amd64`
+  because the job ran on an amd64 runner. That image stays as it is: the
+  workflow never overwrites a published image, and a tag cannot move. The fix
+  ships with the next release bump. Roll forward; do not re-run v0.40.1.
 - A required check fails or is cancelled on a release commit: no tag and no
   image. The failed run shows in Actions. Fix forward with a new release PR.
 - The App token cannot be minted: the run fails before any build or push.
