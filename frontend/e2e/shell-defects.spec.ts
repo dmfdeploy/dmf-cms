@@ -76,16 +76,21 @@ test.describe('seeded shell defects', () => {
     })
     await page.getByRole('link', { name: 'Facilities' }).first().click()
     await expect(page).toHaveURL(/\/facilities$/)
-    const s = await page.evaluate(() => {
-      const main = document.querySelector('main')!
-      return {
-        scrollTop: main.scrollTop,
-        focusInMain: main.contains(document.activeElement),
-        focusIsBody: document.activeElement === document.body,
-      }
-    })
-    expect(s.scrollTop, 'main scroll position after navigating').toBe(0)
-    expect(s.focusInMain, 'focus must land inside main after navigating').toBe(true)
+    // The URL changes before React commits the new route and runs the reset
+    // effect, so a single read right after toHaveURL can run too early. Poll
+    // until the shell settles; a focus move that never happens still fails.
+    await expect
+      .poll(
+        () => page.evaluate(() => document.querySelector('main')!.scrollTop),
+        { message: 'main scroll position after navigating' },
+      )
+      .toBe(0)
+    await expect
+      .poll(
+        () => page.evaluate(() => document.querySelector('main')!.contains(document.activeElement)),
+        { message: 'focus must land inside main after navigating' },
+      )
+      .toBe(true)
   })
 
   test('S5 [768] /media-workloads/studio-a: the first Tab stop is a skip link to main', async ({ page }) => {
