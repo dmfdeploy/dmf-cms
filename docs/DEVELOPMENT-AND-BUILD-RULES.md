@@ -178,12 +178,14 @@ bin/run-playbook.sh <env-name> \
 
 ### `publish-to-ghcr.sh`
 
-Thin wrapper around `dmfdeploy/bin/publish-image-to-ghcr.sh`. Asserts
-`IMAGE_TAG == VERSION`, then delegates the actual push. The release workflow
-calls it with the job token on standard input and `IMAGE_TAG_SUFFIX` set to a
-platform suffix (`-arm64`, `-amd64`). The script refuses to push the bare
-version tag: it exits non-zero when `IMAGE_TAG_SUFFIX` is empty. The umbrella
-helper handles secrets safely:
+Thin wrapper around `dmfdeploy/bin/publish-image-to-ghcr.sh`. Only the release
+workflow runs it. The script exits non-zero unless `GITHUB_ACTIONS` is `true`
+and `GITHUB_WORKFLOW` is `release`, so a run from your workstation pushes
+nothing. Inside the workflow it asserts `IMAGE_TAG == VERSION`, then delegates
+the actual push. The workflow calls it with the job token on standard input
+and `IMAGE_TAG_SUFFIX` set to a platform suffix (`-arm64`, `-amd64`). The
+script also refuses to push the bare version tag: it exits non-zero when
+`IMAGE_TAG_SUFFIX` is empty. The umbrella helper handles secrets safely:
 
 - Token via **stdin only**, never argv
 - Isolated `DOCKER_CONFIG` (not `~/.docker/config.json`)
@@ -232,10 +234,11 @@ it pulls from OpenBao. Playbook 650 only HEAD-checks Zot and Helm-deploys.
 
 The release workflow is the only supported way to publish a release image. It
 pushes a staging image per platform through `scripts/publish-to-ghcr.sh` and
-joins them into the index at `<VERSION>` (§4, "Unattended release"). Do not run
-`publish-to-ghcr.sh` yourself to publish a release. The script refuses a push
-without `IMAGE_TAG_SUFFIX`, and a staging push by hand does not produce the
-index. If the workflow is disabled, wait until it is enabled.
+joins them into the index at `<VERSION>` (§4, "Unattended release"). You
+cannot publish from a workstation: `publish-to-ghcr.sh` exits non-zero outside
+the `release` workflow in GitHub Actions, and a staging push by hand would not
+produce the index anyway. If the workflow is disabled, wait until it is
+enabled.
 
 For a local test build, run `scripts/build-image.sh --no-push`. It builds and
 tags the image on your machine and pushes nothing.

@@ -41,6 +41,15 @@ exit 0
 """
 
 
+def release_workflow_name() -> str:
+    workflow = yaml.safe_load((REPO / ".github/workflows/release.yml").read_text(encoding="utf-8"))
+    return workflow["name"]
+
+
+# What a GitHub Actions runner sets for a job in the release workflow.
+ACTIONS_ENV = {"GITHUB_ACTIONS": "true", "GITHUB_WORKFLOW": release_workflow_name()}
+
+
 def umbrella_dir() -> Path:
     umbrella = os.environ.get("DMFDEPLOY_UMBRELLA") or str(REPO.parent / "dmfdeploy")
     helper = Path(umbrella) / "bin" / "publish-image-to-ghcr.sh"
@@ -88,6 +97,7 @@ def run_block(tmp_path: Path, command: str, arch: str) -> tuple[subprocess.Compl
     env.update(env_in_step)
     env.update(
         {
+            **ACTIONS_ENV,
             "PATH": f"{fake_bin}:{env['PATH']}",
             "HOME": str(tmp_path),
             "DOCKER_CALLS": str(calls),
@@ -136,13 +146,19 @@ def test_the_step_pipes_the_token_with_a_terminating_newline(arch):
     assert "printf '%s\\n' \"$publisher_token\" | scripts/publish-to-ghcr.sh" in publish_step(arch)["run"]
 
 
-def run_wrapper(tmp_path: Path, suffix: str | None) -> tuple[subprocess.CompletedProcess, str]:
+def run_wrapper(
+    tmp_path: Path, suffix: str | None, actions_env: dict[str, str] | None = None
+) -> tuple[subprocess.CompletedProcess, str]:
     fake_bin = tmp_path / "bin"
     fake_bin.mkdir()
     calls = tmp_path / "docker-calls"
     (fake_bin / "docker").write_text(FAKE_DOCKER, encoding="utf-8")
     (fake_bin / "docker").chmod(0o755)
-    env = {k: v for k, v in os.environ.items() if k != "IMAGE_TAG_SUFFIX"}
+    env = {
+        k: v for k, v in os.environ.items()
+        if k not in {"IMAGE_TAG_SUFFIX", "GITHUB_ACTIONS", "GITHUB_WORKFLOW"}
+    }
+    env.update(ACTIONS_ENV if actions_env is None else actions_env)
     env.update(
         {
             "PATH": f"{fake_bin}:{env['PATH']}",
@@ -180,6 +196,38 @@ def test_the_wrapper_still_pushes_a_staging_tag(tmp_path):
     result, docker_calls = run_wrapper(tmp_path, "-arm64")
     assert result.returncode == 0, result.stdout + result.stderr
     assert f"push ghcr.io/dmfdeploy/dmf-cms:{version}-arm64|" in docker_calls
+
+
+@pytest.mark.parametrize(
+    "actions_env",
+    [
+        {},
+        {"GITHUB_ACTIONS": "true"},
+        {"GITHUB_WORKFLOW": "release"},
+        {"GITHUB_ACTIONS": "false", "GITHUB_WORKFLOW": "release"},
+        {"GITHUB_ACTIONS": "true", "GITHUB_WORKFLOW": "some other workflow"},
+    ],
+)
+def test_the_wrapper_refuses_to_push_outside_the_release_workflow(tmp_path, actions_env):
+    """A workstation run, or a run in another workflow, must not reach Docker,
+    even with a valid suffix and a token on standard input."""
+    result, docker_calls = run_wrapper(tmp_path, "-arm64", actions_env)
+    assert result.returncode != 0
+    assert 'only from the "release" workflow' in result.stderr
+    assert "build-image.sh --no-push" in result.stderr
+    assert docker_calls == ""  # no login, no tag, no push
+
+
+def test_the_wrapper_accepts_the_release_workflow_environment(tmp_path):
+    version = (REPO / "VERSION").read_text(encoding="utf-8").strip()
+    result, docker_calls = run_wrapper(tmp_path, "-amd64", dict(ACTIONS_ENV))
+    assert result.returncode == 0, result.stdout + result.stderr
+    assert f"push ghcr.io/dmfdeploy/dmf-cms:{version}-amd64|" in docker_calls
+
+
+def test_the_wrapper_guard_names_the_workflow_in_release_yml():
+    script = (REPO / "scripts" / "publish-to-ghcr.sh").read_text(encoding="utf-8")
+    assert f'RELEASE_WORKFLOW_NAME="{release_workflow_name()}"' in script
 
 
 @pytest.mark.parametrize("arch", ["arm64", "amd64"])

@@ -1,5 +1,10 @@
 #!/usr/bin/env bash
-# publish-to-ghcr.sh — push the locally-built dmf-cms image to GHCR.
+# publish-to-ghcr.sh — push one platform's dmf-cms staging image to GHCR.
+#
+# Only the release workflow (.github/workflows/release.yml) runs this script.
+# It refuses to run anywhere else, so a workstation cannot push an image that
+# skipped the exact-SHA gate, the label check and the attestation. To test an
+# image locally, run scripts/build-image.sh --no-push.
 #
 # Thin wrapper around the umbrella's bin/publish-image-to-ghcr.sh. The
 # umbrella script handles secrets (token via stdin, isolated DOCKER_CONFIG
@@ -15,17 +20,12 @@
 # must match the repo's VERSION file. This wrapper asserts that
 # precondition before invoking the umbrella push.
 #
-# Usage:
+# Usage (inside the release workflow's publish step):
 #
-#   # From the gh CLI (token never typed, never in argv):
-#   gh auth token | GHCR_USER="<github-username>" IMAGE_TAG_SUFFIX=-arm64 \
-#     ~/repos/dmfdeploy/dmf-cms/scripts/publish-to-ghcr.sh
+#   printf '%s\n' "$publisher_token" | scripts/publish-to-ghcr.sh
 #
-# The piped credential must be a token carrying write:packages
-# ('gh auth refresh -s write:packages' if 'gh auth status' does not list it).
-# An account password is not a substitute: GHCR rejects one with exactly the
-# same 'denied: denied' as a bad token, so the failure looks like a scope
-# problem and is not.
+# The workflow pipes its job token on standard input and sets GHCR_USER and
+# IMAGE_TAG_SUFFIX.
 #
 # Env knobs:
 #   GHCR_USER         GitHub username (default: prompt)
@@ -40,6 +40,24 @@
 #                     scripts/build-image.sh's local tag convention)
 
 set -euo pipefail
+
+# Release-workflow guard -------------------------------------------------
+#
+# GitHub Actions sets GITHUB_ACTIONS and GITHUB_WORKFLOW on every runner. Keep
+# RELEASE_WORKFLOW_NAME equal to the `name:` in .github/workflows/release.yml;
+# a test checks that they match.
+RELEASE_WORKFLOW_NAME="release"
+if [[ "${GITHUB_ACTIONS:-}" != "true" || "${GITHUB_WORKFLOW:-}" != "$RELEASE_WORKFLOW_NAME" ]]; then
+  cat >&2 <<NOTWORKFLOW
+ERROR: this script publishes only from the "${RELEASE_WORKFLOW_NAME}" workflow in GitHub Actions.
+
+A push from anywhere else skips the exact-SHA gate, the label check and the
+attestation. To publish a release, run the "${RELEASE_WORKFLOW_NAME}" workflow
+(.github/workflows/release.yml). To test an image on your machine, run
+scripts/build-image.sh --no-push, which pushes nothing.
+NOTWORKFLOW
+  exit 1
+fi
 
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 REPO_ROOT="$(cd "$SCRIPT_DIR/.." && pwd)"
