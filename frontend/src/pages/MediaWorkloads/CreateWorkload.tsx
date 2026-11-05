@@ -12,6 +12,7 @@ import FlowStep from './FlowStep'
 import { useDraftWorkloadStore } from '../../store/draftWorkload'
 import PageHeading from '../../components/PageHeading'
 import { usePageTitle } from '../../hooks/usePageTitle'
+import { capacityRefusalMessage } from '../../lib/capacityRefusal'
 
 /**
  * Create Media Workload — the draft leg of the guided sequential flow
@@ -93,7 +94,7 @@ const FLOW_STEP_LABELS: Record<FlowStepId, string> = {
  *   NOT know, and must not resolve that ambiguity in either direction: the
  *   operator needs to go and look, not be told to try again.
  */
-type DeployOutcome = { kind: 'refused'; status: number } | { kind: 'unknown' }
+type DeployOutcome = { kind: 'refused'; status: number; capacity: string | null } | { kind: 'unknown' }
 
 /**
  * Designed refusal copy keyed on HTTP status, per Art. 8 — what happened,
@@ -341,7 +342,9 @@ export default function CreateWorkload() {
       console.error('Provision failed:', e)
       setArming(false)
       setDeployOutcome(
-        e instanceof APIError ? { kind: 'refused', status: e.status } : { kind: 'unknown' },
+        e instanceof APIError
+          ? { kind: 'refused', status: e.status, capacity: capacityRefusalMessage(e) }
+          : { kind: 'unknown' },
       )
     }
   }
@@ -997,7 +1000,8 @@ function ProvisionSection({
         {!arming && outcome?.kind === 'refused' && (
           <p className="mt-2 text-xs text-red-300">
             Provisioning didn&apos;t go through — nothing was created for workload:{slug}.{' '}
-            {REFUSAL_COPY[outcome.status] ??
+            {outcome.capacity ??
+              REFUSAL_COPY[outcome.status] ??
               'The facility refused the request. Check your access and the reason, then try again.'}
           </p>
         )}

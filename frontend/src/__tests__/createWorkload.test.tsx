@@ -88,6 +88,8 @@ interface FetchOpts {
   catalogStatus?: number
   facilitySites?: Array<{ name: string; slug: string | null; device_count: number }>
   deployStatus?: number
+  /** JSON body for the deployStatus response; defaults to a bare error. */
+  deployBody?: Record<string, unknown>
   deployResult?: Record<string, unknown>
   /** Throw from fetch itself — transport loss, NOT an HTTP error response. */
   deployThrows?: boolean
@@ -150,7 +152,7 @@ function mkFetch(opts: FetchOpts = {}) {
       // A THROW, not a response: this is the transport-loss path, where the
       // console never learns whether AWX got the request.
       if (opts.deployThrows) throw new TypeError('Failed to fetch')
-      if (opts.deployStatus) return json({ error: 'boom' }, opts.deployStatus)
+      if (opts.deployStatus) return json(opts.deployBody ?? { error: 'boom' }, opts.deployStatus)
       return json(opts.deployResult ?? { job_id: 900, status: 'launched', request_id: 'req-1' })
     }
     if (url.endsWith('/api/media-workloads/grouped')) {
@@ -744,6 +746,41 @@ describe('Provision: the deploy POST', () => {
     // IS always present regardless of step, and unique to CreateWorkload —
     // the retired per-page hero heading the old assertion named is gone.
     expect(screen.getByRole('button', { name: 'Start over' })).toBeTruthy()
+  })
+})
+
+describe('Provision: a 409 is read by its error code, not its status', () => {
+  async function provisionWith409(body: Record<string, unknown>) {
+    mkFetch({ deployStatus: 409, deployBody: body })
+    renderCreate()
+    await screen.findByRole('heading', { name: 'Identity' })
+    const provision = await reachProvision()
+    fireEvent.click(within(provision).getByRole('button', { name: '▶ Provision now' }))
+    fireEvent.change(
+      within(provision).getByPlaceholderText('Reason (required, recorded in the audit trail)'),
+      { target: { value: 'demo launch' } },
+    )
+    fireEvent.click(within(provision).getByRole('button', { name: 'Confirm provision' }))
+    return provision
+  }
+
+  it('shows the budget shortfall and the finalise advice for a no-fit capacity refusal', async () => {
+    const provision = await provisionWith409({
+      error: 'capacity-preflight-refused',
+      kind: 'no-fit',
+      report: { shortfall_cpu_m: 1500, shortfall_mem_b: 2 * 1024 ** 3 },
+    })
+    await waitFor(() =>
+      expect(within(provision).getByText(/CPU short by 1500m, memory short by 2048Mi/)).toBeTruthy(),
+    )
+    expect(within(provision).getByText(/Finalise a running workload/)).toBeTruthy()
+    expect(within(provision).queryByText(/already in flight/)).toBeNull()
+  })
+
+  it('keeps the in-flight copy for a real in-flight 409', async () => {
+    const provision = await provisionWith409({ error: 'conflicting lifecycle operation in progress' })
+    await waitFor(() => expect(within(provision).getByText(/already in flight/)).toBeTruthy())
+    expect(within(provision).queryByText(/Finalise a running workload/)).toBeNull()
   })
 })
 

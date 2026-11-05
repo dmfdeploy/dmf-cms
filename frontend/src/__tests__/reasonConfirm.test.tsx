@@ -13,6 +13,7 @@ import { cleanup, render, screen, fireEvent, waitFor } from '@testing-library/re
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query'
 import { MemoryRouter } from 'react-router-dom'
 import ReasonConfirm from '../components/ReasonConfirm'
+import { APIError } from '../api/client'
 import Catalog from '../pages/Catalog'
 import type { CatalogEntry, CatalogListResponse, UserIdentity } from '../api/types'
 
@@ -417,5 +418,57 @@ describe('Catalog deploy — reason-gated flow', () => {
     await waitFor(() => expect(deployFetch).toHaveBeenCalledOnce())
     const [, init] = deployFetch.mock.calls[0]
     expect(JSON.parse(init?.body as string)).toEqual({ reason: 'x', workload: 'studio-a' })
+  })
+})
+
+describe('ReasonConfirm capacity refusal', () => {
+  it('shows the budget shortfall and the finalise-then-retry step for a capacity refusal', () => {
+    const body = JSON.stringify({
+      error: 'capacity-preflight-refused',
+      kind: 'no-fit',
+      report: { shortfall_cpu_m: 1500, shortfall_mem_b: 2 * 1024 ** 3 },
+    })
+    render(
+      <ReasonConfirm
+        title="T"
+        description="D"
+        error={new APIError(409, body, 'capacity-preflight-refused')}
+        onConfirm={vi.fn()}
+        onCancel={() => {}}
+      />,
+    )
+    expect(screen.getByText(/CPU short by 1500m, memory short by 2048Mi/)).toBeTruthy()
+    expect(screen.getByText(/Finalise a running workload/)).toBeTruthy()
+    expect(screen.queryByText(/Check your access/)).toBeNull()
+  })
+
+  it.each(['budget-unavailable', 'multi-node-unsupported', 'missing-budget', 'invalid-budget'])(
+    'does not advise finalising a workload for the %s refusal',
+    (kind) => {
+      render(
+        <ReasonConfirm
+          title="T"
+          description="D"
+          error={new APIError(409, JSON.stringify({ error: 'capacity-preflight-refused', kind }), 'capacity-preflight-refused')}
+          onConfirm={vi.fn()}
+          onCancel={() => {}}
+        />,
+      )
+      expect(screen.getByText(/could not confirm the facility has room/)).toBeTruthy()
+      expect(screen.queryByText(/Finalise a running workload/)).toBeNull()
+    },
+  )
+
+  it('keeps the generic message for other errors', () => {
+    render(
+      <ReasonConfirm
+        title="T"
+        description="D"
+        error={new APIError(403, JSON.stringify({ error: 'forbidden' }), 'forbidden')}
+        onConfirm={vi.fn()}
+        onCancel={() => {}}
+      />,
+    )
+    expect(screen.getByText(/Check your access, then retry/)).toBeTruthy()
   })
 })
