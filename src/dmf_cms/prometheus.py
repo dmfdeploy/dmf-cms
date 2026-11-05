@@ -61,3 +61,34 @@ def list_targets(*, url: str) -> list[dict]:
     result = _request(url, "/api/v1/targets")
     data = result.get("data", {})
     return data.get("activeTargets", [])
+
+
+def flatten_alert(alert: dict) -> dict:
+    """Flatten one raw alert into the fields the Monitoring page reads.
+
+    Prometheus nests the name and severity under ``labels`` and the text
+    under ``annotations``. ``list_alerts`` stays raw because the workspace
+    health endpoint needs the full label set.
+    """
+    labels = alert.get("labels") or {}
+    annotations = alert.get("annotations") or {}
+    return {
+        "name": labels.get("alertname", "unknown"),
+        "state": alert.get("state", ""),
+        "severity": labels.get("severity", ""),
+        "summary": annotations.get("summary", ""),
+        "description": annotations.get("description", ""),
+        "activeAt": alert.get("activeAt", ""),
+    }
+
+
+def flatten_target(target: dict) -> dict:
+    """Flatten one raw scrape target into the fields the Monitoring page reads."""
+    labels = target.get("labels") or {}
+    return {
+        "job": labels.get("job", ""),
+        "instance": labels.get("instance", ""),
+        "health": target.get("health", "unknown"),
+        "lastScrape": target.get("lastScrape", ""),
+        "lastError": target.get("lastError", ""),
+    }
