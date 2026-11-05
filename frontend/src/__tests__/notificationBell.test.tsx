@@ -6,7 +6,7 @@
  * conditions), link to the expert Monitoring page, and carry NO ack.
  */
 import { afterEach, describe, expect, it, vi } from 'vitest'
-import { act, cleanup, render, screen } from '@testing-library/react'
+import { act, cleanup, fireEvent, render, screen } from '@testing-library/react'
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query'
 import { MemoryRouter } from 'react-router-dom'
 import NotificationBell from '../components/NotificationBell'
@@ -175,5 +175,46 @@ describe('NotificationBell', () => {
     // Summary line and dropdown body both now acknowledge the failed read.
     expect(screen.getByText(/Monitoring not configured — unconfirmed just now/)).toBeTruthy()
     expect(screen.getByText(/could not be confirmed just now/)).toBeTruthy()
+  })
+
+  it('exposes disclosure state and links the trigger to its panel', async () => {
+    renderBell(health([]))
+    const btn = await screen.findByRole('button', { name: 'Monitoring alerts' })
+    expect(btn.getAttribute('aria-expanded')).toBe('false')
+    fireEvent.click(btn)
+    expect(btn.getAttribute('aria-expanded')).toBe('true')
+    const panel = document.getElementById(btn.getAttribute('aria-controls') as string)
+    expect(panel).not.toBeNull()
+    expect(panel?.textContent).toContain('Monitoring alerts')
+  })
+
+  it('closes on Escape and returns focus to the trigger', async () => {
+    renderBell(health([]))
+    const btn = await screen.findByRole('button', { name: 'Monitoring alerts' })
+    fireEvent.click(btn)
+    const link = await screen.findByRole('link', { name: 'Open Monitoring' })
+    link.focus()
+    fireEvent.keyDown(document.activeElement ?? document, { key: 'Escape' })
+    expect(screen.queryByRole('link', { name: 'Open Monitoring' })).toBeNull()
+    expect(btn.getAttribute('aria-expanded')).toBe('false')
+    expect(document.activeElement).toBe(btn)
+  })
+
+  it('ignores Escape pressed outside the bell and leaves focus alone', async () => {
+    renderBell(health([]))
+    const outside = document.createElement('input')
+    document.body.appendChild(outside)
+    try {
+      const btn = await screen.findByRole('button', { name: 'Monitoring alerts' })
+      fireEvent.click(btn)
+      await screen.findByRole('link', { name: 'Open Monitoring' })
+      outside.focus()
+      fireEvent.keyDown(outside, { key: 'Escape' })
+      expect(btn.getAttribute('aria-expanded')).toBe('true')
+      expect(screen.queryByRole('link', { name: 'Open Monitoring' })).not.toBeNull()
+      expect(document.activeElement).toBe(outside)
+    } finally {
+      outside.remove()
+    }
   })
 })
