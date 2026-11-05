@@ -16,6 +16,10 @@
 # (publish-index-to-ghcr.sh). A single-platform image at <VERSION> would block
 # that index for good. Set IMAGE_TAG_SUFFIX to a platform suffix.
 #
+# Before any push it also requires a clean tree at the commit v<VERSION> names
+# (or, until the workflow creates that tag, RELEASE_SHA) and an image whose
+# revision label is that commit.
+#
 # Per the public container registry publishing plan §5.3: the IMAGE_TAG
 # must match the repo's VERSION file. This wrapper asserts that
 # precondition before invoking the umbrella push.
@@ -140,6 +144,78 @@ them into the index at ${IMAGE_TAG}. It is the only supported way to publish a
 release image. If the workflow is disabled, wait until it is enabled.
 NOSUFFIX
   exit 1
+fi
+
+# Revision check ----------------------------------------------------------
+#
+# A release PR is rebase-merged, so the commit the release tag names is not the
+# commit the release branch built. An image built before the merge carries the
+# old commit in its revision label while the registry tag names the new one.
+# Compare full SHAs, push nothing on a mismatch, and fail closed when the label
+# is missing or the image cannot be read.
+#
+# The expected commit is the one v<VERSION> names. The release workflow creates
+# that tag only after both pushes, so there the commit it has already verified
+# (RELEASE_SHA) stands in. With neither, nothing says which commit to trust.
+# The release gate repeats the label comparison (release-gate.py check-labels)
+# on both images before any push. This copy stays in the wrapper because the
+# gate lives in another checkout that this script cannot assume.
+LOCAL_IMAGE="${SOURCE_REGISTRY}/dmf-cms:${IMAGE_TAG}${IMAGE_TAG_SUFFIX}"
+HEAD_COMMIT="$(git -C "$REPO_ROOT" rev-parse --verify 'HEAD^{commit}')"
+RELEASE_SHA="${RELEASE_SHA:-}"
+EXPECTED_COMMIT=""
+EXPECTED_FROM=""
+# show-ref exits 1 when the ref does not exist and 128 on an error such as a
+# tag that points at a missing object. Only the first means the tag is absent.
+TAG_STATE=0
+git -C "$REPO_ROOT" show-ref --verify --quiet "refs/tags/v${IMAGE_TAG}" 2>/dev/null || TAG_STATE=$?
+TAG_UNREADABLE=""
+if [[ "$TAG_STATE" -eq 0 ]]; then
+  EXPECTED_COMMIT="$(git -C "$REPO_ROOT" rev-parse --verify --quiet "v${IMAGE_TAG}^{commit}" || true)"
+  EXPECTED_FROM="the commit v${IMAGE_TAG} names"
+  [[ -n "$EXPECTED_COMMIT" ]] || TAG_UNREADABLE="tag v${IMAGE_TAG} exists but does not resolve to a commit."
+elif [[ "$TAG_STATE" -ne 1 ]]; then
+  TAG_UNREADABLE="git could not read tag v${IMAGE_TAG} (exit ${TAG_STATE})."
+elif [[ -n "$RELEASE_SHA" ]]; then
+  EXPECTED_COMMIT="$RELEASE_SHA"
+  EXPECTED_FROM="the release workflow's verified commit"
+fi
+IMAGE_COMMIT="$(docker image inspect "$LOCAL_IMAGE" \
+  --format '{{index .Config.Labels "org.opencontainers.image.revision"}}' 2>/dev/null || true)"
+
+revision_refusal() {
+  cat >&2 <<REVISION
+ERROR: $1
+
+  image ${LOCAL_IMAGE}
+    revision label: ${IMAGE_COMMIT:-<missing>}
+  expected commit: ${EXPECTED_COMMIT:-<unknown>}
+  checked-out commit: ${HEAD_COMMIT}
+
+Nothing was pushed. To rebuild, check out the expected commit, then run:
+
+  scripts/build-image.sh --no-push --platform linux/${IMAGE_TAG_SUFFIX#-} --tag-suffix ${IMAGE_TAG_SUFFIX}
+REVISION
+  exit 1
+}
+
+if [[ -n "$TAG_UNREADABLE" ]]; then
+  revision_refusal "$TAG_UNREADABLE"
+fi
+if [[ -z "$EXPECTED_COMMIT" ]]; then
+  revision_refusal "no commit to check against: tag v${IMAGE_TAG} is absent and RELEASE_SHA is not set."
+fi
+if [[ "$HEAD_COMMIT" != "$EXPECTED_COMMIT" ]]; then
+  revision_refusal "the working tree is not at ${EXPECTED_FROM}."
+fi
+if [[ -n "$(git -C "$REPO_ROOT" status --porcelain)" ]]; then
+  revision_refusal "the working tree has uncommitted changes."
+fi
+if [[ -z "$IMAGE_COMMIT" ]]; then
+  revision_refusal "the image has no org.opencontainers.image.revision label, or docker could not read it."
+fi
+if [[ "$IMAGE_COMMIT" != "$EXPECTED_COMMIT" ]]; then
+  revision_refusal "the image revision label differs from ${EXPECTED_FROM}."
 fi
 
 exec "${UMBRELLA_DIR}/bin/publish-image-to-ghcr.sh" \
