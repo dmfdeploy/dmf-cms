@@ -47,7 +47,7 @@ def _request(
             raw = resp.read()
             return json.loads(raw) if raw else {}
     except urllib.error.HTTPError as exc:
-        error_body = exc.read().decode() if exc.fp else str(exc)
+        error_body = exc.read().decode(errors="replace") if exc.fp else str(exc)
         raise NetboxAPIError(exc.code, error_body) from exc
 
 

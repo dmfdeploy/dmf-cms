@@ -481,7 +481,7 @@ def test_deploy_netbox_api_error_refused_no_awx_call(monkeypatch, tmp_path, awx_
     _entries(monkeypatch, _entry_with_topology_ref("topology-params.j1.yaml"))
 
     def raise_netbox_error(**k):
-        raise netbox.NetboxAPIError(500, "boom")
+        raise netbox.NetboxAPIError(500, "SENTINEL-652-NETBOX-BODY")
 
     monkeypatch.setattr(netbox, "list_sites", raise_netbox_error)
 
@@ -489,6 +489,8 @@ def test_deploy_netbox_api_error_refused_no_awx_call(monkeypatch, tmp_path, awx_
     resp = client.post("/api/catalog/mxl-videotestsrc/deploy", json={"reason": "x"})
     assert resp.status_code == 502, resp.text
     assert resp.json()["error"] == "topology-facility-error"
+    # #652: NetBox's response body stays in the log.
+    assert "SENTINEL-652-NETBOX-BODY" not in resp.text
     assert awx_spy == []
 
 

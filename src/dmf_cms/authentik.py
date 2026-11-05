@@ -38,7 +38,7 @@ def _request(
         with urllib.request.urlopen(req, timeout=15) as resp:
             return json.loads(resp.read())
     except urllib.error.HTTPError as exc:
-        error_body = exc.read().decode() if exc.fp else str(exc)
+        error_body = exc.read().decode(errors="replace") if exc.fp else str(exc)
         raise AuthentikAPIError(exc.code, error_body) from exc
 
 

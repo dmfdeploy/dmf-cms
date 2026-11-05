@@ -806,12 +806,17 @@ async def _resolve_topology_seam(
             ssl_verify=settings.netbox.ssl_verify,
         )
     except netbox.NetboxAPIError as exc:
+        # #652: str(exc) embeds NetBox's own response body; keep it in the log.
+        logger.error(
+            "topology facility lookup: NetBox API error (status %s): %s",
+            exc.status, _sanitize_audit_field(exc.body),
+        )
         _audit_awx_write(
             request, user, action="deploy", target=key, request_id=request_id, reason=reason,
             outcome="topology-facility-error",
         )
         return None, JSONResponse(
-            {"error": "topology-facility-error", "detail": str(exc), "request_id": request_id},
+            {"error": "topology-facility-error", "detail": _UPSTREAM_ERROR_MESSAGE, "request_id": request_id},
             status_code=502,
         )
 
@@ -4042,6 +4047,15 @@ def create_app(settings: Settings | None = None, contract: AppContract | None = 
                 "elapsed": info.elapsed,
                 "failed": info.failed,
             })
+        except (OSError, AWXTransportError) as exc:
+            # #652: a job's status has no honest empty value, so an AWX that
+            # did not answer is a 503 carrying the /api/changes/jobs reason.
+            # The client wraps a read-time drop in AWXTransportError, so it is
+            # caught before AWXAPIError.
+            reason = _awx_degraded_reason(exc, autoscale_enabled=settings.awx_autoscale.enabled)
+            logger.warning("workflow job status: AWX did not answer (%s): %s", reason, _sanitize_audit_field(str(exc)))
+            note = "AWX is not running" if reason == "awx-not-running" else "AWX is unreachable"
+            return JSONResponse({"error": note, "reason": reason}, status_code=503)
         except AWXAPIError as exc:
             return _upstream_error_response(exc, source="AWX")
 
@@ -4179,7 +4193,12 @@ def create_app(settings: Settings | None = None, contract: AppContract | None = 
                 ms = round((time.monotonic() - t0) * 1000)
                 return {"connected": True, "latency_ms": ms, "user_count": len(users)}
             except AuthentikAPIError as exc:
-                return {"connected": False, "error": str(exc)}
+                # #652: str(exc) embeds the upstream body; keep it in the log.
+                logger.warning("admin health: Authentik API error (status %s): %s", exc.status, _sanitize_audit_field(exc.body))
+                return {"connected": False, "error": f"Authentik API {exc.status}"}
+            except Exception as exc:
+                logger.warning("admin health: Authentik unreachable: %s", _sanitize_audit_field(str(exc)))
+                return {"connected": False, "error": "Authentik is unreachable"}
 
         def _ping_awx() -> dict:
             if not settings.awx.configured:
@@ -4217,9 +4236,12 @@ def create_app(settings: Settings | None = None, contract: AppContract | None = 
                 ms = round((time.monotonic() - t0) * 1000)
                 return {"connected": True, "latency_ms": ms}
             except netbox.NetboxAPIError as exc:
-                return {"connected": False, "error": str(exc)}
+                # #652: str(exc) embeds the upstream body; keep it in the log.
+                logger.warning("admin health: NetBox API error (status %s): %s", exc.status, _sanitize_audit_field(exc.body))
+                return {"connected": False, "error": f"NetBox API {exc.status}"}
             except Exception as exc:
-                return {"connected": False, "error": str(exc)}
+                logger.warning("admin health: NetBox unreachable: %s", _sanitize_audit_field(str(exc)))
+                return {"connected": False, "error": "NetBox is unreachable"}
 
         def _ping_prometheus() -> dict:
             if not settings.prometheus.configured:
@@ -4230,9 +4252,12 @@ def create_app(settings: Settings | None = None, contract: AppContract | None = 
                 ms = round((time.monotonic() - t0) * 1000)
                 return {"connected": True, "latency_ms": ms}
             except prometheus.PrometheusAPIError as exc:
-                return {"connected": False, "error": str(exc)}
+                # #652: str(exc) embeds the upstream body; keep it in the log.
+                logger.warning("admin health: Prometheus API error (status %s): %s", exc.status, _sanitize_audit_field(exc.body))
+                return {"connected": False, "error": f"Prometheus API {exc.status}"}
             except Exception as exc:
-                return {"connected": False, "error": str(exc)}
+                logger.warning("admin health: Prometheus unreachable: %s", _sanitize_audit_field(str(exc)))
+                return {"connected": False, "error": "Prometheus is unreachable"}
 
         return JSONResponse({
             "authentik": _ping_authentik(),
@@ -4506,7 +4531,9 @@ def create_app(settings: Settings | None = None, contract: AppContract | None = 
             alerts = prometheus.list_alerts(url=settings.prometheus.url)
             return JSONResponse({"alerts": [prometheus.flatten_alert(a) for a in alerts]})
         except Exception as exc:
-            return JSONResponse({"error": f"Failed to fetch alerts: {exc}"}, status_code=500)
+            # #652: PrometheusAPIError's str() embeds the upstream body.
+            logger.error("monitoring alerts: Prometheus request failed: %s", _sanitize_audit_field(str(exc)))
+            return JSONResponse({"error": "Failed to fetch alerts"}, status_code=500)
 
     @app.get("/api/monitoring/targets")
     async def api_monitoring_targets(request: Request):
@@ -4518,7 +4545,9 @@ def create_app(settings: Settings | None = None, contract: AppContract | None = 
             targets = prometheus.list_targets(url=settings.prometheus.url)
             return JSONResponse({"targets": [prometheus.flatten_target(t) for t in targets]})
         except Exception as exc:
-            return JSONResponse({"error": f"Failed to fetch targets: {exc}"}, status_code=500)
+            # #652: PrometheusAPIError's str() embeds the upstream body.
+            logger.error("monitoring targets: Prometheus request failed: %s", _sanitize_audit_field(str(exc)))
+            return JSONResponse({"error": "Failed to fetch targets"}, status_code=500)
 
     @app.get("/api/monitoring/metrics")
     async def api_monitoring_metrics(request: Request):
@@ -4563,7 +4592,9 @@ def create_app(settings: Settings | None = None, contract: AppContract | None = 
                 "pvc_usage_percent": round(pvc, 1),
             })
         except Exception as exc:
-            return JSONResponse({"error": f"Failed to fetch metrics: {exc}"}, status_code=500)
+            # #652: PrometheusAPIError's str() embeds the upstream body.
+            logger.error("monitoring metrics: Prometheus request failed: %s", _sanitize_audit_field(str(exc)))
+            return JSONResponse({"error": "Failed to fetch metrics"}, status_code=500)
 
     # ------------------------------------------------------------------
     # Facility (physical infrastructure) endpoints
@@ -6031,6 +6062,13 @@ def create_app(settings: Settings | None = None, contract: AppContract | None = 
                 "is_done": info.is_done,
                 "is_running": info.is_running,
             })
+        except (OSError, AWXTransportError) as exc:
+            # #652: same contract as the workflow job poller, including the
+            # AWXTransportError wrap, which must never read as a finished job.
+            reason = _awx_degraded_reason(exc, autoscale_enabled=settings.awx_autoscale.enabled)
+            logger.warning("catalog job status: AWX did not answer (%s): %s", reason, _sanitize_audit_field(str(exc)))
+            note = "AWX is not running" if reason == "awx-not-running" else "AWX is unreachable"
+            return JSONResponse({"error": note, "reason": reason}, status_code=503)
         except AWXAPIError as exc:
             # Return status info even if AWX reports an error for the job.
             # #430: the upstream body goes to the log, not the client.
