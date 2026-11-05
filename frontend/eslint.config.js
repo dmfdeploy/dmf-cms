@@ -33,14 +33,4 @@ export default [
       reportUnusedDisableDirectives: "off",
     },
   },
-  {
-    // Downgraded to warnings to keep the debt visible without blocking CI.
-    // Restore the recommended level when dmfdeploy/dmfdeploy#614 is fixed.
-    files: ["**/*.{js,jsx,ts,tsx}"],
-    rules: {
-      "jsx-a11y/click-events-have-key-events": "warn",
-      "jsx-a11y/no-noninteractive-element-interactions": "warn",
-      "jsx-a11y/no-static-element-interactions": "warn",
-    },
-  },
 ];

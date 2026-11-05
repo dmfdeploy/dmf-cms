@@ -1,4 +1,4 @@
-import { useState } from 'react'
+import { useId, useState } from 'react'
 import { Input, Select, Textarea } from './FormField'
 
 /**
@@ -105,6 +105,7 @@ export default function ReasonConfirm({
   confirmTestId?: string
 }) {
   const [reason, setReason] = useState('')
+  const extraFieldId = useId()
   const extraInvalid = extraField?.invalid ?? false
   const danger = variant === 'danger'
 
@@ -134,11 +135,12 @@ export default function ReasonConfirm({
       />
       {extraField && (
         <div className="mt-3">
-          <label className={`block text-sm ${danger ? 'text-red-200/80' : 'text-amber-200/80'}`}>
+          <label htmlFor={extraFieldId} className={`block text-sm ${danger ? 'text-red-200/80' : 'text-amber-200/80'}`}>
             {extraField.label}
           </label>
           {extraField.options ? (
             <Select
+              id={extraFieldId}
               className="mt-1.5"
               value={extraField.value}
               onChange={(e) => extraField.onChange(e.target.value)}
@@ -154,6 +156,7 @@ export default function ReasonConfirm({
             </Select>
           ) : (
             <Input
+              id={extraFieldId}
               type="text"
               className="mt-1.5"
               placeholder={extraField.placeholder}

@@ -379,14 +379,14 @@ export default function FinaliseStage({
                   teardown's OperationStatusLine); the raw id/state pair
                   moves into "System details", the same disclosure every
                   other expert-tier readout on this page already uses. */}
-              <p className="mt-1 text-muted/70">
+              <p className="mt-1 text-muted">
                 {purgeOp
                   ? OPERATION_LABEL[purgeOp.state]
                   : purgeOpFailed
                     ? 'Could not query status'
                     : 'Querying status…'}
               </p>
-              <details className="mt-1 text-muted/70">
+              <details className="mt-1 text-muted">
                 <summary className="cursor-pointer select-none opacity-80 hover:opacity-100">
                   System details
                 </summary>
@@ -519,7 +519,7 @@ export default function FinaliseStage({
                       {lastSwitchResult.outcome_message ?? lastSwitchResult.outcome ?? lastSwitchResult.status}
                     </span>
                   </p>
-                  <p className="mt-1 font-mono text-muted/70">
+                  <p className="mt-1 font-mono text-muted">
                     request {lastSwitchResult.request_id}
                     {lastSwitchResult.outcome ? ` · ${lastSwitchResult.outcome}` : ''}
                   </p>
@@ -533,7 +533,7 @@ export default function FinaliseStage({
                         Deleted permanently — confirmed absent by a fresh source read.
                       </p>
                       {purgeReview.purge_verified_at && (
-                        <p className="mt-1 font-mono text-muted/70">
+                        <p className="mt-1 font-mono text-muted">
                           verified {purgeReview.purge_verified_at}
                         </p>
                       )}
@@ -546,7 +546,7 @@ export default function FinaliseStage({
                         Delete permanently did not complete —{' '}
                         {purgeReview.error ?? purgeReview.l3_outcome ?? purgeReview.state}
                       </p>
-                      <p className="mt-1 font-mono text-muted/70">request {purgeReview.request_id}</p>
+                      <p className="mt-1 font-mono text-muted">request {purgeReview.request_id}</p>
                     </>
                   )}
                 </div>

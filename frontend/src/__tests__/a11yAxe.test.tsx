@@ -135,10 +135,7 @@ describe('axe: confirm and notifications', () => {
     expect(await axe(container, AXE_OPTIONS)).toHaveNoViolations()
   })
 
-  // Known defect, dmfdeploy/dmfdeploy#614: the extra field's <label> is not
-  // associated with its input (axe rule "label"). Change it.fails back to it
-  // when the label is fixed: this case must then pass.
-  it.fails('ReasonConfirm with an extra field and an error has no violations', async () => {
+  it('ReasonConfirm with an extra field and an error has no violations', async () => {
     const { container } = render(
       <ReasonConfirm
         title="Delete Studio A"
@@ -156,6 +153,26 @@ describe('axe: confirm and notifications', () => {
       />,
     )
     expect(await axe(container, AXE_OPTIONS)).toHaveNoViolations()
+  })
+
+  it('ReasonConfirm with an options select has no violations', async () => {
+    const { container } = render(
+      <ReasonConfirm
+        title="Launch workflow"
+        description="Runs the workflow."
+        onConfirm={() => {}}
+        onCancel={() => {}}
+        extraField={{
+          label: 'Target',
+          value: '',
+          onChange: () => {},
+          invalid: false,
+          options: [{ value: 'a', label: 'Studio A' }],
+        }}
+      />,
+    )
+    expect(await axe(container, AXE_OPTIONS)).toHaveNoViolations()
+    expect(screen.getByLabelText('Target').tagName).toBe('SELECT')
   })
 
   it('NotificationBell (closed) has no violations', async () => {

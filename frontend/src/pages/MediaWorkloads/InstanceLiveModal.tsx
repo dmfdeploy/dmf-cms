@@ -195,13 +195,14 @@ export default function InstanceLiveModal({
         if (pressStartedOnBackdrop.current && e.target === e.currentTarget) onClose()
         pressStartedOnBackdrop.current = false
       }}
-      role="dialog"
-      aria-modal="true"
-      aria-labelledby="live-modal-title"
+      role="presentation"
       data-testid="instance-live-modal"
     >
       <div
         ref={panelRef}
+        role="dialog"
+        aria-modal="true"
+        aria-labelledby="live-modal-title"
         tabIndex={-1}
         className="panel max-h-full w-full max-w-2xl overflow-y-auto p-5 outline-none"
       >

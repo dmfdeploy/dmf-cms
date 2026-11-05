@@ -380,7 +380,7 @@ export default function ProvisionStage({
         // is untouched: mutation ownership stays in this stage (GATE-S1-RV2
         // P1), failure and success lines stay where they were.
         <details
-          className="mt-4 border-t border-white/5 pt-3 text-muted/70"
+          className="mt-4 border-t border-white/5 pt-3 text-muted"
           open={desiredStateOpen}
           onToggle={(e) => setDesiredStateOpen(e.currentTarget.open)}
         >

@@ -1206,7 +1206,7 @@ describe('Tile: WorkloadEntryTile keeps the primary link free of interactive des
     ])
     renderListPage()
 
-    const link = await screen.findByRole('link', { name: 'Open test workload detail' })
+    const link = await screen.findByTestId('workload-tile-test').then((tile) => within(tile).getByRole('link'))
     // All three badges present at once — the busiest this tile's children
     // ever get — and still zero interactive descendants inside the anchor.
     expect(within(link).getByText('configured')).toBeTruthy()

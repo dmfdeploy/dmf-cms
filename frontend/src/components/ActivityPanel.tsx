@@ -120,10 +120,10 @@ function AuditEventOutcomeBlock({ outcome }: { outcome: AuditEventOutcome }) {
         // for 'unknown' — its detail is always "" (that IS the lost
         // field), nothing to disclose.
         <details className="mt-1">
-          <summary className="text-xs text-muted/70 cursor-pointer select-none">
+          <summary className="text-xs text-muted cursor-pointer select-none">
             Technical detail (for support)
           </summary>
-          <p className="text-xs text-muted/70 mt-1 font-mono">{outcome.detail}</p>
+          <p className="text-xs text-muted mt-1 font-mono">{outcome.detail}</p>
         </details>
       )}
       {(outcome.state === 'in_flight' || outcome.state === 'succeeded') && (
@@ -134,7 +134,7 @@ function AuditEventOutcomeBlock({ outcome }: { outcome: AuditEventOutcome }) {
         // 'in_flight' this is now the ONLY outcome text on the row (the
         // badge above it is gone) — still honest and still there, just no
         // longer duplicated into a second, non-aging pill.
-        <p className="text-xs text-muted/70 mt-1 font-mono">{outcome.detail}</p>
+        <p className="text-xs text-muted mt-1 font-mono">{outcome.detail}</p>
       )}
     </div>
   )

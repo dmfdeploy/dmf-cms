@@ -202,13 +202,13 @@ function ProblemRow({ alert }: { alert: WorkspaceAlert }) {
               <button
                 type="button"
                 onClick={() => setShowDetails((v) => !v)}
-                className="text-xs text-muted/70 hover:text-muted mt-1 cursor-pointer"
+                className="text-xs text-muted hover:text-text mt-1 cursor-pointer"
                 aria-expanded={showDetails}
               >
                 {showDetails ? 'Hide details' : 'Details'}
               </button>
               {showDetails && (
-                <p className="text-xs text-muted/70 mt-1 font-mono break-all">
+                <p className="text-xs text-muted mt-1 font-mono break-all">
                   {alert.name}
                   {alert.context ? ` · ${alert.context}` : ''}
                 </p>

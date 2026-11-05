@@ -69,7 +69,7 @@ describe('NotificationBell', () => {
     // Badge shows the count.
     expect(await screen.findByText('1')).toBeTruthy()
     // Open the dropdown.
-    screen.getByRole('button', { name: 'Monitoring alerts' }).click()
+    screen.getByRole('button', { name: 'Monitoring alerts, 1' }).click()
     // Honest label — a monitoring affordance, not "Notifications"/classified.
     expect(await screen.findByText('Monitoring alerts')).toBeTruthy()
     expect(screen.getByRole('link', { name: 'Open Monitoring' })).toBeTruthy()

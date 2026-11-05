@@ -7,8 +7,6 @@
 // - A listed case that starts passing fails the suite too. If you fix a
 //   defect, remove its entry in the same change.
 
-const A11Y = 'dmfdeploy/dmfdeploy#614'
-
 export type Invariant =
   | 'only main scrolls'
   | 'top bar stays'
@@ -46,19 +44,10 @@ interface AxeDefect {
   issue: string
 }
 
-const AXE_DEFECTS: AxeDefect[] = [
-  // The bell's visible alert count is not part of its accessible name.
-  { rule: 'label-content-name-mismatch', routes: 'all', issue: A11Y },
-  { rule: 'color-contrast', routes: ['/', '/activity/history', '/monitoring'], issue: A11Y },
-  // The icon-only PR link in the history lane has no name.
-  { rule: 'link-name', routes: ['/activity/history'], issue: A11Y },
-  // A colour-only inline link on the setup page.
-  {
-    rule: 'link-in-text-block',
-    routes: ['/media-workloads/studio-a/setup', '/media-workloads/studio-b/setup'],
-    issue: A11Y,
-  },
-]
+// Empty since the accessibility fixes (dmfdeploy/dmfdeploy#614). Add an entry
+// here only for a defect that has an open issue, and remove it in the change
+// that fixes it.
+const AXE_DEFECTS: AxeDefect[] = []
 
 /** Maps each known axe rule on this route to the issue that tracks it. */
 export function knownAxeViolations(route: string): Map<string, string> {
