@@ -866,6 +866,11 @@ def resolve_outcome_state(action: str, outcome: str) -> str:
 
 
 _OUTCOME_COPY = {
+    "entry-already-active": {
+        "headline": "This function is already deployed",
+        "meaning": "The catalog entry is already active, so a second deploy was refused and nothing was dispatched.",
+        "next_step": "Use the existing deployment, or tear it down first if you need to start again.",
+    },
     "facility-busy": {
         "headline": "Another operation is already using this facility",
         "meaning": "The action could not proceed because a conflicting operation on the same facility is still running.",

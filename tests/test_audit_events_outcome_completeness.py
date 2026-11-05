@@ -45,7 +45,7 @@ _KNOWN_TERMINAL_OUTCOMES: dict[str, frozenset[str]] = {
     "deploy": frozenset({
         "invalid-workload", "awx-not-configured", "entry-not-found", "no-job-template",
         "autoscale-misconfigured", "conflict-active-operation", "template-not-found",
-        "conflict-active-job", "facility-busy",
+        "conflict-active-job", "facility-busy", "entry-already-active",
         # L3 preflight refusals (main.py:443-634) — capacity-denied
         # (Prometheus unconfigured, no supply data, or demand read
         # failure), invalid-override (malformed override flag),

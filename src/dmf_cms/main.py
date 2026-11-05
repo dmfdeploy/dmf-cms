@@ -5204,6 +5204,35 @@ def create_app(settings: Settings | None = None, contract: AppContract | None = 
             out.append(_entry_to_dict(entry, status))
         return JSONResponse({"entries": out})
 
+    async def _refuse_if_entry_active(
+        request: Request, user: UserIdentity, *, entry, key: str, request_id: str, reason: str,
+    ) -> JSONResponse | None:
+        """#341: server-side duplicate-deploy refusal.
+
+        Reads the entry's lifecycle from the same source ``GET /api/catalog``
+        uses and answers 409 when it is already ``active``, so the client
+        guards are a convenience and not the only protection. Any other value
+        (including ``unknown`` and ``error``) does not refuse: a failed read
+        must not block a first deploy. Callers run it after the in-flight
+        checks, so a reattach never reaches it.
+        """
+        if not (settings.netbox.configured and entry.provision):
+            return None
+        lifecycle = await run_in_threadpool(
+            get_lifecycle_status,
+            entry,
+            settings.netbox.api_url,
+            settings.netbox.api_token,
+            ssl_verify=settings.netbox.ssl_verify,
+        )
+        if lifecycle != "active":
+            return None
+        _audit_awx_write(request, user, action="deploy", target=key, request_id=request_id, reason=reason, outcome="entry-already-active")
+        return JSONResponse(
+            {"error": "entry-already-active", "lifecycle": lifecycle, "request_id": request_id},
+            status_code=409,
+        )
+
     @app.post("/api/catalog/{key}/deploy")
     async def api_catalog_deploy(request: Request, key: str):
         """Launch the AWX job template for this catalog entry (Provision/Configure).
@@ -5304,6 +5333,16 @@ def create_app(settings: Settings | None = None, contract: AppContract | None = 
                     outcome="reattached", linked_request_id=op.request_id,
                 )
                 return JSONResponse({**op.to_dict(), "request_id": request_id}, status_code=200)
+
+            # #341: an already-active entry is refused here, after the
+            # reattach return above. The refusal un-wedges the just-created op
+            # for the same reason as the facility and preflight refusals.
+            refusal = await _refuse_if_entry_active(
+                request, user, entry=entry, key=key, request_id=request_id, reason=reason,
+            )
+            if refusal is not None:
+                ops_store.update(op.operation_id, state=OperationState.ERROR, error="entry-already-active")
+                return refusal
 
             # #202 WP2 §4.5 P2-2: advisory facility check — after the
             # per-entry guards above (a reattach must never be facility-
@@ -5426,6 +5465,12 @@ def create_app(settings: Settings | None = None, contract: AppContract | None = 
                 if op_id is not None:
                     body["operation_id"] = op_id
                 return JSONResponse(body)
+            # #341: refuse an already-active entry, after the reattach return.
+            refusal = await _refuse_if_entry_active(
+                request, user, entry=entry, key=key, request_id=request_id, reason=reason,
+            )
+            if refusal is not None:
+                return refusal
             # Cross-JT guard (#24): the sync flow has no store to lock across
             # actions, so check whether the OPPOSITE stage's job template has
             # an in-flight job before launching this one. Residual
