@@ -1,5 +1,6 @@
 import { useId, useState } from 'react'
 import { Input, Select, Textarea } from './FormField'
+import { capacityRefusalMessage } from '../lib/capacityRefusal'
 
 /**
  * Armed-confirm + mandatory-reason panel for a consequential write (the C5
@@ -108,6 +109,7 @@ export default function ReasonConfirm({
   const extraFieldId = useId()
   const extraInvalid = extraField?.invalid ?? false
   const danger = variant === 'danger'
+  const capacityRefusal = capacityRefusalMessage(error)
 
   return (
     <div
@@ -173,7 +175,12 @@ export default function ReasonConfirm({
           ) : null}
         </div>
       )}
-      {error != null && error !== false && (
+      {capacityRefusal && (
+        <p className="mt-1.5 text-sm text-red-300">
+          {capacityRefusal}
+        </p>
+      )}
+      {error != null && error !== false && !capacityRefusal && (
         <p className="mt-1.5 text-sm text-red-300">
           {/* Art. 8: the operator gets what happened and what is safe to do
               next, not a stringified exception. Fixed here so all three
