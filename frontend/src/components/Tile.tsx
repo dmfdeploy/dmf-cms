@@ -99,7 +99,9 @@ export default function Tile({
   testId,
 }: {
   to: string
-  ariaLabel: string
+  /** Omit it so the link is named by its visible content: an aria-label that
+   *  does not contain the visible text fails WCAG 2.5.3 (label in name). */
+  ariaLabel?: string
   /** The tile's visible face — rendered INSIDE the primary Link, so it must
    *  be non-interactive per testUtils/domAssertions.ts's bounded set (see
    *  the CONTRACT note above). Give anything that needs its own interactive

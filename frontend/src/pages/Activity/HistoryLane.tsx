@@ -218,7 +218,7 @@ export default function HistoryLane() {
                               History lane still surfaces the catalog key (demo
                               runbook §7a), just no longer as the headline. */}
                           <h3 className="font-semibold text-sm">{describeJob(job.name, outcome)}</h3>
-                          <p className="text-xs text-muted/70 mt-0.5">{job.name}</p>
+                          <p className="text-xs text-muted mt-0.5">{job.name}</p>
                           <div className="flex items-center gap-2 mt-2 text-xs text-muted">
                             <span className={`inline-block px-2 py-1 rounded font-semibold ${
                               job.status === 'successful' ? 'bg-green-500/20 text-green-400' :
@@ -349,8 +349,9 @@ export default function HistoryLane() {
                         target="_blank"
                         rel="noopener noreferrer"
                         className="text-blue-500 hover:text-blue-400 shrink-0"
+                        aria-label={`Open ${pr.repo} #${pr.number} on the host (opens in a new tab)`}
                       >
-                        <ExternalLink className="w-4 h-4" />
+                        <ExternalLink className="w-4 h-4" aria-hidden="true" />
                       </a>
                     </div>
                   </div>

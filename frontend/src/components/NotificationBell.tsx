@@ -75,7 +75,7 @@ export default function NotificationBell() {
       <button
         onClick={() => setDropdownOpen(!dropdownOpen)}
         className="relative p-2 text-muted hover:text-text transition-colors cursor-pointer"
-        aria-label="Monitoring alerts"
+        aria-label={state.hasProblems ? `Monitoring alerts, ${alerts.length}` : 'Monitoring alerts'}
       >
         <Bell className="w-5 h-5" />
         {state.hasProblems ? (
@@ -163,7 +163,7 @@ function AlertList({ alerts }: { alerts: WorkspaceAlert[] }) {
                 {scope && <p className="text-xs text-muted mt-0.5 truncate">{scope}</p>}
                 {alert.summary && <p className="text-xs text-muted mt-0.5">{alert.summary}</p>}
                 {alert.active_at && (
-                  <p className="text-xs text-muted/50 mt-1">
+                  <p className="text-xs text-muted mt-1">
                     Active: {new Date(alert.active_at).toLocaleString()}
                   </p>
                 )}

@@ -448,7 +448,6 @@ function WorkloadEntryTile({
     // sibling slot instead of a spot nested inside the anchor.
     <Tile
       to={workloadHomePath(workload.slug)}
-      ariaLabel={`Open ${workload.name} workload detail`}
       testId={`workload-tile-${workload.slug}`}
     >
       {rep ? (

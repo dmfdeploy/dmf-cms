@@ -168,7 +168,7 @@ function FacilityEntry({ data }: { data: ReturnType<typeof useFacilitySummary>['
           console, see the file docstring), so `itemCount={1}` is a
           constant, not a derived count. */}
       <CanvasGrid itemCount={1}>
-        <Tile to={`/facilities/${encodeURIComponent(site.slug)}`} ariaLabel={`Open ${site.name} facility detail`}>
+        <Tile to={`/facilities/${encodeURIComponent(site.slug)}`}>
           <div className="flex aspect-video w-full items-center justify-center rounded-md border border-white/10 bg-black/40">
             <Building2 className="h-8 w-8 text-blue-400" />
           </div>

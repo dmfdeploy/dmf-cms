@@ -122,7 +122,7 @@ export default function Monitoring() {
                       {alert.name}
                     </div>
                     {alert.summary && <p className="text-xs text-muted mt-1">{alert.summary}</p>}
-                    {alert.activeAt && <p className="text-xs text-muted/50 mt-1">Active: {new Date(alert.activeAt).toLocaleString()}</p>}
+                    {alert.activeAt && <p className="text-xs text-muted mt-1">Active: {new Date(alert.activeAt).toLocaleString()}</p>}
                   </div>
                 ))
               )}

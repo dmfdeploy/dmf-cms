@@ -938,7 +938,7 @@ function WorkloadWizard({
               this flow — survives without naming either. */}
           This workload is operating. This flow isn&apos;t where a running workload is
           watched — its live view is the workload&apos;s own home —{' '}
-          <Link to={workloadHomePath(workload.slug)} className="text-accent hover:underline">
+          <Link to={workloadHomePath(workload.slug)} className="text-accent underline">
             open the live view
           </Link>
           . The steps below stay reviewable, and Finalise &amp; Review is where it ends.
@@ -1039,7 +1039,7 @@ function ConfigureForwardExit({ exit, slug }: { exit: ForwardExit; slug: string 
   return (
     <div className="panel mt-4 border-white/10 px-4 py-3 text-sm text-muted">
       {description}{' '}
-      <Link to={to} className="text-accent hover:underline">
+      <Link to={to} className="text-accent underline">
         {label} →
       </Link>
     </div>
