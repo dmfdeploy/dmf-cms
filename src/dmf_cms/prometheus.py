@@ -17,8 +17,14 @@ class PrometheusAPIError(Exception):
         super().__init__(f"Prometheus API {status}: {body}")
 
 
-def _request(url: str, path: str, params: dict | None = None) -> dict:
-    """Make a GET request to the Prometheus API (no auth required)."""
+def _request(
+    url: str, path: str, params: dict | None = None, *, parse_json: bool = True
+) -> dict:
+    """Make a GET request to the Prometheus API (no auth required).
+
+    ``parse_json=False`` is for the health endpoints, which answer in plain
+    text; the body is read and discarded.
+    """
     base = url.rstrip("/")
     query_str = urllib.parse.urlencode(params or {})
     full_url = f"{base}{path}" + (f"?{query_str}" if query_str else "")
@@ -27,19 +33,21 @@ def _request(url: str, path: str, params: dict | None = None) -> dict:
     try:
         with urllib.request.urlopen(req, timeout=30) as resp:
             raw = resp.read()
-            return json.loads(raw) if raw else {}
+            return json.loads(raw) if raw and parse_json else {}
     except urllib.error.HTTPError as exc:
-        error_body = exc.read().decode() if exc.fp else str(exc)
+        error_body = exc.read().decode(errors="replace") if exc.fp else str(exc)
         raise PrometheusAPIError(exc.code, error_body) from exc
 
 
-def ping(*, url: str) -> bool:
-    """Check Prometheus health endpoint."""
-    try:
-        _request(url, "/-/healthy")
-        return True
-    except (PrometheusAPIError, Exception):
-        return False
+def ping(*, url: str) -> None:
+    """Check the Prometheus health endpoint.
+
+    Returns on a 2xx. Raises ``PrometheusAPIError`` on a non-2xx response and
+    lets transport errors (``URLError``, timeouts) propagate, so the caller
+    can tell "healthy" from "failed" and log why. The endpoint answers in
+    plain text, not JSON.
+    """
+    _request(url, "/-/healthy", parse_json=False)
 
 
 def query(*, url: str, expr: str) -> list[dict]:
