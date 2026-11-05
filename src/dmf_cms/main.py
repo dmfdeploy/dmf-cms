@@ -4504,7 +4504,7 @@ def create_app(settings: Settings | None = None, contract: AppContract | None = 
             return JSONResponse({"alerts": []})
         try:
             alerts = prometheus.list_alerts(url=settings.prometheus.url)
-            return JSONResponse({"alerts": alerts})
+            return JSONResponse({"alerts": [prometheus.flatten_alert(a) for a in alerts]})
         except Exception as exc:
             return JSONResponse({"error": f"Failed to fetch alerts: {exc}"}, status_code=500)
 
@@ -4516,7 +4516,7 @@ def create_app(settings: Settings | None = None, contract: AppContract | None = 
             return JSONResponse({"targets": []})
         try:
             targets = prometheus.list_targets(url=settings.prometheus.url)
-            return JSONResponse({"targets": targets})
+            return JSONResponse({"targets": [prometheus.flatten_target(t) for t in targets]})
         except Exception as exc:
             return JSONResponse({"error": f"Failed to fetch targets: {exc}"}, status_code=500)
 
