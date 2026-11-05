@@ -1,7 +1,9 @@
 """Contract of .github/workflows/hold-disarm.yml and the automerge triggers.
 
 `hold` stops a merge. The disarm workflow must stay tiny: label event only,
-GITHUB_TOKEN only, no code, no secrets.
+GITHUB_TOKEN only, no code, no secrets. It runs on `pull_request_target`, so
+the base branch's definition and the base repository's token apply, and fork
+pull requests are covered.
 """
 from __future__ import annotations
 
@@ -21,17 +23,20 @@ def load(path: Path) -> dict:
     return data
 
 
-def test_name_and_trigger_is_only_pull_request_labeled():
+def test_name_and_trigger_is_only_pull_request_target_labeled():
     wf = load(HOLD)
     assert wf["name"] == "hold-disarm"
-    assert wf["on"] == {"pull_request": {"types": ["labeled"]}}
+    assert wf["on"] == {"pull_request_target": {"types": ["labeled"]}}
 
 
-def test_only_pull_requests_write():
+def test_only_contents_and_pull_requests_write():
     wf = load(HOLD)
     assert wf["permissions"] == {}
     (job,) = wf["jobs"].values()
-    assert job["permissions"] == {"pull-requests": "write"}
+    assert job["permissions"] == {
+        "contents": "write",
+        "pull-requests": "write",
+    }
 
 
 def test_job_runs_only_for_the_hold_label():
