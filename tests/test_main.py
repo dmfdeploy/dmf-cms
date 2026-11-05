@@ -39,7 +39,34 @@ def test_login_and_overview_shell_render():
     overview = client.get("/")
     assert overview.status_code == 200
     assert "DMF Console" in overview.text
+
+
+def test_spa_fallback_without_built_frontend(monkeypatch, tmp_path):
+    # Point the app at a package root with no static/app build, so the
+    # unbuilt-shell copy is served whether or not the real frontend is built.
+    monkeypatch.setattr("dmf_cms.main.PACKAGE_ROOT", tmp_path)
+    client = TestClient(create_app())
+
+    overview = client.get("/")
+
+    assert overview.status_code == 200
+    assert "DMF Console" in overview.text
     assert "App Catalog" in overview.text
+    assert "React app not built" in overview.text
+
+
+def test_spa_fallback_serves_built_index(monkeypatch, tmp_path):
+    app_dir = tmp_path / "static" / "app"
+    app_dir.mkdir(parents=True)
+    (app_dir / "index.html").write_text("<title>DMF Console</title><div id=root></div>")
+    monkeypatch.setattr("dmf_cms.main.PACKAGE_ROOT", tmp_path)
+    client = TestClient(create_app())
+
+    overview = client.get("/")
+
+    assert overview.status_code == 200
+    assert 'id=root' in overview.text
+    assert "React app not built" not in overview.text
 
 
 def test_login_redirect_uses_forwarded_https_scheme(monkeypatch):
