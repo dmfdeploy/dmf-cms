@@ -1,4 +1,4 @@
-import { useState, useEffect, useRef } from 'react'
+import { useState, useEffect, useRef, useId, type KeyboardEvent } from 'react'
 import { Link } from 'react-router-dom'
 import { Bell, CheckCircle, AlertTriangle, AlertCircle } from 'lucide-react'
 import { useWorkspaceHealth } from '@/api/hooks'
@@ -48,6 +48,8 @@ export default function NotificationBell() {
   const health = useWorkspaceHealth()
   const [dropdownOpen, setDropdownOpen] = useState(false)
   const dropdownRef = useRef<HTMLDivElement>(null)
+  const triggerRef = useRef<HTMLButtonElement>(null)
+  const panelId = useId()
 
   const state = classifyWorkspaceHealth(health)
   const nominal = isNominal(state)
@@ -69,10 +71,27 @@ export default function NotificationBell() {
     return () => document.removeEventListener('mousedown', handleClickOutside)
   }, [])
 
+  // Escape dismisses the open panel and hands focus back to the trigger, so
+  // keyboard users do not lose their place in the shell. The handler sits on
+  // the bell's own wrapper, not on the document: Escape pressed elsewhere
+  // (another input, an open modal) belongs to that surface and must not close
+  // the panel or pull focus away from it. The wrapper is not itself
+  // interactive, so it is marked presentational; it only observes key events
+  // that bubble up from the trigger and panel.
+  const handleKeyDown = (event: KeyboardEvent<HTMLDivElement>) => {
+    if (event.key === 'Escape' && dropdownOpen) {
+      setDropdownOpen(false)
+      triggerRef.current?.focus()
+    }
+  }
+
   return (
-    <div className="relative" ref={dropdownRef}>
+    <div className="relative" ref={dropdownRef} role="presentation" onKeyDown={handleKeyDown}>
       {/* Bell icon */}
       <button
+        ref={triggerRef}
+        aria-expanded={dropdownOpen}
+        aria-controls={panelId}
         onClick={() => setDropdownOpen(!dropdownOpen)}
         className="relative p-2 text-muted hover:text-text transition-colors cursor-pointer"
         aria-label={state.hasProblems ? `Monitoring alerts, ${alerts.length}` : 'Monitoring alerts'}
@@ -97,7 +116,7 @@ export default function NotificationBell() {
 
       {/* Dropdown */}
       {dropdownOpen && (
-        <div className="absolute right-0 mt-2 w-96 bg-panel border border-muted/20 rounded-lg shadow-xl overflow-hidden z-50">
+        <div id={panelId} className="absolute right-0 mt-2 w-96 bg-panel border border-muted/20 rounded-lg shadow-xl overflow-hidden z-50">
           {/* Header */}
           <div className="px-4 py-3 border-b border-muted/20 flex items-center justify-between">
             <div>
