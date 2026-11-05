@@ -12,6 +12,7 @@ from __future__ import annotations
 
 import os
 import re
+import shutil
 import subprocess
 from pathlib import Path
 
@@ -32,6 +33,7 @@ case "$1" in
     if [[ "$2" == inspect && "${4:-}" == --format ]]; then
       case "$5" in
         *Architecture*) echo amd64/linux ;;
+        *Labels*) echo "${FAKE_REVISION:-}" ;;
         *) echo ghcr.io/dmfdeploy/dmf-cms@sha256:fixture ;;
       esac
     fi
@@ -60,6 +62,41 @@ def umbrella_dir() -> Path:
             "test would hide a broken publish step."
         )
     return Path(umbrella)
+
+
+def make_checkout(tmp_path: Path, *, tag: str | None = None, extra_commit: bool = False) -> tuple[Path, str]:
+    """A small git checkout holding the real wrapper, so the revision check
+    sees a known commit and a clean tree whatever state this repository is in.
+    Returns the checkout and its HEAD commit."""
+    checkout = tmp_path / "checkout"
+    (checkout / "scripts").mkdir(parents=True)
+    shutil.copy(REPO / "scripts" / "publish-to-ghcr.sh", checkout / "scripts")
+    shutil.copy(REPO / "VERSION", checkout)
+    version = (REPO / "VERSION").read_text(encoding="utf-8").strip()
+
+    def git(*args: str) -> str:
+        return subprocess.run(
+            ["git", "-c", "user.name=t", "-c", "user.email=t@example.com", *args],
+            cwd=checkout, text=True, capture_output=True, check=True,
+        ).stdout.strip()
+
+    git("init", "-q")
+    git("add", ".")
+    git("commit", "-q", "-m", "release")
+    if tag == "first":
+        git("tag", f"v{version}")
+    if extra_commit:
+        (checkout / "notes").write_text("later\n", encoding="utf-8")
+        git("add", ".")
+        git("commit", "-q", "-m", "later")
+    if tag == "head":
+        git("tag", f"v{version}")
+    if tag == "broken":
+        # A tag ref whose object is missing: show-ref exits 128.
+        (checkout / ".git" / "refs" / "tags" / f"v{version}").write_text(
+            "0123456789abcdef0123456789abcdef01234567\n", encoding="utf-8"
+        )
+    return checkout, git("rev-parse", "HEAD")
 
 
 def release_steps() -> list[dict]:
@@ -106,9 +143,15 @@ def run_block(tmp_path: Path, command: str, arch: str) -> tuple[subprocess.Compl
         }
     )
     assert step["working-directory"] == "src"  # the checkout of the verified commit
+    checkout, head = make_checkout(tmp_path)
+    env["FAKE_REVISION"] = head
+    # The job, not the step, sets the verified commit; steps inherit it.
+    workflow = yaml.safe_load((REPO / ".github/workflows/release.yml").read_text(encoding="utf-8"))
+    assert "RELEASE_SHA" in workflow["jobs"]["release"]["env"]
+    env["RELEASE_SHA"] = head
     result = subprocess.run(
         ["bash", "-e", "-o", "pipefail", "-c", command],
-        text=True, capture_output=True, env=env, cwd=REPO, check=False,
+        text=True, capture_output=True, env=env, cwd=checkout, check=False,
     )
     return result, (calls.read_text(encoding="utf-8") if calls.exists() else ""), received
 
@@ -147,8 +190,19 @@ def test_the_step_pipes_the_token_with_a_terminating_newline(arch):
 
 
 def run_wrapper(
-    tmp_path: Path, suffix: str | None, actions_env: dict[str, str] | None = None
+    tmp_path: Path,
+    suffix: str | None,
+    actions_env: dict[str, str] | None = None,
+    *,
+    revision: str | None = None,
+    tag: str | None = None,
+    extra_commit: bool = False,
+    dirty: bool = False,
+    release_sha: str | None = "head",
 ) -> tuple[subprocess.CompletedProcess, str]:
+    """`revision` is the image's revision label: None means the checkout's HEAD,
+    "" means no label. `release_sha` is the workflow's verified commit: "head" means
+    the checkout's HEAD, None leaves it unset."""
     fake_bin = tmp_path / "bin"
     fake_bin.mkdir()
     calls = tmp_path / "docker-calls"
@@ -171,9 +225,16 @@ def run_wrapper(
     )
     if suffix is not None:
         env["IMAGE_TAG_SUFFIX"] = suffix
+    checkout, head = make_checkout(tmp_path, tag=tag, extra_commit=extra_commit)
+    env["FAKE_REVISION"] = head if revision is None else revision
+    env.pop("RELEASE_SHA", None)
+    if release_sha is not None:
+        env["RELEASE_SHA"] = head if release_sha == "head" else release_sha
+    if dirty:
+        (checkout / "untracked").write_text("x\n", encoding="utf-8")
     result = subprocess.run(
-        ["bash", str(REPO / "scripts" / "publish-to-ghcr.sh")],
-        input=FAKE_TOKEN + "\n", text=True, capture_output=True, env=env, cwd=REPO, check=False,
+        ["bash", str(checkout / "scripts" / "publish-to-ghcr.sh")],
+        input=FAKE_TOKEN + "\n", text=True, capture_output=True, env=env, cwd=checkout, check=False,
     )
     return result, (calls.read_text(encoding="utf-8") if calls.exists() else "")
 
@@ -235,6 +296,101 @@ def test_every_workflow_publish_step_sets_a_suffix(arch):
     """The workflow never relies on the bare tag: both steps pass a suffix."""
     step = publish_step(arch)
     assert step["env"]["IMAGE_TAG_SUFFIX"] == f"-{arch}"
+
+
+# ------------------------------------------------ the revision check
+
+OTHER_COMMIT = "0123456789abcdef0123456789abcdef01234567"
+
+
+def assert_nothing_pushed(docker_calls: str) -> None:
+    assert "login" not in docker_calls
+    assert "push " not in docker_calls
+    assert "tag " not in docker_calls
+
+
+def test_the_wrapper_refuses_an_image_built_from_another_commit(tmp_path):
+    """After a rebase merge the tag names a new commit, and an image built
+    before the merge still carries the old one."""
+    result, docker_calls = run_wrapper(tmp_path, "-arm64", revision=OTHER_COMMIT, tag="head")
+    assert result.returncode != 0
+    assert "revision label differs" in result.stderr
+    assert OTHER_COMMIT in result.stderr
+    assert re.search(r"expected commit: [0-9a-f]{40}", result.stderr)
+    assert "--platform linux/arm64 --tag-suffix -arm64" in result.stderr
+    assert_nothing_pushed(docker_calls)
+
+
+def test_the_wrapper_accepts_an_image_built_from_the_tagged_commit(tmp_path):
+    version = (REPO / "VERSION").read_text(encoding="utf-8").strip()
+    result, docker_calls = run_wrapper(tmp_path, "-arm64", tag="head")
+    assert result.returncode == 0, result.stdout + result.stderr
+    assert f"push ghcr.io/dmfdeploy/dmf-cms:{version}-arm64|" in docker_calls
+
+
+def test_the_wrapper_fails_closed_when_the_image_has_no_revision_label(tmp_path):
+    result, docker_calls = run_wrapper(tmp_path, "-arm64", revision="", tag="head")
+    assert result.returncode != 0
+    assert "no org.opencontainers.image.revision label" in result.stderr
+    assert "<missing>" in result.stderr
+    assert_nothing_pushed(docker_calls)
+
+
+def test_the_wrapper_refuses_a_checkout_that_is_not_at_the_tagged_commit(tmp_path):
+    """The label matches HEAD, yet the tag names an earlier commit."""
+    result, docker_calls = run_wrapper(tmp_path, "-arm64", tag="first", extra_commit=True)
+    assert result.returncode != 0
+    assert "not at the commit" in result.stderr
+    assert_nothing_pushed(docker_calls)
+
+
+def test_an_unreadable_tag_is_not_an_absent_tag(tmp_path):
+    """Git cannot read the tag, so the verified commit must not stand in."""
+    result, docker_calls = run_wrapper(tmp_path, "-arm64", tag="broken")
+    assert result.returncode != 0
+    assert "could not read tag" in result.stderr
+    assert_nothing_pushed(docker_calls)
+
+
+def test_without_a_tag_the_wrapper_accepts_an_image_of_the_verified_commit(tmp_path):
+    version = (REPO / "VERSION").read_text(encoding="utf-8").strip()
+    result, docker_calls = run_wrapper(tmp_path, "-arm64")
+    assert result.returncode == 0, result.stdout + result.stderr
+    assert f"push ghcr.io/dmfdeploy/dmf-cms:{version}-arm64|" in docker_calls
+
+
+def test_without_a_tag_the_image_must_match_the_verified_commit(tmp_path):
+    result, docker_calls = run_wrapper(tmp_path, "-arm64", revision=OTHER_COMMIT, release_sha="head")
+    assert result.returncode != 0
+    assert "differs from the release workflow's verified commit" in result.stderr
+    assert_nothing_pushed(docker_calls)
+
+
+def test_without_a_tag_the_checkout_must_be_the_verified_commit(tmp_path):
+    result, docker_calls = run_wrapper(tmp_path, "-arm64", release_sha=OTHER_COMMIT, revision=OTHER_COMMIT)
+    assert result.returncode != 0
+    assert "not at the release workflow's verified commit" in result.stderr
+    assert_nothing_pushed(docker_calls)
+
+
+def test_without_a_tag_or_a_verified_commit_the_wrapper_refuses(tmp_path):
+    result, docker_calls = run_wrapper(tmp_path, "-arm64", release_sha=None)
+    assert result.returncode != 0
+    assert "no commit to check against" in result.stderr
+    assert_nothing_pushed(docker_calls)
+
+
+@pytest.mark.parametrize("arch", ["arm64", "amd64"])
+def test_the_rebuild_advice_names_the_platform_of_the_suffix(tmp_path, arch):
+    result, _ = run_wrapper(tmp_path, f"-{arch}", revision=OTHER_COMMIT)
+    assert f"--platform linux/{arch} --tag-suffix -{arch}" in result.stderr
+
+
+def test_the_wrapper_refuses_a_dirty_tree(tmp_path):
+    result, docker_calls = run_wrapper(tmp_path, "-arm64", tag="head", dirty=True)
+    assert result.returncode != 0
+    assert "uncommitted changes" in result.stderr
+    assert_nothing_pushed(docker_calls)
 
 
 # ------------------------------------------------ the index join (imagetools)
