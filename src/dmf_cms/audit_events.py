@@ -208,10 +208,14 @@ _AUDIT_LOGGER_NAME = "dmf_cms.audit"
 
 _TRAILING_FIELD = "linked_request_id"
 
+# Optional field written before the trailing link, only on the job-watch
+# records main.py's _audit_job_attached emits. Lines without it parse as before.
+_JOB_ID_FIELD = "job_id"
+
 _ALL_MARKER_NAMES = (
     "action", "actor", "role", "real_role", "request_id",
     "target", "reason", "outcome", "workload", "capacity",
-    _TRAILING_FIELD,
+    _JOB_ID_FIELD, _TRAILING_FIELD,
 )
 
 
@@ -232,6 +236,7 @@ def _marker_pattern(name: str) -> re.Pattern[str]:
 
 _MARKER_PATTERNS = {name: _marker_pattern(name) for name in _ALL_MARKER_NAMES}
 
+_JOB_ID_VALUE_RE = re.compile(r"(\d{1,18})(?=\s|$)")
 _FMT_MARKER_RE = re.compile(r"^\s*fmt=(\d+)\s")
 _NEW_FORMAT_VERSION = "2"
 
@@ -427,6 +432,18 @@ def _parse_new_format_line(tail: str) -> dict[str, str] | None:
     values[_TRAILING_FIELD] = (
         tail[trailing_marker + len(f"{_TRAILING_FIELD}="):].strip() if trailing_marker is not None else ""
     )
+
+    # job_id sits between capacity and the trailing link. Only digits count,
+    # and only job-watch records may carry one: user-authored lines reach this
+    # parser too, and a job id on them would let a user claim a job.
+    job_marker = _find_marker(tail, _JOB_ID_FIELD, pos)
+    job_id = ""
+    if job_marker is not None and (trailing_marker is None or job_marker < trailing_marker):
+        job_match = _JOB_ID_VALUE_RE.match(tail, job_marker + len(f"{_JOB_ID_FIELD}="))
+        job_id = job_match.group(1) if job_match else ""
+    if not (values["actor"] == _JOB_WATCH_ACTOR and values["role"] == "system"):
+        job_id = ""
+    values[_JOB_ID_FIELD] = job_id
 
     # `actor` alone is
     # NOT proof a line is console-authored — main.py's _audit_awx_write
@@ -670,6 +687,11 @@ _AUTO_ROLLBACK_ACTOR = "system:auto-rollback"
 # onto the dispatch row they correlate to (see list_audit_events'
 # `terminal_by_request_id`), never rendered standalone.
 _JOB_WATCH_ACTOR = "system:job-watch"
+
+# The outcome token of main.py's _audit_job_attached record: "this request's
+# watcher attached to job N". Carries a job id, never a result, so it must not
+# enter the terminal join.
+_JOB_ATTACHED_OUTCOME = "job-attached"
 
 # What the lane discloses as excluded (plan §7 AC 5), the two reasons kept
 # distinct: `finalise-purge` is out because rendering it would WIDEN access
@@ -1009,6 +1031,27 @@ def _unknown_outcome() -> dict[str, object]:
     }
 
 
+def _restarted_outcome(job_id: str) -> dict[str, object]:
+    """The honest answer for a dispatch whose watcher died with the process
+    that held it: the job may have finished, failed or still be running, and
+    the console did not see which."""
+    job = f" The automation job is number {job_id}." if job_id else ""
+    return {
+        "state": "unknown",
+        "headline": "Outcome unknown: the console restarted",
+        "meaning": (
+            "The console restarted while this job was running, so it did not "
+            "see the job finish. The job may have succeeded, failed or still "
+            f"be running.{job}"
+        ),
+        "next_step": (
+            "Check the workload's current state in Workspace or Activity → "
+            "Jobs before you try again."
+        ),
+        "detail": "",
+    }
+
+
 def build_terminal_join_outcome(raw_outcome: str) -> dict[str, object]:
     """Resolve a terminal-outcome join record's own `outcome=` field
     (`_audit_watch_terminal`'s compound `<state>[:<l3_outcome>]` token)
@@ -1078,6 +1121,20 @@ def _age_stale_in_flight(
     return _unknown_outcome()
 
 
+def _written_before_process_start(
+    outcome: dict[str, object], ts_ns_str: str, process_started_ns: int | None,
+) -> bool:
+    """True for an 'in_flight' row older than this process. Its watcher ran
+    in a process that no longer exists, so nothing is following the job. An
+    unparseable timestamp proves nothing, so it is never treated as old."""
+    if outcome.get("state") != "in_flight" or process_started_ns is None:
+        return False
+    try:
+        return int(ts_ns_str) < process_started_ns
+    except (TypeError, ValueError):
+        return False
+
+
 # ----------------------------------------------------------------------
 # Orchestration.
 # ----------------------------------------------------------------------
@@ -1098,6 +1155,7 @@ def list_audit_events(
     now_ns: int | None = None,
     timeout: float = _DEFAULT_TIMEOUT_SECONDS,
     max_in_flight_age_seconds: int | None = None,
+    process_started_ns: int | None = None,
 ) -> dict[str, object]:
     """The full read: retention window, bounded query, parse, gate, shape.
 
@@ -1113,6 +1171,13 @@ def list_audit_events(
     'unknown' rather than claiming to still be watched forever. See
     `_age_stale_in_flight`. `None` (the default) disables aging — every
     existing caller/test that doesn't pass it keeps today's behavior.
+
+    `process_started_ns`: when this console process started. A deploy/
+    teardown row with no outcome that was written before it belongs to a
+    watcher that died with the previous process, so it reads 'unknown' at
+    once instead of waiting out the age bound. Derived on every read, never
+    written, so repeated restarts cannot record conflicting answers. `None`
+    (the default) disables the check.
     """
     if now_ns is None:
         now_ns = time.time_ns()
@@ -1210,13 +1275,32 @@ def list_audit_events(
     # keeps a user-authored row out of this map, not just out of `events`
     # directly.
     terminal_by_request_id: dict[str, dict[str, str]] = {}
+    job_by_request_id: dict[str, str] = {}
     for _ts, fields in rows:
         if fields.get("actor") != _JOB_WATCH_ACTOR or fields.get("role") != "system":
             continue
         linked = fields.get("linked_request_id", "")
-        if not linked or linked in terminal_by_request_id:
+        if not linked:
+            continue
+        if fields.get("outcome") == _JOB_ATTACHED_OUTCOME:
+            # Names the job; says nothing about how it ended.
+            if fields.get("job_id") and linked not in job_by_request_id:
+                job_by_request_id[linked] = fields["job_id"]
+            continue
+        if linked in terminal_by_request_id:
             continue
         terminal_by_request_id[linked] = fields
+
+    # A retry after a restart attaches a second request to the SAME AWX job
+    # (the first request's watcher is gone). The job's result belongs to both,
+    # so key each terminal record by (action, job): the first request, which
+    # has no terminal record of its own, can then find it. The job id is
+    # AWX's own identity for the job, so this link is exact, never a guess.
+    terminal_by_job: dict[tuple[str, str], dict[str, str]] = {}
+    for linked, terminal in terminal_by_request_id.items():
+        job = job_by_request_id.get(linked)
+        if job:
+            terminal_by_job.setdefault((terminal.get("action", ""), job), terminal)
 
     events: list[dict[str, object]] = []
     for ts_ns_str, fields in rows:
@@ -1308,8 +1392,14 @@ def list_audit_events(
                 if cls == "auto-rollback"
                 else fields.get("outcome") in _DISPATCH_OUTCOME_TOKENS
             )
+            if terminal_fields is None and is_dispatch_row:
+                run_job = job_by_request_id.get(run_id, "")
+                if run_job:
+                    terminal_fields = terminal_by_job.get((action, run_job))
             if terminal_fields is not None and is_dispatch_row:
                 outcome = build_terminal_join_outcome(terminal_fields.get("outcome", ""))
+            elif _written_before_process_start(outcome, ts_ns_str, process_started_ns):
+                outcome = _restarted_outcome(job_by_request_id.get(run_id, ""))
             else:
                 # No ELIGIBLE join for this row —
                 # age it into 'unknown' once it's provably outlived any
