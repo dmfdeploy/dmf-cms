@@ -16,6 +16,8 @@ import {
 import { useActivityStore } from '../../store/activity'
 import PageHeading from '../../components/PageHeading'
 import { usePageTitle } from '../../hooks/usePageTitle'
+import { useGuardWrite } from '../../lib/inventoryFreshness'
+import { InventoryWritesGate, InventoryWritesNotice } from '../MediaWorkloads'
 
 const lifecycleBadge: Record<string, string> = {
   bootstrapped: 'bg-muted/20 text-muted',
@@ -32,7 +34,16 @@ interface EntryActionState {
 }
 
 export default function Catalog() {
+  return (
+    <InventoryWritesGate>
+      <CatalogPage />
+    </InventoryWritesGate>
+  )
+}
+
+function CatalogPage() {
   usePageTitle('Catalog')
+  const guardWrite = useGuardWrite()
   const queryClient = useQueryClient()
   // (umbrella #385) retrofitted
   // onto settleQuery. This page's OWN bug, distinct from the isError-gating
@@ -76,6 +87,7 @@ export default function Catalog() {
   // EntryCard had the identical onConfirm-then-close shape, found by the
   // sweep the umbrella issue calls for.
   const handleDeploy = async (entry: CatalogEntry, reason: string, workload?: string) => {
+    guardWrite()
     const result = await deployMutation.mutateAsync({ key: entry.key, reason, workload })
     record('deploy', entry.key, reason, result, isOperation(result) ? 'dispatched' : result.status)
     if (isOperation(result)) {
@@ -94,6 +106,7 @@ export default function Catalog() {
   }
 
   const handleTeardown = async (entry: CatalogEntry, reason: string) => {
+    guardWrite()
     const result = await teardownMutation.mutateAsync({ key: entry.key, reason })
     record('teardown', entry.key, reason, result, isOperation(result) ? 'dispatched' : result.status)
     if (isOperation(result)) {
@@ -163,6 +176,7 @@ export default function Catalog() {
   return (
     <div className="flex-1 overflow-y-auto p-6">
       <PageHeading>Catalog</PageHeading>
+      <InventoryWritesNotice />
       {/* A settled failed refetch retains `catalogData` from the earlier
           successful read (Art. 5 — the screen stays still, entries remain
           deployable/tearable-down) — but the CURRENT read did not confirm

@@ -12,6 +12,19 @@ const InventoryWritesBlockedContext = createContext(false)
 
 export const InventoryWritesBlockedProvider = InventoryWritesBlockedContext.Provider
 
+/**
+ * What a page needs to tell the user why writes are withdrawn: the read that
+ * blocked them. Null while writes are allowed.
+ */
+export interface InventoryWritesBlockReason {
+  stale: boolean
+  reason?: string
+  last_success?: string | null
+  failure_since?: string | null
+}
+
+export const InventoryWritesBlockReasonContext = createContext<InventoryWritesBlockReason | null>(null)
+
 export function useInventoryWritesBlocked(): boolean {
   return useContext(InventoryWritesBlockedContext)
 }

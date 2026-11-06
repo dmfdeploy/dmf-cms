@@ -516,6 +516,46 @@ def _on_read_failure(
         return _current_response(state, monotonic(), degraded)
 
 
+_WRITE_GUARD_KINDS = ("instances", "grouped")
+
+
+def inventory_write_block(
+    netbox_url: str,
+    tenant_slugs: Optional[tuple[str, ...]],
+    monotonic: Callable[[], float] = time.monotonic,
+) -> Optional[str]:
+    """Why a write must be refused right now, or None when it may proceed.
+
+    A write is refused while this process's own read state for the caller's
+    scope has an unresolved failure: stale (a last-good inventory is being
+    served inside the grace window) or degraded (the window has passed, or
+    there never was a success). A successful read clears it, so the console's
+    15 s poll lifts the block on its own.
+
+    A scope this process has not read yet has no failure on record and is not
+    blocked. That is deliberate: the console only offers a write after its own
+    inventory read succeeded, the reads that gate a write (clear, purge) go to
+    NetBox again and fail closed, and a refusal here for a cold worker would
+    turn every restart into spurious 409s until someone opened the inventory.
+
+    Returns ``"inventory-stale"`` or ``"inventory-degraded"``.
+    """
+    now = monotonic()
+    with _read_states_lock:
+        for kind in _WRITE_GUARD_KINDS:
+            state = _read_states.get(_read_key(kind, netbox_url, tenant_slugs))
+            if state is None or state.failure_since is None:
+                continue
+            if (
+                state.last_good is not None
+                and state.last_success_mono is not None
+                and now - state.last_success_mono <= READ_GRACE_SECONDS
+            ):
+                return "inventory-stale"
+            return "inventory-degraded"
+    return None
+
+
 def list_instances(
     netbox_url: str,
     netbox_token: str,
