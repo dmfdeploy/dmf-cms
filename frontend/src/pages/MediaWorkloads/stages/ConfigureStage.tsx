@@ -290,7 +290,7 @@ function InstanceSwitchControl({
               setArming(false)
               setTarget('')
             }}
-            confirmTestId="confirm-switch-source"
+            testIdPrefix="switch-source"
             extraField={{
               label: 'Target source',
               placeholder: 'Select a source…',

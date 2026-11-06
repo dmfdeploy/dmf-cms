@@ -313,6 +313,7 @@ export default function Topbar() {
             <button
               onClick={() => setMenuOpen(!menuOpen)}
               aria-expanded={menuOpen}
+              aria-controls="account-menu-panel"
               // The name starts with the visible initials so speech input can
               // match the label, and ends with the action.
               aria-label={`${initials}, account menu`}
@@ -334,7 +335,7 @@ export default function Topbar() {
               // it would make the exact promise this comment says the panel
               // doesn't keep. Do not re-add either without also building the
               // menu keyboard model.
-              <div className="absolute right-0 mt-2 w-48 bg-panel border border-border rounded-lg shadow-lg overflow-hidden z-50">
+              <div id="account-menu-panel" className="absolute right-0 mt-2 w-48 bg-panel border border-border rounded-lg shadow-lg overflow-hidden z-50">
                 <div className="px-4 py-3 border-b border-border">
                   <p className="text-sm font-medium text-text">{user.display_name}</p>
                   <p className="text-xs text-muted">{user.email}</p>

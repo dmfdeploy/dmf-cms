@@ -88,7 +88,7 @@ export default function ReasonConfirm({
   onCancel,
   extraField,
   variant = 'warning',
-  confirmTestId,
+  testIdPrefix,
 }: {
   title: string
   description: string
@@ -107,15 +107,16 @@ export default function ReasonConfirm({
   // disables Confirm alongside the existing empty-reason guard.
   extraField?: ReasonConfirmExtraField
   variant?: 'warning' | 'danger'
-  // umbrella #571: stable selector for the Confirm button on the demo click
-  // path. Optional so existing callers that don't need a stable hook here
-  // (teardown/delete/launch-workflow/clear-for-deployment) are unaffected.
-  confirmTestId?: string
+  // Selector contract (umbrella #741). With a prefix, the Confirm button is
+  // `confirm-<prefix>` and the reason input is `reason-<prefix>`. Without one,
+  // the reason input is `reason-input` and Confirm has no test id.
+  testIdPrefix?: string
 }) {
   const [reason, setReason] = useState('')
   const extraFieldId = useId()
   const extraInvalid = extraField?.invalid ?? false
   const danger = variant === 'danger'
+  const confirmId = testIdPrefix ? `confirm-${testIdPrefix}` : undefined
   // A caller that supplies its own error copy owns every error shape. The
   // capacity copy says "Nothing was changed", which only holds for the
   // console's own refusal, so it shows only for one (see isConsoleRefusal),
@@ -146,7 +147,7 @@ export default function ReasonConfirm({
         value={reason}
         onChange={(e) => setReason(e.target.value)}
         rows={2}
-        data-testid="reason-input"
+        data-testid={testIdPrefix ? `reason-${testIdPrefix}` : 'reason-input'}
       />
       {extraField && (
         <div className="mt-3">
@@ -212,7 +213,7 @@ export default function ReasonConfirm({
           className={`btn btn-sm ${danger ? 'btn-danger' : 'btn-primary'}`}
           disabled={!reason.trim() || pending || extraInvalid || writesBlocked}
           onClick={() => onConfirm(reason.trim())}
-          {...(confirmTestId ? { 'data-testid': confirmTestId } : {})}
+          {...(confirmId ? { 'data-testid': confirmId } : {})}
         >
           {pending ? pendingLabel : confirmLabel}
         </button>

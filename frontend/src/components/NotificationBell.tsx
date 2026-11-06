@@ -1,4 +1,4 @@
-import { useState, useEffect, useRef, useId, type KeyboardEvent } from 'react'
+import { useState, useEffect, useRef, type KeyboardEvent } from 'react'
 import { Link } from 'react-router-dom'
 import { Bell, CheckCircle, AlertTriangle, AlertCircle } from 'lucide-react'
 import { useWorkspaceHealth } from '@/api/hooks'
@@ -44,12 +44,15 @@ function summaryText(state: WorkspaceHealthState): string {
   }
 }
 
+// A fixed id: the selector contract and the e2e specs find the panel through
+// the trigger's aria-controls (see lib/selectorContract.ts).
+const PANEL_ID = 'monitoring-alerts-panel'
+
 export default function NotificationBell() {
   const health = useWorkspaceHealth()
   const [dropdownOpen, setDropdownOpen] = useState(false)
   const dropdownRef = useRef<HTMLDivElement>(null)
   const triggerRef = useRef<HTMLButtonElement>(null)
-  const panelId = useId()
 
   const state = classifyWorkspaceHealth(health)
   const nominal = isNominal(state)
@@ -91,7 +94,7 @@ export default function NotificationBell() {
       <button
         ref={triggerRef}
         aria-expanded={dropdownOpen}
-        aria-controls={panelId}
+        aria-controls={PANEL_ID}
         onClick={() => setDropdownOpen(!dropdownOpen)}
         className="relative p-2 text-muted hover:text-text transition-colors cursor-pointer"
         aria-label={state.hasProblems ? `Monitoring alerts, ${alerts.length}` : 'Monitoring alerts'}
@@ -116,7 +119,7 @@ export default function NotificationBell() {
 
       {/* Dropdown */}
       {dropdownOpen && (
-        <div id={panelId} className="absolute right-0 mt-2 w-96 bg-panel border border-muted/20 rounded-lg shadow-xl overflow-hidden z-50">
+        <div id={PANEL_ID} className="absolute right-0 mt-2 w-96 bg-panel border border-muted/20 rounded-lg shadow-xl overflow-hidden z-50">
           {/* Header */}
           <div className="px-4 py-3 border-b border-muted/20 flex items-center justify-between">
             <div>
