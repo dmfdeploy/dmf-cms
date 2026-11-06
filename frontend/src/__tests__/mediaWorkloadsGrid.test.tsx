@@ -20,7 +20,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { act, cleanup, render, screen, fireEvent, within } from '@testing-library/react'
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query'
 import { MemoryRouter, Route, Routes } from 'react-router-dom'
-import MediaWorkloads, { degradedReasonCopy } from '../pages/MediaWorkloads'
+import MediaWorkloads, { ageCopy, degradedReasonCopy, freshnessCopy } from '../pages/MediaWorkloads'
 import WorkloadSetup from '../pages/MediaWorkloads/WorkloadSetup'
 import WorkloadHome from '../pages/MediaWorkloads/WorkloadHome'
 import HeaderSlotProbe from './testUtils/HeaderSlotProbe'
@@ -1319,7 +1319,7 @@ describe('degraded-read honesty (hard gate 1, umbrella #385)', () => {
 
   it.each([
     ['netbox-not-configured', /isn.t connected in this environment/],
-    ['netbox-unreachable', /isn.t responding right now/],
+    ['netbox-unreachable', /on its last attempts/],
     ['netbox-error', /returned an unexpected error/],
   ])('reason=%s: the empty state says it cannot enumerate, never "none"', async (reason, bannerText) => {
     mkDegradedFetch({
@@ -1335,7 +1335,7 @@ describe('degraded-read honesty (hard gate 1, umbrella #385)', () => {
     // The panel below must not contradict the banner above by claiming zero.
     expect(
       await screen.findByText(
-        'Cannot confirm there are no Media Function instances — the source of truth is unreachable.',
+        'Cannot confirm there are no Media Function instances — the console could not read the facility inventory system.',
       ),
     ).toBeTruthy()
     expect(screen.queryByText("No media workloads yet — they'll appear here once you create one.")).toBeNull()
@@ -1385,10 +1385,10 @@ describe('degraded-read honesty (hard gate 1, umbrella #385)', () => {
     expect(screen.queryByText("No media workloads yet — they'll appear here once you create one.")).toBeNull()
     // NetBox WAS reachable here — the unreachable-specific copy must not
     // appear, or the operator is pointed at the wrong cause entirely.
-    expect(screen.queryByText(/source of truth is unreachable/)).toBeNull()
+    expect(screen.queryByText(/the console could not read the facility inventory system/)).toBeNull()
     expect(
       screen.queryByText(
-        'Cannot confirm there are no Media Function instances — the source of truth is unreachable.',
+        'Cannot confirm there are no Media Function instances — the console could not read the facility inventory system.',
       ),
     ).toBeNull()
   })
@@ -1486,7 +1486,7 @@ describe('the healthy-empty ghost canvas (umbrella #498)', () => {
       renderListPage()
 
       const banner = await screen.findByText(
-        'Cannot confirm there are no Media Function instances — the source of truth is unreachable.',
+        'Cannot confirm there are no Media Function instances — the console could not read the facility inventory system.',
       )
       // A degraded/unreachable read is "something is wrong, retrying" — the
       // ready-for-your-first-workload canvas must not lay behind it (Art. 8:
@@ -1569,5 +1569,112 @@ describe('bounds are universal, including the fallback panel (GATE-S1-RV)', () =
 
     expect(h.counters.aggregateStatus).toBe(0)
     Object.defineProperty(document, 'visibilityState', { value: 'visible', configurable: true })
+  })
+})
+
+// dmfdeploy#319: a starved NetBox read is not an outage. The API marks a
+// last-good payload `stale` inside its grace window and, once degraded,
+// carries `last_success` / `failure_since`. The banner states the age and
+// never claims the source of truth is down.
+describe('read-grace freshness (dmfdeploy#319)', () => {
+  const minutesAgo = (m: number) => new Date(Date.now() - m * 60000).toISOString()
+
+  function mkGraceFetch(body: Record<string, unknown>) {
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(async (input: RequestInfo | URL) => {
+        const url = (typeof input === 'string' ? input : (input as Request).url).toString()
+        if (url.endsWith('/api/catalog')) return json({ entries: [catalogEntry()] })
+        if (url.endsWith('/api/media-workloads/grouped')) return json(body)
+        return json({})
+      }),
+    )
+  }
+
+  it('ageCopy and freshnessCopy speak in minutes and tolerate missing data', () => {
+    const now = Date.parse('2027-01-15T08:10:00Z')
+    expect(ageCopy('2027-01-15T08:05:00Z', now)).toBe('5 minutes ago')
+    expect(ageCopy('2027-01-15T08:09:30Z', now)).toBe('less than a minute ago')
+    expect(ageCopy(null, now)).toBeNull()
+    expect(freshnessCopy({ last_success: null, failure_since: '2027-01-15T08:08:00Z' }, now)).toBe(
+      'The console has not yet confirmed the inventory since it started. Reads have been failing since 2 minutes ago.',
+    )
+  })
+
+  it('stale: shows the last inventory, marked as out of date, with its age', async () => {
+    mkGraceFetch({
+      configured: true,
+      degraded: false,
+      stale: true,
+      last_success: minutesAgo(2),
+      failure_since: minutesAgo(1),
+      scope: [],
+      workloads: [
+        {
+          slug: 'videotest',
+          name: 'videotest',
+          lifecycle: 'operate',
+          health: 'ok',
+          instances: [{ ...inst(), workload_assignment: 'ok' }],
+          functions: [],
+        },
+      ],
+      invalid_instances: [],
+    })
+    renderListPage()
+    expect(await screen.findByText('videotest')).toBeTruthy()
+    expect(screen.getByText(/This list may be out of date/)).toBeTruthy()
+    expect(screen.getByText(/Last confirmed 2 minutes ago/)).toBeTruthy()
+    expect(screen.queryByText(/unreachable|is down/i)).toBeNull()
+  })
+
+  it('fresh: no stale notice', async () => {
+    mkGraceFetch({
+      configured: true,
+      degraded: false,
+      stale: false,
+      last_success: minutesAgo(0),
+      failure_since: null,
+      scope: [],
+      workloads: [],
+      invalid_instances: [],
+    })
+    renderListPage()
+    await screen.findByText('Media Workloads')
+    expect(screen.queryByText(/may be out of date/)).toBeNull()
+  })
+
+  it('degraded: the banner carries last-confirmed and failing-since ages, not "down"', async () => {
+    mkGraceFetch({
+      configured: true,
+      degraded: true,
+      reason: 'netbox-unreachable',
+      stale: false,
+      last_success: minutesAgo(7),
+      failure_since: minutesAgo(5),
+      scope: [],
+      workloads: [],
+      invalid_instances: [],
+    })
+    renderListPage()
+    expect(await screen.findByText(/Last confirmed 7 minutes ago/)).toBeTruthy()
+    expect(screen.getByText(/Reads have been failing since 5 minutes ago/)).toBeTruthy()
+    expect(screen.queryByText(/is down|is unreachable/i)).toBeNull()
+  })
+
+  it('degraded and never confirmed: says so instead of inventing an age', async () => {
+    mkGraceFetch({
+      configured: true,
+      degraded: true,
+      reason: 'netbox-error',
+      stale: false,
+      last_success: null,
+      failure_since: minutesAgo(1),
+      scope: [],
+      workloads: [],
+      invalid_instances: [],
+    })
+    renderListPage()
+    expect(await screen.findByText(/has not yet confirmed the inventory since it started/)).toBeTruthy()
   })
 })

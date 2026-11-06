@@ -18,6 +18,7 @@ import { lookupState, requestedBadge, requestedLabel, REQUESTED_TITLE } from '..
 import StageCard from './StageCard'
 import { JobStatusLine, OperationStatusLine } from './JobProgress'
 import { settleQuery } from '../../../lib/queryState'
+import { useGuardWrite } from '../../../lib/inventoryFreshness'
 
 /**
  * Provision — the deploy action, relocated from pages/Catalog/index.tsx
@@ -98,6 +99,7 @@ export default function ProvisionStage({
   // WorkloadHome.tsx's catalogData — but the shared primitive is still the
   // shape a new consumer should copy).
   const { data: user } = settleQuery(useCurrentUser())
+  const guardWrite = useGuardWrite()
   const deployMutation = useDeployCatalog()
   const recordAwxWrite = useActivityStore((s) => s.recordAwxWrite)
   const queryClient = useQueryClient()
@@ -112,6 +114,11 @@ export default function ProvisionStage({
   const clearMutation = useClearForDeployment()
   const [lastClearResult, setLastClearResult] = useState<ClearForDeploymentResult | null>(null)
   const onClearConfirm = (instance: string, reason: string) => {
+    try {
+      guardWrite()
+    } catch {
+      return
+    }
     onJobStart()
     clearMutation.mutate(
       { instance, reason },
@@ -230,6 +237,7 @@ export default function ProvisionStage({
   // Letting the rejection propagate is what lets the caller decide to keep
   // the panel open instead — see ProvisionEntry's onConfirm.
   const handleDeploy = async (entry: CatalogEntry, reason: string, workloadSlug: string) => {
+    guardWrite()
     onJobStart()
     const result = await deployMutation.mutateAsync({ key: entry.key, reason, workload: workloadSlug || undefined })
     recordAwxWrite({

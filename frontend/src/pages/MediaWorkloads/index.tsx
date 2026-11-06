@@ -125,7 +125,7 @@ export function degradedReasonCopy(reason: string | undefined): string {
     case 'netbox-not-configured':
       return "The facility inventory system isn't connected in this environment. The console cannot tell you what Media Function instances exist. Ask an administrator to configure the connection."
     case 'netbox-unreachable':
-      return "The facility inventory system isn't responding right now. The console cannot tell you what Media Function instances exist. This is usually temporary — retrying automatically. If it continues, contact your systems engineer."
+      return "The console could not read the facility inventory system on its last attempts. It cannot tell you what Media Function instances exist right now. A slow read is usually temporary — retrying automatically. If it continues, contact your systems engineer."
     case 'netbox-error':
       return 'The facility inventory system returned an unexpected error. The console cannot tell you what Media Function instances exist. If this continues, contact your systems engineer.'
     default:
@@ -133,6 +133,68 @@ export function degradedReasonCopy(reason: string | undefined): string {
       // vocabulary — still owes a next step, not just a shrug.
       return 'The facility inventory system could not be read for an unstated reason. The console cannot tell you what Media Function instances exist. If this continues, contact your systems engineer.'
   }
+}
+
+/**
+ * dmfdeploy#319: how long ago an ISO timestamp was, in operator words.
+ * `now` is a parameter so tests do not depend on the wall clock.
+ */
+export function ageCopy(iso: string | null | undefined, now: number = Date.now()): string | null {
+  if (!iso) return null
+  const then = Date.parse(iso)
+  if (Number.isNaN(then)) return null
+  const minutes = Math.floor(Math.max(0, now - then) / 60000)
+  if (minutes < 1) return 'less than a minute ago'
+  if (minutes === 1) return '1 minute ago'
+  if (minutes < 60) return `${minutes} minutes ago`
+  const hours = Math.floor(minutes / 60)
+  return hours === 1 ? '1 hour ago' : `${hours} hours ago`
+}
+
+/**
+ * The freshness line shared by the stale and degraded states. It states when
+ * the console last confirmed the inventory and how long reads have been
+ * failing; it never says the source is down — the console only knows its own
+ * reads did not complete.
+ */
+export function freshnessCopy(
+  data: { last_success?: string | null; failure_since?: string | null },
+  now: number = Date.now(),
+): string {
+  const confirmed = ageCopy(data.last_success, now)
+  const failing = ageCopy(data.failure_since, now)
+  const parts = [
+    confirmed
+      ? `Last confirmed ${confirmed}.`
+      : 'The console has not yet confirmed the inventory since it started.',
+  ]
+  if (failing) parts.push(`Reads have been failing since ${failing}.`)
+  return parts.join(' ')
+}
+
+/**
+ * The notice a screen shows above content that came from a stale (last-good)
+ * inventory: what the user is looking at, its age, and that it is retried.
+ * Shared so every screen that retains stale data says the same thing.
+ */
+export function StaleInventoryNotice({
+  data,
+}: {
+  data: { last_success?: string | null; failure_since?: string | null }
+}) {
+  return (
+    <div
+      role="status"
+      className="panel mt-4 border border-amber-500/20 bg-amber-500/10 px-4 py-3 text-sm text-amber-200"
+    >
+      <p>
+        This view may be out of date. The latest read of the facility inventory system did not
+        complete, so the console is showing the last inventory it confirmed, and offers no changes
+        until a read succeeds. Retrying automatically.
+      </p>
+      <p className="mt-1">{freshnessCopy(data)}</p>
+    </div>
+  )
 }
 
 /**
@@ -219,6 +281,9 @@ export default function MediaWorkloads() {
   // *console* fetch with its own honest, non-overclaiming text, so this
   // stays reason-scoped rather than duplicating that banner.
   const sourceUnreachable = Boolean(data?.degraded && data?.reason)
+  // dmfdeploy#319: a failed read inside the server's grace window serves the
+  // last good inventory with `stale: true`. That data is shown, but marked.
+  const showingStale = Boolean(data?.stale) && !isError
   // `degraded` is the COMPLETENESS gate on its own — the
   // OTHER way it can be true, invalid workload:* tags excluding members from
   // `workloads` on an otherwise-successful read, carries no `reason` token
@@ -233,7 +298,9 @@ export default function MediaWorkloads() {
   // to a stale, previously-honest `false` and re-license an absence claim
   // the CURRENT read never established. A settled error always wins here,
   // regardless of what's retained.
-  const cannotClaimNone = Boolean(isError || data?.degraded)
+  // A stale payload is last-good data from before the latest failed read, so
+  // it cannot establish absence now either (dmfdeploy#319).
+  const cannotClaimNone = Boolean(isError || data?.degraded || data?.stale)
 
   // umbrella #498, operator ruling 2026-08-30: the ghost canvas renders on
   // the zero-workloads screen ONLY in this, the genuinely-healthy-and-empty
@@ -267,6 +334,19 @@ export default function MediaWorkloads() {
         </div>
       )}
 
+      {!isLoading && showingStale && (
+        <div
+          role="status"
+          className="panel mt-6 border border-amber-500/20 bg-amber-500/10 px-4 py-3 text-sm text-amber-200"
+        >
+          <p>
+            This list may be out of date. The latest read of the facility inventory system did not
+            complete, so the console is showing the last inventory it confirmed. Retrying automatically.
+          </p>
+          <p className="mt-1">{freshnessCopy(data ?? {})}</p>
+        </div>
+      )}
+
       {!isLoading && data && !data.configured && (
         <div className="panel mt-6 border border-amber-500/20 bg-amber-500/10 px-4 py-3 text-sm text-amber-200">
           Media Workloads is not configured for this environment (tenancy posture
@@ -277,6 +357,7 @@ export default function MediaWorkloads() {
       {!isLoading && sourceUnreachable && (!data?.workloads || data.workloads.length === 0) && (
         <div className="panel mt-6 border border-amber-500/20 bg-amber-500/10 px-4 py-3 text-sm text-amber-200">
           <p>{degradedReasonCopy(data?.reason)}</p>
+          <p className="mt-1">{freshnessCopy(data ?? {})}</p>
           <details className="mt-1 text-xs text-amber-200/70">
             <summary className="cursor-pointer select-none opacity-80 hover:opacity-100">
               System details
@@ -299,7 +380,9 @@ export default function MediaWorkloads() {
               {isError
                 ? 'Cannot confirm there are no Media Function instances — the last read attempt failed. Retrying automatically.'
                 : sourceUnreachable
-                ? 'Cannot confirm there are no Media Function instances — the source of truth is unreachable.'
+                ? 'Cannot confirm there are no Media Function instances — the console could not read the facility inventory system.'
+                : data.stale
+                ? 'The last confirmed inventory listed no Media Function instances, but the latest read did not complete. The console cannot confirm there are none now. Retrying automatically.'
                 : INCOMPLETE_INVALID_TAGS_COPY}
             </div>
           ) : healthyEmpty ? (

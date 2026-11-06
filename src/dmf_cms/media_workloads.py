@@ -17,6 +17,9 @@ tenant slug. All errors surface as a degraded payload, never a raw 500
 
 from __future__ import annotations
 
+import copy
+import datetime
+import itertools
 import logging
 import math
 import re
@@ -342,6 +345,177 @@ def _observed_by_app(prometheus_url: str) -> dict[str, float]:
     return out
 
 
+# ── Read grace: a brief NetBox read failure is not an outage ───────────────
+#
+# A NetBox starved for a minute by platform churn (dmfdeploy#319: AWX cold
+# boot pinning the node) answers slowly, not never. The console polls these
+# inventories every 15 s (frontend hooks.ts), so 120 s is eight polls: long
+# enough to ride out a starved window of a minute or two, short enough that a
+# real outage still surfaces within a couple of minutes. Inside the window a
+# failed read serves the last good inventory marked ``stale``; after it the
+# payload is degraded as before. One constant, so the window is tuned in one
+# place. Elapsed time is measured on the monotonic clock, so a wall-clock
+# step cannot lengthen or shorten the window; wall time only labels the
+# timestamps the API returns.
+READ_GRACE_SECONDS = 120.0
+
+# Per-process state: each server worker keeps its own last-good snapshot, so
+# during an outage two workers can serve different historical inventories (each
+# the last one *it* read), and a worker that never succeeded (fresh start, or
+# no request routed to it yet) reports degraded at once. That is acceptable
+# inside the grace window because every stale payload is marked ``stale`` with
+# its ``last_success`` age, the console blocks every write while stale, and the
+# window is two minutes, so any difference between workers is bounded and
+# visible. The Dockerfile starts one process; running more is not required and
+# nothing here is shared or persisted, so a restart starts clean.
+# The cache key carries the tenant scope, so a scoped user never receives
+# another scope's last-good inventory.
+#
+# Overlapping reads: each read takes a ticket when it starts, and cache writes
+# are ordered by ticket, never by completion. A slow older read that finishes
+# last cannot replace a newer snapshot or clear a newer failure, and it gets
+# the same response a newer read would get, not its own obsolete payload.
+
+
+class _ReadState:
+    __slots__ = (
+        "last_good", "last_success", "last_success_mono", "success_ticket",
+        "failure_since", "failure_ticket", "failure_degraded",
+    )
+
+    def __init__(self) -> None:
+        self.last_good: Optional[dict[str, Any]] = None
+        self.last_success: Optional[float] = None
+        self.last_success_mono: Optional[float] = None
+        self.success_ticket = 0
+        self.failure_since: Optional[float] = None
+        self.failure_ticket = 0
+        self.failure_degraded: Optional[dict[str, Any]] = None
+
+
+_read_states: dict[tuple, _ReadState] = {}
+_read_states_lock = threading.Lock()
+_read_tickets = itertools.count(1)
+
+
+def _reset_read_grace() -> None:
+    """Drop every cached last-good inventory (tests; process-local only)."""
+    with _read_states_lock:
+        _read_states.clear()
+
+
+def _begin_read(
+    clock: Callable[[], float], monotonic: Callable[[], float]
+) -> tuple[int, float, float]:
+    """Order a read by when it starts: (ticket, wall start, monotonic start)."""
+    with _read_states_lock:
+        return next(_read_tickets), clock(), monotonic()
+
+
+def _iso_utc(ts: Optional[float]) -> Optional[str]:
+    if ts is None:
+        return None
+    return (
+        datetime.datetime.fromtimestamp(ts, datetime.timezone.utc)
+        .isoformat(timespec="seconds")
+        .replace("+00:00", "Z")
+    )
+
+
+def _read_key(kind: str, netbox_url: str, tenant_slugs: Optional[tuple[str, ...]]) -> tuple:
+    return (kind, netbox_url, None if tenant_slugs is None else tuple(sorted(tenant_slugs)))
+
+
+def _current_response(
+    state: _ReadState, now_mono: float, degraded: Optional[dict[str, Any]]
+) -> dict[str, Any]:
+    """The one response the latest observed state calls for (lock held).
+
+    Every read returns this, whichever request it was, so a superseded read
+    never reports a state the cache has already moved past. No failure on
+    record: the snapshot, fresh. A failure inside the grace window: the
+    snapshot, stale. Otherwise the newest recorded failure's payload;
+    ``degraded`` only when none is stored.
+    """
+    meta = {
+        "last_success": _iso_utc(state.last_success),
+        "failure_since": _iso_utc(state.failure_since),
+    }
+    if state.last_good is not None and state.failure_since is None:
+        fresh = copy.deepcopy(state.last_good)
+        fresh.update(meta, stale=False)
+        return fresh
+    if (
+        state.last_good is not None
+        and state.last_success_mono is not None
+        and now_mono - state.last_success_mono <= READ_GRACE_SECONDS
+    ):
+        serve = copy.deepcopy(state.last_good)
+        serve.update(meta, stale=True)
+        return serve
+    newest = state.failure_degraded if state.failure_degraded is not None else degraded
+    out = copy.deepcopy(newest)
+    out.update(meta, stale=False)
+    return out
+
+
+def _remember_success(
+    key: tuple,
+    payload: dict[str, Any],
+    ticket: int,
+    started: float,
+    started_mono: float,
+    monotonic: Callable[[], float],
+) -> dict[str, Any]:
+    """Record a successful read, unless a newer one already did.
+
+    The snapshot is replaced only by a read that started after the cached one;
+    the failure state is cleared only by a read that started after the latest
+    failure. The caller gets the current response, which is its own payload
+    only while that payload is the newest observation.
+    """
+    with _read_states_lock:
+        state = _read_states.setdefault(key, _ReadState())
+        if ticket > state.success_ticket:
+            state.last_good = copy.deepcopy(payload)
+            state.last_success = started
+            state.last_success_mono = started_mono
+            state.success_ticket = ticket
+        if ticket > state.failure_ticket:
+            state.failure_since = None
+            state.failure_degraded = None
+        return _current_response(state, monotonic(), None)
+
+
+def _on_read_failure(
+    key: tuple,
+    degraded: dict[str, Any],
+    ticket: int,
+    started: float,
+    monotonic: Callable[[], float],
+) -> dict[str, Any]:
+    """Serve the last good inventory inside the grace window, else ``degraded``.
+
+    Both outcomes carry ``last_success`` (None if there never was one) and
+    ``failure_since`` so the banner can say how long. A failure that started
+    before the cached snapshot was read is outdated by it and records
+    nothing. ``failure_since`` keeps the first failure's start; the degraded
+    payload is the newest failure's, so an older request completing late
+    cannot replace a newer diagnosis. Grace is measured on the monotonic
+    clock, so a wall-clock step cannot stretch the window; wall time only
+    labels the API timestamps.
+    """
+    with _read_states_lock:
+        state = _read_states.setdefault(key, _ReadState())
+        if ticket > state.success_ticket:
+            if state.failure_since is None:
+                state.failure_since = started
+            if ticket > state.failure_ticket:
+                state.failure_ticket = ticket
+                state.failure_degraded = copy.deepcopy(degraded)
+        return _current_response(state, monotonic(), degraded)
+
+
 def list_instances(
     netbox_url: str,
     netbox_token: str,
@@ -351,18 +525,34 @@ def list_instances(
     sidecar_namespaces: frozenset[str] = _DEFAULT_SIDECAR_NAMESPACES,
     sidecar_ports: frozenset[int] = _DEFAULT_SIDECAR_PORTS,
     catalog_dir: str = CATALOG_DIR,
+    clock: Callable[[], float] = time.time,
+    monotonic: Callable[[], float] = time.monotonic,
 ) -> dict[str, Any]:
-    """Inventory payload: instances + per-function rollup, desired vs observed."""
+    """Inventory payload: instances + per-function rollup, desired vs observed.
+
+    A failed NetBox read inside ``READ_GRACE_SECONDS`` of the last success
+    serves that last inventory marked ``stale``; see ``_on_read_failure``.
+    """
     from . import netbox as _netbox
 
+    read_key = _read_key("instances", netbox_url, tenant_slugs)
+    ticket, started, started_mono = _begin_read(clock, monotonic)
     try:
         services = _fetch_services(netbox_url, netbox_token, ssl_verify, tenant_slugs)
     except _netbox.NetboxAPIError as exc:
         logger.warning("media-workloads: NetBox query failed: %s", sanitize_audit_field(str(exc)))
-        return {"degraded": True, "reason": "netbox-unreachable", "instances": [], "functions": []}
+        return _on_read_failure(
+            read_key,
+            {"degraded": True, "reason": "netbox-unreachable", "instances": [], "functions": []},
+            ticket, started, monotonic,
+        )
     except Exception as exc:
         logger.warning("media-workloads: unexpected NetBox error: %s", exc)
-        return {"degraded": True, "reason": "netbox-error", "instances": [], "functions": []}
+        return _on_read_failure(
+            read_key,
+            {"degraded": True, "reason": "netbox-error", "instances": [], "functions": []},
+            ticket, started, monotonic,
+        )
 
     # One catalog read per inventory request, shared by every instance's
     # has_topology.
@@ -403,11 +593,15 @@ def list_instances(
         if inst["reconcile_pending"]:
             agg["reconcile_pending"] += 1
 
-    return {
-        "degraded": False,
-        "instances": instances,
-        "functions": sorted(functions.values(), key=lambda f: f["function_key"]),
-    }
+    return _remember_success(
+        read_key,
+        {
+            "degraded": False,
+            "instances": instances,
+            "functions": sorted(functions.values(), key=lambda f: f["function_key"]),
+        },
+        ticket, started, started_mono, monotonic,
+    )
 
 
 # ── ADR-0046 decisions 3 + 5: workload-first grouping ──────────────────────
@@ -614,24 +808,37 @@ def list_workloads_grouped(
     sidecar_namespaces: frozenset[str] = _DEFAULT_SIDECAR_NAMESPACES,
     sidecar_ports: frozenset[int] = _DEFAULT_SIDECAR_PORTS,
     catalog_dir: str = CATALOG_DIR,
+    clock: Callable[[], float] = time.time,
+    monotonic: Callable[[], float] = time.monotonic,
 ) -> dict[str, Any]:
     """Grouped workload-first payload (ADR-0046 decisions 3 + 5).
 
     Returns workloads grouped by ``workload:<slug>`` tag, with per-workload
     lifecycle derivation and identity-joined observed state. The flat
     instance shape within each workload is identical to ``list_instances``
-    for frontend reuse.
+    for frontend reuse. A failed NetBox read follows the same grace window
+    as ``list_instances``.
     """
     from . import netbox as _netbox
 
+    read_key = _read_key("grouped", netbox_url, tenant_slugs)
+    ticket, started, started_mono = _begin_read(clock, monotonic)
     try:
         services = _fetch_services(netbox_url, netbox_token, ssl_verify, tenant_slugs)
     except _netbox.NetboxAPIError as exc:
         logger.warning("media-workloads: NetBox query failed: %s", sanitize_audit_field(str(exc)))
-        return {"degraded": True, "reason": "netbox-unreachable", "workloads": [], "invalid_instances": []}
+        return _on_read_failure(
+            read_key,
+            {"degraded": True, "reason": "netbox-unreachable", "workloads": [], "invalid_instances": []},
+            ticket, started, monotonic,
+        )
     except Exception as exc:
         logger.warning("media-workloads: unexpected NetBox error: %s", exc)
-        return {"degraded": True, "reason": "netbox-error", "workloads": [], "invalid_instances": []}
+        return _on_read_failure(
+            read_key,
+            {"degraded": True, "reason": "netbox-error", "workloads": [], "invalid_instances": []},
+            ticket, started, monotonic,
+        )
 
     # One catalog read per inventory request, shared by every instance's
     # has_topology.
@@ -736,11 +943,15 @@ def list_workloads_grouped(
             "functions": sorted(functions.values(), key=lambda f: f["function_key"]),
         })
 
-    return {
-        "degraded": len(invalid_instances) > 0,
-        "workloads": workloads,
-        "invalid_instances": invalid_instances,
-    }
+    return _remember_success(
+        read_key,
+        {
+            "degraded": len(invalid_instances) > 0,
+            "workloads": workloads,
+            "invalid_instances": invalid_instances,
+        },
+        ticket, started, started_mono, monotonic,
+    )
 
 # Hard cap on pages a
 # completeness-verified purge fetch will follow before refusing — generous

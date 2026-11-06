@@ -1,5 +1,6 @@
 import { useState } from 'react'
 import { Textarea } from '../../components/FormField'
+import { useInventoryWritesBlocked } from '../../lib/inventoryFreshness'
 
 /**
  * The ONE consequential Media Workloads write (ADR-0037), as a self-contained
@@ -46,7 +47,10 @@ export default function ClearForDeployment({
   const [confirming, setConfirming] = useState(false)
   const [reason, setReason] = useState('')
 
+  const writesBlocked = useInventoryWritesBlocked()
+
   const submit = () => {
+    if (writesBlocked) return
     onConfirm(instance, reason.trim())
     setConfirming(false)
     setReason('')
@@ -88,7 +92,7 @@ export default function ClearForDeployment({
       <div className="mt-3 flex gap-2">
         <button
           className="btn btn-primary btn-sm"
-          disabled={!reason.trim() || pending}
+          disabled={!reason.trim() || pending || writesBlocked}
           onClick={submit}
         >
           {pending ? 'Recording…' : 'Confirm'}

@@ -6,6 +6,7 @@ import type { MediaWorkload, SwitchSourceResult } from '../../../api/types'
 import type { StageActionId, StageState } from '../../../lib/workloadLifecycle'
 import StageCard from './StageCard'
 import { settleQuery } from '../../../lib/queryState'
+import { useGuardWrite } from '../../../lib/inventoryFreshness'
 
 /**
  * Configure — source selection and the switch, relocated from
@@ -145,6 +146,7 @@ function InstanceSwitchControl({
   // switch.
   const topologyQuery = useInstanceTopology(instance, { enabled: hasTopology !== false })
   const topology = settleQuery(topologyQuery)
+  const guardWrite = useGuardWrite()
   const switchMutation = useSwitchSource()
   const recordAwxWrite = useActivityStore((s) => s.recordAwxWrite)
   const [arming, setArming] = useState(false)
@@ -191,6 +193,11 @@ function InstanceSwitchControl({
       !!observed_at &&
       Date.now() - new Date(observed_at).getTime() < OBSERVED_SOURCE_STALE_MS
     if (!stillFresh) return
+    try {
+      guardWrite()
+    } catch {
+      return
+    }
     onJobStart()
     switchMutation.mutate(
       { instance, sourceInstance: target, reason },

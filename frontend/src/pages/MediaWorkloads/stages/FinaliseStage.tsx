@@ -20,6 +20,7 @@ import type { StageActionId, StageState } from '../../../lib/workloadLifecycle'
 import StageCard from './StageCard'
 import { JobStatusLine, OPERATION_LABEL, OperationStatusLine } from './JobProgress'
 import { settleQuery } from '../../../lib/queryState'
+import { useGuardWrite } from '../../../lib/inventoryFreshness'
 
 /**
  * Finalise & Review — the teardown action, relocated from
@@ -138,6 +139,7 @@ export default function FinaliseStage({
   //
   // (umbrella #385) retrofitted onto settleQuery.
   const { data: catalogData, loading: catalogLoading, failed: catalogFailed } = settleQuery(useCatalog())
+  const guardWrite = useGuardWrite()
   const teardownMutation = useTeardownCatalog()
   const purgeMutation = usePurgeWorkload()
   const recordAwxWrite = useActivityStore((s) => s.recordAwxWrite)
@@ -252,6 +254,7 @@ export default function FinaliseStage({
   // own copy of the exact same onConfirm-then-close shape ProvisionEntry had,
   // and the sweep the umbrella issue calls for found it here too.
   const handleTeardown = async (entry: CatalogEntry, reason: string) => {
+    guardWrite()
     onJobStart()
     const result = await teardownMutation.mutateAsync({ key: entry.key, reason })
     recordAwxWrite({
@@ -293,6 +296,11 @@ export default function FinaliseStage({
   }
 
   const handlePurge = async (reason: string) => {
+    try {
+      guardWrite()
+    } catch {
+      return
+    }
     onJobStart()
     try {
       const result = await purgeMutation.mutateAsync({ slug: workload.slug, confirm: purgeConfirmText, reason })
