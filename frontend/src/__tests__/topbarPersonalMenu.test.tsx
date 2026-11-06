@@ -53,7 +53,7 @@ function renderTopbar() {
 
 // getInitials('Ops') -> single word, name.slice(0, 2).toUpperCase() -> 'OP'.
 function openMenu() {
-  const avatarButton = screen.getByRole('button', { name: 'OP' })
+  const avatarButton = screen.getByRole('button', { name: /, account menu$/i })
   fireEvent.click(avatarButton)
   return avatarButton
 }
@@ -96,7 +96,7 @@ describe('Topbar personal menu dismissal (umbrella #432 §B)', () => {
 
   it('carries aria-expanded on the trigger but no aria-haspopup — this is a disclosure, not an ARIA menu', () => {
     renderTopbar()
-    const avatarButton = screen.getByRole('button', { name: 'OP' })
+    const avatarButton = screen.getByRole('button', { name: /, account menu$/i })
     // aria-haspopup is deliberately absent (umbrella #432 §B ruling, round
     // 2): WAI-ARIA treats aria-haspopup="true" as EQUIVALENT to
     // aria-haspopup="menu", which would make exactly the promise the panel
@@ -117,6 +117,22 @@ describe('Topbar personal menu dismissal (umbrella #432 §B)', () => {
     // native roles.
     expect(screen.queryByRole('menu')).toBeNull()
     expect(screen.getByRole('link', { name: 'Settings' })).toBeTruthy()
+  })
+
+  it('keeps a stable name that starts with the visible initials before and after activation', () => {
+    renderTopbar()
+    const button = screen.getByRole('button', { name: 'OP, account menu' })
+    expect(button.getAttribute('aria-expanded')).toBe('false')
+    // jsdom cannot compute visibility from CSS classes, so check the structure: the only child is a plain text node.
+    expect(button.childNodes.length).toBe(1)
+    expect(button.firstChild?.nodeType).toBe(Node.TEXT_NODE)
+    expect(button.firstChild?.nodeValue).toBe('OP')
+
+    fireEvent.click(button)
+
+    expect(screen.getByRole('button', { name: 'OP, account menu' })).toBe(button)
+    expect(button.getAttribute('aria-expanded')).toBe('true')
+    expect(button.firstChild?.nodeValue).toBe('OP')
   })
 
   it('dismisses the menu when Settings is clicked (in-place navigation, Topbar stays mounted)', () => {
@@ -187,7 +203,7 @@ describe('Topbar personal menu dismissal (umbrella #432 §B)', () => {
     )
 
     // First commit: Topbar's early return fires, nothing on screen yet.
-    expect(screen.queryByRole('button', { name: 'OP' })).toBeNull()
+    expect(screen.queryByRole('button', { name: /, account menu$/i })).toBeNull()
 
     // The identity fetch settles AFTER Topbar's first commit — same order
     // as production.
@@ -195,7 +211,7 @@ describe('Topbar personal menu dismissal (umbrella #432 §B)', () => {
       useAuthStore.getState().setUser(identity())
     })
 
-    const avatarButton = screen.getByRole('button', { name: 'OP' })
+    const avatarButton = screen.getByRole('button', { name: /, account menu$/i })
     fireEvent.click(avatarButton)
     expect(screen.getByText('ops@dmf.example.com')).toBeTruthy()
 

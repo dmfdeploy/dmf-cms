@@ -208,6 +208,7 @@ export default function Topbar() {
   if (!user) return null
 
   const role = user.role || 'viewer'
+  const initials = getInitials(user.display_name)
   const isAdmin = user.real_role === 'admin'
 
   // The wordmark renders on the Workspace/home route only — elsewhere the
@@ -312,9 +313,12 @@ export default function Topbar() {
             <button
               onClick={() => setMenuOpen(!menuOpen)}
               aria-expanded={menuOpen}
+              // The name starts with the visible initials so speech input can
+              // match the label, and ends with the action.
+              aria-label={`${initials}, account menu`}
               className={`w-8 h-8 rounded-full flex items-center justify-center text-xs font-bold transition-all hover:ring-2 cursor-pointer ${roleBadgeStyles[role] || 'bg-gray-900/40 text-gray-300'}`}
             >
-              {getInitials(user.display_name)}
+              {initials}
             </button>
 
             {menuOpen && (
