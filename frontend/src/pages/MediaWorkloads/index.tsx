@@ -211,6 +211,35 @@ export function inventoryUnread(data: { degraded?: boolean; reason?: string } | 
 }
 
 /**
+ * True when an instance with a conflicting workload assignment names `slug`.
+ * That instance is left out of `workloads`, so the workload's absence from the
+ * list says nothing about whether it exists.
+ */
+export function slugNamedByConflict(
+  data: { invalid_instances?: { conflicting_workloads: string[] }[] } | undefined,
+  slug: string | undefined,
+): boolean {
+  if (!slug) return false
+  return Boolean(data?.invalid_instances?.some((inv) => inv.conflicting_workloads.includes(slug)))
+}
+
+/** Why a workload page cannot show a workload that a conflicting assignment names. */
+export function ConflictingAssignmentNotice({ slug }: { slug: string | undefined }) {
+  return (
+    <div
+      role="status"
+      className="panel mt-4 border border-amber-500/20 bg-amber-500/10 px-4 py-3 text-sm text-amber-200"
+    >
+      <p>
+        The workload &quot;{slug}&quot; can&apos;t be shown because an instance has a conflicting
+        workload assignment. Each service must belong to exactly one workload. Fix the NetBox
+        tags to resolve it.
+      </p>
+    </div>
+  )
+}
+
+/**
  * Why a workload page cannot confirm the workload: the stale notice when it
  * holds a last-good inventory, else the reason the source was not read.
  */
