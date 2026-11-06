@@ -4,7 +4,7 @@ vocabulary (umbrella #202 WP3 R5b enum, extended umbrella #320/#321).
 Lives in its own leaf module (not ``main.py``, where the enum was
 originally defined) so both ``main.py`` (the ``DMF_L3_OUTCOME`` marker's kv
 ``detail=`` sanitizer) and ``switch_source.py`` (the switch-outcome parser,
-which validates a ``DMF_L3_SWITCH_REFUSED: detail=<x>`` value against this
+which validates a ``DMF_L3_SWITCH_OUTCOME: refused detail=<x>`` value against this
 SAME set) can import it without a circular import — ``main.py`` already
 imports from ``switch_source.py``, so the reverse import isn't available.
 

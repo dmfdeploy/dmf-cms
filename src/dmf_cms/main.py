@@ -1473,7 +1473,7 @@ _PRE_MUTATION_TOKENS = frozenset({
 # umbrella #320/#321: the frozenset itself now lives in l3_detail_tokens.py
 # (re-exported here as _KV_DETAIL_TOKENS for every existing call site) so
 # switch_source.py's new switch-outcome parser can validate a
-# DMF_L3_SWITCH_REFUSED detail value against the SAME allowlist without a
+# DMF_L3_SWITCH_OUTCOME refused detail value against the SAME allowlist without a
 # circular import (main.py already imports switch_source.py). The set now
 # also carries the switch/topology detail values dmf-runbooks 0.4.3 emits
 # for the switch play (switch-*, topology-*) — see l3_detail_tokens.py's

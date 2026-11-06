@@ -123,7 +123,7 @@ class SwitchSourceCommand:
     # UNCHANGED for compatibility — `outcome` is additive, one of the frozen
     # switch_* enums classify_switch_job_failure/ReconnectViaAwxActuator.execute
     # produce (see this module's own switch-outcome parser section below).
-    # `outcome_message` is the matching default operator copy for the two
+    # `outcome_message` is the matching default operator copy for the
     # rollback outcomes only (None for every other outcome — the console's
     # expert view is expected to show the raw `outcome` code instead).
     outcome: Optional[str] = None
@@ -299,54 +299,49 @@ _TERMINAL_JOB_STATUSES = frozenset({"successful", "failed", "canceled", "error"}
 
 
 # ---------------------------------------------------------------------------
-# umbrella #320 — switch-outcome parser (SwitchSourceCommand.outcome).
+# umbrella #320 / #730 — switch-outcome classifier (SwitchSourceCommand.outcome).
 #
-# WHY THIS IS A STDOUT-TEXT PARSER, unlike the deploy/rollback L3 outcome
-# marker (main.py's own module docstring, "R2b": that marker moved OFF
-# stdout onto job-events anchored by a single dedicated task name,
-# ``dmf-l3-outcome``, specifically because stdout-text-position binding is
-# unreliable): dmf-runbooks' switch play (``switch-mxl-fabrics-demo.yml``,
-# 0.4.3) deliberately does NOT emit a ``DMF_L3_OUTCOME`` marker at all —
-# its own header says so explicitly ("that vocabulary is launch/teardown/
-# rollback's own snapshot-based outcome model, which a switch does not
-# use"). Its failure/refusal messages instead come from a handful of
-# DIFFERENTLY-NAMED ``ansible.builtin.fail``/``assert`` tasks, each with
-# its own fixed, sanitized message prefix. With no single anchor task to
-# fetch job-events for, this is an INTERIM BRIDGE: prefix-scan the job's
-# own (tail-bounded) stdout for exactly these fixed prefixes — never a
-# generic/free-text scrape. A failure message lands near the END of a
-# job's stdout (the play stops shortly after, modulo the rescue block's
-# own unconditional lock-release), so the existing tail bound
-# (``awx.get_job_stdout``'s ``_STDOUT_TAIL_BYTES``) reliably still covers
-# it, unlike the SUCCESS-marker case R2b moved away from. This parser is
-# explicitly designed to be superseded once dmf-runbooks ships a
-# structured outcome event for switch (tracked, not this change's scope):
-# nothing here assumes prefix-scanning is permanent.
+# The outcome is decided ONLY from a structured outcome event, never from
+# free text. dmf-runbooks' switch play emits exactly one event per run from
+# a single dedicated task, ``dmf-l3-switch-outcome``. This module splits the
+# work in two so a non-AWX backend can reuse the classifier:
+#
+# * ``SwitchOutcomeEvent`` + ``classify_switch_job_failure`` are backend-
+#   agnostic: they take a token and a stage and know nothing about AWX.
+# * ``switch_outcome_from_awx_events`` is the ONLY place that knows AWX's
+#   job-event shape. It reads the dedicated task's own events, so a task
+#   name or a caller-supplied value elsewhere in the job output (stdout,
+#   other tasks' messages) cannot reach the classifier.
+#
+# When no valid event exists (an older runbooks release, a job that died
+# before the emit, an events fetch that failed) the classifier returns the
+# generic outcome derived from the job's terminal status alone: the console
+# says the job failed and does not guess why.
 SWITCH_OUTCOME_SUCCESS = "switch_success"
 SWITCH_OUTCOME_PREVIOUS_SOURCE_RESTORED = "switch_failed_previous_source_restored"
+SWITCH_OUTCOME_NO_PREVIOUS_SOURCE = "switch_failed_no_previous_source"
 SWITCH_OUTCOME_RECOVERY_UNVERIFIED = "switch_failed_recovery_unverified"
 SWITCH_OUTCOME_WATCH_TIMEOUT = "switch_watch_timeout"
 SWITCH_OUTCOME_WATCH_LOST = "switch_watch_lost"
 
-# Exact prefixes dmf-runbooks 0.4.3's switch play emits in its own
-# ansible.builtin.fail `msg:` (folded `>-` scalars — one line, no embedded
-# newlines) — see playbooks/switch-mxl-fabrics-demo.yml's own PHASE 2
-# verify-failed block for the source of truth. Mutually exclusive by the
-# playbook's own `when:` guards (a rollback either verifies or it
-# doesn't) — checked in a fixed priority order regardless.
-_SWITCH_ROLLBACK_RESTORED_PREFIX = "rollback_verified previous_source_restored"
-_SWITCH_ROLLBACK_UNVERIFIED_PREFIX = "rollback_verification_failed"
+# The task name the switch play's outcome event is emitted from
+# (roles/l3_run_guard/tasks/_emit_switch_outcome.yml in dmf-runbooks).
+_SWITCH_OUTCOME_TASK_NAME = "dmf-l3-switch-outcome"
 
-# DMF_L3_SWITCH_REFUSED: detail=<token> — emitted by several differently
-# named validate/resolve/coordinator/final-readback tasks across the
-# switch play; <token> is validated against the SAME KV_DETAIL_TOKENS
-# allowlist main.py's own L3 outcome marker sanitizer uses (this is by
-# design: workstream #4's token-registry update added exactly the
-# switch-*/topology-* tokens this regex needs to recognize) — an
-# unrecognized token falls through to the generic job-status mapping
-# rather than fabricating an unbounded switch_refused_<anything> enum
-# member from untrusted text.
-_SWITCH_REFUSED_DETAIL_RE = re.compile(r"DMF_L3_SWITCH_REFUSED: detail=([a-z0-9-]+)")
+# The event's ``msg`` is ``DMF_L3_SWITCH_OUTCOME: <token> [detail=<stage>] ...``.
+# ``detail=`` is always the FIRST field when present, so only that position
+# is read: later fields can carry caller-supplied text and are ignored.
+_SWITCH_OUTCOME_MSG_RE = re.compile(
+    r"^DMF_L3_SWITCH_OUTCOME: (?P<token>[a-z0-9_]+)(?: detail=(?P<detail>[a-z0-9-]+))?(?: .*)?$"
+)
+
+# Structured outcome token -> console outcome enum (``refused`` is handled
+# separately: its enum is built from the allowlisted detail).
+_SWITCH_TOKEN_TO_OUTCOME = {
+    "rollback_verified_previous_source_restored": SWITCH_OUTCOME_PREVIOUS_SOURCE_RESTORED,
+    "rollback_verified_no_previous_source": SWITCH_OUTCOME_NO_PREVIOUS_SOURCE,
+    "rollback_verification_failed": SWITCH_OUTCOME_RECOVERY_UNVERIFIED,
+}
 
 _SWITCH_GENERIC_JOB_OUTCOME = {
     "failed": "switch_job_failed",
@@ -354,13 +349,15 @@ _SWITCH_GENERIC_JOB_OUTCOME = {
     "canceled": "switch_job_canceled",
 }
 
-# Default operator copy (frozen design, umbrella #320) — the only two
-# outcomes with a fixed default message; every other outcome is expected to
-# be rendered from its own machine code by the console UI, not from a
-# canned string here.
+# Default operator copy (frozen design, umbrella #320) — the rollback
+# outcomes only; every other outcome is rendered from its own machine code
+# by the console UI, not from a canned string here.
 _SWITCH_OUTCOME_OPERATOR_COPY = {
     SWITCH_OUTCOME_PREVIOUS_SOURCE_RESTORED: (
         "Switch did not complete; the previous source was restored. Safe to retry."
+    ),
+    SWITCH_OUTCOME_NO_PREVIOUS_SOURCE: (
+        "Switch did not complete; there was no previous source to restore. Safe to retry."
     ),
     SWITCH_OUTCOME_RECOVERY_UNVERIFIED: (
         "Switch did not complete; automatic recovery did not verify. "
@@ -369,32 +366,53 @@ _SWITCH_OUTCOME_OPERATOR_COPY = {
 }
 
 
-def classify_switch_job_failure(job_status: str, stdout: Optional[str]) -> tuple[str, Optional[str]]:
-    """Classify a TERMINAL, non-successful AWX switch job into one of the
-    frozen ``switch_*`` outcome enums.
+@dataclass(frozen=True)
+class SwitchOutcomeEvent:
+    """A backend-neutral structured switch outcome: the token the switch
+    play reported and, for ``refused``, the stage it reported."""
 
-    ``stdout`` may be ``None`` (the fetch itself failed/timed out) or
-    simply not contain any recognized marker (an older runbooks version,
-    or a failure this parser doesn't yet know about) — either way this
-    falls back to the generic, job-status-derived outcome rather than
-    raising or returning an unclassified value. Pure/side-effect-free so
-    it can be unit-tested directly against fixture stdout strings, with no
-    AWX mocking required.
+    token: str
+    detail: Optional[str] = None
+
+
+def switch_outcome_from_awx_events(events: list[Any]) -> Optional[SwitchOutcomeEvent]:
+    """Map AWX job events to a ``SwitchOutcomeEvent``, or ``None``.
+
+    Only events whose own ``task`` field is the dedicated outcome task are
+    read, even though the fetch already filters by task name: the events are
+    untrusted API data. The LAST valid event wins. Every level of the event
+    is shape-checked, so a malformed event is skipped, never raised on.
     """
-    if stdout:
-        if _SWITCH_ROLLBACK_RESTORED_PREFIX in stdout:
-            return (
-                SWITCH_OUTCOME_PREVIOUS_SOURCE_RESTORED,
-                _SWITCH_OUTCOME_OPERATOR_COPY[SWITCH_OUTCOME_PREVIOUS_SOURCE_RESTORED],
-            )
-        if _SWITCH_ROLLBACK_UNVERIFIED_PREFIX in stdout:
-            return (
-                SWITCH_OUTCOME_RECOVERY_UNVERIFIED,
-                _SWITCH_OUTCOME_OPERATOR_COPY[SWITCH_OUTCOME_RECOVERY_UNVERIFIED],
-            )
-        match = _SWITCH_REFUSED_DETAIL_RE.search(stdout)
-        if match and match.group(1) in KV_DETAIL_TOKENS:
-            return f"switch_refused_{match.group(1)}", None
+    for event in reversed(events):
+        if not isinstance(event, dict) or event.get("task") != _SWITCH_OUTCOME_TASK_NAME:
+            continue
+        event_data = event.get("event_data")
+        res = event_data.get("res") if isinstance(event_data, dict) else None
+        msg = res.get("msg") if isinstance(res, dict) else None
+        match = _SWITCH_OUTCOME_MSG_RE.match(msg.strip()) if isinstance(msg, str) else None
+        if match:
+            return SwitchOutcomeEvent(token=match.group("token"), detail=match.group("detail"))
+    return None
+
+
+def classify_switch_job_failure(
+    job_status: str, outcome: Optional[SwitchOutcomeEvent]
+) -> tuple[str, Optional[str]]:
+    """Classify a TERMINAL, non-successful switch job into one of the
+    ``switch_*`` outcome enums.
+
+    ``outcome`` is the structured event, or ``None`` when there is none.
+    A missing, unrecognised or detail-less event falls back to the generic
+    outcome derived from ``job_status``. Pure, so tests need no AWX mocking.
+    """
+    if outcome is not None:
+        enum = _SWITCH_TOKEN_TO_OUTCOME.get(outcome.token)
+        if enum:
+            return enum, _SWITCH_OUTCOME_OPERATOR_COPY[enum]
+        # Only allowlisted details become an enum member, so an event cannot
+        # mint an unbounded switch_refused_<anything> value.
+        if outcome.token == "refused" and outcome.detail in KV_DETAIL_TOKENS:
+            return f"switch_refused_{outcome.detail}", None
     return _SWITCH_GENERIC_JOB_OUTCOME.get(job_status, f"switch_job_{job_status}"), None
 
 
@@ -636,34 +654,33 @@ class ReconnectViaAwxActuator:
                     # — "no new rollback logic in WP4" (umbrella #201): this actuator's only job is to
                     # report the state accurately, never to auto-remediate.
                     #
-                    # umbrella #320: classify the sanitized outcome from the
-                    # job's own (tail-bounded) stdout — never surface the
-                    # raw text itself; a stdout-fetch failure degrades to
-                    # `stdout=None`, which classify_switch_job_failure
-                    # already treats as "no marker found" (generic mapping).
-                    stdout = await self._fetch_job_stdout_safe(job_id)
-                    outcome, outcome_message = classify_switch_job_failure(status, stdout)
+                    # umbrella #730: classify from the switch play's structured
+                    # outcome event only. No event degrades to the generic,
+                    # job-status-derived outcome; raw output is never read.
+                    outcome_event = await self._fetch_switch_outcome_safe(job_id)
+                    outcome, outcome_message = classify_switch_job_failure(status, outcome_event)
                     self._fail(command, f"switch-job-{status}", outcome=outcome, outcome_message=outcome_message)
                 return
 
             await asyncio.sleep(self._poll_interval_seconds)
 
-    async def _fetch_job_stdout_safe(self, job_id: int) -> Optional[str]:
-        """Best-effort stdout fetch for the switch-outcome parser — a
-        fetch failure (network error, AWX unavailable, ...) must never
-        crash the watcher or block the already-known job-status-derived
-        failure classification; it just means the parser falls back to
-        the generic mapping (see ``classify_switch_job_failure``)."""
+    async def _fetch_switch_outcome_safe(self, job_id: int) -> Optional[SwitchOutcomeEvent]:
+        """Best-effort fetch of the switch play's outcome event. A fetch
+        failure (network error, AWX unavailable, ...) must never crash the
+        watcher or block the already-known job-status-derived failure
+        classification; it just means there is no structured outcome."""
         try:
-            return await run_in_threadpool(
-                _awx.get_job_stdout,
+            events = await run_in_threadpool(
+                _awx.get_job_events_for_task,
                 api_url=self._awx_api_url,
                 api_token=self._awx_api_token,
                 job_id=job_id,
+                task_name=_SWITCH_OUTCOME_TASK_NAME,
                 ssl_verify=self._awx_ssl_verify,
             )
         except Exception:
             return None
+        return switch_outcome_from_awx_events(events)
 
     @staticmethod
     def _fail(
