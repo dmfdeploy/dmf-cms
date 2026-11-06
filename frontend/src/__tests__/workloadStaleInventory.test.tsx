@@ -324,6 +324,128 @@ describe('an unread inventory after the grace window is not a "not found"', () =
   })
 })
 
+/** The grouped response is whatever `live.body` and `live.status` hold at the moment of each fetch. */
+function mockGroupedLive(live: { status: number; body: Record<string, unknown> }) {
+  vi.stubGlobal(
+    'fetch',
+    vi.fn(async (input: RequestInfo | URL) => {
+      const url = (typeof input === 'string' ? input : (input as Request).url).toString()
+      const json = (b: unknown, status = 200) =>
+        new Response(JSON.stringify(b), { status, headers: { 'Content-Type': 'application/json' } })
+      if (url.endsWith('/api/me')) {
+        return json({ subject: 'ops', display_name: 'Ops', email: 'o@x', role: 'engineer', real_role: 'engineer', groups: [] })
+      }
+      if (url.endsWith('/api/catalog')) return json({ entries: [CATALOG] })
+      if (url.endsWith('/api/media-workloads/grouped')) return json(live.body, live.status)
+      return json({})
+    }),
+  )
+}
+
+const FRESH = (workloads: MediaWorkload[]) => ({
+  configured: true,
+  degraded: false,
+  workloads,
+  invalid_instances: [],
+  stale: false,
+})
+
+const STALE_EMPTY = () => ({
+  ...FRESH([]),
+  stale: true,
+  last_success: ONE_MINUTE_AGO(),
+  failure_since: ONE_MINUTE_AGO(),
+})
+
+const NOT_FOUND = 'Workload not found'
+const NOT_IN_SCOPE = /is in your scope right now/
+const CONFLICT_COPY = /conflicting workload assignment/
+
+const PAGES = [
+  { name: 'WorkloadSetup', path: (slug: string) => `/media-workloads/${slug}/setup`, route: '/media-workloads/:slug/setup', el: () => <WorkloadSetup /> },
+  { name: 'WorkloadHome', path: (slug: string) => `/media-workloads/${slug}`, route: '/media-workloads/:slug', el: () => <WorkloadHome /> },
+]
+
+function expectNoAbsenceClaim() {
+  expect(screen.queryByText(NOT_FOUND)).toBeNull()
+  expect(screen.queryByText(NOT_IN_SCOPE)).toBeNull()
+}
+
+describe.each(PAGES)('$name: a conflicting assignment that names the slug', (page) => {
+  it('explains the conflict instead of claiming the workload is absent', async () => {
+    mockGrouped(CONFLICTING_TAGS)
+    mount(page.path('a'), page.route, page.el())
+    expect(await screen.findByText(CONFLICT_COPY)).toBeTruthy()
+    expectNoAbsenceClaim()
+  })
+
+  it('still says not found for a slug no invalid instance names', async () => {
+    mockGrouped(CONFLICTING_TAGS)
+    mount(page.path('gone'), page.route, page.el())
+    expect(await screen.findByText(NOT_FOUND)).toBeTruthy()
+    expect(screen.queryByText(CONFLICT_COPY)).toBeNull()
+  })
+})
+
+describe.each(PAGES)('$name: no absence claim while the read is unconfirmed', (page) => {
+  it('fresh -> failed background read keeps the workload and never says not found', async () => {
+    const live = { status: 200, body: FRESH([workload({ lifecycle: 'operate', instances: [instance()] })]) as Record<string, unknown> }
+    mockGroupedLive(live)
+    const qc = mount(page.path('studio-a'), page.route, page.el())
+    await waitFor(() => expect(screen.queryByText('Loading workload…')).toBeNull())
+    expectNoAbsenceClaim()
+
+    live.status = 500
+    live.body = { detail: 'boom' }
+    await refetch(qc)
+    expectNoAbsenceClaim()
+
+    live.status = 200
+    live.body = GRACE_EXPIRED()
+    await refetch(qc)
+    expect(await screen.findByText(UNREAD_COPY)).toBeTruthy()
+    expectNoAbsenceClaim()
+  })
+
+  it('stale -> grace expired never says not found, and ends on the unread reason', async () => {
+    const live = { status: 200, body: STALE_EMPTY() as Record<string, unknown> }
+    mockGroupedLive(live)
+    const qc = mount(page.path('gone'), page.route, page.el())
+    await screen.findByText(/could not be (confirmed|loaded) right now/)
+    expectNoAbsenceClaim()
+
+    live.body = GRACE_EXPIRED()
+    await refetch(qc)
+    expect(await screen.findByText(UNREAD_COPY)).toBeTruthy()
+    expectNoAbsenceClaim()
+  })
+
+  it('netbox-error shows its own reason', async () => {
+    mockGrouped({ ...GRACE_EXPIRED(), reason: 'netbox-error' })
+    mount(page.path('gone'), page.route, page.el())
+    expect(await screen.findByText(/returned an unexpected error/)).toBeTruthy()
+    expect(screen.queryByText(UNREAD_COPY)).toBeNull()
+    expectNoAbsenceClaim()
+  })
+
+  it('netbox-not-configured without timestamps implies no earlier read or failure', async () => {
+    mockGrouped({
+      configured: true,
+      degraded: true,
+      reason: 'netbox-not-configured',
+      workloads: [],
+      invalid_instances: [],
+      stale: false,
+    })
+    mount(page.path('gone'), page.route, page.el())
+    expect(await screen.findByText(/isn't connected in this environment/)).toBeTruthy()
+    expect(screen.queryByText(/Last confirmed/)).toBeNull()
+    expect(screen.queryByText(/not yet confirmed the inventory/)).toBeNull()
+    expect(screen.queryByText(/failing since/)).toBeNull()
+    expectNoAbsenceClaim()
+  })
+})
+
 describe('Media Workloads list: a stale empty inventory is not a healthy empty one', () => {
   it('shows the stale warning and no "ready for your first workload" canvas', async () => {
     const inv: Inventory = { workloads: [], stale: false }

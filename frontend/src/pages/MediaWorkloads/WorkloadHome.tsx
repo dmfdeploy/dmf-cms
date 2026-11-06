@@ -14,7 +14,13 @@ import { settleQuery } from '../../lib/queryState'
 import { LIVE_TILE_CAP, useDocumentVisible, usePrefersReducedMotion } from './liveView'
 import PageHeading from '../../components/PageHeading'
 import { usePageTitle } from '../../hooks/usePageTitle'
-import { StaleInventoryNotice, UnconfirmedInventoryNotice, inventoryUnread } from '.'
+import {
+  ConflictingAssignmentNotice,
+  StaleInventoryNotice,
+  UnconfirmedInventoryNotice,
+  inventoryUnread,
+  slugNamedByConflict,
+} from '.'
 
 /**
  * WorkloadHome — the bare workload URL, and the workload's HOME
@@ -326,6 +332,18 @@ export default function WorkloadHome() {
   // recomputed, so there is exactly one "which workload is this" answer per
   // render.
   const workload = workloadForRail
+
+  if (!workload && slugNamedByConflict(data, slug)) {
+    return (
+      <div className="flex-1 overflow-y-auto p-6">
+        <PageHeading>{slug}</PageHeading>
+        <ConflictingAssignmentNotice slug={slug} />
+        <Link to="/media-workloads" className="mt-4 inline-block text-sm text-accent hover:underline">
+          ← Back to Media Workloads
+        </Link>
+      </div>
+    )
+  }
 
   if (!workload) {
     return (

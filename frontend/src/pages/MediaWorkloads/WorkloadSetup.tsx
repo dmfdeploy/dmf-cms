@@ -30,7 +30,13 @@ import PageHeading from '../../components/PageHeading'
 import { usePageTitle } from '../../hooks/usePageTitle'
 import { workloadHomePath } from '../../lib/routes'
 import ViewLiveExit from './ViewLiveExit'
-import { StaleInventoryNotice, UnconfirmedInventoryNotice, inventoryUnread } from '.'
+import {
+  ConflictingAssignmentNotice,
+  StaleInventoryNotice,
+  UnconfirmedInventoryNotice,
+  inventoryUnread,
+  slugNamedByConflict,
+} from '.'
 import { InventoryWritesBlockedProvider } from '../../lib/inventoryFreshness'
 
 /**
@@ -355,6 +361,16 @@ export default function WorkloadSetup() {
           This workload could not be confirmed right now. Retrying automatically.
         </div>
         <UnconfirmedInventoryNotice data={data} />
+      </div>
+    )
+  }
+
+  if (!workload && slugNamedByConflict(data, slug)) {
+    return (
+      <div className="flex-1 overflow-y-auto p-6">
+        <PageHeading>{`${slug} — Setup`}</PageHeading>
+        <ExitRow slug={slug ?? ''} />
+        <ConflictingAssignmentNotice slug={slug} />
       </div>
     )
   }
