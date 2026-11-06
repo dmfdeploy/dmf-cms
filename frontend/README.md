@@ -111,6 +111,48 @@ src/
 6. Click Launch on a workflow
 7. Watch the job status update in real-time
 
+## Selector contract
+
+Tests, e2e specs and demo scripts select the shell and the shared primitives
+through a versioned list in `src/lib/selectorContract.ts`. The contract test
+(`src/__tests__/selectorContract.test.tsx`) renders each entry's component and
+checks that the selector resolves.
+
+Naming rules:
+
+- Select the shell by ARIA role and accessible name, for example
+  `getByRole('navigation', { name: 'Console navigation' })`. Don't add a
+  `data-testid` to an element that already has a role and a name.
+- Use `data-testid` only for an element with no semantic handle.
+- Write ids in lowercase kebab-case.
+- Name a keyed item `<noun>-<domain key>`, for example `workload-tile-<slug>`.
+  The entry's `key` field says what the key means.
+- Name `ReasonConfirm` ids `confirm-<action>` and `reason-<action>` by passing
+  `testIdPrefix="<action>"`. Without a prefix, the reason field is
+  `reason-input` and the Confirm button has no id.
+
+To change a selector on purpose:
+
+1. Edit the entry in `src/lib/selectorContract.ts` and the component.
+2. Increase `SELECTOR_CONTRACT_VERSION`.
+3. Run `npx vitest run src/__tests__/selectorContract.test.tsx`. The failure
+   message prints the new contents for `src/lib/selectorContract.lock.json`.
+   Paste them into that file and run the test again.
+
+The in-repo test checks that the lock matches the contract in the same
+revision. It can't prove that you bumped the version. CI proves it on pull
+requests: `scripts/check-selector-contract-version.mjs` compares the lock with
+the one on the base branch. It fails when the digest changed and the version
+didn't go up, and when the version went up and the digest didn't change. To run
+it locally, from the repository root:
+
+```bash
+node frontend/scripts/check-selector-contract-version.mjs origin/main
+```
+
+Per-screen ids for layouts that are about to be replaced stay out of the
+contract.
+
 ## Testing AWX Workflow Integration
 
 Requires:

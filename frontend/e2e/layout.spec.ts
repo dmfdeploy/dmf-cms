@@ -109,17 +109,15 @@ for (const width of VIEWPORTS) {
         expect(offenders, 'first focusable element of each row must be hittable').toEqual([])
       })
 
-      for (const [name, trigger, popover] of [
+      for (const [name, trigger] of [
         [
           'bell',
           (p: import('@playwright/test').Page) =>
-            p.getByRole('button', { name: 'Monitoring alerts' }),
-          'xpath=following-sibling::div[1]',
+            p.getByRole('button', { name: /^Monitoring alerts(, \d+)?$/ }),
         ],
         [
           'avatar',
-          (p: import('@playwright/test').Page) => p.locator('header button[aria-expanded]'),
-          'xpath=following-sibling::div[1]',
+          (p: import('@playwright/test').Page) => p.getByRole('button', { name: /, account menu$/ }),
         ],
       ] as const) {
         test(`[${width}] ${path}: ${name} popover over rail`, async ({ page }) => {
@@ -128,7 +126,10 @@ for (const width of VIEWPORTS) {
           test.skip((await railRow(page).count()) === 0, 'no lifecycle rail row on this route')
           const button = trigger(page).first()
           await button.click()
-          const pop = button.locator(popover)
+          // The trigger names its panel with aria-controls (see lib/selectorContract.ts).
+          const panelId = await button.getAttribute('aria-controls')
+          expect(panelId, `${name} trigger names its panel`).toBeTruthy()
+          const pop = page.locator(`[id="${panelId}"]`)
           await expect(pop).toBeVisible()
           const result = await pop.evaluate((popEl) => {
             const row = document.querySelector('[data-testid="header-slot-row"]')!

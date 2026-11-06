@@ -71,26 +71,22 @@ describe('ReasonConfirm component', () => {
     expect(screen.getByText('nope')).toBeTruthy()
   })
 
-  // umbrella #571: the reason field always carries a stable selector; the
-  // Confirm button carries one only when a caller opts in via confirmTestId
-  // — every existing caller that doesn't pass it is unaffected.
-  it('carries data-testid on the reason field, and on Confirm only when confirmTestId is passed', () => {
+  // umbrella #571, #741: without a testIdPrefix the reason field is
+  // reason-input and Confirm carries no test id.
+  it('without testIdPrefix, the reason field is reason-input and Confirm has no test id', () => {
     render(<ReasonConfirm title="T" description="D" onConfirm={vi.fn()} onCancel={() => {}} />)
-    expect(screen.getByTestId('reason-input')).toBeTruthy()
+    expect(screen.getByTestId('reason-input')).toBe(screen.getByRole('textbox'))
     expect(screen.getByRole('button', { name: 'Confirm' }).getAttribute('data-testid')).toBeNull()
   })
 
-  it('applies confirmTestId to the Confirm button when provided', () => {
+  // umbrella #741: testIdPrefix names both ids from one action name.
+  it('testIdPrefix names the Confirm button and the reason field', () => {
     render(
-      <ReasonConfirm
-        title="T"
-        description="D"
-        onConfirm={vi.fn()}
-        onCancel={() => {}}
-        confirmTestId="confirm-deploy"
-      />,
+      <ReasonConfirm title="T" description="D" onConfirm={vi.fn()} onCancel={() => {}} testIdPrefix="teardown" />,
     )
-    expect(screen.getByTestId('confirm-deploy')).toBe(screen.getByRole('button', { name: 'Confirm' }))
+    expect(screen.getByTestId('confirm-teardown')).toBe(screen.getByRole('button', { name: 'Confirm' }))
+    expect(screen.getByTestId('reason-teardown')).toBe(screen.getByRole('textbox'))
+    expect(screen.queryByTestId('reason-input')).toBeNull()
   })
 
   it('extraField: a valid (or absent) value leaves Confirm gated on reason alone', () => {

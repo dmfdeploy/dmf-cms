@@ -1010,7 +1010,7 @@ function ProvisionSection({
               pending={pending}
               onConfirm={onConfirm}
               onCancel={onCancel}
-              confirmTestId="confirm-deploy"
+              testIdPrefix="deploy"
             />
           </div>
         )}

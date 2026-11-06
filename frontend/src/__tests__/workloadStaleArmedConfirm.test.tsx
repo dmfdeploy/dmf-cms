@@ -248,7 +248,7 @@ describe('armed confirmations while the inventory turns stale (components)', () 
       )
     const { rerender } = render(el(false))
     fireEvent.click(await screen.findByRole('button', { name: 'Switch source' }))
-    fireEvent.change(screen.getByTestId('reason-input'), { target: { value: 'go' } })
+    fireEvent.change(screen.getByTestId('reason-switch-source'), { target: { value: 'go' } })
     fireEvent.change(screen.getByRole('combobox'), { target: { value: 'source-b' } })
     expect((screen.getByTestId('confirm-switch-source') as HTMLButtonElement).disabled).toBe(false)
 

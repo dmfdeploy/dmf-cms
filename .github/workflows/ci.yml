@@ -133,6 +133,16 @@ jobs:
         working-directory: frontend
         run: npm test
 
+      # A lock in the same revision cannot prove a version bump, so compare
+      # it with the base branch's lock.
+      - name: Check the selector contract version bump
+        if: github.event_name == 'pull_request'
+        env:
+          BASE_REF: ${{ github.base_ref }}
+        run: |
+          git fetch --no-tags --depth=1 origin "$BASE_REF"
+          node frontend/scripts/check-selector-contract-version.mjs "origin/$BASE_REF"
+
       - name: Type-check and build
         working-directory: frontend
         run: npm run build
