@@ -122,6 +122,7 @@ from .awx import AWXAPIError, AWXAutoscaleError, AWXJobInfo, AWXTransportError, 
 from .catalog import CatalogEntry, load_catalog_entries, get_lifecycle_status, load_topology_instance, CATALOG_DIR
 from .catalog import _netbox_service_names as _catalog_service_names
 from .contracts import AppContract, load_app_contract
+from .awx import EVENT_INGESTION_MAX_EXTRA_POLLS
 from . import l3_detail_tokens
 from .log_safety import sanitize_audit_field
 from .operations import (
@@ -1798,7 +1799,7 @@ async def _fetch_l3_milestone_from_events(app: FastAPI, job_id: int) -> str | No
 # landed. Never poll forever: a job whose ingestion never finishes (a
 # genuinely stuck/crashed AWX event processor) must not hang this
 # operation's terminal transition indefinitely.
-_L3_EVENT_INGESTION_MAX_EXTRA_POLLS = 6
+_L3_EVENT_INGESTION_MAX_EXTRA_POLLS = EVENT_INGESTION_MAX_EXTRA_POLLS
 
 
 async def _await_event_ingestion_finished(app: FastAPI, job: dict, job_id: int, poll_interval: float) -> None:

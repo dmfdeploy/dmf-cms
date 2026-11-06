@@ -364,9 +364,12 @@ _SWITCH_OUTCOME_OPERATOR_COPY = {
         "Switch did not complete; automatic recovery did not verify. "
         "Output may be parked; follow the recovery path."
     ),
+    # No outcome event can also mean the events had not landed yet, so this
+    # does not say that no refusal or rollback happened.
     "switch_job_failed": (
-        "Switch did not complete and the job did not report why. The viewer may have no "
-        "active source. Check the current source, then retry."
+        "Switch did not complete and the console found no reported reason. The job may "
+        "have refused or rolled back, and the viewer may have no active source. "
+        "Check the current source, then retry."
     ),
     # An AWX "error" job can fail after it started, so its result is unknown.
     "switch_job_error": (
@@ -792,14 +795,47 @@ class ReconnectViaAwxActuator:
                     # report the state accurately, never to auto-remediate.
                     #
                     # umbrella #730: classify from the switch play's structured
-                    # outcome event only. No event degrades to the generic,
+                    # outcome event only, once AWX has ingested the job's events. No event degrades to the generic,
                     # job-status-derived outcome; raw output is never read.
+                    await self._await_event_ingestion(job_id, job)
                     outcome_event = await self._fetch_switch_outcome_safe(job_id)
                     outcome, _ = classify_switch_job_failure(status, outcome_event)
                     self._fail(command, f"switch-job-{status}", outcome=outcome)
                 return
 
             await asyncio.sleep(self._poll_interval_seconds)
+
+    async def _await_event_ingestion(self, job_id: int, job: dict) -> None:
+        """Wait, bounded, for AWX's ``event_processing_finished`` flag.
+
+        AWX reports a job terminal before every job event has landed, so an
+        immediate fetch can miss the outcome event and record a real refusal or
+        rollback as a generic failure. This mirrors main.py's
+        ``_await_event_ingestion_finished`` (same bound, same rule that only
+        three consecutive ``get_job`` failures end the wait early). When the
+        bound runs out the caller classifies from whatever events exist.
+        """
+        if job.get("event_processing_finished", False):
+            return
+        consecutive_failures = 0
+        for _ in range(_awx.EVENT_INGESTION_MAX_EXTRA_POLLS):
+            await asyncio.sleep(self._poll_interval_seconds)
+            try:
+                job = await run_in_threadpool(
+                    _awx.get_job,
+                    api_url=self._awx_api_url,
+                    api_token=self._awx_api_token,
+                    job_id=job_id,
+                    ssl_verify=self._awx_ssl_verify,
+                )
+            except Exception:
+                consecutive_failures += 1
+                if consecutive_failures >= 3:
+                    return
+                continue
+            consecutive_failures = 0
+            if isinstance(job, dict) and job.get("event_processing_finished", False):
+                return
 
     async def _fetch_switch_outcome_safe(self, job_id: int) -> Optional[SwitchOutcomeEvent]:
         """Best-effort fetch of the switch play's outcome event. A fetch
