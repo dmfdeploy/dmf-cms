@@ -30,7 +30,7 @@ def inventory_already_read(monkeypatch):
     def seed(netbox_url, tenant_slugs, read, timeout=0):
         key = media_workloads._read_key("grouped", netbox_url, tenant_slugs)
         ticket, started, started_mono = media_workloads._begin_read(
-            media_workloads.time.time, media_workloads.time.monotonic
+            key, media_workloads.time.time, media_workloads.time.monotonic
         )
         media_workloads._remember_success(
             key,
