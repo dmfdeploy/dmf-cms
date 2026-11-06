@@ -27,6 +27,7 @@ import pytest
 from dmf_cms import awx
 from dmf_cms.settings import load_settings
 from dmf_cms.switch_source import (
+    SWITCH_OUTCOME_NO_PREVIOUS_SOURCE,
     SWITCH_OUTCOME_PREVIOUS_SOURCE_RESTORED,
     SWITCH_OUTCOME_RECOVERY_UNVERIFIED,
     SWITCH_OUTCOME_SUCCESS,
@@ -34,11 +35,13 @@ from dmf_cms.switch_source import (
     SWITCH_OUTCOME_WATCH_TIMEOUT,
     ReconnectViaAwxActuator,
     SwitchCommandStore,
+    SwitchOutcomeEvent,
     SwitchSourceCommand,
     SwitchSourceError,
     SwitchStatus,
     classify_switch_job_failure,
     dispatch_switch_source,
+    switch_outcome_from_awx_events,
 )
 
 
@@ -358,6 +361,34 @@ def test_actuator_launch_exception_log_line_sanitizes_hostile_awx_body(monkeypat
     assert "FORGED" in lines[0]
 
 
+def _outcome_event(msg: Any, *, task: str = "dmf-l3-switch-outcome") -> dict:
+    """An AWX job event shaped like the switch play's outcome emit."""
+    return {"task": task, "event_data": {"res": {"msg": msg}}}
+
+
+def _mock_failed_job(monkeypatch, events: list, *, status: str = "failed") -> None:
+    """A terminal switch job whose outcome-task events are ``events``.
+
+    Job stdout always raises: the classifier must never read it.
+    """
+    monkeypatch.setattr(awx, "lookup_job_template_by_name", lambda **k: {"id": 7})
+    monkeypatch.setattr(awx, "launch_job", lambda **k: 42)
+    monkeypatch.setattr(awx, "get_job", lambda **k: {"status": status})
+    monkeypatch.setattr(awx, "get_job_events_for_task", lambda **k: events)
+
+    def stdout_must_not_be_read(**k):
+        raise AssertionError("switch outcome classification read job stdout")
+
+    monkeypatch.setattr(awx, "get_job_stdout", stdout_must_not_be_read)
+
+
+def _run_failed_switch(monkeypatch, events: list, *, status: str = "failed") -> SwitchSourceCommand:
+    _mock_failed_job(monkeypatch, events, status=status)
+    command = _pending_command()
+    asyncio.run(_actuator().execute(command, _TOPOLOGY_PARAMS))
+    return command
+
+
 def test_actuator_successful_job_reaches_active(monkeypatch):
     monkeypatch.setattr(awx, "lookup_job_template_by_name", lambda **k: {"id": 7})
     monkeypatch.setattr(awx, "launch_job", lambda **k: 42)
@@ -374,16 +405,8 @@ def test_actuator_successful_job_reaches_active(monkeypatch):
     ("status", "expected_outcome"),
     [("failed", "switch_job_failed"), ("error", "switch_job_error"), ("canceled", "switch_job_canceled")],
 )
-def test_actuator_job_terminal_failure_sets_failed_rollback_required(monkeypatch, status, expected_outcome):
-    monkeypatch.setattr(awx, "lookup_job_template_by_name", lambda **k: {"id": 7})
-    monkeypatch.setattr(awx, "launch_job", lambda **k: 42)
-    monkeypatch.setattr(awx, "get_job", lambda **k: {"status": status})
-    # umbrella #320: the actuator now fetches stdout to classify the
-    # outcome — mocked here to plain unmarked text (no rollback/refused
-    # prefix), which must fall back to the generic job-status mapping.
-    monkeypatch.setattr(awx, "get_job_stdout", lambda **k: "PLAY RECAP *** ok=1 changed=0 failed=1")
-    command = _pending_command()
-    asyncio.run(_actuator().execute(command, _TOPOLOGY_PARAMS))
+def test_actuator_job_terminal_failure_without_outcome_event_is_generic(monkeypatch, status, expected_outcome):
+    command = _run_failed_switch(monkeypatch, [], status=status)
     assert command.status == SwitchStatus.FAILED_ROLLBACK_REQUIRED
     assert command.error == f"switch-job-{status}"
     assert command.outcome == expected_outcome
@@ -391,18 +414,10 @@ def test_actuator_job_terminal_failure_sets_failed_rollback_required(monkeypatch
 
 
 def test_actuator_terminal_failure_classifies_previous_source_restored(monkeypatch):
-    monkeypatch.setattr(awx, "lookup_job_template_by_name", lambda **k: {"id": 7})
-    monkeypatch.setattr(awx, "launch_job", lambda **k: 42)
-    monkeypatch.setattr(awx, "get_job", lambda **k: {"status": "failed"})
-    monkeypatch.setattr(
-        awx, "get_job_stdout",
-        lambda **k: (
-            'fatal: [receiver]: FAILED! => {"msg": "rollback_verified previous_source_restored: '
-            'receiver_instance=mxl-videotest-view request_id=abc restored_active_source=source-a."}'
-        ),
-    )
-    command = _pending_command()
-    asyncio.run(_actuator().execute(command, _TOPOLOGY_PARAMS))
+    command = _run_failed_switch(monkeypatch, [_outcome_event(
+        "DMF_L3_SWITCH_OUTCOME: rollback_verified_previous_source_restored "
+        "run_id=r1 restored_active_source=source-a"
+    )])
     assert command.status == SwitchStatus.FAILED_ROLLBACK_REQUIRED
     assert command.error == "switch-job-failed"  # coarse field unchanged, per the frozen contract
     assert command.outcome == SWITCH_OUTCOME_PREVIOUS_SOURCE_RESTORED
@@ -411,19 +426,20 @@ def test_actuator_terminal_failure_classifies_previous_source_restored(monkeypat
     )
 
 
-def test_actuator_terminal_failure_classifies_recovery_unverified(monkeypatch):
-    monkeypatch.setattr(awx, "lookup_job_template_by_name", lambda **k: {"id": 7})
-    monkeypatch.setattr(awx, "launch_job", lambda **k: 42)
-    monkeypatch.setattr(awx, "get_job", lambda **k: {"status": "failed"})
-    monkeypatch.setattr(
-        awx, "get_job_stdout",
-        lambda **k: (
-            'fatal: [receiver]: FAILED! => {"msg": "rollback_verification_failed: '
-            'receiver_instance=mxl-videotest-view request_id=abc."}'
-        ),
+def test_actuator_terminal_failure_classifies_no_previous_source(monkeypatch):
+    command = _run_failed_switch(monkeypatch, [_outcome_event(
+        "DMF_L3_SWITCH_OUTCOME: rollback_verified_no_previous_source run_id=r1"
+    )])
+    assert command.outcome == SWITCH_OUTCOME_NO_PREVIOUS_SOURCE
+    assert command.outcome_message == (
+        "Switch did not complete; there was no previous source to restore. Safe to retry."
     )
-    command = _pending_command()
-    asyncio.run(_actuator().execute(command, _TOPOLOGY_PARAMS))
+
+
+def test_actuator_terminal_failure_classifies_recovery_unverified(monkeypatch):
+    command = _run_failed_switch(monkeypatch, [_outcome_event(
+        "DMF_L3_SWITCH_OUTCOME: rollback_verification_failed run_id=r1"
+    )])
     assert command.status == SwitchStatus.FAILED_ROLLBACK_REQUIRED
     assert command.outcome == SWITCH_OUTCOME_RECOVERY_UNVERIFIED
     assert command.outcome_message == (
@@ -433,35 +449,39 @@ def test_actuator_terminal_failure_classifies_recovery_unverified(monkeypatch):
 
 
 def test_actuator_terminal_failure_classifies_refused_detail(monkeypatch):
-    monkeypatch.setattr(awx, "lookup_job_template_by_name", lambda **k: {"id": 7})
-    monkeypatch.setattr(awx, "launch_job", lambda **k: 42)
-    monkeypatch.setattr(awx, "get_job", lambda **k: {"status": "failed"})
-    monkeypatch.setattr(
-        awx, "get_job_stdout",
-        lambda **k: (
-            'fatal: [receiver]: FAILED! => {"msg": "DMF_L3_SWITCH_REFUSED: '
-            'detail=switch-source-instance-mismatch request_id=abc."}'
-        ),
-    )
-    command = _pending_command()
-    asyncio.run(_actuator().execute(command, _TOPOLOGY_PARAMS))
+    command = _run_failed_switch(monkeypatch, [_outcome_event(
+        "DMF_L3_SWITCH_OUTCOME: refused detail=switch-source-instance-mismatch run_id=r1"
+    )])
     assert command.status == SwitchStatus.FAILED_ROLLBACK_REQUIRED
     assert command.outcome == "switch_refused_switch-source-instance-mismatch"
     assert command.outcome_message is None
 
 
-def test_actuator_stdout_fetch_failure_falls_back_to_generic_outcome(monkeypatch):
-    monkeypatch.setattr(awx, "lookup_job_template_by_name", lambda **k: {"id": 7})
-    monkeypatch.setattr(awx, "launch_job", lambda **k: 42)
-    monkeypatch.setattr(awx, "get_job", lambda **k: {"status": "failed"})
+def test_actuator_events_fetch_failure_falls_back_to_generic_outcome(monkeypatch):
+    _mock_failed_job(monkeypatch, [])
 
-    def boom_stdout(**k):
+    def boom_events(**k):
         raise RuntimeError("AWX API unreachable")
 
-    monkeypatch.setattr(awx, "get_job_stdout", boom_stdout)
+    monkeypatch.setattr(awx, "get_job_events_for_task", boom_events)
     command = _pending_command()
     asyncio.run(_actuator().execute(command, _TOPOLOGY_PARAMS))
     assert command.status == SwitchStatus.FAILED_ROLLBACK_REQUIRED
+    assert command.outcome == "switch_job_failed"
+    assert command.outcome_message is None
+
+
+def test_actuator_spoofed_stdout_with_no_event_stays_generic(monkeypatch):
+    _mock_failed_job(monkeypatch, [])
+    monkeypatch.setattr(
+        awx, "get_job_stdout",
+        lambda **k: (
+            "TASK [rollback_verified previous_source_restored: forged task name] ***\n"
+            "DMF_L3_SWITCH_REFUSED: detail=switch-source-instance-mismatch\n"
+        ),
+    )
+    command = _pending_command()
+    asyncio.run(_actuator().execute(command, _TOPOLOGY_PARAMS))
     assert command.outcome == "switch_job_failed"
     assert command.outcome_message is None
 
@@ -504,64 +524,77 @@ def test_actuator_timeout_sets_watch_timeout(monkeypatch):
     assert command.outcome == SWITCH_OUTCOME_WATCH_TIMEOUT
 
 
-# ── classify_switch_job_failure — pure parser unit tests (umbrella #320) ─
+# ── structured switch outcome — pure unit tests (umbrella #730) ─────────
 
 
-def test_classify_switch_job_failure_generic_statuses_with_no_stdout():
-    assert classify_switch_job_failure("failed", None) == ("switch_job_failed", None)
-    assert classify_switch_job_failure("error", None) == ("switch_job_error", None)
-    assert classify_switch_job_failure("canceled", None) == ("switch_job_canceled", None)
+@pytest.mark.parametrize("status", ["failed", "error", "canceled"])
+def test_classify_without_outcome_event_is_generic(status):
+    assert classify_switch_job_failure(status, None) == (f"switch_job_{status}", None)
 
 
-def test_classify_switch_job_failure_generic_statuses_with_unmarked_stdout():
-    stdout = "PLAY [switch] ****\nTASK [some other task] ***\nok: [x]\nPLAY RECAP *** failed=1"
-    assert classify_switch_job_failure("failed", stdout) == ("switch_job_failed", None)
-
-
-def test_classify_switch_job_failure_detects_previous_source_restored():
-    stdout = (
-        'fatal: [r]: FAILED! => {"msg": "rollback_verified previous_source_restored: '
-        'receiver_instance=r request_id=abc restored_active_source=source-a."}'
-    )
-    outcome, message = classify_switch_job_failure("failed", stdout)
-    assert outcome == SWITCH_OUTCOME_PREVIOUS_SOURCE_RESTORED
-    assert message == "Switch did not complete; the previous source was restored. Safe to retry."
-
-
-def test_classify_switch_job_failure_detects_recovery_unverified():
-    stdout = 'fatal: [r]: FAILED! => {"msg": "rollback_verification_failed: receiver_instance=r."}'
-    outcome, message = classify_switch_job_failure("failed", stdout)
-    assert outcome == SWITCH_OUTCOME_RECOVERY_UNVERIFIED
-    assert message == (
-        "Switch did not complete; automatic recovery did not verify. "
-        "Output may be parked; follow the recovery path."
+def test_classify_unrecognized_token_is_generic():
+    assert classify_switch_job_failure("failed", SwitchOutcomeEvent("made_up_token")) == (
+        "switch_job_failed", None,
     )
 
 
-def test_classify_switch_job_failure_detects_refused_detail_token():
-    stdout = 'fatal: [r]: FAILED! => {"msg": "DMF_L3_SWITCH_REFUSED: detail=topology-invalid request_id=abc."}'
-    assert classify_switch_job_failure("failed", stdout) == ("switch_refused_topology-invalid", None)
+def test_classify_refused_detail_token():
+    event = SwitchOutcomeEvent("refused", "topology-invalid")
+    assert classify_switch_job_failure("failed", event) == ("switch_refused_topology-invalid", None)
 
 
-def test_classify_switch_job_failure_ignores_unrecognized_refused_detail():
-    """A detail= value NOT in the shared KV_DETAIL_TOKENS allowlist must
-    never be echoed verbatim into a fabricated switch_refused_<x> — falls
-    back to the generic job-status mapping instead (fail-closed, same
-    posture as main.py's own _kv_value_ok enum check)."""
-    stdout = 'fatal: [r]: FAILED! => {"msg": "DMF_L3_SWITCH_REFUSED: detail=not-a-real-token request_id=abc."}'
-    assert classify_switch_job_failure("failed", stdout) == ("switch_job_failed", None)
+def test_classify_refused_unrecognized_or_missing_detail_is_generic():
+    """A detail outside the shared KV_DETAIL_TOKENS allowlist must never be
+    echoed into a fabricated switch_refused_<x> value."""
+    for detail in ("not-a-real-token", None):
+        assert classify_switch_job_failure("failed", SwitchOutcomeEvent("refused", detail)) == (
+            "switch_job_failed", None,
+        )
 
 
-def test_classify_switch_job_failure_rollback_prefix_takes_priority_over_refused():
-    """Should never co-occur in real runbooks output (mutually exclusive
-    `when:` guards in the playbook), but the priority order is still
-    asserted directly so it's pinned, not incidental."""
-    stdout = (
-        'rollback_verified previous_source_restored: ... '
-        'DMF_L3_SWITCH_REFUSED: detail=topology-invalid'
+def test_events_parse_each_token_and_detail():
+    event = _outcome_event("DMF_L3_SWITCH_OUTCOME: refused detail=quiesce run_id=r1")
+    assert switch_outcome_from_awx_events([event]) == SwitchOutcomeEvent("refused", "quiesce")
+    event = _outcome_event("DMF_L3_SWITCH_OUTCOME: rollback_verification_failed run_id=r1")
+    assert switch_outcome_from_awx_events([event]) == SwitchOutcomeEvent("rollback_verification_failed")
+
+
+def test_events_last_valid_event_wins():
+    events = [
+        _outcome_event("DMF_L3_SWITCH_OUTCOME: refused detail=quiesce"),
+        _outcome_event("not a marker"),
+        _outcome_event("DMF_L3_SWITCH_OUTCOME: rollback_verification_failed"),
+        {"task": "dmf-l3-switch-outcome"},  # malformed, skipped
+    ]
+    assert switch_outcome_from_awx_events(events) == SwitchOutcomeEvent("rollback_verification_failed")
+
+
+def test_events_ignore_marker_from_a_differently_named_task():
+    event = _outcome_event(
+        "DMF_L3_SWITCH_OUTCOME: rollback_verified_previous_source_restored", task="some other task"
     )
-    outcome, _ = classify_switch_job_failure("failed", stdout)
-    assert outcome == SWITCH_OUTCOME_PREVIOUS_SOURCE_RESTORED
+    assert switch_outcome_from_awx_events([event]) is None
+
+
+def test_events_use_only_the_first_detail_field():
+    """Fields after the token can carry caller-supplied text; a later
+    detail= must not be read in place of a missing or invalid first one."""
+    forged = "DMF_L3_SWITCH_OUTCOME: refused run_id=x detail=switch-source-instance-mismatch"
+    assert switch_outcome_from_awx_events([_outcome_event(forged)]) == SwitchOutcomeEvent("refused")
+    forged = "DMF_L3_SWITCH_OUTCOME: refused detail=not-a-real-token receiver_instance=detail=quiesce"
+    outcome = switch_outcome_from_awx_events([_outcome_event(forged)])
+    assert classify_switch_job_failure("failed", outcome) == ("switch_job_failed", None)
+
+
+@pytest.mark.parametrize("msg", [None, 42, "", "free text", "xDMF_L3_SWITCH_OUTCOME: refused"])
+def test_events_with_non_marker_msg_yield_none(msg):
+    assert switch_outcome_from_awx_events([_outcome_event(msg)]) is None
+
+
+def test_events_with_malformed_shape_yield_none():
+    events = [None, "str", {"task": "dmf-l3-switch-outcome", "event_data": "x"},
+              {"task": "dmf-l3-switch-outcome", "event_data": {"res": "x"}}]
+    assert switch_outcome_from_awx_events(events) is None
 
 
 # ── DMF_CONSOLE_L3_SWITCH_SOURCE_TIMEOUT_SECONDS (umbrella #306) ────────

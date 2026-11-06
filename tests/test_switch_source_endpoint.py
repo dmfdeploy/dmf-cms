@@ -84,7 +84,7 @@ def _mock_awx_terminal(monkeypatch, *, status="successful"):
     monkeypatch.setattr(awx, "lookup_job_template_by_name", lambda **k: {"id": 7})
     monkeypatch.setattr(awx, "launch_job", lambda **k: 42)
     monkeypatch.setattr(awx, "get_job", lambda **k: {"status": status})
-    monkeypatch.setattr(awx, "get_job_stdout", lambda **k: "")
+    monkeypatch.setattr(awx, "get_job_events_for_task", lambda **k: [])
 
 
 # umbrella #321: netbox/media_tenancy default UNCONFIGURED (matching every
@@ -421,8 +421,7 @@ def test_failed_rollback_required_is_200_not_an_http_error(monkeypatch, caplog):
     assert body["status"] == "failed_rollback_required"
     assert body["error"] == "switch-job-failed"
     # umbrella #320: the new additive outcome fields ride the same response
-    # envelope — stdout here is mocked to empty text (no rollback/refused
-    # marker), so the generic job-status mapping applies.
+    # envelope — no outcome event is mocked, so the generic job-status mapping applies.
     assert body["outcome"] == "switch_job_failed"
     assert body["outcome_message"] is None
     assert any("outcome=failed_rollback_required" in m for m in _audit_lines(caplog))
