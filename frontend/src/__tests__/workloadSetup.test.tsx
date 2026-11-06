@@ -982,6 +982,51 @@ describe('Configure: switch click path', () => {
     expect(within(finaliseSection).getByText(/Last switch outcome/)).toBeTruthy()
   })
 
+  // An outcome this console has no copy for (a newer or older backend) must
+  // not put its machine token in the primary text of either view.
+  it('shows generic text, not the raw token, for a failed outcome without a message', async () => {
+    mkFetch({
+      workload: viewerWorkload(),
+      catalog: [catalogEntry({ key: 'viewer', display_name: 'MXL Viewer', lifecycle: 'active' })],
+      topology: { 'viewer-1': freshTopology() },
+      switchResult: {
+        command_id: 'cmd-2',
+        receiver_instance: 'viewer-1',
+        source_instance: 'source-b',
+        reason: 'go',
+        status: 'failed_rollback_required',
+        previous_source: 'source-a',
+        error: 'switch-job-failed',
+        outcome: 'switch_refused_future-stage',
+        outcome_message: null,
+        request_id: 'req-switch-2',
+        initiator: 'ops',
+        created_at: '2026-01-01T00:00:00Z',
+        updated_at: '2026-01-01T00:00:00Z',
+        actor: 'ops',
+        role: 'engineer',
+      },
+    })
+    renderDetail()
+    await findRail()
+
+    const configureSection = await selectStep('Configure')
+    fireEvent.click(await within(configureSection).findByRole('button', { name: 'Switch source' }))
+    fireEvent.change(within(configureSection).getByPlaceholderText(REASON_PLACEHOLDER), {
+      target: { value: 'operator requested' },
+    })
+    fireEvent.change(within(configureSection).getByRole('combobox'), { target: { value: 'source-b' } })
+    fireEvent.click(within(configureSection).getByRole('button', { name: 'Confirm switch' }))
+    await within(configureSection).findByText(/Switch failed \(switch-job-failed\)/)
+    expect(within(configureSection).queryByText('switch_refused_future-stage')).toBeNull()
+
+    const finaliseSection = await selectStep('Finalise & Review')
+    expect(
+      within(finaliseSection).getByText('Switch did not complete. Check the current source before you retry.'),
+    ).toBeTruthy()
+    expect(within(finaliseSection).queryByText('switch_refused_future-stage')).toBeNull()
+  })
+
   it('fails closed (no target offered) when the observation is stale', async () => {
     const wl = viewerWorkload()
     mkFetch({

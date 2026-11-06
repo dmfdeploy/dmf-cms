@@ -123,9 +123,8 @@ class SwitchSourceCommand:
     # UNCHANGED for compatibility — `outcome` is additive, one of the frozen
     # switch_* enums classify_switch_job_failure/ReconnectViaAwxActuator.execute
     # produce (see this module's own switch-outcome parser section below).
-    # `outcome_message` is the matching default operator copy for the
-    # rollback outcomes only (None for every other outcome — the console's
-    # expert view is expected to show the raw `outcome` code instead).
+    # `outcome_message` is the matching operator copy (None only on success);
+    # the raw `outcome` code is expert-level detail.
     outcome: Optional[str] = None
     outcome_message: Optional[str] = None
     request_id: Optional[str] = None
@@ -349,9 +348,11 @@ _SWITCH_GENERIC_JOB_OUTCOME = {
     "canceled": "switch_job_canceled",
 }
 
-# Default operator copy (frozen design, umbrella #320) — the rollback
-# outcomes only; every other outcome is rendered from its own machine code
-# by the console UI, not from a canned string here.
+# Operator copy for every outcome the console can report, so no view has to
+# show a machine token as its primary text. Each message says what happened,
+# what it means for the viewer, and what to do next. Messages claim "nothing
+# changed" only for stages the play guarantees are read-only; later stages say
+# what may already have been changed.
 _SWITCH_OUTCOME_OPERATOR_COPY = {
     SWITCH_OUTCOME_PREVIOUS_SOURCE_RESTORED: (
         "Switch did not complete; the previous source was restored. Safe to retry."
@@ -363,7 +364,89 @@ _SWITCH_OUTCOME_OPERATOR_COPY = {
         "Switch did not complete; automatic recovery did not verify. "
         "Output may be parked; follow the recovery path."
     ),
+    "switch_job_failed": (
+        "Switch did not complete and the job did not report why. The viewer may have no "
+        "active source. Check the current source, then retry."
+    ),
+    "switch_job_error": (
+        "Switch could not run because the job hit an error. The viewer may have no "
+        "active source. Check the current source, then retry."
+    ),
+    "switch_job_canceled": (
+        "The switch job was canceled before it finished. The viewer may have no active "
+        "source, or one that was not verified. Check the current source, then retry."
+    ),
+    SWITCH_OUTCOME_WATCH_TIMEOUT: (
+        "The switch job did not finish in time, so its result is unknown. The viewer may "
+        "still be switching. Wait, check the current source, then retry."
+    ),
+    SWITCH_OUTCOME_WATCH_LOST: (
+        "The console lost contact with the switch job, so its result is unknown. "
+        "Check the current source before you retry."
+    ),
 }
+
+# ``refused detail=<stage>`` copy, keyed by the stage the play was in. The
+# stage order and what each stage can already have changed come from
+# dmf-runbooks' switch-mxl-fabrics-demo.yml: the stages up to
+# baseline-capture only read; quiesce is the first stage that mutates.
+_SWITCH_NOTHING_CHANGED_COPY = (
+    "Switch was refused before it changed anything. The current source is unchanged. "
+    "Check the request, then retry."
+)
+_SWITCH_READ_ONLY_STAGE_COPY = (
+    "Switch was refused while it read the current state, before any change. "
+    "The current source is unchanged. Retry; if it repeats, check the viewer's status."
+)
+_SWITCH_REFUSED_STAGE_COPY = {
+    "pre-lock": _SWITCH_NOTHING_CHANGED_COPY,
+    "reserved-var": _SWITCH_NOTHING_CHANGED_COPY,
+    "coordinator-read": _SWITCH_READ_ONLY_STAGE_COPY,
+    "chart-resolve": _SWITCH_READ_ONLY_STAGE_COPY,
+    "baseline-capture": _SWITCH_READ_ONLY_STAGE_COPY,
+    "quiesce": (
+        "Switch stopped while it cleared the current source. The active source may "
+        "already be cleared, so the viewer may receive no source. "
+        "Check the current source, then retry."
+    ),
+    "repoint": (
+        "Switch stopped while it re-pointed the viewer. The active source is cleared, "
+        "the viewer may already point at the new source, and no rollback ran. "
+        "Check the viewer, then retry."
+    ),
+    "select": (
+        "Switch stopped before it set the new active source. The viewer was re-pointed "
+        "and verified, but no source is active. Retry the switch."
+    ),
+    "final-readback": (
+        "Switch set the new source but could not confirm it, so it may have taken "
+        "effect. Check the active source before you retry."
+    ),
+}
+# Any other allowlisted detail: the console cannot tell how far the play got.
+_SWITCH_REFUSED_FALLBACK_COPY = (
+    "Switch was refused. The console cannot tell whether anything changed. "
+    "Check the current source before you retry."
+)
+# An outcome this console version has no copy for.
+_SWITCH_UNKNOWN_OUTCOME_COPY = (
+    "Switch did not complete, and the console has no description for the result. "
+    "Check the current source before you retry."
+)
+
+
+def switch_outcome_message(outcome: str) -> Optional[str]:
+    """Operator copy for a switch outcome; ``None`` only for success."""
+    if outcome == SWITCH_OUTCOME_SUCCESS:
+        return None
+    message = _SWITCH_OUTCOME_OPERATOR_COPY.get(outcome)
+    if message:
+        return message
+    if outcome.startswith("switch_refused_"):
+        return _SWITCH_REFUSED_STAGE_COPY.get(
+            outcome.removeprefix("switch_refused_"), _SWITCH_REFUSED_FALLBACK_COPY
+        )
+    return _SWITCH_UNKNOWN_OUTCOME_COPY
 
 
 @dataclass(frozen=True)
@@ -399,21 +482,26 @@ def classify_switch_job_failure(
     job_status: str, outcome: Optional[SwitchOutcomeEvent]
 ) -> tuple[str, Optional[str]]:
     """Classify a TERMINAL, non-successful switch job into one of the
-    ``switch_*`` outcome enums.
+    ``switch_*`` outcome enums, with its operator message.
 
     ``outcome`` is the structured event, or ``None`` when there is none.
     A missing, unrecognised or detail-less event falls back to the generic
     outcome derived from ``job_status``. Pure, so tests need no AWX mocking.
     """
+    result = _classify_switch_outcome(job_status, outcome)
+    return result, switch_outcome_message(result)
+
+
+def _classify_switch_outcome(job_status: str, outcome: Optional[SwitchOutcomeEvent]) -> str:
     if outcome is not None:
         enum = _SWITCH_TOKEN_TO_OUTCOME.get(outcome.token)
         if enum:
-            return enum, _SWITCH_OUTCOME_OPERATOR_COPY[enum]
+            return enum
         # Only allowlisted details become an enum member, so an event cannot
         # mint an unbounded switch_refused_<anything> value.
         if outcome.token == "refused" and outcome.detail in KV_DETAIL_TOKENS:
-            return f"switch_refused_{outcome.detail}", None
-    return _SWITCH_GENERIC_JOB_OUTCOME.get(job_status, f"switch_job_{job_status}"), None
+            return f"switch_refused_{outcome.detail}"
+    return _SWITCH_GENERIC_JOB_OUTCOME.get(job_status, f"switch_job_{job_status}")
 
 
 class ReconnectViaAwxActuator:
@@ -658,8 +746,8 @@ class ReconnectViaAwxActuator:
                     # outcome event only. No event degrades to the generic,
                     # job-status-derived outcome; raw output is never read.
                     outcome_event = await self._fetch_switch_outcome_safe(job_id)
-                    outcome, outcome_message = classify_switch_job_failure(status, outcome_event)
-                    self._fail(command, f"switch-job-{status}", outcome=outcome, outcome_message=outcome_message)
+                    outcome, _ = classify_switch_job_failure(status, outcome_event)
+                    self._fail(command, f"switch-job-{status}", outcome=outcome)
                 return
 
             await asyncio.sleep(self._poll_interval_seconds)
@@ -688,12 +776,11 @@ class ReconnectViaAwxActuator:
         error: str,
         *,
         outcome: Optional[str] = None,
-        outcome_message: Optional[str] = None,
     ) -> None:
         command.status = SwitchStatus.FAILED_ROLLBACK_REQUIRED
         command.error = error
         command.outcome = outcome
-        command.outcome_message = outcome_message
+        command.outcome_message = switch_outcome_message(outcome) if outcome else None
         command.updated_at = datetime.now(timezone.utc)
 
 

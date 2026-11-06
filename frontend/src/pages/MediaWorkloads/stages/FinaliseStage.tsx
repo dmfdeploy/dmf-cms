@@ -524,7 +524,10 @@ export default function FinaliseStage({
                   <p className="text-muted">
                     Last switch outcome:{' '}
                     <span className={lastSwitchResult.status === 'active' ? 'text-green-400' : 'text-red-300'}>
-                      {lastSwitchResult.outcome_message ?? lastSwitchResult.outcome ?? lastSwitchResult.status}
+                      {lastSwitchResult.outcome_message ??
+                        (lastSwitchResult.status === 'active'
+                          ? 'Switch completed.'
+                          : 'Switch did not complete. Check the current source before you retry.')}
                     </span>
                   </p>
                   <p className="mt-1 font-mono text-muted">
