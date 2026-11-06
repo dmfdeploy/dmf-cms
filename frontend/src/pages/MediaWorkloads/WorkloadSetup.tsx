@@ -30,7 +30,7 @@ import PageHeading from '../../components/PageHeading'
 import { usePageTitle } from '../../hooks/usePageTitle'
 import { workloadHomePath } from '../../lib/routes'
 import ViewLiveExit from './ViewLiveExit'
-import { StaleInventoryNotice } from '.'
+import { StaleInventoryNotice, UnconfirmedInventoryNotice, inventoryUnread } from '.'
 import { InventoryWritesBlockedProvider } from '../../lib/inventoryFreshness'
 
 /**
@@ -343,8 +343,10 @@ export default function WorkloadSetup() {
   // this point means `launch` was never present in the first place: the
   // hoisted check already returned for every render where it was.
   // dmfdeploy#319: a stale inventory that lacks this workload proves nothing
-  // about now, so it must not become a "not found" claim.
-  if (!workload && data?.stale) {
+  // about now, so it must not become a "not found" claim. Neither does an
+  // unread one: once the grace window ends, the failed read comes back
+  // degraded with an empty list.
+  if (!workload && data && (data.stale || inventoryUnread(data))) {
     return (
       <div className="flex-1 overflow-y-auto p-6">
         <PageHeading>{`${slug} — Setup`}</PageHeading>
@@ -352,7 +354,7 @@ export default function WorkloadSetup() {
         <div className="panel mt-4 border border-amber-500/20 bg-amber-500/10 px-4 py-3 text-sm text-amber-200">
           This workload could not be confirmed right now. Retrying automatically.
         </div>
-        <StaleInventoryNotice data={data} />
+        <UnconfirmedInventoryNotice data={data} />
       </div>
     )
   }
