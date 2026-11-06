@@ -401,7 +401,7 @@ class _Episode:
         self.reads = []
         for i in range(count):
             self.clock.now = T0 + 5 * i
-            self.reads.append(mw._begin_read(self.key, self.clock, self.clock))
+            self.reads.append(mw._begin_read(self.clock, self.clock))
         self.clock.now = T0 + 5 * count
 
     def ok(self, i):
@@ -443,11 +443,13 @@ def test_success_completing_last_still_splits_later_failures(kind):
     ep.fail(3)
     assert ep.fail(2)["failure_since"] == _at(0)
     got = ep.ok(1)
-    assert got["failure_since"] == _at(2)
+    # Two failures (2 and 3) are newer than the suppressed success, so the
+    # episode restarts at the newest one: the documented understatement.
+    assert got["failure_since"] == _at(3)
     assert got["degraded"] is True
     assert ep.blocked() == "inventory-degraded"
     # An older failure completing after the split cannot reopen the episode.
-    assert ep.fail(0)["failure_since"] == _at(2)
+    assert ep.fail(0)["failure_since"] == _at(3)
 
 
 def test_suppressed_success_with_no_failure_after_it_leaves_no_episode(kind):
@@ -458,7 +460,7 @@ def test_suppressed_success_with_no_failure_after_it_leaves_no_episode(kind):
     got = ep.ok(1)
     assert got["failure_since"] is None and got["stale"] is False
     assert got["name"] == "r2"
-    assert mw._read_states[ep.key].failure_starts == {}
+    assert _state(ep).failure_since is None
     # A failure older than a success already seen records nothing.
     assert ep.fail(0)["failure_since"] is None
     assert ep.blocked() is None
@@ -468,46 +470,80 @@ def _state(ep):
     return mw._read_states[ep.key]
 
 
-def test_sustained_sequential_failures_keep_one_entry(kind):
-    ep = _Episode(kind, 0)
-    first = None
-    for i in range(1_000):
-        ep.clock.now = T0 + i
-        ticket, started, _ = mw._begin_read(ep.key, ep.clock, ep.clock)
-        got = mw._on_read_failure(ep.key, _DEGRADED, ticket, started, ep.clock)
-        first = first if first is not None else got["failure_since"]
-        assert len(_state(ep).failure_starts) <= 1
-    assert got["failure_since"] == first == mw._iso_utc(T0)
-    assert mw._in_flight == {}
-
-
-def test_failure_between_an_in_flight_read_and_its_success_is_kept(kind):
-    ep = _Episode(kind, 3)  # A=0 fails, B=1 in flight, C=2 fails, B succeeds
+def test_failure_then_unrelated_success_split_keeps_gate_blocked(kind):
+    ep = _Episode(kind, 4)  # A=0 fails, B=1 succeeds late, C=2 fails, D=3 stays unread
     ep.fail(0)
     ep.fail(2)
-    assert _state(ep).failure_starts.keys() == {ep.reads[0][0], ep.reads[2][0]}
-    assert ep.ok(1)["failure_since"] == _at(2)
-    assert mw._in_flight == {}
+    got = ep.ok(1)
+    assert got["failure_since"] == _at(2)
+    assert got["last_success"] is None
+    assert ep.blocked() == "inventory-degraded"
 
 
-def test_many_failures_while_an_older_read_is_in_flight_stay_bounded(kind):
-    ep = _Episode(kind, 1)  # read 0 stays in flight throughout
-    for i in range(1, 501):
-        ep.clock.now = T0 + 5 * i
-        ticket, started, _ = mw._begin_read(ep.key, ep.clock, ep.clock)
-        mw._on_read_failure(ep.key, _DEGRADED, ticket, started, ep.clock)
-        assert len(_state(ep).failure_starts) <= 2
-    assert ep.ok(0)["failure_since"] == _at(1)
-    assert len(_state(ep).failure_starts) <= 1
+@pytest.mark.parametrize("snap", [False, True])
+@pytest.mark.parametrize("a_outcome", ["ok", "fail"])
+def test_newer_success_clears_failure_while_older_read_is_pending(kind, snap, a_outcome):
+    ep = _Episode(kind, 4 if snap else 3)
+    base = 1 if snap else 0
+    a, b, c = base, base + 1, base + 2
+    if snap:
+        ep.ok(0)
+    ep.fail(b)
+    got = ep.ok(c)  # A is still pending
+    assert got["stale"] is False
+    assert got["failure_since"] is None
+    assert got["name"] == f"r{c}"
+    assert ep.blocked() is None
+    # A completing afterwards cannot bring the failure state back.
+    after = ep.ok(a) if a_outcome == "ok" else ep.fail(a)
+    assert after["stale"] is False
+    assert after["failure_since"] is None
+    assert after["name"] == f"r{c}"
+    assert ep.blocked() is None
+    assert _state(ep).last_success == T0 + 5 * c
 
 
-def test_abandoned_read_leaves_no_in_flight_ticket(monkeypatch, kind):
+def test_two_failures_newer_than_a_suppressed_success_understate_the_outage(kind):
+    ep = _Episode(kind, 4)  # A=0, B=1, C=2, D=3
+    ep.fail(0)
+    ep.fail(2)
+    ep.fail(3)
+    assert _state(ep).failure_since == T0
+    got = ep.ok(1)
+    # The true episode began at A's start; the state keeps only the newest
+    # failure after the split, never anything earlier than C.
+    assert got["failure_since"] == _at(3)
+    assert got["failure_since"] >= _at(2)
+    assert ep.blocked() == "inventory-degraded"
+
+
+def test_sustained_sequential_failures_keep_the_first_start_in_scalar_state(kind):
+    ep = _Episode(kind, 0)
+    for i in range(1_000):
+        ep.clock.now = T0 + i
+        ticket, started, _ = mw._begin_read(ep.clock, ep.clock)
+        got = mw._on_read_failure(ep.key, _DEGRADED, ticket, started, ep.clock)
+    assert got["failure_since"] == mw._iso_utc(T0)
+    state = _state(ep)
+    assert state.failure_started == T0 + 999
+    # The snapshot and the newest diagnosis are single payloads; nothing else
+    # may be a collection that grows with the number of failures.
+    for name in set(mw._ReadState.__slots__) - {"last_good", "failure_degraded"}:
+        assert not isinstance(getattr(state, name), (dict, list, set, tuple))
+
+
+@pytest.mark.parametrize("raiser", ["clock", "monotonic"])
+def test_clock_error_during_read_start_leaves_no_state(monkeypatch, kind, raiser):
     Source(monkeypatch)
 
-    def boom(*args, **kwargs):
-        raise KeyboardInterrupt
+    def boom():
+        raise RuntimeError("clock failed")
 
-    monkeypatch.setattr(mw, "load_catalog_snapshot", boom)
-    with pytest.raises(KeyboardInterrupt):
-        _read(kind, Clock())
-    assert mw._in_flight == {}
+    good = Clock()
+    with pytest.raises(RuntimeError):
+        _read(kind, boom if raiser == "clock" else good, boom if raiser == "monotonic" else good)
+    assert mw._read_states == {}
+    assert mw.inventory_write_block(ARGS[0], None, monotonic=good) is None
+    got = _read(kind, good)
+    assert got["stale"] is False and got["failure_since"] is None
+    assert mw.inventory_write_block(ARGS[0], None, monotonic=good) is None
