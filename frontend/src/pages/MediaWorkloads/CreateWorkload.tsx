@@ -13,6 +13,8 @@ import { useDraftWorkloadStore } from '../../store/draftWorkload'
 import PageHeading from '../../components/PageHeading'
 import { usePageTitle } from '../../hooks/usePageTitle'
 import { capacityRefusalMessage } from '../../lib/capacityRefusal'
+import { useGuardWrite } from '../../lib/inventoryFreshness'
+import { InventoryWritesGate, InventoryWritesNotice } from '.'
 
 /**
  * Create Media Workload — the draft leg of the guided sequential flow
@@ -131,6 +133,15 @@ type DraftWizardStep = 'identity' | FlowStepId
 const DRAFT_WIZARD_STEPS: DraftWizardStep[] = ['identity', ...FLOW_STEPS]
 
 export default function CreateWorkload() {
+  return (
+    <InventoryWritesGate>
+      <CreateWorkloadPage />
+    </InventoryWritesGate>
+  )
+}
+
+function CreateWorkloadPage() {
+  const guardWrite = useGuardWrite()
   usePageTitle('Create media workload')
   const navigate = useNavigate()
 
@@ -287,6 +298,14 @@ export default function CreateWorkload() {
 
   async function handleProvisionConfirm(reason: string) {
     if (!selectedEntry) return
+    // A refused guard sends nothing, so it is neither a launch the server
+    // refused nor one whose outcome is unknown: the panel stays armed, and
+    // its Confirm button is already withdrawn while the read is stale.
+    try {
+      guardWrite()
+    } catch {
+      return
+    }
     try {
       const result = await deployMutation.mutateAsync({
         key: selectedEntry.key,
@@ -486,6 +505,7 @@ export default function CreateWorkload() {
   return (
     <div className="flex-1 overflow-y-auto p-6">
       <PageHeading>Create media workload</PageHeading>
+      <InventoryWritesNotice />
       <div className="flex flex-wrap items-start justify-between gap-x-3 gap-y-1">
         <p className="text-sm text-muted">
           Studio identity, template, and facility placement for a workload that does not exist

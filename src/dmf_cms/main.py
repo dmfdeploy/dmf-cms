@@ -1028,6 +1028,49 @@ def _upstream_error_response(
     return JSONResponse(payload, status_code=status)
 
 
+_INVENTORY_WRITE_REFUSAL_DETAIL = {
+    "inventory-stale": (
+        "The facility inventory could not be read just now, so the console cannot confirm "
+        "it is current. No change was sent. Retry after the inventory has been read again."
+    ),
+    "inventory-degraded": (
+        "The facility inventory could not be read, so the console cannot confirm what is "
+        "deployed. No change was sent. Retry after the inventory has been read again."
+    ),
+}
+
+
+def _inventory_write_refusal(
+    request: Request, user: UserIdentity, request_id: str
+) -> JSONResponse | None:
+    """Refuse a write while this process's inventory read state is stale or degraded.
+
+    Every mutating catalog and media-workloads route calls this once, so a
+    stale inventory licenses no write whatever client sent it. Returns the
+    409 response, or None when the write may proceed. The route writes its
+    own audit line with the literal outcome ``inventory-unconfirmed``; the
+    response body says whether the read is stale or degraded. See
+    ``media_workloads.inventory_write_block`` for what counts as blocked and
+    why a never-read scope is not.
+    """
+    settings = request.app.state.settings
+    if not settings.netbox.configured:
+        return None
+    code = media_workloads.inventory_write_block(
+        settings.netbox.api_url, settings.media_tenancy.tenants_for(user.groups)
+    )
+    if code is None:
+        return None
+    return JSONResponse(
+        {
+            "error": code,
+            "detail": _INVENTORY_WRITE_REFUSAL_DETAIL[code],
+            "request_id": request_id,
+        },
+        status_code=409,
+    )
+
+
 def _audit_awx_write(
     request: Request,
     user: UserIdentity,
@@ -5261,6 +5304,10 @@ def create_app(settings: Settings | None = None, contract: AppContract | None = 
         if werr is not None:
             _audit_awx_write(request, user, action="deploy", target=key, request_id=request_id, reason=reason, outcome="invalid-workload")
             return werr
+        blocked = _inventory_write_refusal(request, user, request_id)
+        if blocked is not None:
+            _audit_awx_write(request, user, action="deploy", target=key, request_id=request_id, reason=reason, outcome="inventory-unconfirmed")
+            return blocked
         if not settings.awx.configured:
             _audit_awx_write(request, user, action="deploy", target=key, request_id=request_id, reason=reason, outcome="awx-not-configured")
             return JSONResponse({"error": "AWX API not configured", "request_id": request_id}, status_code=503)
@@ -5579,6 +5626,10 @@ def create_app(settings: Settings | None = None, contract: AppContract | None = 
             return rerr
         assert reason is not None
         request_id = uuid.uuid4().hex
+        blocked = _inventory_write_refusal(request, user, request_id)
+        if blocked is not None:
+            _audit_awx_write(request, user, action="teardown", target=key, request_id=request_id, reason=reason, outcome="inventory-unconfirmed")
+            return blocked
         if not settings.awx.configured:
             _audit_awx_write(request, user, action="teardown", target=key, request_id=request_id, reason=reason, outcome="awx-not-configured")
             return JSONResponse({"error": "AWX API not configured", "request_id": request_id}, status_code=503)
@@ -6272,6 +6323,18 @@ def create_app(settings: Settings | None = None, contract: AppContract | None = 
             return rerr
         assert reason is not None
         request_id = uuid.uuid4().hex
+        blocked = _inventory_write_refusal(request, user, request_id)
+        if blocked is not None:
+            logger.info(
+                "media-workloads clear: actor=%s role=%s request_id=%s instance=%s reason=%r outcome=%s",
+                _sanitize_audit_field(user.subject),
+                user.role,
+                request_id,
+                _sanitize_audit_field(instance),
+                reason,
+                "inventory-unconfirmed",
+            )
+            return blocked
         tenant_slugs = settings.media_tenancy.tenants_for(user.groups)
         result = await run_in_threadpool(
             media_workloads.clear_for_deployment,
@@ -6481,6 +6544,15 @@ def create_app(settings: Settings | None = None, contract: AppContract | None = 
             )
             return JSONResponse({"error": "AWX API not configured", "request_id": request_id}, status_code=503)
 
+        blocked = _inventory_write_refusal(request, user, request_id)
+        if blocked is not None:
+            _audit_awx_write(
+                request, user, action="switch-source", target=instance,
+                request_id=request_id, reason=reason, workload=source_instance,
+                outcome="inventory-unconfirmed",
+            )
+            return blocked
+
         try:
             topology_params = resolve_topology_for_receiver(receiver_instance=instance)
         except SwitchSourceError as exc:
@@ -6651,6 +6723,10 @@ def create_app(settings: Settings | None = None, contract: AppContract | None = 
             )
             return JSONResponse({"error": "AWX API not configured", "request_id": request_id}, status_code=503)
 
+        blocked = _inventory_write_refusal(request, user, request_id)
+        if blocked is not None:
+            _audit_awx_write(request, user, action="finalise-purge", target=slug, request_id=request_id, reason=reason, outcome="inventory-unconfirmed")
+            return blocked
         tenant_slugs = settings.media_tenancy.tenants_for(user.groups)
         preflight = await run_in_threadpool(
             media_workloads.resolve_purge_target,

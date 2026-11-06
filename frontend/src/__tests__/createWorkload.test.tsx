@@ -43,7 +43,7 @@
  * the bare slug rather than /setup.
  */
 import { afterEach, describe, expect, it, vi } from 'vitest'
-import { cleanup, fireEvent, render, screen, waitFor, within } from '@testing-library/react'
+import { act, cleanup, fireEvent, render, screen, waitFor, within } from '@testing-library/react'
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query'
 import { MemoryRouter, Route, Routes } from 'react-router-dom'
 import CreateWorkload from '../pages/MediaWorkloads/CreateWorkload'
@@ -103,6 +103,8 @@ interface FetchOpts {
    *  returns, simulating a persistently failing read (WorkloadSetup's own
    *  `error` branch). */
   groupedStatus?: number
+  /** dmfdeploy#319: extra fields merged into the grouped read, e.g. `stale`. */
+  groupedExtra?: Record<string, unknown>
   /** dmfdeploy#414: the `configured` flag the grouped-
    *  inventory read reports (WorkloadSetup's own unconfigured branch). */
   groupedConfigured?: boolean
@@ -125,6 +127,7 @@ function mkFetch(opts: FetchOpts = {}) {
   // Mutable so a test can simulate the launcher stamping the tag partway
   // through the journey, which is the real sequence.
   let workloads: MediaWorkload[] = opts.workloads ?? []
+  let groupedExtra: Record<string, unknown> = opts.groupedExtra ?? {}
   // Mutable, so a test can simulate the facility summary's
   // own periodic refresh returning a DIFFERENT single site mid-draft — the
   // reachable transition the confirmed-facility identity check exists for.
@@ -168,6 +171,7 @@ function mkFetch(opts: FetchOpts = {}) {
         scope: [],
         workloads,
         invalid_instances: [],
+        ...groupedExtra,
       })
     }
     const jobMatch = url.match(/\/api\/catalog\/[^/]+\/status\/(\d+)$/)
@@ -188,6 +192,9 @@ function mkFetch(opts: FetchOpts = {}) {
     fetchMock,
     setWorkloads: (next: MediaWorkload[]) => {
       workloads = next
+    },
+    setGroupedExtra: (next: Record<string, unknown>) => {
+      groupedExtra = next
     },
     setCatalog: (next: CatalogEntry[]) => {
       catalog = next
@@ -2056,5 +2063,77 @@ describe('umbrella #432 §D1 FIX ROUND: Next is never primary on a locked step',
     const configure = stepSection('Configure')
     expect(within(configure).getByText(/nothing to configure/)).toBeTruthy()
     assertNextNeutral(configure)
+  })
+})
+
+// ---- dmfdeploy#319: a stale or failed inventory read withdraws Provision ----
+
+describe('Provision: withdrawn while the inventory read is stale or has failed', () => {
+  const ONE_MINUTE_AGO = () => new Date(Date.now() - 60_000).toISOString()
+  const STALE = { stale: true, last_success: ONE_MINUTE_AGO(), failure_since: ONE_MINUTE_AGO() }
+
+  async function armWithReason(provision: HTMLElement) {
+    fireEvent.click(within(provision).getByRole('button', { name: '▶ Provision now' }))
+    fireEvent.change(within(provision).getByRole('textbox'), { target: { value: 'go' } })
+  }
+
+  async function refetchGrouped(qc: QueryClient) {
+    await act(async () => {
+      await qc.refetchQueries({ queryKey: ['media-workloads-grouped'] })
+    })
+  }
+
+  it('disables an armed Confirm when the read turns stale, sends nothing, and releases when fresh', async () => {
+    const h = mkFetch()
+    const qc = renderCreate()
+    await screen.findByRole('heading', { name: 'Identity' })
+    const provision = await reachProvision()
+    await armWithReason(provision)
+    const confirm = () => within(provision).getByTestId('confirm-deploy') as HTMLButtonElement
+    expect(confirm().disabled).toBe(false)
+
+    h.setGroupedExtra(STALE)
+    await refetchGrouped(qc)
+    await screen.findByText(/This view may be out of date/)
+    expect(confirm().disabled).toBe(true)
+    fireEvent.click(confirm())
+    expect(h.deploy).toHaveLength(0)
+
+    h.setGroupedExtra({})
+    await refetchGrouped(qc)
+    await waitFor(() => expect(confirm().disabled).toBe(false))
+    expect(screen.queryByText(/This view may be out of date/)).toBeNull()
+    fireEvent.click(confirm())
+    await screen.findByText('Deploy accepted.')
+    expect(h.deploy).toHaveLength(1)
+  })
+
+  it('also withdraws Confirm when the read has degraded past the grace window', async () => {
+    const h = mkFetch()
+    const qc = renderCreate()
+    await screen.findByRole('heading', { name: 'Identity' })
+    const provision = await reachProvision()
+    await armWithReason(provision)
+
+    h.setGroupedExtra({ degraded: true, reason: 'netbox-unreachable', workloads: [] })
+    await refetchGrouped(qc)
+    await screen.findByText(/offers no changes until a read succeeds/)
+    const confirm = within(provision).getByTestId('confirm-deploy') as HTMLButtonElement
+    expect(confirm.disabled).toBe(true)
+    fireEvent.click(confirm)
+    expect(h.deploy).toHaveLength(0)
+  })
+
+  it('does not withdraw Confirm for a degraded read caused by conflicting workload tags', async () => {
+    const h = mkFetch()
+    const qc = renderCreate()
+    await screen.findByRole('heading', { name: 'Identity' })
+    const provision = await reachProvision()
+    await armWithReason(provision)
+
+    h.setGroupedExtra({ degraded: true })
+    await refetchGrouped(qc)
+    const confirm = within(provision).getByTestId('confirm-deploy') as HTMLButtonElement
+    expect(confirm.disabled).toBe(false)
   })
 })

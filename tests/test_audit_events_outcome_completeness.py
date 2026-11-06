@@ -46,6 +46,8 @@ _KNOWN_TERMINAL_OUTCOMES: dict[str, frozenset[str]] = {
         "invalid-workload", "awx-not-configured", "entry-not-found", "no-job-template",
         "autoscale-misconfigured", "conflict-active-operation", "template-not-found",
         "conflict-active-job", "facility-busy",
+        # dmfdeploy#319: refused while the inventory read is stale or degraded.
+        "inventory-unconfirmed",
         # L3 preflight refusals (main.py:443-634) — capacity-denied
         # (Prometheus unconfigured, no supply data, or demand read
         # failure), invalid-override (malformed override flag),
@@ -63,7 +65,7 @@ _KNOWN_TERMINAL_OUTCOMES: dict[str, frozenset[str]] = {
     "teardown": frozenset({
         "awx-not-configured", "entry-not-found", "no-job-template", "autoscale-misconfigured",
         "conflict-active-operation", "template-not-found", "conflict-active-job", "facility-busy",
-        "lifecycle-jt-refused",
+        "lifecycle-jt-refused", "inventory-unconfirmed",
     }),
     "rollback": frozenset({
         "invalid-run-id", "awx-not-configured", "autoscale-misconfigured", "facility-busy",

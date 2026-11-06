@@ -1,4 +1,4 @@
-import { useMemo } from 'react'
+import { useContext, useMemo, type ReactNode } from 'react'
 import { Link } from 'react-router-dom'
 import { AlertCircle, AlertTriangle, CheckCircle2, HelpCircle, Info, RefreshCw, type LucideIcon } from 'lucide-react'
 import { useMediaWorkloadsGrouped } from '../../api/hooks'
@@ -11,6 +11,10 @@ import Tile from '../../components/Tile'
 import CanvasGrid from '../../components/CanvasGrid'
 import Badge, { type BadgeTone } from '../../components/Badge'
 import { usePageTitle } from '../../hooks/usePageTitle'
+import {
+  InventoryWritesBlockedProvider,
+  InventoryWritesBlockReasonContext,
+} from '../../lib/inventoryFreshness'
 import { workloadHomePath } from '../../lib/routes'
 import {
   LIVE_TILE_CAP,
@@ -193,6 +197,60 @@ export function StaleInventoryNotice({
         until a read succeeds. Retrying automatically.
       </p>
       <p className="mt-1">{freshnessCopy(data)}</p>
+    </div>
+  )
+}
+
+/**
+ * dmfdeploy#319: wraps a page that sends writes outside the media-workloads
+ * screens (Catalog, Create). It reads the same inventory the rest of the
+ * console polls and withdraws every write below it, through the same context
+ * `useGuardWrite` and the shared confirm panels read, while that read is
+ * stale or has failed, including when the request to the console's own API
+ * failed, since the console then cannot confirm anything. A degraded read
+ * caused by a conflicting workload tag is not a failed read and does not block.
+ */
+export function InventoryWritesGate({ children }: { children: ReactNode }) {
+  const { data, isError } = useMediaWorkloadsGrouped()
+  const failedRead =
+    data?.degraded === true &&
+    (data.reason === 'netbox-unreachable' || data.reason === 'netbox-error')
+  const stale = data?.stale === true
+  const blockReason =
+    stale || failedRead || isError
+      ? {
+          stale,
+          reason: failedRead ? data?.reason : undefined,
+          last_success: data?.last_success,
+          failure_since: data?.failure_since,
+        }
+      : null
+  return (
+    <InventoryWritesBlockReasonContext.Provider value={blockReason}>
+      <InventoryWritesBlockedProvider value={blockReason !== null}>
+        {children}
+      </InventoryWritesBlockedProvider>
+    </InventoryWritesBlockReasonContext.Provider>
+  )
+}
+
+/** Renders why writes are withdrawn, inside an `InventoryWritesGate`; nothing otherwise. */
+export function InventoryWritesNotice() {
+  const blocked = useContext(InventoryWritesBlockReasonContext)
+  if (blocked === null) return null
+  if (blocked.stale) return <StaleInventoryNotice data={blocked} />
+  return (
+    <div
+      role="status"
+      className="panel mt-4 border border-amber-500/20 bg-amber-500/10 px-4 py-3 text-sm text-amber-200"
+    >
+      <p>
+        {blocked.reason
+          ? degradedReasonCopy(blocked.reason)
+          : 'The console could not refresh the facility inventory just now, so it cannot confirm what is deployed.'}{' '}
+        The console offers no changes until a read succeeds. Retrying automatically.
+      </p>
+      {blocked.reason && <p className="mt-1">{freshnessCopy(blocked)}</p>}
     </div>
   )
 }
