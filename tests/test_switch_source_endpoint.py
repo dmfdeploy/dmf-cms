@@ -423,7 +423,7 @@ def test_failed_rollback_required_is_200_not_an_http_error(monkeypatch, caplog):
     # umbrella #320: the new additive outcome fields ride the same response
     # envelope — no outcome event is mocked, so the generic job-status mapping applies.
     assert body["outcome"] == "switch_job_failed"
-    assert body["outcome_message"] is None
+    assert body["outcome_message"].startswith("Switch did not complete")
     assert any("outcome=failed_rollback_required" in m for m in _audit_lines(caplog))
 
 
