@@ -177,3 +177,48 @@ def test_admin_health_pings_run_off_the_loop_and_side_by_side(monkeypatch):
     assert health_status == 200 and admin_status == 200
     assert health_delay < HEALTHZ_BUDGET_SECONDS
     assert admin_total < 3.0  # four sequential pings would take 6 s
+
+
+@pytest.mark.parametrize(
+    ("path", "patch_target"),
+    [
+        ("/api/admin/users", "dmf_cms.main.list_users"),
+        ("/api/admin/groups", "dmf_cms.main.list_groups"),
+        ("/api/admin/jobs", "dmf_cms.main.list_recent_jobs"),
+        ("/api/workflows", "dmf_cms.main.list_job_templates"),
+        ("/api/changes/jobs", "dmf_cms.main.list_recent_jobs"),
+    ],
+)
+def test_offloaded_routes_never_block_healthz(monkeypatch, path, patch_target):
+    """A blocking upstream call in an async handler stalls /healthz for as long
+    as it blocks; moving any of these back onto the loop fails this test."""
+    from dmf_cms.settings import AuthentikSettings, AWXSettings
+
+    def hang(*args, **kwargs):
+        time.sleep(1.0)
+        return []
+
+    monkeypatch.setattr(patch_target, hang)
+    settings = Settings(
+        dev_groups=("dmf-console-admin",),
+        authentik=AuthentikSettings(api_url="http://a.invalid", api_token="t"),
+        awx=AWXSettings(api_url="http://b.invalid", api_token="t"),
+    )
+    app = create_app(settings=settings)
+
+    async def scenario():
+        transport = httpx.ASGITransport(app=app)
+        async with httpx.AsyncClient(transport=transport, base_url="http://console") as client:
+            await client.get("/auth/login", follow_redirects=False)
+            started = time.monotonic()
+            slow = asyncio.create_task(client.get(path))
+            await asyncio.sleep(0.2)  # a blocked loop delays this wake-up too
+            health = await client.get("/healthz")
+            delay = time.monotonic() - started - 0.2
+            response = await slow
+            return health.status_code, delay, response.status_code
+
+    status, delay, route_status = asyncio.run(scenario())
+    assert status == 200
+    assert delay < 0.5
+    assert route_status != 404  # the route exists and was reached

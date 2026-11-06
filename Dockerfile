@@ -47,4 +47,7 @@ RUN pip install --no-cache-dir . && \
 
 EXPOSE 8000
 
-CMD ["uvicorn", "dmf_cms.main:app", "--host", "0.0.0.0", "--port", "8000"]
+# Bound shutdown: open connections and running work must not hold the process
+# past the pod's 30 s termination grace period (the chart sets none, so the
+# Kubernetes default applies), after which the kubelet kills it.
+CMD ["uvicorn", "dmf_cms.main:app", "--host", "0.0.0.0", "--port", "8000", "--timeout-graceful-shutdown", "10"]
