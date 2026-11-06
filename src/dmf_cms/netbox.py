@@ -8,6 +8,10 @@ import urllib.error
 import urllib.parse
 import urllib.request
 
+# A stalled NetBox must give up well inside the liveness window (3 probes x
+# 20 s) so a hung read frees its worker thread long before kubelet acts.
+REQUEST_TIMEOUT_SECONDS = 10
+
 
 class NetboxAPIError(Exception):
     """Raised when the NetBox API returns a non-2xx response."""
@@ -43,7 +47,7 @@ def _request(
     req = urllib.request.Request(url, headers=headers, method=method, data=data)
 
     try:
-        with urllib.request.urlopen(req, timeout=30, context=ssl_context) as resp:
+        with urllib.request.urlopen(req, timeout=REQUEST_TIMEOUT_SECONDS, context=ssl_context) as resp:
             raw = resp.read()
             return json.loads(raw) if raw else {}
     except urllib.error.HTTPError as exc:

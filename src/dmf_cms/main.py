@@ -3659,7 +3659,7 @@ def create_app(settings: Settings | None = None, contract: AppContract | None = 
     @app.get("/auth/login", response_class=HTMLResponse, name="login")
     async def login(request: Request):
         if settings.oidc.configured:
-            discovery = discovery_document(settings.oidc)
+            discovery = await run_in_threadpool(discovery_document, settings.oidc)
             state = new_state()
             nonce = new_state()
             code_verifier = new_pkce_verifier()
@@ -3721,7 +3721,7 @@ def create_app(settings: Settings | None = None, contract: AppContract | None = 
         # advertises no end-session endpoint.
         if settings.oidc.configured:
             try:
-                discovery = discovery_document(settings.oidc)
+                discovery = await run_in_threadpool(discovery_document, settings.oidc)
                 end_session = build_end_session_url(
                     discovery,
                     settings.oidc,
@@ -3763,9 +3763,10 @@ def create_app(settings: Settings | None = None, contract: AppContract | None = 
         if not code or not state or request.session.get("oidc_state") != state:
             return RedirectResponse(url="/auth/login", status_code=302)
 
-        discovery = discovery_document(settings.oidc)
+        discovery = await run_in_threadpool(discovery_document, settings.oidc)
         code_verifier = str(request.session.get("oidc_code_verifier", ""))
-        token = exchange_code_for_token(
+        token = await run_in_threadpool(
+            exchange_code_for_token,
             discovery,
             settings.oidc,
             code,
@@ -3775,7 +3776,7 @@ def create_app(settings: Settings | None = None, contract: AppContract | None = 
         access_token = str(token.get("access_token", ""))
         if not access_token:
             return RedirectResponse(url="/", status_code=302)
-        claims = fetch_userinfo(discovery, access_token)
+        claims = await run_in_threadpool(fetch_userinfo, discovery, access_token)
         store_user(request.session, user_from_claims(claims))
         return RedirectResponse(url=_base_path_url("/", settings), status_code=302)
 
@@ -4598,7 +4599,7 @@ def create_app(settings: Settings | None = None, contract: AppContract | None = 
         if not settings.prometheus.configured:
             return JSONResponse({"alerts": []})
         try:
-            alerts = prometheus.list_alerts(url=settings.prometheus.url)
+            alerts = await run_in_threadpool(prometheus.list_alerts, url=settings.prometheus.url)
             return JSONResponse({"alerts": [prometheus.flatten_alert(a) for a in alerts]})
         except Exception as exc:
             # #652: PrometheusAPIError's str() embeds the upstream body.
@@ -4612,7 +4613,7 @@ def create_app(settings: Settings | None = None, contract: AppContract | None = 
         if not settings.prometheus.configured:
             return JSONResponse({"targets": []})
         try:
-            targets = prometheus.list_targets(url=settings.prometheus.url)
+            targets = await run_in_threadpool(prometheus.list_targets, url=settings.prometheus.url)
             return JSONResponse({"targets": [prometheus.flatten_target(t) for t in targets]})
         except Exception as exc:
             # #652: PrometheusAPIError's str() embeds the upstream body.
@@ -4631,25 +4632,29 @@ def create_app(settings: Settings | None = None, contract: AppContract | None = 
                 "pvc_usage_percent": 0,
             })
         try:
-            cpu_result = prometheus.query(
+            cpu_result = await run_in_threadpool(
+                prometheus.query,
                 url=settings.prometheus.url,
                 expr='100 - (avg(rate(node_cpu_seconds_total{mode="idle"}[5m])) * 100)',
             )
             cpu = float(cpu_result[0]["value"][1]) if cpu_result else 0
 
-            mem_result = prometheus.query(
+            mem_result = await run_in_threadpool(
+                prometheus.query,
                 url=settings.prometheus.url,
                 expr="100 * (1 - node_memory_MemAvailable_bytes / node_memory_MemTotal_bytes)",
             )
             mem = float(mem_result[0]["value"][1]) if mem_result else 0
 
-            restarts_result = prometheus.query(
+            restarts_result = await run_in_threadpool(
+                prometheus.query,
                 url=settings.prometheus.url,
                 expr="sum(increase(kube_pod_container_status_restarts_total[24h]))",
             )
             restarts = int(float(restarts_result[0]["value"][1])) if restarts_result else 0
 
-            pvc_result = prometheus.query(
+            pvc_result = await run_in_threadpool(
+                prometheus.query,
                 url=settings.prometheus.url,
                 expr="sum(kubelet_volume_stats_used_bytes) / sum(kubelet_volume_stats_capacity_bytes) * 100",
             )
@@ -4943,7 +4948,8 @@ def create_app(settings: Settings | None = None, contract: AppContract | None = 
         if not settings.forgejo.configured:
             return JSONResponse({"repos": [], "reason": "forgejo-unconfigured"})
         try:
-            repos = forgejo.list_repos(
+            repos = await run_in_threadpool(
+                forgejo.list_repos,
                 api_url=settings.forgejo.api_url,
                 api_token=settings.forgejo.api_token,
             )
@@ -4957,7 +4963,8 @@ def create_app(settings: Settings | None = None, contract: AppContract | None = 
                 repo_name = repo.get("name", "")
 
                 try:
-                    commits = forgejo.list_commits(
+                    commits = await run_in_threadpool(
+                        forgejo.list_commits,
                         api_url=settings.forgejo.api_url,
                         api_token=settings.forgejo.api_token,
                         owner=owner,
@@ -5013,7 +5020,8 @@ def create_app(settings: Settings | None = None, contract: AppContract | None = 
         if not settings.forgejo.configured:
             return JSONResponse({"pulls": [], "reason": "forgejo-unconfigured"})
         try:
-            repos = forgejo.list_repos(
+            repos = await run_in_threadpool(
+                forgejo.list_repos,
                 api_url=settings.forgejo.api_url,
                 api_token=settings.forgejo.api_token,
             )
@@ -5039,7 +5047,8 @@ def create_app(settings: Settings | None = None, contract: AppContract | None = 
                 repo_name = repo.get("name", "")
 
                 try:
-                    pulls = forgejo.list_pulls(
+                    pulls = await run_in_threadpool(
+                        forgejo.list_pulls,
                         api_url=settings.forgejo.api_url,
                         api_token=settings.forgejo.api_token,
                         owner=owner,
@@ -5296,7 +5305,8 @@ def create_app(settings: Settings | None = None, contract: AppContract | None = 
         for entry in index.values():
             status = "unknown"
             if settings.netbox.configured and entry.provision:
-                status = get_lifecycle_status(
+                status = await run_in_threadpool(
+                    get_lifecycle_status,
                     entry,
                     settings.netbox.api_url,
                     settings.netbox.api_token,
@@ -6176,7 +6186,8 @@ def create_app(settings: Settings | None = None, contract: AppContract | None = 
         for entry in index.values():
             status = "unknown"
             if settings.netbox.configured and entry.provision:
-                status = get_lifecycle_status(
+                status = await run_in_threadpool(
+                    get_lifecycle_status,
                     entry,
                     settings.netbox.api_url,
                     settings.netbox.api_token,
@@ -6201,7 +6212,7 @@ def create_app(settings: Settings | None = None, contract: AppContract | None = 
             return JSONResponse(
                 {"configured": False, "nodes": [], "flow": {}, "transport": {}, "reachable": False}
             )
-        data = mxl.fetch_status(settings.mxl.endpoints)
+        data = await run_in_threadpool(mxl.fetch_status, settings.mxl.endpoints)
         data["configured"] = True
         return JSONResponse(data)
 
@@ -6212,7 +6223,7 @@ def create_app(settings: Settings | None = None, contract: AppContract | None = 
             return err
         if not settings.mxl.configured:
             return JSONResponse({"error": "MXL endpoints not configured"}, status_code=503)
-        jpeg = mxl.fetch_preview(settings.mxl.endpoints, role)
+        jpeg = await run_in_threadpool(mxl.fetch_preview, settings.mxl.endpoints, role)
         if jpeg is None:
             return JSONResponse({"error": "preview unavailable"}, status_code=404)
         return Response(content=jpeg, media_type="image/jpeg", headers={"Cache-Control": "no-store"})
