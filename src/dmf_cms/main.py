@@ -96,6 +96,7 @@ import json
 import logging
 import re
 import sys
+import threading
 import time
 import urllib.error
 import uuid
@@ -1289,40 +1290,41 @@ def _bootstrap_console_groups(settings: Settings) -> None:
             )
 
 
-async def _bootstrap_console_groups_in_background(settings: Settings) -> None:
-    """Seed the console groups without holding up startup.
+def _start_console_group_bootstrap(settings: Settings) -> threading.Thread:
+    """Seed the console groups without holding up startup or shutdown.
 
-    Seeding is best-effort and nothing in the request path reads its result:
-    roles come from the signed-in user's own claims. Running it before the
-    app serves let a slow Authentik (five calls, up to 15 s each) outlast the
-    liveness probe, so the pod restarted before it ever answered.
+    Running it before the app serves let a slow Authentik (five calls, up to
+    15 s each) outlast the liveness probe, so the pod restarted before it ever
+    answered. It runs on a daemon thread, not the request worker pool, whose
+    threads keep the process alive until their current call returns.
+
+    A late seeding only delays two things: /api/admin/groups listing the
+    console groups, and the bootstrap user joining the admin group.
     """
-    try:
-        await run_in_threadpool(_bootstrap_console_groups, settings)
-    except Exception as exc:
-        logger.warning("console group bootstrap failed: %s", _sanitize_audit_field(str(exc)))
+    def run() -> None:
+        try:
+            _bootstrap_console_groups(settings)
+        except Exception as exc:
+            logger.warning("console group bootstrap failed: %s", _sanitize_audit_field(str(exc)))
+
+    thread = threading.Thread(target=run, name="console-group-bootstrap", daemon=True)
+    thread.start()
+    return thread
 
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
-    # Kept on app.state so the task is not garbage-collected mid-run.
-    app.state.group_bootstrap_task = asyncio.create_task(
-        _bootstrap_console_groups_in_background(app.state.settings)
-    )
+    _start_console_group_bootstrap(app.state.settings)
     app.state.operations = OperationStore(ttl_seconds=3600)
     app.state.operation_tasks: set[asyncio.Task] = set()
     # Watchers live in this process. The audit read compares a dispatch row's
-    # time with this instant to tell "the console restarted while it ran"
-    # from "still being watched".
+    # time with this instant: an older row with no outcome is one this
+    # process cannot vouch for.
     app.state.started_ns = time.time_ns()
     # umbrella #201 WP5: a dedicated store, not folded into OperationStore —
     # see switch_source.SwitchCommandStore's own docstring for why.
     app.state.switch_commands = SwitchCommandStore(ttl_seconds=3600)
-    try:
-        yield
-    finally:
-        # The seeding call may still be waiting on Authentik; shutdown must not.
-        app.state.group_bootstrap_task.cancel()
+    yield
 
 
 async def _post_wake_template_lookup(settings, name: str) -> dict | None:
@@ -3860,7 +3862,8 @@ def create_app(settings: Settings | None = None, contract: AppContract | None = 
             return JSONResponse({"error": "no enrollment flow configured"}, status_code=503)
 
         try:
-            result = create_invitation(
+            result = await run_in_threadpool(
+                create_invitation,
                 api_url=settings.authentik.api_url,
                 api_token=settings.authentik.api_token,
                 flow_slug=settings.authentik.enrollment_flow_slug,
@@ -4010,7 +4013,8 @@ def create_app(settings: Settings | None = None, contract: AppContract | None = 
         # is a local failure after AWX replied, so it must not be labelled as
         # AWX state. It takes the framework's generic 500 (no detail leaks).
         try:
-            templates = list_job_templates(
+            templates = await run_in_threadpool(
+                list_job_templates,
                 api_url=settings.awx.api_url,
                 api_token=settings.awx.api_token,
                 ssl_verify=settings.awx.ssl_verify,
@@ -4130,7 +4134,8 @@ def create_app(settings: Settings | None = None, contract: AppContract | None = 
 
         # Sync flow (autoscale disabled)
         try:
-            template = lookup_job_template_by_name(
+            template = await run_in_threadpool(
+                lookup_job_template_by_name,
                 api_url=settings.awx.api_url,
                 api_token=settings.awx.api_token,
                 name=workflow_name,
@@ -4143,7 +4148,8 @@ def create_app(settings: Settings | None = None, contract: AppContract | None = 
             # codex R2-2: lifecycle-mapped JTs are refused above, before the
             # async/sync split — by construction, `lifecycle` is always
             # None here. Non-catalog JTs only.
-            job_id = launch_job(
+            job_id = await run_in_threadpool(
+                launch_job,
                 api_url=settings.awx.api_url,
                 api_token=settings.awx.api_token,
                 job_template_id=template["id"],
@@ -4162,7 +4168,8 @@ def create_app(settings: Settings | None = None, contract: AppContract | None = 
         if not settings.awx.configured:
             return JSONResponse({"error": "AWX API not configured"}, status_code=503)
         try:
-            info = get_job_status(
+            info = await run_in_threadpool(
+                get_job_status,
                 api_url=settings.awx.api_url,
                 api_token=settings.awx.api_token,
                 job_id=job_id,
@@ -4388,11 +4395,19 @@ def create_app(settings: Settings | None = None, contract: AppContract | None = 
                 logger.warning("admin health: Prometheus unreachable: %s", _sanitize_audit_field(str(exc)))
                 return {"connected": False, "error": "Prometheus is unreachable"}
 
+        # Each ping blocks on its own socket. Run them side by side off the
+        # loop so one admin request waits for the slowest upstream, not the sum.
+        authentik_health, awx_health, netbox_health, prometheus_health = await asyncio.gather(
+            run_in_threadpool(_ping_authentik),
+            run_in_threadpool(_ping_awx),
+            run_in_threadpool(_ping_netbox),
+            run_in_threadpool(_ping_prometheus),
+        )
         return JSONResponse({
-            "authentik": _ping_authentik(),
-            "awx": _ping_awx(),
-            "netbox": _ping_netbox(),
-            "prometheus": _ping_prometheus(),
+            "authentik": authentik_health,
+            "awx": awx_health,
+            "netbox": netbox_health,
+            "prometheus": prometheus_health,
         })
 
     @app.get("/api/admin/users")
@@ -4406,7 +4421,8 @@ def create_app(settings: Settings | None = None, contract: AppContract | None = 
         if not settings.authentik.configured:
             return JSONResponse({"error": "Authentik not configured"}, status_code=503)
 
-        raw_users = list_users(
+        raw_users = await run_in_threadpool(
+            list_users,
             api_url=settings.authentik.api_url,
             api_token=settings.authentik.api_token,
         )
@@ -4466,7 +4482,8 @@ def create_app(settings: Settings | None = None, contract: AppContract | None = 
         if not settings.awx.configured:
             return JSONResponse({"jobs": []})
 
-        raw_jobs = list_recent_jobs(
+        raw_jobs = await run_in_threadpool(
+            list_recent_jobs,
             api_url=settings.awx.api_url,
             api_token=settings.awx.api_token,
             ssl_verify=settings.awx.ssl_verify,
@@ -4511,7 +4528,8 @@ def create_app(settings: Settings | None = None, contract: AppContract | None = 
             return JSONResponse({"groups": []})
 
         try:
-            groups_data = list_groups(
+            groups_data = await run_in_threadpool(
+                list_groups,
                 api_url=settings.authentik.api_url,
                 api_token=settings.authentik.api_token,
             )
@@ -4933,7 +4951,8 @@ def create_app(settings: Settings | None = None, contract: AppContract | None = 
         if not settings.awx.configured:
             return JSONResponse({"jobs": [], "reason": "awx-unconfigured"})
         try:
-            jobs_data = list_recent_jobs(
+            jobs_data = await run_in_threadpool(
+                list_recent_jobs,
                 api_url=settings.awx.api_url,
                 api_token=settings.awx.api_token,
                 ssl_verify=settings.awx.ssl_verify,
@@ -5545,7 +5564,8 @@ def create_app(settings: Settings | None = None, contract: AppContract | None = 
 
         # Sync flow (autoscale disabled)
         try:
-            template = lookup_job_template_by_name(
+            template = await run_in_threadpool(
+                lookup_job_template_by_name,
                 api_url=settings.awx.api_url,
                 api_token=settings.awx.api_token,
                 name=jt_name,
@@ -5564,7 +5584,8 @@ def create_app(settings: Settings | None = None, contract: AppContract | None = 
             # in-flight, return it instead of launching a duplicate (defends
             # against double-click / two tabs / slow render — the real guard,
             # backend-side). See find_active_job_for_template.
-            active = find_active_job_for_template(
+            active = await run_in_threadpool(
+                find_active_job_for_template,
                 api_url=settings.awx.api_url,
                 api_token=settings.awx.api_token,
                 job_template_id=template["id"],
@@ -5606,14 +5627,16 @@ def create_app(settings: Settings | None = None, contract: AppContract | None = 
             # check-to-launch TOCTOU window; the AWX-layer concurrency cap
             # (umbrella #254) is the backstop, not closed here.
             if opposite_jt_name:
-                opposite_template = lookup_job_template_by_name(
+                opposite_template = await run_in_threadpool(
+                    lookup_job_template_by_name,
                     api_url=settings.awx.api_url,
                     api_token=settings.awx.api_token,
                     name=opposite_jt_name,
                     ssl_verify=settings.awx.ssl_verify,
                 )
                 if opposite_template is not None:
-                    opposite_active = find_active_job_for_template(
+                    opposite_active = await run_in_threadpool(
+                        find_active_job_for_template,
                         api_url=settings.awx.api_url,
                         api_token=settings.awx.api_token,
                         job_template_id=opposite_template["id"],
@@ -5668,7 +5691,8 @@ def create_app(settings: Settings | None = None, contract: AppContract | None = 
             )
             if topology_err is not None:
                 return topology_err
-            job_id = launch_job(
+            job_id = await run_in_threadpool(
+                launch_job,
                 api_url=settings.awx.api_url,
                 api_token=settings.awx.api_token,
                 job_template_id=template["id"],
@@ -5817,7 +5841,8 @@ def create_app(settings: Settings | None = None, contract: AppContract | None = 
 
         # Sync flow (autoscale disabled)
         try:
-            template = lookup_job_template_by_name(
+            template = await run_in_threadpool(
+                lookup_job_template_by_name,
                 api_url=settings.awx.api_url,
                 api_token=settings.awx.api_token,
                 name=jt_name,
@@ -5832,7 +5857,8 @@ def create_app(settings: Settings | None = None, contract: AppContract | None = 
             ops_store_for_check = getattr(request.app.state, "operations", None)
             # Idempotency guard (symmetric with deploy): return an in-flight
             # teardown job for this template instead of launching a duplicate.
-            active = find_active_job_for_template(
+            active = await run_in_threadpool(
+                find_active_job_for_template,
                 api_url=settings.awx.api_url,
                 api_token=settings.awx.api_token,
                 job_template_id=template["id"],
@@ -5866,14 +5892,16 @@ def create_app(settings: Settings | None = None, contract: AppContract | None = 
             # one. Residual check-to-launch TOCTOU window; the AWX-layer
             # concurrency cap (umbrella #254) is the backstop, not closed here.
             if opposite_jt_name:
-                opposite_template = lookup_job_template_by_name(
+                opposite_template = await run_in_threadpool(
+                    lookup_job_template_by_name,
                     api_url=settings.awx.api_url,
                     api_token=settings.awx.api_token,
                     name=opposite_jt_name,
                     ssl_verify=settings.awx.ssl_verify,
                 )
                 if opposite_template is not None:
-                    opposite_active = find_active_job_for_template(
+                    opposite_active = await run_in_threadpool(
+                        find_active_job_for_template,
                         api_url=settings.awx.api_url,
                         api_token=settings.awx.api_token,
                         job_template_id=opposite_template["id"],
@@ -5904,7 +5932,8 @@ def create_app(settings: Settings | None = None, contract: AppContract | None = 
                     },
                     status_code=409,
                 )
-            job_id = launch_job(
+            job_id = await run_in_threadpool(
+                launch_job,
                 api_url=settings.awx.api_url,
                 api_token=settings.awx.api_token,
                 job_template_id=template["id"],
@@ -6014,7 +6043,8 @@ def create_app(settings: Settings | None = None, contract: AppContract | None = 
         # check/auto-rollback/outcome-surfacing machinery has teeth here
         # in the shipped default (autoscale-disabled) mode too.
         try:
-            template = lookup_job_template_by_name(
+            template = await run_in_threadpool(
+                lookup_job_template_by_name,
                 api_url=settings.awx.api_url,
                 api_token=settings.awx.api_token,
                 name=settings.l3.rollback_jt_name,
@@ -6033,7 +6063,8 @@ def create_app(settings: Settings | None = None, contract: AppContract | None = 
             # branch. Retrieved here (before the already-active check)
             # since codex R3-4 needs it there too.
             ops_store_for_check = getattr(request.app.state, "operations", None)
-            active = find_active_job_for_template(
+            active = await run_in_threadpool(
+                find_active_job_for_template,
                 api_url=settings.awx.api_url,
                 api_token=settings.awx.api_token,
                 job_template_id=template["id"],
@@ -6080,7 +6111,8 @@ def create_app(settings: Settings | None = None, contract: AppContract | None = 
                     },
                     status_code=409,
                 )
-            job_id = launch_job(
+            job_id = await run_in_threadpool(
+                launch_job,
                 api_url=settings.awx.api_url,
                 api_token=settings.awx.api_token,
                 job_template_id=template["id"],
@@ -6197,7 +6229,8 @@ def create_app(settings: Settings | None = None, contract: AppContract | None = 
         if key not in index:
             return JSONResponse({"error": f"catalog entry '{key}' not found"}, status_code=404)
         try:
-            info = get_job_status(
+            info = await run_in_threadpool(
+                get_job_status,
                 api_url=settings.awx.api_url,
                 api_token=settings.awx.api_token,
                 job_id=job_id,

@@ -65,7 +65,7 @@ def read(monkeypatch, timed_lines, *, process_started_ns=PROCESS_STARTED):
 def test_a_dispatch_from_before_the_restart_reads_unknown_and_names_the_job(monkeypatch):
     out = read(monkeypatch, [(1000, dispatch("rid-1")), (1010, attached("rid-1", 103))])["rid-1"]
     assert out["state"] == "unknown"
-    assert "restarted" in out["headline"]
+    assert out["headline"] == "Outcome not recorded"
     assert "103" in out["meaning"]
     assert out["next_step"]
 
@@ -73,7 +73,7 @@ def test_a_dispatch_from_before_the_restart_reads_unknown_and_names_the_job(monk
 def test_a_dispatch_from_before_the_restart_with_no_job_still_reads_unknown(monkeypatch):
     out = read(monkeypatch, [(1000, dispatch("rid-1"))])["rid-1"]
     assert out["state"] == "unknown"
-    assert "number" not in out["meaning"]
+    assert "job" in out["meaning"] and "automation job 1" not in out["meaning"]
 
 
 def test_a_dispatch_after_the_restart_still_reads_in_flight(monkeypatch):
@@ -221,7 +221,7 @@ def test_a_preflight_row_is_never_called_a_restart_loss(monkeypatch, token):
     ]
     events = audit_events_by_row(monkeypatch, lines)
     pre = next(e for e in events if e["outcome"]["detail"] == token or e["at_ns"] == str(1000 * S))
-    assert "restarted" not in pre["outcome"].get("headline", "")
+    assert pre["outcome"].get("headline") != "Outcome not recorded"
     assert pre["outcome"]["state"] == "in_flight"
 
 
@@ -242,10 +242,28 @@ def audit_events_by_row(monkeypatch, timed_lines):
 
 def test_a_dispatch_with_a_job_names_the_job_in_plain_words(monkeypatch):
     out = read(monkeypatch, [(1000, dispatch("rid-1")), (1010, attached("rid-1", 103))])["rid-1"]
-    assert out["meaning"].startswith("The console restarted while automation job 103 was running")
+    assert out["meaning"].startswith("The console has no record of automation job 103 finishing")
 
 
 def test_a_dispatch_without_a_job_does_not_claim_a_job_ran(monkeypatch):
     out = read(monkeypatch, [(1000, dispatch("rid-1"))])["rid-1"]
-    assert "was running" not in out["meaning"]
     assert "may not have started" in out["meaning"]
+    assert "automation job " not in out["meaning"].replace("An automation job may", "")
+
+
+def test_the_wording_claims_neither_a_restart_nor_a_running_job(monkeypatch):
+    for lines in ([(1000, dispatch("rid-1"))], [(1000, dispatch("rid-1")), (1010, attached("rid-1", 103))]):
+        out = read(monkeypatch, lines)["rid-1"]
+        text = " ".join(str(out[k]) for k in ("headline", "meaning", "next_step")).lower()
+        assert "restart" not in text
+        assert "was running" not in text
+
+
+def test_another_console_still_watching_replaces_the_wording_with_the_real_outcome(monkeypatch):
+    # An older row, read by a console that started later: until the console
+    # that holds the watcher writes its outcome the row says "not recorded"
+    # (still true), and afterwards it shows what happened.
+    before = [(1000, dispatch("rid-1")), (1010, attached("rid-1", 103))]
+    assert read(monkeypatch, before)["rid-1"]["headline"] == "Outcome not recorded"
+    after = before + [(1150, terminal("rid-1", "run_failed"))]
+    assert read(monkeypatch, after)["rid-1"]["state"] == "failed"

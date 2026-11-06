@@ -1031,31 +1031,29 @@ def _unknown_outcome() -> dict[str, object]:
     }
 
 
-def _restarted_outcome(job_id: str) -> dict[str, object]:
-    """The honest answer for a dispatch whose watcher died with the process
-    that held it. The console did not see how the request ended."""
+def _not_recorded_outcome(job_id: str) -> dict[str, object]:
+    """What the log shows for a dispatch older than this process with no
+    outcome: only that none was recorded. It does not say why (a restart, or
+    another console still watching) or what the job is doing, so the copy
+    claims neither."""
     if job_id:
         meaning = (
-            f"The console restarted while automation job {job_id} was running, "
-            "so it did not see the job finish. The job may have succeeded, "
-            "failed or still be running."
+            f"The console has no record of automation job {job_id} finishing. "
+            "The job may have succeeded, failed or still be running."
         )
     else:
         # The dispatch line is written before AWX wakes, so with no attach
         # record there is no evidence a job ever started.
         meaning = (
-            "The console restarted before it saw this request finish. An "
-            "automation job may not have started, or may have run without the "
-            "console seeing it."
+            "The console has no record of this request finishing. An "
+            "automation job may not have started, or may have run without "
+            "the console recording it."
         )
     return {
         "state": "unknown",
-        "headline": "Outcome unknown: the console restarted",
+        "headline": "Outcome not recorded",
         "meaning": meaning,
-        "next_step": (
-            "Check the workload's current state in Workspace or Activity → "
-            "Jobs before you try again."
-        ),
+        "next_step": "Check the workload's current state before you try again.",
         "detail": "",
     }
 
@@ -1129,11 +1127,11 @@ def _age_stale_in_flight(
     return _unknown_outcome()
 
 
-def _written_before_process_start(
+def _older_than_this_process(
     outcome: dict[str, object], ts_ns_str: str, process_started_ns: int | None,
 ) -> bool:
-    """True for an 'in_flight' row older than this process. Its watcher ran
-    in a process that no longer exists, so nothing is following the job. An
+    """True for an 'in_flight' row older than this process. Its watcher, if
+    any, is not one this process started, so this reader cannot vouch for it. An
     unparseable timestamp proves nothing, so it is never treated as old."""
     if outcome.get("state") != "in_flight" or process_started_ns is None:
         return False
@@ -1181,11 +1179,12 @@ def list_audit_events(
     existing caller/test that doesn't pass it keeps today's behavior.
 
     `process_started_ns`: when this console process started. A deploy/
-    teardown row with no outcome that was written before it belongs to a
-    watcher that died with the previous process, so it reads 'unknown' at
-    once instead of waiting out the age bound. Derived on every read, never
-    written, so repeated restarts cannot record conflicting answers. `None`
-    (the default) disables the check.
+    teardown dispatch row with no outcome that was written before it may have
+    lost its watcher with a previous process, so it reads "outcome not
+    recorded" at once instead of waiting out the age bound. That wording is
+    true whether the watcher died or another console is still running it: a
+    terminal record written later replaces it. Derived on every read, never
+    written. `None` (the default) disables the check.
     """
     if now_ns is None:
         now_ns = time.time_ns()
@@ -1406,8 +1405,8 @@ def list_audit_events(
                     terminal_fields = terminal_by_job.get((action, run_job))
             if terminal_fields is not None and is_dispatch_row:
                 outcome = build_terminal_join_outcome(terminal_fields.get("outcome", ""))
-            elif is_dispatch_row and _written_before_process_start(outcome, ts_ns_str, process_started_ns):
-                outcome = _restarted_outcome(job_by_request_id.get(run_id, ""))
+            elif is_dispatch_row and _older_than_this_process(outcome, ts_ns_str, process_started_ns):
+                outcome = _not_recorded_outcome(job_by_request_id.get(run_id, ""))
             else:
                 # No ELIGIBLE join for this row —
                 # age it into 'unknown' once it's provably outlived any
