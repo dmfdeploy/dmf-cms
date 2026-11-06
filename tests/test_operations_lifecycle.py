@@ -801,12 +801,12 @@ def test_track_sync_reattach_second_call_reattaches_without_overwrite_or_second_
     )
     monkeypatch.setattr(main, "get_job", lambda **k: {"extra_vars": '{"l3_request_id": "' + ("a" * 32) + '"}'})
 
-    op_id_1 = main._track_sync_reattach(
+    op_id_1 = asyncio.run(main._track_sync_reattach(
         app, ops_store, "req-1", "alice", action="deploy", target="key1", job_id=111,
-    )
-    op_id_2 = main._track_sync_reattach(
+    ))
+    op_id_2 = asyncio.run(main._track_sync_reattach(
         app, ops_store, "req-2", "bob", action="deploy", target="key1", job_id=222,
-    )
+    ))
 
     assert op_id_1 == op_id_2
     assert len(watcher_calls) == 1  # exactly one watcher spawned, not two
@@ -827,12 +827,12 @@ def test_track_sync_rollback_reattach_second_call_reattaches_without_overwrite_o
         main, "get_job", lambda **k: {"extra_vars": f'{{"l3_run_id": "{run_id}"}}'},
     )
 
-    op_id_1, mismatch_1 = main._track_sync_rollback_reattach(
+    op_id_1, mismatch_1 = asyncio.run(main._track_sync_rollback_reattach(
         app, ops_store, "req-1", "alice", run_id=run_id, job_id=111,
-    )
-    op_id_2, mismatch_2 = main._track_sync_rollback_reattach(
+    ))
+    op_id_2, mismatch_2 = asyncio.run(main._track_sync_rollback_reattach(
         app, ops_store, "req-2", "bob", run_id=run_id, job_id=222,
-    )
+    ))
 
     assert mismatch_1 is False and mismatch_2 is False
     assert op_id_1 == op_id_2

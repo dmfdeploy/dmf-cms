@@ -18,6 +18,7 @@ import pytest
 from dmf_cms import netbox
 from dmf_cms.catalog import CatalogEntry
 from dmf_cms.main import create_app
+from dmf_cms.operations import OperationStore
 from dmf_cms.settings import NetboxSettings, Settings
 
 # Kubelet fails the pod after 3 probes 20 s apart (charts/dmf-cms deployment).
@@ -222,3 +223,73 @@ def test_offloaded_routes_never_block_healthz(monkeypatch, path, patch_target):
     assert status == 200
     assert delay < 0.5
     assert route_status != 404  # the route exists and was reached
+
+
+_REATTACH_RUN_ID = "a" * 32
+
+
+@pytest.mark.parametrize(
+    ("path", "body"),
+    [
+        ("/api/catalog/reattach-entry/deploy", {"reason": "reattach"}),
+        ("/api/catalog/reattach-entry/teardown", {"reason": "reattach"}),
+        (f"/api/runs/{_REATTACH_RUN_ID}/rollback", {"reason": "reattach"}),
+    ],
+)
+def test_already_active_reattach_never_blocks_healthz(monkeypatch, path, body):
+    """When AWX already runs the job, the route reads that job's detail to
+    learn its identity. That read must go off the loop: AWX stalling after the
+    active-job lookup succeeded must not stall /healthz."""
+    from dmf_cms.settings import AWXAutoscaleSettings, AWXSettings, L3Settings
+
+    entry = CatalogEntry(
+        key="reattach-entry",
+        display_name="Reattach entry",
+        summary="Reattach entry",
+        configure={"awx_job_template": "dmf-configure"},
+        finalise={"awx_job_template": "dmf-finalise"},
+    )
+
+    def hang(*args, **kwargs):
+        time.sleep(1.0)
+        return {
+            "id": 555,
+            "status": "running",
+            "extra_vars": f'{{"l3_run_id": "{_REATTACH_RUN_ID}"}}',
+        }
+
+    monkeypatch.setattr("dmf_cms.main.load_catalog_entries", lambda *a, **k: [entry])
+    monkeypatch.setattr("dmf_cms.main.lookup_job_template_by_name", lambda **k: {"id": 7})
+    monkeypatch.setattr("dmf_cms.main.find_active_job_for_template", lambda **k: 555)
+    monkeypatch.setattr("dmf_cms.main.get_job", hang)
+    settings = Settings(
+        runtime_mode="local",
+        dev_login_enabled=True,
+        dev_groups=("dmf-console-operator",),
+        awx=AWXSettings(api_url="http://awx.test", api_token="t"),
+        awx_autoscale=AWXAutoscaleSettings(enabled=False),
+        l3=L3Settings(enabled=False, rollback_jt_name="media-rollback-run"),
+    )
+    app = create_app(settings=settings)
+    # The reattach branch only runs when an operations store exists, and the
+    # lifespan that creates it does not run under ASGITransport.
+    app.state.operations = OperationStore(ttl_seconds=3600)
+    app.state.operation_tasks = set()
+
+    async def scenario():
+        transport = httpx.ASGITransport(app=app)
+        async with httpx.AsyncClient(transport=transport, base_url="http://console") as client:
+            await client.get("/auth/login", follow_redirects=False)
+            started = time.monotonic()
+            slow = asyncio.create_task(client.post(path, json=body))
+            await asyncio.sleep(0.2)  # a blocked loop delays this wake-up too
+            health = await client.get("/healthz")
+            delay = time.monotonic() - started - 0.2
+            response = await slow
+            return health.status_code, delay, response.status_code
+
+    status, delay, route_status = asyncio.run(scenario())
+    assert status == 200
+    assert delay < 0.5
+    assert route_status == 200  # reached the already-active reattach branch
+    assert app.state.operations.list_all()  # ...and tracked the running job

@@ -1957,7 +1957,7 @@ def _extract_run_id_from_job(job: dict, *, action: str) -> str | None:
     return value
 
 
-def _track_sync_reattach(
+async def _track_sync_reattach(
     app: FastAPI, ops_store: OperationStore, request_id: str, initiator: str, *,
     action: str, target: str, job_id: int,
 ) -> str:
@@ -1995,7 +1995,10 @@ def _track_sync_reattach(
         return op.operation_id
     run_id = None
     try:
-        job_detail = get_job(
+        # Blocking AWX read: off the loop so a stalled AWX cannot hold up
+        # /healthz or other requests.
+        job_detail = await run_in_threadpool(
+            get_job,
             api_url=settings.awx.api_url, api_token=settings.awx.api_token,
             job_id=job_id, ssl_verify=settings.awx.ssl_verify,
         )
@@ -2007,7 +2010,7 @@ def _track_sync_reattach(
     return op.operation_id
 
 
-def _track_sync_rollback_reattach(
+async def _track_sync_rollback_reattach(
     app: FastAPI, ops_store: OperationStore, request_id: str, initiator: str, *,
     run_id: str, job_id: int,
 ) -> tuple[str | None, bool]:
@@ -2037,7 +2040,8 @@ def _track_sync_rollback_reattach(
     """
     settings = app.state.settings
     try:
-        job_detail = get_job(
+        job_detail = await run_in_threadpool(
+            get_job,
             api_url=settings.awx.api_url, api_token=settings.awx.api_token,
             job_id=job_id, ssl_verify=settings.awx.ssl_verify,
         )
@@ -5596,7 +5600,7 @@ def create_app(settings: Settings | None = None, contract: AppContract | None = 
                 # store too (never facility-gated — see _track_sync_reattach
                 # — this is retroactive observability, not a new dispatch).
                 op_id = (
-                    _track_sync_reattach(
+                    await _track_sync_reattach(
                         request.app, ops_store_for_check, request_id, user.subject,
                         action="deploy", target=key, job_id=active,
                     )
@@ -5868,7 +5872,7 @@ def create_app(settings: Settings | None = None, contract: AppContract | None = 
                 # codex R3-4: bridge this already-in-flight job into the ops
                 # store — see _track_sync_reattach.
                 op_id = (
-                    _track_sync_reattach(
+                    await _track_sync_reattach(
                         request.app, ops_store_for_check, request_id, user.subject,
                         action="teardown", target=key, job_id=active,
                     )
@@ -6080,7 +6084,7 @@ def create_app(settings: Settings | None = None, contract: AppContract | None = 
                 # run's rollback job to this run_id (that would let the
                 # other run's outcome marker false-complete this one).
                 op_id, identity_mismatch = (
-                    _track_sync_rollback_reattach(
+                    await _track_sync_rollback_reattach(
                         request.app, ops_store_for_check, request_id, user.subject,
                         run_id=run_id, job_id=active,
                     )
