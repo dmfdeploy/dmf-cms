@@ -1294,6 +1294,10 @@ async def lifespan(app: FastAPI):
     _bootstrap_console_groups(app.state.settings)
     app.state.operations = OperationStore(ttl_seconds=3600)
     app.state.operation_tasks: set[asyncio.Task] = set()
+    # Watchers live in this process. The audit read compares a dispatch row's
+    # time with this instant to tell "the console restarted while it ran"
+    # from "still being watched".
+    app.state.started_ns = time.time_ns()
     # umbrella #201 WP5: a dedicated store, not folded into OperationStore —
     # see switch_source.SwitchCommandStore's own docstring for why.
     app.state.switch_commands = SwitchCommandStore(ttl_seconds=3600)
@@ -2035,6 +2039,9 @@ def _spawn_job_watcher(app: FastAPI, operation_id: str, job_id: int, action: str
     task, registered in app.state.operation_tasks like every other
     operation task so app shutdown can await it.
     """
+    op = app.state.operations.get(operation_id)
+    if op is not None:
+        _audit_job_attached(action, key, op.request_id, job_id, is_auto_rollback=op.auto_rollback_dispatch)
     task = asyncio.create_task(_watch_job_operation(app, operation_id, job_id, action, key))
     app.state.operation_tasks.add(task)
     task.add_done_callback(app.state.operation_tasks.discard)
@@ -2373,6 +2380,36 @@ def _audit_watch_terminal(
         "awx write: fmt=2 action=%s actor='system:job-watch' role=system real_role= "
         "request_id=%s target=%r reason=%r outcome=%s workload='' capacity='' linked_request_id=%s",
         action, uuid.uuid4().hex, key, reason, outcome, request_id,
+    )
+
+
+def _audit_job_attached(
+    action: str, key: str, request_id: str | None, job_id: int,
+    *, is_auto_rollback: bool = False,
+) -> None:
+    """Record which AWX job a watched request is following, from the moment
+    its watcher attaches.
+
+    The dispatch line is written before the job exists (the async flow wakes
+    AWX first), so it cannot carry the job id. This second line does, and the
+    audit read uses it two ways: to name the job on a row whose outcome the
+    console lost in a restart, and to give a request the outcome of the same
+    job when a retry attached a different request to it.
+
+    Same emitter shape and scope as ``_audit_watch_terminal``; the outcome
+    token is not a terminal state, so the reader never treats it as one.
+    """
+    if action not in ("deploy", "teardown", "rollback"):
+        return
+    if action == "rollback" and not is_auto_rollback:
+        return
+    if request_id is None:
+        return
+    audit_logger.info(
+        "awx write: fmt=2 action=%s actor='system:job-watch' role=system real_role= "
+        "request_id=%s target=%r reason=%r outcome=job-attached workload='' capacity='' "
+        "job_id=%d linked_request_id=%s",
+        action, uuid.uuid4().hex, key, f"job watch: {action} on {key} attached to its job", job_id, request_id,
     )
 
 
@@ -5125,6 +5162,7 @@ def create_app(settings: Settings | None = None, contract: AppContract | None = 
                 role=user.role,
                 groups=user.groups,
                 max_in_flight_age_seconds=max_in_flight_age_seconds,
+                process_started_ns=getattr(request.app.state, "started_ns", None),
             )
         except Exception as exc:
             # A bug here must not turn an audit surface into a 500 (Art. 1)

@@ -66,6 +66,7 @@ def test_parses_a_plain_line_with_logging_prefix():
         "workload": "wl-a",
         "capacity": "",
         "linked_request_id": "",
+        "job_id": "",
     }
 
 

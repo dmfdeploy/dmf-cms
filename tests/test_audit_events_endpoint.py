@@ -46,6 +46,11 @@ def _client(groups, *, loki_configured=True) -> TestClient:
     # this file — same live app.state.operations instance either way, and
     # a test process that exits at suite end has nothing to clean up.
     client = TestClient(create_app(settings=settings)).__enter__()
+    # The fixture rows sit a few nanoseconds after the epoch, so they all
+    # predate the real process start. Pin the start before them: these tests
+    # are about joins and gates, not about a restart (see
+    # test_audit_events_restart_unknown.py for that).
+    client.app.state.started_ns = 0
     client.get("/auth/login", follow_redirects=False)  # dev login -> session
     return client
 
