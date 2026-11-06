@@ -17,6 +17,7 @@ tenant slug. All errors surface as a degraded payload, never a raw 500
 
 from __future__ import annotations
 
+import concurrent.futures
 import copy
 import datetime
 import itertools
@@ -518,11 +519,19 @@ def _on_read_failure(
 
 _WRITE_GUARD_KINDS = ("instances", "grouped")
 
+# Longest a write waits for the inventory read it needs before it is refused.
+# It is shorter than the 30 s NetBox request timeout, so a NetBox that hangs
+# produces the refusal here rather than a write request that outlives its caller.
+COLD_READ_TIMEOUT_SECONDS = 20.0
+
+_cold_reads: dict[tuple, concurrent.futures.Future] = {}
+
 
 def inventory_write_block(
     netbox_url: str,
     tenant_slugs: Optional[tuple[str, ...]],
     monotonic: Callable[[], float] = time.monotonic,
+    require_read: bool = False,
 ) -> Optional[str]:
     """Why a write must be refused right now, or None when it may proceed.
 
@@ -532,19 +541,22 @@ def inventory_write_block(
     there never was a success). A successful read clears it, so the console's
     15 s poll lifts the block on its own.
 
-    A scope this process has not read yet has no failure on record and is not
-    blocked. That is deliberate: the console only offers a write after its own
-    inventory read succeeded, the reads that gate a write (clear, purge) go to
-    NetBox again and fail closed, and a refusal here for a cold worker would
-    turn every restart into spurious 409s until someone opened the inventory.
+    A scope with no read state at all has no failure on record, so by default
+    it is not blocked. The write routes pass ``require_read=True`` after
+    ``ensure_inventory_read``: a scope that still has no read state then means
+    the read did not complete, and the write is refused as degraded.
 
     Returns ``"inventory-stale"`` or ``"inventory-degraded"``.
     """
     now = monotonic()
     with _read_states_lock:
+        seen = False
         for kind in _WRITE_GUARD_KINDS:
             state = _read_states.get(_read_key(kind, netbox_url, tenant_slugs))
-            if state is None or state.failure_since is None:
+            if state is None:
+                continue
+            seen = True
+            if state.failure_since is None:
                 continue
             if (
                 state.last_good is not None
@@ -553,7 +565,53 @@ def inventory_write_block(
             ):
                 return "inventory-stale"
             return "inventory-degraded"
+        if require_read and not seen:
+            return "inventory-degraded"
     return None
+
+
+def ensure_inventory_read(
+    netbox_url: str,
+    tenant_slugs: Optional[tuple[str, ...]],
+    read: Callable[[], Any],
+    timeout: float = COLD_READ_TIMEOUT_SECONDS,
+) -> None:
+    """Run ``read`` once if this process has never read the caller's scope.
+
+    A write must not rest on an inventory nobody has read since the process
+    started, so the first write for a scope reads the inventory itself.
+    ``read`` is the normal inventory read, so its outcome is recorded in the
+    same read state, ordered by ticket like any other read. Concurrent cold
+    writes for one scope share a single read: the first runs it and the rest
+    wait for it, each for at most ``timeout`` seconds. A read that fails
+    records its failure and the guard then refuses; a wait that times out
+    raises ``TimeoutError`` and the caller refuses.
+    """
+    key = _read_key("grouped", netbox_url, tenant_slugs)
+    with _read_states_lock:
+        if any(
+            _read_key(kind, netbox_url, tenant_slugs) in _read_states
+            for kind in _WRITE_GUARD_KINDS
+        ):
+            return
+        pending = _cold_reads.get(key)
+        owner = pending is None
+        if owner:
+            pending = _cold_reads[key] = concurrent.futures.Future()
+    if not owner:
+        try:
+            pending.result(timeout=timeout)
+        except concurrent.futures.TimeoutError as exc:
+            raise TimeoutError("inventory read still pending") from exc
+        return
+    try:
+        read()
+    except Exception as exc:
+        logger.warning("media-workloads: cold inventory read failed: %s", sanitize_audit_field(str(exc)))
+    finally:
+        with _read_states_lock:
+            _cold_reads.pop(key, None)
+        pending.set_result(None)
 
 
 def list_instances(

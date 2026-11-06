@@ -60,14 +60,18 @@ interface Inventory {
   stale: boolean
 }
 
+/** Every POST the page sent, by URL. */
+const posts: string[] = []
+
 const ONE_MINUTE_AGO = () => new Date(Date.now() - 60_000).toISOString()
 
 /** The grouped response follows `inv`; flip `inv.stale` to model a failed read. */
-function mockApi(inv: Inventory, catalogLifecycle = 'planned') {
+function mockApi(inv: Inventory, catalogLifecycle = 'planned', hold: Promise<void> | null = null) {
   vi.stubGlobal(
     'fetch',
-    vi.fn(async (input: RequestInfo | URL) => {
+    vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
       const url = (typeof input === 'string' ? input : (input as Request).url).toString()
+      if (init?.method === 'POST') posts.push(url)
       const json = (b: unknown) =>
         new Response(JSON.stringify(b), { status: 200, headers: { 'Content-Type': 'application/json' } })
       if (url.endsWith('/api/me')) {
@@ -75,6 +79,7 @@ function mockApi(inv: Inventory, catalogLifecycle = 'planned') {
       }
       if (url.endsWith('/api/catalog')) return json({ entries: [{ ...CATALOG, lifecycle: catalogLifecycle }] })
       if (url.endsWith('/api/media-workloads/grouped')) {
+        if (hold) await hold
         return json({
           configured: true,
           degraded: false,
@@ -115,6 +120,7 @@ async function refetch(qc: QueryClient) {
 const STALE_NOTICE = /This view may be out of date/
 
 afterEach(() => {
+  posts.length = 0
   cleanup()
   vi.restoreAllMocks()
   vi.unstubAllGlobals()
@@ -194,6 +200,25 @@ describe('WorkloadSetup: stale withdraws every write, then restores them', () =>
     expect(await screen.findByText(/could not be confirmed right now/)).toBeTruthy()
     expect(screen.queryByText('Workload not found')).toBeNull()
     expect(screen.queryByText(/is in your scope right now/)).toBeNull()
+  })
+})
+
+describe('WorkloadSetup: no write is offered before the first inventory read settles', () => {
+  it('renders no Deploy or Confirm and sends no POST until the read settles', async () => {
+    let release!: () => void
+    const hold = new Promise<void>((resolve) => {
+      release = resolve
+    })
+    mockApi({ workloads: [workload()], stale: false }, 'planned', hold)
+    mount('/media-workloads/studio-a/setup', '/media-workloads/:slug/setup', <WorkloadSetup />)
+    expect(await screen.findByText('Loading workload…')).toBeTruthy()
+    expect(screen.queryByRole('button', { name: /Deploy|Confirm|Teardown|Switch source/ })).toBeNull()
+    expect(posts).toHaveLength(0)
+
+    release()
+    const provision = await openStep('Provision')
+    expect(await within(provision).findByRole('button', { name: '▶ Deploy' })).toBeTruthy()
+    expect(posts).toHaveLength(0)
   })
 })
 

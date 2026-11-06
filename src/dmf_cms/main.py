@@ -1040,25 +1040,51 @@ _INVENTORY_WRITE_REFUSAL_DETAIL = {
 }
 
 
-def _inventory_write_refusal(
+async def _inventory_write_refusal(
     request: Request, user: UserIdentity, request_id: str
 ) -> JSONResponse | None:
-    """Refuse a write while this process's inventory read state is stale or degraded.
+    """Refuse a write unless this process has a successful inventory read for the caller's scope.
 
     Every mutating catalog and media-workloads route calls this once, so a
-    stale inventory licenses no write whatever client sent it. Returns the
-    409 response, or None when the write may proceed. The route writes its
-    own audit line with the literal outcome ``inventory-unconfirmed``; the
-    response body says whether the read is stale or degraded. See
-    ``media_workloads.inventory_write_block`` for what counts as blocked and
-    why a never-read scope is not.
+    stale or unread inventory licenses no write whatever client sent it.
+    Returns the 409 response, or None when the write may proceed. A scope
+    this process has not read yet is read first, through the normal grouped
+    read, so a restart cannot open a window where NetBox is unreachable and
+    a write is still accepted; that read is bounded by
+    ``media_workloads.COLD_READ_TIMEOUT_SECONDS`` and a timeout refuses. The
+    route writes its own audit line with the literal outcome
+    ``inventory-unconfirmed``; the response body says whether the read is
+    stale or degraded. See ``media_workloads.inventory_write_block`` for what
+    counts as blocked.
     """
     settings = request.app.state.settings
     if not settings.netbox.configured:
         return None
-    code = media_workloads.inventory_write_block(
-        settings.netbox.api_url, settings.media_tenancy.tenants_for(user.groups)
-    )
+    netbox_url = settings.netbox.api_url
+    tenant_slugs = settings.media_tenancy.tenants_for(user.groups)
+    try:
+        await asyncio.wait_for(
+            run_in_threadpool(
+                media_workloads.ensure_inventory_read,
+                netbox_url,
+                tenant_slugs,
+                functools.partial(
+                    media_workloads.list_workloads_grouped,
+                    netbox_url,
+                    settings.netbox.api_token,
+                    settings.netbox.ssl_verify,
+                    tenant_slugs,
+                    settings.prometheus.url if settings.prometheus.configured else "",
+                    settings.mxl.sidecar_namespaces,
+                    settings.mxl.sidecar_ports,
+                    catalog_dir=CATALOG_DIR,
+                ),
+            ),
+            timeout=media_workloads.COLD_READ_TIMEOUT_SECONDS,
+        )
+        code = media_workloads.inventory_write_block(netbox_url, tenant_slugs, require_read=True)
+    except (asyncio.TimeoutError, TimeoutError):
+        code = "inventory-degraded"
     if code is None:
         return None
     return JSONResponse(
@@ -5304,7 +5330,7 @@ def create_app(settings: Settings | None = None, contract: AppContract | None = 
         if werr is not None:
             _audit_awx_write(request, user, action="deploy", target=key, request_id=request_id, reason=reason, outcome="invalid-workload")
             return werr
-        blocked = _inventory_write_refusal(request, user, request_id)
+        blocked = await _inventory_write_refusal(request, user, request_id)
         if blocked is not None:
             _audit_awx_write(request, user, action="deploy", target=key, request_id=request_id, reason=reason, outcome="inventory-unconfirmed")
             return blocked
@@ -5626,7 +5652,7 @@ def create_app(settings: Settings | None = None, contract: AppContract | None = 
             return rerr
         assert reason is not None
         request_id = uuid.uuid4().hex
-        blocked = _inventory_write_refusal(request, user, request_id)
+        blocked = await _inventory_write_refusal(request, user, request_id)
         if blocked is not None:
             _audit_awx_write(request, user, action="teardown", target=key, request_id=request_id, reason=reason, outcome="inventory-unconfirmed")
             return blocked
@@ -6323,7 +6349,7 @@ def create_app(settings: Settings | None = None, contract: AppContract | None = 
             return rerr
         assert reason is not None
         request_id = uuid.uuid4().hex
-        blocked = _inventory_write_refusal(request, user, request_id)
+        blocked = await _inventory_write_refusal(request, user, request_id)
         if blocked is not None:
             logger.info(
                 "media-workloads clear: actor=%s role=%s request_id=%s instance=%s reason=%r outcome=%s",
@@ -6544,7 +6570,7 @@ def create_app(settings: Settings | None = None, contract: AppContract | None = 
             )
             return JSONResponse({"error": "AWX API not configured", "request_id": request_id}, status_code=503)
 
-        blocked = _inventory_write_refusal(request, user, request_id)
+        blocked = await _inventory_write_refusal(request, user, request_id)
         if blocked is not None:
             _audit_awx_write(
                 request, user, action="switch-source", target=instance,
@@ -6723,7 +6749,7 @@ def create_app(settings: Settings | None = None, contract: AppContract | None = 
             )
             return JSONResponse({"error": "AWX API not configured", "request_id": request_id}, status_code=503)
 
-        blocked = _inventory_write_refusal(request, user, request_id)
+        blocked = await _inventory_write_refusal(request, user, request_id)
         if blocked is not None:
             _audit_awx_write(request, user, action="finalise-purge", target=slug, request_id=request_id, reason=reason, outcome="inventory-unconfirmed")
             return blocked

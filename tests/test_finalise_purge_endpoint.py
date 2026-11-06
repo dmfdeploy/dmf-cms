@@ -50,6 +50,9 @@ VIEWER = ("dmf-console-viewer",)
 SLUG = "studio-a"
 
 
+pytestmark = pytest.mark.usefixtures("inventory_already_read")
+
+
 def _settings(groups=OPERATOR, *, autoscale=False, media_tenancy=None) -> Settings:
     return Settings(
         runtime_mode="local",

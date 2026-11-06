@@ -67,6 +67,9 @@ VIEWER_ENTRY = CatalogEntry(
 NO_TOPOLOGY_ENTRY = CatalogEntry(key="mxl-videotest-view", display_name="Viewer", summary="x")
 
 
+pytestmark = pytest.mark.usefixtures("inventory_already_read")
+
+
 def _patch_catalog(monkeypatch, *, entries, topology_ok=True, topology_error="broken"):
     def fake_load_topology_instance(catalog_dir, topology_ref):
         if topology_ok:

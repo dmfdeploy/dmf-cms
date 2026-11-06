@@ -103,6 +103,8 @@ interface FetchOpts {
    *  returns, simulating a persistently failing read (WorkloadSetup's own
    *  `error` branch). */
   groupedStatus?: number
+  /** dmfdeploy#319: the grouped read stays unsettled until this resolves. */
+  groupedHold?: Promise<void>
   /** dmfdeploy#319: extra fields merged into the grouped read, e.g. `stale`. */
   groupedExtra?: Record<string, unknown>
   /** dmfdeploy#414: the `configured` flag the grouped-
@@ -164,6 +166,7 @@ function mkFetch(opts: FetchOpts = {}) {
       // below, same shape as catalogGate above — a promise that never
       // settles pins isLoading indefinitely rather than racing a real delay.
       if (opts.groupedPending) return new Promise<Response>(() => {})
+      if (opts.groupedHold) await opts.groupedHold
       if (opts.groupedStatus) return json({ error: 'boom' }, opts.groupedStatus)
       return json({
         configured: opts.groupedConfigured ?? true,
@@ -2135,5 +2138,31 @@ describe('Provision: withdrawn while the inventory read is stale or has failed',
     await refetchGrouped(qc)
     const confirm = within(provision).getByTestId('confirm-deploy') as HTMLButtonElement
     expect(confirm.disabled).toBe(false)
+  })
+})
+
+describe('Provision: withdrawn until the first inventory read settles', () => {
+  it('keeps an armed Confirm disabled and sends nothing before the first read settles', async () => {
+    let release!: () => void
+    const groupedHold = new Promise<void>((resolve) => {
+      release = resolve
+    })
+    const h = mkFetch({ groupedHold })
+    renderCreate()
+    await screen.findByRole('heading', { name: 'Identity' })
+    const provision = await reachProvision()
+    fireEvent.click(within(provision).getByRole('button', { name: '▶ Provision now' }))
+    fireEvent.change(within(provision).getByRole('textbox'), { target: { value: 'go' } })
+    await screen.findByText(/Checking the facility inventory/)
+    const confirm = () => within(provision).getByTestId('confirm-deploy') as HTMLButtonElement
+    expect(confirm().disabled).toBe(true)
+    fireEvent.click(confirm())
+    expect(h.deploy).toHaveLength(0)
+
+    release()
+    await waitFor(() => expect(confirm().disabled).toBe(false))
+    fireEvent.click(confirm())
+    await screen.findByText('Deploy accepted.')
+    expect(h.deploy).toHaveLength(1)
   })
 })
