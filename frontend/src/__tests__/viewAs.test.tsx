@@ -96,13 +96,13 @@ afterEach(() => {
 describe('view-as dropdown control', () => {
   it('is absent for non-admin users', () => {
     renderTopbar(identity({ role: 'operator', real_role: 'operator' }))
-    fireEvent.click(screen.getByRole('button', { name: /AU/i }))
+    fireEvent.click(screen.getByRole('button', { name: /, account menu$/i }))
     expect(screen.queryByText('View as')).toBeNull()
   })
 
   it('is present for admin users, offering the three downgrade roles', () => {
     renderTopbar(identity())
-    fireEvent.click(screen.getByRole('button', { name: /AU/i }))
+    fireEvent.click(screen.getByRole('button', { name: /, account menu$/i }))
     expect(screen.getByText('View as')).toBeTruthy()
     expect(screen.getByRole('button', { name: 'viewer' })).toBeTruthy()
     expect(screen.getByRole('button', { name: 'operator' })).toBeTruthy()
@@ -115,7 +115,7 @@ describe('view-as dropdown control', () => {
 describe('account menu — Settings placement (#185 WP-E)', () => {
   it('offers Settings (own prefs) in the avatar dropdown, linking to /settings', () => {
     renderTopbar(identity())
-    fireEvent.click(screen.getByRole('button', { name: /AU/i }))
+    fireEvent.click(screen.getByRole('button', { name: /, account menu$/i }))
     const settings = screen.getByRole('link', { name: 'Settings' })
     expect(settings.getAttribute('href')).toBe('/settings')
   })
@@ -137,7 +137,7 @@ describe('amber view-as chip', () => {
 describe('view-as API calls', () => {
   it('POSTs the chosen role to /api/me/view-as', async () => {
     renderTopbar(identity())
-    fireEvent.click(screen.getByRole('button', { name: /AU/i }))
+    fireEvent.click(screen.getByRole('button', { name: /, account menu$/i }))
     fireEvent.click(screen.getByRole('button', { name: 'viewer' }))
     await waitFor(() => expect(viewAsCalls('POST').length).toBeGreaterThanOrEqual(1))
     const [, init] = viewAsCalls('POST')[0] as [unknown, RequestInit]

@@ -106,7 +106,7 @@ describe('axe: shell chrome', () => {
 
   it('Topbar has no violations with the personal menu open', async () => {
     const { container } = withProviders(<Topbar />)
-    fireEvent.click(screen.getByRole('button', { name: 'OO' }))
+    fireEvent.click(screen.getByRole('button', { name: /, account menu$/i }))
     expect(await axe(container, AXE_OPTIONS)).toHaveNoViolations()
   })
 
