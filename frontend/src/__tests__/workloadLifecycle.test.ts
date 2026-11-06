@@ -360,3 +360,40 @@ describe('delete-permanently authorization + entity identity (umbrella dmfdeploy
     })).toEqual([])
   })
 })
+
+
+// dmfdeploy#319: a stale inventory (a last-good payload served after a failed
+// read) fail-closes EVERY write, the same way a busy workload does.
+describe('inventoryStale withdraws every action (dmfdeploy#319)', () => {
+  const base: WorkloadLifecycleInput = {
+    lifecycle: 'provision',
+    hasBootstrappedMembers: true,
+    allMembersBootstrapped: true,
+    anyMemberObservedRunning: false,
+    membersDataTrustworthy: true,
+    purgeAuthorized: true,
+    isPurgeableEntity: true,
+  }
+  const running: WorkloadLifecycleInput = { ...base, lifecycle: 'operate', allMembersBootstrapped: false }
+  const cases: Array<[string, StageId, WorkloadLifecycleInput, string]> = [
+    ['deploy', 'provision', base, 'deploy'],
+    ['clear-for-deployment', 'provision', base, 'clear-for-deployment'],
+    ['switch-source', 'configure', running, 'switch-source'],
+    ['tear-down', 'finalise', running, 'tear-down'],
+    ['delete-permanently', 'finalise', base, 'delete-permanently'],
+  ]
+
+  it.each(cases)('%s is offered when fresh and withheld when stale', (_name, stage, input, action) => {
+    expect(stageActions(stage, input)).toContain(action)
+    expect(stageActions(stage, { ...input, inventoryStale: true })).toEqual([])
+    expect(stageActions(stage, { ...input, inventoryStale: false })).toContain(action)
+  })
+
+  it('withholds every action at every stage and lifecycle while stale', () => {
+    for (const input of ALL_INPUTS) {
+      for (const stage of STAGES) {
+        expect(stageActions(stage.id, { ...input, inventoryStale: true })).toEqual([])
+      }
+    }
+  })
+})

@@ -30,6 +30,8 @@ import PageHeading from '../../components/PageHeading'
 import { usePageTitle } from '../../hooks/usePageTitle'
 import { workloadHomePath } from '../../lib/routes'
 import ViewLiveExit from './ViewLiveExit'
+import { StaleInventoryNotice } from '.'
+import { InventoryWritesBlockedProvider } from '../../lib/inventoryFreshness'
 
 /**
  * WorkloadSetup — the guided flow, at its own `/setup` route (dmfdeploy#414,
@@ -340,6 +342,21 @@ export default function WorkloadSetup() {
   // comment (dmfdeploy#414) for why. By construction, reaching
   // this point means `launch` was never present in the first place: the
   // hoisted check already returned for every render where it was.
+  // dmfdeploy#319: a stale inventory that lacks this workload proves nothing
+  // about now, so it must not become a "not found" claim.
+  if (!workload && data?.stale) {
+    return (
+      <div className="flex-1 overflow-y-auto p-6">
+        <PageHeading>{`${slug} — Setup`}</PageHeading>
+        <ExitRow slug={slug ?? ''} />
+        <div className="panel mt-4 border border-amber-500/20 bg-amber-500/10 px-4 py-3 text-sm text-amber-200">
+          This workload could not be confirmed right now. Retrying automatically.
+        </div>
+        <StaleInventoryNotice data={data} />
+      </div>
+    )
+  }
+
   if (!workload) {
     return (
       <div className="flex-1 overflow-y-auto p-6">
@@ -390,7 +407,8 @@ export default function WorkloadSetup() {
       // the raw read down instead, so buildWorkloadLifecycleInput is the
       // only place that formula runs (see its own docstring for why the
       // boolean-shaped seam was the actual gap).
-      groupedRead={{ isError, isFetching, configured: data?.configured, degraded: data?.degraded }}
+      groupedRead={{ isError, isFetching, configured: data?.configured, degraded: data?.degraded, stale: data?.stale }}
+      freshness={data ?? {}}
     />
   )
 }
@@ -413,6 +431,7 @@ export default function WorkloadSetup() {
 function WorkloadWizard({
   workload,
   groupedRead,
+  freshness,
 }: {
   workload: MediaWorkload
   // umbrella #347: freshness of the SAME grouped read `workload` itself came
@@ -421,7 +440,15 @@ function WorkloadWizard({
   // The raw read, not membersDataTrustworthy's old
   // pre-reduced boolean — buildWorkloadLifecycleInput below now runs
   // isGroupedReadTrustworthy itself, so this component doesn't call it.
-  groupedRead: { isError: boolean; isFetching: boolean; configured?: boolean; degraded?: boolean }
+  groupedRead: {
+    isError: boolean
+    isFetching: boolean
+    configured?: boolean
+    degraded?: boolean
+    stale?: boolean
+  }
+  // dmfdeploy#319: the age fields behind `groupedRead.stale`, for the notice.
+  freshness: { last_success?: string | null; failure_since?: string | null }
 }) {
   const { hash } = useLocation()
   // isError threaded down to
@@ -883,8 +910,10 @@ function WorkloadWizard({
   }
 
   return (
+    <InventoryWritesBlockedProvider value={groupedRead.stale === true || groupedRead.degraded === true}>
     <div className="flex-1 overflow-y-auto p-6">
       <PageHeading>{`${workload.name} — Setup`}</PageHeading>
+      {groupedRead.stale && <StaleInventoryNotice data={freshness} />}
       {/* The lifecycle badge — resting-grammar label + degraded flag — moved
           here from the retired hero: it is state anchored to the flow
           surface, not page chrome. The workload's display name lives in the
@@ -936,7 +965,8 @@ function WorkloadWizard({
               both gone now (LifecycleStrip.tsx no longer has one). The fact
               this sentence still needs to convey — Operate isn't a step in
               this flow — survives without naming either. */}
-          This workload is operating. This flow isn&apos;t where a running workload is
+          {groupedRead.stale ? 'When the inventory was last confirmed, this workload was operating.' : 'This workload is operating.'}{' '}
+          This flow isn&apos;t where a running workload is
           watched — its live view is the workload&apos;s own home —{' '}
           <Link to={workloadHomePath(workload.slug)} className="text-accent underline">
             open the live view
@@ -993,6 +1023,7 @@ function WorkloadWizard({
           Teardown/Delete. */}
       {activeStep === 'configure' && <ConfigureForwardExit exit={forwardExit} slug={workload.slug} />}
     </div>
+    </InventoryWritesBlockedProvider>
   )
 }
 

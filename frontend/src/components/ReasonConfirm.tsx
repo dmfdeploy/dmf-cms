@@ -1,6 +1,7 @@
 import { useId, useState } from 'react'
 import { Input, Select, Textarea } from './FormField'
 import { capacityRefusalMessage } from '../lib/capacityRefusal'
+import { useInventoryWritesBlocked } from '../lib/inventoryFreshness'
 
 /**
  * Armed-confirm + mandatory-reason panel for a consequential write (the C5
@@ -110,6 +111,7 @@ export default function ReasonConfirm({
   const extraInvalid = extraField?.invalid ?? false
   const danger = variant === 'danger'
   const capacityRefusal = capacityRefusalMessage(error)
+  const writesBlocked = useInventoryWritesBlocked()
 
   return (
     <div
@@ -188,10 +190,16 @@ export default function ReasonConfirm({
           That didn&apos;t go through — nothing was changed. Check your access, then retry.
         </p>
       )}
+      {writesBlocked && (
+        <p role="status" className="mt-1.5 text-sm text-amber-200">
+          The inventory is out of date, so this change cannot be sent right now. Your reason is
+          kept. Confirm again after the next successful read.
+        </p>
+      )}
       <div className="mt-3 flex gap-2">
         <button
           className={`btn btn-sm ${danger ? 'btn-danger' : 'btn-primary'}`}
-          disabled={!reason.trim() || pending || extraInvalid}
+          disabled={!reason.trim() || pending || extraInvalid || writesBlocked}
           onClick={() => onConfirm(reason.trim())}
           {...(confirmTestId ? { 'data-testid': confirmTestId } : {})}
         >

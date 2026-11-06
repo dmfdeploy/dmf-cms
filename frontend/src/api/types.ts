@@ -743,6 +743,13 @@ export interface MediaWorkloadsResponse {
   configured: boolean
   reason?: string
   degraded?: boolean
+  // dmfdeploy#319: read-grace freshness. `stale` marks a last-good payload
+  // served because the latest NetBox read failed; `last_success` and
+  // `failure_since` are ISO-8601 UTC (null when there was no success / no
+  // failure).
+  stale?: boolean
+  last_success?: string | null
+  failure_since?: string | null
   scope?: 'all' | string[]
   instances: MediaWorkloadInstance[]
   functions: MediaWorkloadFunction[]
@@ -777,6 +784,13 @@ export interface MediaWorkloadsGroupedResponse {
   configured: boolean
   reason?: string
   degraded?: boolean
+  // dmfdeploy#319: read-grace freshness. `stale` marks a last-good payload
+  // served because the latest NetBox read failed; `last_success` and
+  // `failure_since` are ISO-8601 UTC (null when there was no success / no
+  // failure).
+  stale?: boolean
+  last_success?: string | null
+  failure_since?: string | null
   scope?: 'all' | string[]
   workloads: MediaWorkload[]
   invalid_instances: InvalidInstance[]

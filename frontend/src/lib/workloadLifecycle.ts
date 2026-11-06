@@ -219,6 +219,15 @@ export interface WorkloadLifecycleInput {
    * exists. Fail-closed: absent/false withholds `delete-permanently`.
    */
   isPurgeableEntity?: boolean
+  /**
+   * dmfdeploy#319: the member-state read is a last-good payload served
+   * because the latest NetBox read failed. What it says about the workload
+   * was true when it was last confirmed, not now, so `stageActions` offers
+   * nothing while it is set. Distinct from `membersDataTrustworthy`, which
+   * also folds in `isFetching` and would withdraw every action on each
+   * background poll. Absent/false means the read is not stale.
+   */
+  inventoryStale?: boolean
 }
 
 export interface LifecycleState {
@@ -256,12 +265,15 @@ function running(input: WorkloadLifecycleInput): boolean {
  *    watch the loop close (Art. 2), and the stage running it is active.
  * 2. On 'unknown', nothing is offered anywhere. If the console cannot read
  *    where the workload is, it has no business offering to change it.
+ * 3. While the inventory is stale (a last-good payload served after a failed
+ *    read, dmfdeploy#319), nothing is offered anywhere, for the same reason:
+ *    the position and member states are old, so no write may derive from them.
  */
 export function stageActions(
   id: StageId,
   input: WorkloadLifecycleInput,
 ): StageActionId[] {
-  if (busy(input) || input.lifecycle === 'unknown') return []
+  if (busy(input) || input.lifecycle === 'unknown' || input.inventoryStale) return []
   switch (id) {
     case 'provision': {
       const actions: StageActionId[] = []
@@ -420,7 +432,13 @@ export function buildWorkloadLifecycleInput(
     launching?: boolean
     switching?: boolean
     tearingDown?: boolean
-    groupedRead: { isError: boolean; isFetching: boolean; configured?: boolean; degraded?: boolean }
+    groupedRead: {
+      isError: boolean
+      isFetching: boolean
+      configured?: boolean
+      degraded?: boolean
+      stale?: boolean
+    }
     userRead: { isFetching: boolean; isError: boolean; role?: ConsoleRole | null }
   },
 ): WorkloadLifecycleInput {
@@ -439,6 +457,7 @@ export function buildWorkloadLifecycleInput(
     membersDataRetained: isGroupedReadRetained(facts.groupedRead),
     purgeAuthorized: isPurgeAuthorized(facts.userRead),
     isPurgeableEntity: workload.slug !== 'unassigned',
+    inventoryStale: facts.groupedRead.stale === true,
   }
 }
 
@@ -459,8 +478,15 @@ export function isGroupedReadTrustworthy(read: {
   isFetching: boolean
   configured?: boolean
   degraded?: boolean
+  stale?: boolean
 }): boolean {
-  return !read.isError && !read.isFetching && read.configured === true && read.degraded !== true
+  return (
+    !read.isError &&
+    !read.isFetching &&
+    read.configured === true &&
+    read.degraded !== true &&
+    read.stale !== true
+  )
 }
 
 /**
@@ -510,8 +536,9 @@ export function isGroupedReadRetained(read: {
   isFetching: boolean
   configured?: boolean
   degraded?: boolean
+  stale?: boolean
 }): boolean {
-  return !read.isError && read.configured === true && read.degraded !== true
+  return !read.isError && read.configured === true && read.degraded !== true && read.stale !== true
 }
 
 /**

@@ -762,6 +762,70 @@ describe('Facility Detail — panel regroup (WP-4, umbrella #347)', () => {
 // `workloads` array from a degraded (source-unreachable) read is not
 // evidence of a zero count, and the panel must not state one.
 describe('Facility Detail — media workloads count panel honesty (umbrella #385)', () => {
+  // dmfdeploy#319: freshness is independent of completeness. A stale last-good
+  // payload can already be incomplete (degraded), and the count then
+  // describes an inventory the console has not reconfirmed.
+  const STALE_FIELDS = {
+    stale: true,
+    last_success: new Date(Date.now() - 3 * 60_000).toISOString(),
+    failure_since: new Date(Date.now() - 60_000).toISOString(),
+  }
+  const INVALID = [
+    {
+      instance: 'bad-svc',
+      function_key: 'mxl-videotestsrc',
+      workload_assignment: 'invalid-multiple',
+      conflicting_workloads: ['beta', 'gamma'],
+    },
+  ]
+
+  it('a stale payload that was already incomplete, with no workloads, still says the inventory is old', async () => {
+    renderDetail('dmf-lab', {
+      '/api/facility/dmf-lab/detail': detailPayload(),
+      '/api/media-workloads/grouped': {
+        configured: true, degraded: true, scope: [], workloads: [], invalid_instances: INVALID, ...STALE_FIELDS,
+      },
+    })
+    expect(await screen.findByText(/This count is incomplete/)).toBeTruthy()
+    expect(screen.getByText(/This count may be out of date/)).toBeTruthy()
+    expect(screen.getByText(/Last confirmed 3 minutes ago/)).toBeTruthy()
+  })
+
+  it('a stale payload that was already incomplete, with some workloads, still says the inventory is old', async () => {
+    renderDetail('dmf-lab', {
+      '/api/facility/dmf-lab/detail': detailPayload(),
+      '/api/media-workloads/grouped': {
+        configured: true,
+        degraded: true,
+        scope: [],
+        workloads: [{ slug: 'alpha', name: 'alpha', lifecycle: 'operate', health: 'ok', instances: [], functions: [] }],
+        invalid_instances: INVALID,
+        ...STALE_FIELDS,
+      },
+    })
+    expect(await screen.findByText(/At least/)).toBeTruthy()
+    expect(screen.getByText(/This count may be out of date/)).toBeTruthy()
+  })
+
+  it('a stale complete payload shows the notice once, and a fresh one shows none', async () => {
+    renderDetail('dmf-lab', {
+      '/api/facility/dmf-lab/detail': detailPayload(),
+      '/api/media-workloads/grouped': {
+        configured: true, degraded: false, scope: [], workloads: [], invalid_instances: [], ...STALE_FIELDS,
+      },
+    })
+    expect(await screen.findAllByText(/This count may be out of date/)).toHaveLength(1)
+    cleanup()
+    renderDetail('dmf-lab', {
+      '/api/facility/dmf-lab/detail': detailPayload(),
+      '/api/media-workloads/grouped': {
+        configured: true, degraded: false, scope: [], workloads: [], invalid_instances: [], stale: false,
+      },
+    })
+    await screen.findByText(/media workload/)
+    expect(screen.queryByText(/This count may be out of date/)).toBeNull()
+  })
+
   it('a degraded, reason-carrying read never states a fabricated zero count', async () => {
     renderDetail('dmf-lab', {
       '/api/facility/dmf-lab/detail': detailPayload(),
@@ -782,7 +846,7 @@ describe('Facility Detail — media workloads count panel honesty (umbrella #385
     // generic "this section cannot be read" that named neither the failed
     // source nor gave a next step. Now shares degradedReasonCopy with
     // MediaWorkloads/index.tsx so the two surfaces can't disagree.
-    expect(await screen.findByText(/isn.t responding right now/)).toBeTruthy()
+    expect(await screen.findByText(/could not read the facility inventory system/)).toBeTruthy()
     expect(screen.queryByText(/0 media workload/)).toBeNull()
   })
 
@@ -812,7 +876,7 @@ describe('Facility Detail — media workloads count panel honesty (umbrella #385
     expect(await screen.findByText(/This count is incomplete/)).toBeTruthy()
     expect(screen.queryByText(/0 media workload/)).toBeNull()
     // NetBox WAS reachable — must not borrow the unreachable-specific copy.
-    expect(screen.queryByText(/isn.t responding right now/)).toBeNull()
+    expect(screen.queryByText(/could not read the facility inventory system/)).toBeNull()
   })
 
   // An earlier version only withheld the

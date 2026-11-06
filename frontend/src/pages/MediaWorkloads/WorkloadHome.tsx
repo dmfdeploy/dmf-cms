@@ -14,6 +14,7 @@ import { settleQuery } from '../../lib/queryState'
 import { LIVE_TILE_CAP, useDocumentVisible, usePrefersReducedMotion } from './liveView'
 import PageHeading from '../../components/PageHeading'
 import { usePageTitle } from '../../hooks/usePageTitle'
+import { StaleInventoryNotice } from '.'
 
 /**
  * WorkloadHome — the bare workload URL, and the workload's HOME
@@ -191,13 +192,16 @@ export default function WorkloadHome() {
   // right now" notice is simpler, reuses existing copy, and — critically —
   // is not a new claim either: it's the one thing this read still knows for
   // certain right now.
-  const readErrorMasksRetainedStatus = hasReadError && data != null && (isUnconfigured || !workloadForRail)
+  // A stale payload masks the same two claims: a last-good inventory that lacks
+  // this workload (or says "unconfigured") is not evidence about now (dmfdeploy#319).
+  const readErrorMasksRetainedStatus =
+    (hasReadError || Boolean(data?.stale)) && data != null && (isUnconfigured || !workloadForRail)
   // Unconditional, ahead of every early return below (hooks must run every
   // render) — same reasoning as the rail registration below.
   usePageTitle(workloadForRail ? workloadForRail.name : slug)
   const railInput: WorkloadLifecycleInput | null = workloadForRail
     ? buildWorkloadLifecycleInput(workloadForRail, {
-        groupedRead: { isError, isFetching, configured: data?.configured, degraded: data?.degraded },
+        groupedRead: { isError, isFetching, configured: data?.configured, degraded: data?.degraded, stale: data?.stale },
         userRead: {
           isFetching: userQuery.isFetching,
           isError: userQuery.isError,
@@ -300,6 +304,7 @@ export default function WorkloadHome() {
         <div className="panel border border-amber-500/20 bg-amber-500/10 px-4 py-3 text-sm text-amber-200">
           This workload could not be loaded right now. Retrying automatically.
         </div>
+        {!hasReadError && data?.stale && <StaleInventoryNotice data={data} />}
       </div>
     )
   }
@@ -464,7 +469,9 @@ export default function WorkloadHome() {
         </div>
       )}
 
-      {!hasReadError && homeState === 'unresolved' && (
+      {!hasReadError && data?.stale && <StaleInventoryNotice data={data} />}
+
+      {!hasReadError && !data?.stale && homeState === 'unresolved' && (
         <div className="panel mt-6 border border-amber-500/20 bg-amber-500/10 px-4 py-3 text-sm text-amber-200">
           This workload&apos;s status isn&apos;t clear enough right now to recommend a next step.
         </div>

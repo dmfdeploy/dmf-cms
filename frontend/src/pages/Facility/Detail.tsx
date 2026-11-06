@@ -1,7 +1,7 @@
 import { useParams, Link } from 'react-router-dom'
 import { useFacilityDetail, useMediaWorkloadsGrouped } from '@/api/hooks'
 import type { FacilityDetailResponse } from '@/api/types'
-import { degradedReasonCopy } from '@/pages/MediaWorkloads'
+import { degradedReasonCopy, freshnessCopy } from '@/pages/MediaWorkloads'
 import { settleQuery } from '@/lib/queryState'
 import PageHeading from '@/components/PageHeading'
 import { usePageTitle } from '@/hooks/usePageTitle'
@@ -575,7 +575,9 @@ function WorkloadCountPanel() {
         ) : countUnreliable && data.reason ? (
           // Fail-hard path: `workloads` is empty by construction here (see
           // media_workloads.py), so there is no partial count to salvage.
-          <p className="text-sm text-muted">{degradedReasonCopy(data.reason)}</p>
+          <p className="text-sm text-muted">
+            {degradedReasonCopy(data.reason)} {freshnessCopy(data)}
+          </p>
         ) : countUnreliable && data.workloads.length === 0 ? (
           <p className="text-sm text-muted">
             This count is incomplete — every recorded instance has a conflicting workload assignment and none
@@ -595,6 +597,14 @@ function WorkloadCountPanel() {
           <p className="text-sm text-text">
             <span className="font-mono">{data.workloads.length}</span> media workload
             {data.workloads.length === 1 ? '' : 's'} provisioned on this facility.
+          </p>
+        )}
+        {/* Freshness is independent of completeness: a stale last-good
+            payload can also be incomplete (degraded), and either way the
+            count above describes the inventory as last confirmed. */}
+        {data && !isError && data.configured && data.stale && (
+          <p className="mt-1 text-xs text-muted" role="status">
+            This count may be out of date: the latest read did not complete. {freshnessCopy(data)}
           </p>
         )}
       </div>
