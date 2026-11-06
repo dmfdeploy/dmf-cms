@@ -382,6 +382,7 @@ class _ReadState:
     __slots__ = (
         "last_good", "last_success", "last_success_mono", "success_ticket",
         "failure_since", "failure_ticket", "failure_degraded",
+        "seen_success_ticket", "failure_starts",
     )
 
     def __init__(self) -> None:
@@ -392,6 +393,18 @@ class _ReadState:
         self.failure_since: Optional[float] = None
         self.failure_ticket = 0
         self.failure_degraded: Optional[dict[str, Any]] = None
+        # Newest success by ticket, even one the snapshot rule ignored, and
+        # the start of each failure newer than it (ticket -> wall start).
+        # A success between two failures splits them, so ``failure_since``
+        # is the earliest start still in ``failure_starts``.
+        self.seen_success_ticket = 0
+        self.failure_starts: dict[int, float] = {}
+
+    def refresh_failure_since(self) -> None:
+        if self.failure_starts:
+            self.failure_since = self.failure_starts[min(self.failure_starts)]
+        else:
+            self.failure_since = None
 
 
 _read_states: dict[tuple, _ReadState] = {}
@@ -485,9 +498,14 @@ def _remember_success(
             state.last_success = started
             state.last_success_mono = started_mono
             state.success_ticket = ticket
+        if ticket > state.seen_success_ticket:
+            state.seen_success_ticket = ticket
+            state.failure_starts = {
+                t: at for t, at in state.failure_starts.items() if t > ticket
+            }
         if ticket > state.failure_ticket:
-            state.failure_since = None
             state.failure_degraded = None
+        state.refresh_failure_since()
         return _current_response(state, monotonic(), None)
 
 
@@ -502,8 +520,9 @@ def _on_read_failure(
 
     Both outcomes carry ``last_success`` (None if there never was one) and
     ``failure_since`` so the banner can say how long. A failure that started
-    before the cached snapshot was read is outdated by it and records
-    nothing. ``failure_since`` keeps the first failure's start; the degraded
+    before the newest observed success is outdated by it and records
+    nothing. ``failure_since`` is the earliest start among failures newer
+    than that success, so a success between two failures splits them; the degraded
     payload is the newest failure's, so an older request completing late
     cannot replace a newer diagnosis. Grace is measured on the monotonic
     clock, so a wall-clock step cannot stretch the window; wall time only
@@ -511,9 +530,9 @@ def _on_read_failure(
     """
     with _read_states_lock:
         state = _read_states.setdefault(key, _ReadState())
-        if ticket > state.success_ticket:
-            if state.failure_since is None:
-                state.failure_since = started
+        if ticket > state.seen_success_ticket:
+            state.failure_starts[ticket] = started
+            state.refresh_failure_since()
             if ticket > state.failure_ticket:
                 state.failure_ticket = ticket
                 state.failure_degraded = copy.deepcopy(degraded)

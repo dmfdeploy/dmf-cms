@@ -343,7 +343,8 @@ def test_superseded_failure_carries_the_newest_failure_reason(monkeypatch, kind)
     # A started first but completed last: it reports B's reason, not its own.
     assert box["A"]["degraded"] is True
     assert box["A"]["reason"] == "netbox-unreachable"
-    assert box["A"]["failure_since"] == "2027-01-15T08:00:05Z"
+    # No success separates the two failures, so the episode began with A's start.
+    assert box["A"]["failure_since"] == "2027-01-15T08:00:00Z"
     # The stored failure is B's, so a later read after both still agrees.
     (state,) = mw._read_states.values()
     assert state.failure_degraded["reason"] == "netbox-unreachable"
@@ -380,3 +381,84 @@ def test_wall_clock_step_forward_does_not_cut_the_window_short(monkeypatch, kind
     mono.now = T0 + 10
     wall.now = T0 + 3600
     assert _read(kind, wall, mono)["stale"] is True
+
+
+# ── failure_since across an intervening success ────────────────────────────
+#
+# Drives the real _begin_read / _on_read_failure / _remember_success so the
+# ticket order, not the call order, decides the failure episode.
+
+_DEGRADED = {"degraded": True, "reason": "starved"}
+
+
+class _Episode:
+    """Reads 0..count-1 start five seconds apart; tests finish them in any order."""
+
+    def __init__(self, kind, count):
+        mw._reset_read_grace()
+        self.clock = Clock()
+        self.key = mw._read_key("instances" if kind == "flat" else "grouped", ARGS[0], None)
+        self.reads = []
+        for i in range(count):
+            self.clock.now = T0 + 5 * i
+            self.reads.append(mw._begin_read(self.clock, self.clock))
+        self.clock.now = T0 + 5 * count
+
+    def ok(self, i):
+        ticket, started, mono = self.reads[i]
+        payload = {"instances": [], "workloads": [], "name": f"r{i}"}
+        return mw._remember_success(self.key, payload, ticket, started, mono, self.clock)
+
+    def fail(self, i):
+        ticket, started, _ = self.reads[i]
+        return mw._on_read_failure(self.key, _DEGRADED, ticket, started, self.clock)
+
+    def blocked(self):
+        return mw.inventory_write_block(ARGS[0], None, monotonic=self.clock)
+
+
+def _at(i):
+    return mw._iso_utc(T0 + 5 * i)
+
+
+def test_intervening_success_splits_failure_episode(kind):
+    ep = _Episode(kind, 4)
+    ep.ok(0)
+    ep.fail(1)
+    assert ep.fail(3)["failure_since"] == _at(1)
+    got = ep.ok(2)
+    # Read 2 started between the failures of reads 1 and 3, so the current
+    # episode began with read 3. The snapshot stays read 0's.
+    assert got["failure_since"] == _at(3)
+    assert got["last_success"] == _at(0)
+    assert got["name"] == "r0"
+    assert got["stale"] is True
+    assert mw._read_states[ep.key].success_ticket == ep.reads[0][0]
+    assert ep.blocked() == "inventory-stale"
+
+
+def test_success_completing_last_still_splits_later_failures(kind):
+    ep = _Episode(kind, 4)  # read 0 fails, 1 succeeds, 2 and 3 fail
+    ep.fail(0)
+    ep.fail(3)
+    assert ep.fail(2)["failure_since"] == _at(0)
+    got = ep.ok(1)
+    assert got["failure_since"] == _at(2)
+    assert got["degraded"] is True
+    assert ep.blocked() == "inventory-degraded"
+    # An older failure completing after the split cannot reopen the episode.
+    assert ep.fail(0)["failure_since"] == _at(2)
+
+
+def test_suppressed_success_with_no_failure_after_it_leaves_no_episode(kind):
+    ep = _Episode(kind, 3)
+    ep.fail(0)
+    assert ep.ok(2)["failure_since"] is None
+    # Read 1 is older than the stored success and has no later failure.
+    got = ep.ok(1)
+    assert got["failure_since"] is None and got["stale"] is False
+    assert got["name"] == "r2"
+    assert mw._read_states[ep.key].failure_starts == {}
+    # A failure older than a success already seen records nothing.
+    assert ep.fail(0)["failure_since"] is None
+    assert ep.blocked() is None
