@@ -175,8 +175,9 @@ interface FetchOpts {
   operationResponses?: Record<string, Record<string, unknown>>
   switchResult?: Record<string, unknown>
   // How the switch request itself fails: an HTTP error, a lost response, or
-  // a response body that is not JSON.
-  switchRequestFailure?: 'http-500' | 'lost' | 'bad-json'
+  // a response body that is not JSON. 'http-500-capacity' is an HTTP error
+  // whose body has the deploy preflight's shape.
+  switchRequestFailure?: 'http-500' | 'http-500-capacity' | 'lost' | 'bad-json'
   clearResult?: Record<string, unknown>
   facilitySites?: Array<{ name: string; slug: string | null; device_count: number }>
   // Holds the switch-source POST open until releaseSwitch() is called — the
@@ -279,6 +280,9 @@ function mkFetch(opts: FetchOpts = {}) {
       calls.switch.push({ url, init })
       await switchGate
       if (opts.switchRequestFailure === 'http-500') return json({ error: 'boom' }, 500)
+      if (opts.switchRequestFailure === 'http-500-capacity') {
+        return json({ error: 'capacity-preflight-refused', kind: 'no-fit' }, 500)
+      }
       if (opts.switchRequestFailure === 'lost') throw new TypeError('Failed to fetch')
       if (opts.switchRequestFailure === 'bad-json') {
         return new Response('<html>gateway timeout</html>', { status: 200 })
@@ -1047,7 +1051,7 @@ describe('Configure: switch click path', () => {
   // The switch endpoint runs the switch before it answers, so a failed
   // request can follow a switch that already ran. None of these may say
   // nothing changed.
-  it.each(['http-500', 'lost', 'bad-json'] as const)(
+  it.each(['http-500', 'http-500-capacity', 'lost', 'bad-json'] as const)(
     'shows unknown-result copy, not "nothing was changed", when the request fails (%s)',
     async (switchRequestFailure) => {
       mkFetch({
