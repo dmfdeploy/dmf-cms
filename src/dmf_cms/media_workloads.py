@@ -27,7 +27,7 @@ import re
 import threading
 import time
 import urllib.parse
-from typing import Any, Callable, Iterable, Optional
+from typing import Any, Callable, Optional
 
 from .catalog import CATALOG_DIR, CatalogEntry, load_catalog_entries, inventory_has_topology, load_catalog_snapshot, load_topology_instance
 from .log_safety import sanitize_audit_field
@@ -379,10 +379,25 @@ READ_GRACE_SECONDS = 120.0
 
 
 class _ReadState:
+    """Last-good snapshot plus the failure episode for one read key.
+
+    ``failure_since`` marks when the current outage began. It never spans a
+    success (a success newer than a failure ends that failure's episode), and
+    it never starts before the latest success. It is exact except in one
+    case: a success that the snapshot rule suppresses (it started before a
+    failure that is already recorded) can arrive after more than one failure
+    newer than it. The episode then restarts at the newest failure, so
+    ``failure_since`` is later than the true start and the outage looks
+    shorter than it was. The write gate and the stale-or-degraded decision
+    are unaffected, because the episode stays open. The state is a fixed set
+    of scalars with no per-failure history and no record of reads in flight,
+    which is why this one bounded error is accepted.
+    """
+
     __slots__ = (
         "last_good", "last_success", "last_success_mono", "success_ticket",
-        "failure_since", "failure_ticket", "failure_degraded",
-        "seen_success_ticket", "failure_starts",
+        "failure_since", "failure_since_ticket", "failure_ticket",
+        "failure_started", "failure_degraded", "seen_success_ticket",
     )
 
     def __init__(self) -> None:
@@ -391,44 +406,17 @@ class _ReadState:
         self.last_success_mono: Optional[float] = None
         self.success_ticket = 0
         self.failure_since: Optional[float] = None
+        self.failure_since_ticket = 0
+        # Newest failure by ticket, with its start and diagnosis.
         self.failure_ticket = 0
+        self.failure_started: Optional[float] = None
         self.failure_degraded: Optional[dict[str, Any]] = None
-        # Newest success by ticket, even one the snapshot rule ignored, and
-        # the start of retained failures newer than it (ticket -> wall start).
-        # A success between two failures splits them, so ``failure_since``
-        # is the earliest start still in ``failure_starts``.
+        # Newest success by ticket, including one the snapshot rule ignored.
         self.seen_success_ticket = 0
-        self.failure_starts: dict[int, float] = {}
-
-    def refresh_failure_since(self, in_flight: Iterable[int] = ()) -> None:
-        """Prune ``failure_starts``, then derive ``failure_since`` (lock held).
-
-        A failure can only become the episode start later if it is the
-        earliest failure above some candidate ticket: the newest success seen,
-        or a read still in flight, since that read could yet succeed and
-        split the episode there. Every other failure is dropped, so the
-        history holds at most one entry per in-flight read plus one, however
-        long an outage runs.
-        """
-        if self.failure_starts:
-            keep: set[int] = set()
-            for floor in (self.seen_success_ticket, *in_flight):
-                above = [t for t in self.failure_starts if t > floor]
-                if above:
-                    keep.add(min(above))
-            self.failure_starts = {t: self.failure_starts[t] for t in keep}
-        if self.failure_starts:
-            self.failure_since = self.failure_starts[min(self.failure_starts)]
-        else:
-            self.failure_since = None
 
 
 _read_states: dict[tuple, _ReadState] = {}
 _read_states_lock = threading.Lock()
-# Tickets of reads that have started and not yet completed, per read key.
-# Kept apart from ``_read_states`` because a scope counts as read only once
-# a read has recorded an outcome. Entries vanish when the set empties.
-_in_flight: dict[tuple, set[int]] = {}
 _read_tickets = itertools.count(1)
 
 
@@ -436,39 +424,14 @@ def _reset_read_grace() -> None:
     """Drop every cached last-good inventory (tests; process-local only)."""
     with _read_states_lock:
         _read_states.clear()
-        _in_flight.clear()
 
 
 def _begin_read(
-    key: tuple, clock: Callable[[], float], monotonic: Callable[[], float]
+    clock: Callable[[], float], monotonic: Callable[[], float]
 ) -> tuple[int, float, float]:
-    """Order a read by when it starts: (ticket, wall start, monotonic start).
-
-    The ticket stays in flight until the read completes or ``_end_read``
-    abandons it; callers must reach one of those on every path.
-    """
+    """Order a read by when it starts: (ticket, wall start, monotonic start)."""
     with _read_states_lock:
-        ticket = next(_read_tickets)
-        _in_flight.setdefault(key, set()).add(ticket)
-        return ticket, clock(), monotonic()
-
-
-def _complete(key: tuple, ticket: int) -> None:
-    """Drop a ticket from the in-flight set (lock held)."""
-    pending = _in_flight.get(key)
-    if pending is not None:
-        pending.discard(ticket)
-        if not pending:
-            del _in_flight[key]
-
-
-def _end_read(key: tuple, ticket: int) -> None:
-    """Mark a read complete without recording an outcome (idempotent)."""
-    with _read_states_lock:
-        _complete(key, ticket)
-        state = _read_states.get(key)
-        if state is not None:
-            state.refresh_failure_since(_in_flight.get(key, ()))
+        return next(_read_tickets), clock(), monotonic()
 
 
 def _iso_utc(ts: Optional[float]) -> Optional[str]:
@@ -538,7 +501,6 @@ def _remember_success(
     """
     with _read_states_lock:
         state = _read_states.setdefault(key, _ReadState())
-        _complete(key, ticket)
         if ticket > state.success_ticket and ticket > state.failure_ticket:
             state.last_good = copy.deepcopy(payload)
             state.last_success = started
@@ -547,8 +509,17 @@ def _remember_success(
         if ticket > state.seen_success_ticket:
             state.seen_success_ticket = ticket
         if ticket > state.failure_ticket:
+            state.failure_since = None
+            state.failure_since_ticket = 0
             state.failure_degraded = None
-        state.refresh_failure_since(_in_flight.get(key, ()))
+        elif (
+            state.failure_since is not None
+            and ticket > state.failure_since_ticket
+        ):
+            # A suppressed success splits the episode: it restarts at the
+            # newest failure, the only later start this state still holds.
+            state.failure_since = state.failure_started
+            state.failure_since_ticket = state.failure_ticket
         return _current_response(state, monotonic(), None)
 
 
@@ -563,9 +534,8 @@ def _on_read_failure(
 
     Both outcomes carry ``last_success`` (None if there never was one) and
     ``failure_since`` so the banner can say how long. A failure that started
-    before the newest observed success is outdated by it and records
-    nothing. ``failure_since`` is the earliest start among failures newer
-    than that success, so a success between two failures splits them; the degraded
+    before the newest success is outdated by it and records nothing.
+    ``failure_since`` keeps the episode's first start (see ``_ReadState``); the degraded
     payload is the newest failure's, so an older request completing late
     cannot replace a newer diagnosis. Grace is measured on the monotonic
     clock, so a wall-clock step cannot stretch the window; wall time only
@@ -573,13 +543,21 @@ def _on_read_failure(
     """
     with _read_states_lock:
         state = _read_states.setdefault(key, _ReadState())
-        _complete(key, ticket)
         if ticket > state.seen_success_ticket:
-            state.failure_starts[ticket] = started
+            if (
+                state.failure_since is None
+                or state.failure_since_ticket <= state.seen_success_ticket
+            ):
+                state.failure_since = started
+                state.failure_since_ticket = ticket
+            elif ticket < state.failure_since_ticket:
+                # An earlier failure completing late.
+                state.failure_since = started
+                state.failure_since_ticket = ticket
             if ticket > state.failure_ticket:
                 state.failure_ticket = ticket
+                state.failure_started = started
                 state.failure_degraded = copy.deepcopy(degraded)
-        state.refresh_failure_since(_in_flight.get(key, ()))
         return _current_response(state, monotonic(), degraded)
 
 
@@ -700,77 +678,72 @@ def list_instances(
     from . import netbox as _netbox
 
     read_key = _read_key("instances", netbox_url, tenant_slugs)
-    ticket, started, started_mono = _begin_read(read_key, clock, monotonic)
+    ticket, started, started_mono = _begin_read(clock, monotonic)
     try:
-        try:
-            services = _fetch_services(netbox_url, netbox_token, ssl_verify, tenant_slugs)
-        except _netbox.NetboxAPIError as exc:
-            logger.warning("media-workloads: NetBox query failed: %s", sanitize_audit_field(str(exc)))
-            return _on_read_failure(
-                read_key,
-                {"degraded": True, "reason": "netbox-unreachable", "instances": [], "functions": []},
-                ticket, started, monotonic,
-            )
-        except Exception as exc:
-            logger.warning("media-workloads: unexpected NetBox error: %s", exc)
-            return _on_read_failure(
-                read_key,
-                {"degraded": True, "reason": "netbox-error", "instances": [], "functions": []},
-                ticket, started, monotonic,
-            )
-
-        # One catalog read per inventory request, shared by every instance's
-        # has_topology.
-        catalog_snapshot = load_catalog_snapshot(catalog_dir)
-        instances = [
-            _service_to_instance(
-                svc,
-                sidecar_namespaces=sidecar_namespaces,
-                sidecar_ports=sidecar_ports,
-                catalog_dir=catalog_dir,
-                catalog_snapshot=catalog_snapshot,
-            )
-            for svc in services
-        ]
-
-        observed = _observed_by_app(prometheus_url) if prometheus_url else {}
-        for inst in instances:
-            key = inst["function_key"]
-            if key is not None and key in observed:
-                inst["observed_state"] = "running" if observed[key] >= 1.0 else "failing"
-            # Intent says active but runtime proof is absent/failing — the two
-            # disagree. This flags that gap; it does not name, or claim exists,
-            # anything that closes it automatically (dmfdeploy#411).
-            inst["reconcile_direction"] = _reconcile_direction(
-                inst["requested_state"], inst["observed_state"]
-            )
-            inst["reconcile_pending"] = inst["reconcile_direction"] is not None
-
-        functions: dict[str, dict[str, Any]] = {}
-        for inst in instances:
-            key = inst["function_key"] or "(untagged)"
-            agg = functions.setdefault(
-                key, {"function_key": key, "count": 0, "running": 0, "reconcile_pending": 0}
-            )
-            agg["count"] += 1
-            if inst["observed_state"] == "running":
-                agg["running"] += 1
-            if inst["reconcile_pending"]:
-                agg["reconcile_pending"] += 1
-
-        return _remember_success(
+        services = _fetch_services(netbox_url, netbox_token, ssl_verify, tenant_slugs)
+    except _netbox.NetboxAPIError as exc:
+        logger.warning("media-workloads: NetBox query failed: %s", sanitize_audit_field(str(exc)))
+        return _on_read_failure(
             read_key,
-            {
-                "degraded": False,
-                "instances": instances,
-                "functions": sorted(functions.values(), key=lambda f: f["function_key"]),
-            },
-            ticket, started, started_mono, monotonic,
+            {"degraded": True, "reason": "netbox-unreachable", "instances": [], "functions": []},
+            ticket, started, monotonic,
         )
-    finally:
-        # An unexpected error between the fetch and the recorded outcome
-        # must not leave this read in flight.
-        _end_read(read_key, ticket)
+    except Exception as exc:
+        logger.warning("media-workloads: unexpected NetBox error: %s", exc)
+        return _on_read_failure(
+            read_key,
+            {"degraded": True, "reason": "netbox-error", "instances": [], "functions": []},
+            ticket, started, monotonic,
+        )
+
+    # One catalog read per inventory request, shared by every instance's
+    # has_topology.
+    catalog_snapshot = load_catalog_snapshot(catalog_dir)
+    instances = [
+        _service_to_instance(
+            svc,
+            sidecar_namespaces=sidecar_namespaces,
+            sidecar_ports=sidecar_ports,
+            catalog_dir=catalog_dir,
+            catalog_snapshot=catalog_snapshot,
+        )
+        for svc in services
+    ]
+
+    observed = _observed_by_app(prometheus_url) if prometheus_url else {}
+    for inst in instances:
+        key = inst["function_key"]
+        if key is not None and key in observed:
+            inst["observed_state"] = "running" if observed[key] >= 1.0 else "failing"
+        # Intent says active but runtime proof is absent/failing — the two
+        # disagree. This flags that gap; it does not name, or claim exists,
+        # anything that closes it automatically (dmfdeploy#411).
+        inst["reconcile_direction"] = _reconcile_direction(
+            inst["requested_state"], inst["observed_state"]
+        )
+        inst["reconcile_pending"] = inst["reconcile_direction"] is not None
+
+    functions: dict[str, dict[str, Any]] = {}
+    for inst in instances:
+        key = inst["function_key"] or "(untagged)"
+        agg = functions.setdefault(
+            key, {"function_key": key, "count": 0, "running": 0, "reconcile_pending": 0}
+        )
+        agg["count"] += 1
+        if inst["observed_state"] == "running":
+            agg["running"] += 1
+        if inst["reconcile_pending"]:
+            agg["reconcile_pending"] += 1
+
+    return _remember_success(
+        read_key,
+        {
+            "degraded": False,
+            "instances": instances,
+            "functions": sorted(functions.values(), key=lambda f: f["function_key"]),
+        },
+        ticket, started, started_mono, monotonic,
+    )
 
 
 # ── ADR-0046 decisions 3 + 5: workload-first grouping ──────────────────────
@@ -991,141 +964,136 @@ def list_workloads_grouped(
     from . import netbox as _netbox
 
     read_key = _read_key("grouped", netbox_url, tenant_slugs)
-    ticket, started, started_mono = _begin_read(read_key, clock, monotonic)
+    ticket, started, started_mono = _begin_read(clock, monotonic)
     try:
-        try:
-            services = _fetch_services(netbox_url, netbox_token, ssl_verify, tenant_slugs)
-        except _netbox.NetboxAPIError as exc:
-            logger.warning("media-workloads: NetBox query failed: %s", sanitize_audit_field(str(exc)))
-            return _on_read_failure(
-                read_key,
-                {"degraded": True, "reason": "netbox-unreachable", "workloads": [], "invalid_instances": []},
-                ticket, started, monotonic,
-            )
-        except Exception as exc:
-            logger.warning("media-workloads: unexpected NetBox error: %s", exc)
-            return _on_read_failure(
-                read_key,
-                {"degraded": True, "reason": "netbox-error", "workloads": [], "invalid_instances": []},
-                ticket, started, monotonic,
-            )
-
-        # One catalog read per inventory request, shared by every instance's
-        # has_topology.
-        catalog_snapshot = load_catalog_snapshot(catalog_dir)
-        instances = [
-            _service_to_instance(
-                svc,
-                sidecar_namespaces=sidecar_namespaces,
-                sidecar_ports=sidecar_ports,
-                catalog_dir=catalog_dir,
-                catalog_snapshot=catalog_snapshot,
-            )
-            for svc in services
-        ]
-
-        # Build a name→cluster_service lookup from NetBox custom fields.
-        # The Prometheus instance label contains the cluster_service (leading DNS
-        # label of the probe target), NOT the NetBox service name. They may differ
-        # (e.g. nmos-cpp service → cluster_service=nmos-cpp-registry).
-        svc_cluster_service: dict[str, str] = {}
-        for svc in services:
-            cf = svc.get("custom_fields")
-            if isinstance(cf, dict):
-                cs = cf.get("cluster_service")
-                if isinstance(cs, str) and cs:
-                    svc_cluster_service[svc.get("name", "")] = cs
-
-        # Identity-join: per-instance observed state via cluster_service (ADR-0046 §3)
-        observed = _observed_by_identity(prometheus_url) if prometheus_url else {}
-        for inst in instances:
-            cs = svc_cluster_service.get(inst["instance"], inst["instance"])
-            if cs in observed:
-                inst["observed_state"] = "running" if observed[cs] >= 1.0 else "failing"
-            inst["reconcile_direction"] = _reconcile_direction(
-                inst["requested_state"], inst["observed_state"]
-            )
-            inst["reconcile_pending"] = inst["reconcile_direction"] is not None
-
-        # Build a name→tags lookup from the raw service records for grouping.
-        svc_tags_by_name: dict[str, list[str]] = {
-            svc.get("name", ""): _tag_names(svc) for svc in services
-        }
-
-        # Group by workload assignment
-        workload_groups: dict[str, list[dict[str, Any]]] = {}
-        invalid_instances: list[dict[str, Any]] = []
-
-        for inst in instances:
-            names = svc_tags_by_name.get(inst["instance"], [])
-            slug, status = _workload_assignment(names)
-
-            if status == "invalid-multiple":
-                # Surface the conflicting workload slugs so the operator can
-                # identify and fix the mis-tagged service (ADR-0046 §2).
-                conflicting = [
-                    n.split(":", 1)[1] for n in names if n.startswith("workload:")
-                ]
-                invalid_instances.append({
-                    **inst,
-                    "workload_assignment": "invalid-multiple",
-                    "conflicting_workloads": conflicting,
-                })
-                # Do NOT place in multiple workloads (ADR-0046 §2).
-                continue
-
-            inst["workload_assignment"] = status
-            workload_groups.setdefault(slug, []).append(inst)
-
-        # Build workload objects
-        workloads: list[dict[str, Any]] = []
-        for slug, members in sorted(workload_groups.items()):
-            members_sorted = sorted(members, key=lambda i: i["instance"])
-            lifecycle = _derive_workload_lifecycle(members_sorted)
-
-            # Per-workload function rollup within this workload
-            functions: dict[str, dict[str, Any]] = {}
-            for inst in members_sorted:
-                key = inst["function_key"] or "(untagged)"
-                agg = functions.setdefault(
-                    key, {"function_key": key, "count": 0, "running": 0, "reconcile_pending": 0}
-                )
-                agg["count"] += 1
-                if inst["observed_state"] == "running":
-                    agg["running"] += 1
-                if inst["reconcile_pending"]:
-                    agg["reconcile_pending"] += 1
-
-            workloads.append({
-                "slug": slug,
-                "name": "Unassigned" if slug == "unassigned" else slug,
-                "lifecycle": lifecycle,
-                "health": "ok",
-                # Progress is derived once at the NetBox read boundary. The
-                # console renders these facts directly rather than rebuilding
-                # lifecycle counts from the instance list.
-                "progress": {
-                    "designed": len(members_sorted),
-                    "provisioned": sum(inst["requested_state"] == "active" for inst in members_sorted),
-                    "total": len(members_sorted),
-                },
-                "instances": members_sorted,
-                "functions": sorted(functions.values(), key=lambda f: f["function_key"]),
-            })
-
-        return _remember_success(
+        services = _fetch_services(netbox_url, netbox_token, ssl_verify, tenant_slugs)
+    except _netbox.NetboxAPIError as exc:
+        logger.warning("media-workloads: NetBox query failed: %s", sanitize_audit_field(str(exc)))
+        return _on_read_failure(
             read_key,
-            {
-                "degraded": len(invalid_instances) > 0,
-                "workloads": workloads,
-                "invalid_instances": invalid_instances,
-            },
-            ticket, started, started_mono, monotonic,
+            {"degraded": True, "reason": "netbox-unreachable", "workloads": [], "invalid_instances": []},
+            ticket, started, monotonic,
         )
-    finally:
-        # An unexpected error between the fetch and the recorded outcome
-        # must not leave this read in flight.
-        _end_read(read_key, ticket)
+    except Exception as exc:
+        logger.warning("media-workloads: unexpected NetBox error: %s", exc)
+        return _on_read_failure(
+            read_key,
+            {"degraded": True, "reason": "netbox-error", "workloads": [], "invalid_instances": []},
+            ticket, started, monotonic,
+        )
+
+    # One catalog read per inventory request, shared by every instance's
+    # has_topology.
+    catalog_snapshot = load_catalog_snapshot(catalog_dir)
+    instances = [
+        _service_to_instance(
+            svc,
+            sidecar_namespaces=sidecar_namespaces,
+            sidecar_ports=sidecar_ports,
+            catalog_dir=catalog_dir,
+            catalog_snapshot=catalog_snapshot,
+        )
+        for svc in services
+    ]
+
+    # Build a name→cluster_service lookup from NetBox custom fields.
+    # The Prometheus instance label contains the cluster_service (leading DNS
+    # label of the probe target), NOT the NetBox service name. They may differ
+    # (e.g. nmos-cpp service → cluster_service=nmos-cpp-registry).
+    svc_cluster_service: dict[str, str] = {}
+    for svc in services:
+        cf = svc.get("custom_fields")
+        if isinstance(cf, dict):
+            cs = cf.get("cluster_service")
+            if isinstance(cs, str) and cs:
+                svc_cluster_service[svc.get("name", "")] = cs
+
+    # Identity-join: per-instance observed state via cluster_service (ADR-0046 §3)
+    observed = _observed_by_identity(prometheus_url) if prometheus_url else {}
+    for inst in instances:
+        cs = svc_cluster_service.get(inst["instance"], inst["instance"])
+        if cs in observed:
+            inst["observed_state"] = "running" if observed[cs] >= 1.0 else "failing"
+        inst["reconcile_direction"] = _reconcile_direction(
+            inst["requested_state"], inst["observed_state"]
+        )
+        inst["reconcile_pending"] = inst["reconcile_direction"] is not None
+
+    # Build a name→tags lookup from the raw service records for grouping.
+    svc_tags_by_name: dict[str, list[str]] = {
+        svc.get("name", ""): _tag_names(svc) for svc in services
+    }
+
+    # Group by workload assignment
+    workload_groups: dict[str, list[dict[str, Any]]] = {}
+    invalid_instances: list[dict[str, Any]] = []
+
+    for inst in instances:
+        names = svc_tags_by_name.get(inst["instance"], [])
+        slug, status = _workload_assignment(names)
+
+        if status == "invalid-multiple":
+            # Surface the conflicting workload slugs so the operator can
+            # identify and fix the mis-tagged service (ADR-0046 §2).
+            conflicting = [
+                n.split(":", 1)[1] for n in names if n.startswith("workload:")
+            ]
+            invalid_instances.append({
+                **inst,
+                "workload_assignment": "invalid-multiple",
+                "conflicting_workloads": conflicting,
+            })
+            # Do NOT place in multiple workloads (ADR-0046 §2).
+            continue
+
+        inst["workload_assignment"] = status
+        workload_groups.setdefault(slug, []).append(inst)
+
+    # Build workload objects
+    workloads: list[dict[str, Any]] = []
+    for slug, members in sorted(workload_groups.items()):
+        members_sorted = sorted(members, key=lambda i: i["instance"])
+        lifecycle = _derive_workload_lifecycle(members_sorted)
+
+        # Per-workload function rollup within this workload
+        functions: dict[str, dict[str, Any]] = {}
+        for inst in members_sorted:
+            key = inst["function_key"] or "(untagged)"
+            agg = functions.setdefault(
+                key, {"function_key": key, "count": 0, "running": 0, "reconcile_pending": 0}
+            )
+            agg["count"] += 1
+            if inst["observed_state"] == "running":
+                agg["running"] += 1
+            if inst["reconcile_pending"]:
+                agg["reconcile_pending"] += 1
+
+        workloads.append({
+            "slug": slug,
+            "name": "Unassigned" if slug == "unassigned" else slug,
+            "lifecycle": lifecycle,
+            "health": "ok",
+            # Progress is derived once at the NetBox read boundary. The
+            # console renders these facts directly rather than rebuilding
+            # lifecycle counts from the instance list.
+            "progress": {
+                "designed": len(members_sorted),
+                "provisioned": sum(inst["requested_state"] == "active" for inst in members_sorted),
+                "total": len(members_sorted),
+            },
+            "instances": members_sorted,
+            "functions": sorted(functions.values(), key=lambda f: f["function_key"]),
+        })
+
+    return _remember_success(
+        read_key,
+        {
+            "degraded": len(invalid_instances) > 0,
+            "workloads": workloads,
+            "invalid_instances": invalid_instances,
+        },
+        ticket, started, started_mono, monotonic,
+    )
 
 # Hard cap on pages a
 # completeness-verified purge fetch will follow before refusing — generous
