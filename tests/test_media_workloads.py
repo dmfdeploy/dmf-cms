@@ -909,3 +909,129 @@ def test_topology_source_pattern_agrees_between_flat_and_grouped_reads(monkeypat
     assert flat_pattern == "smpte"
     assert grouped_pattern == "smpte"
     assert flat_pattern == grouped_pattern
+
+
+# ---------------------------------------------------------------------------
+# has_topology: the inventory flag the console uses to skip the topology
+# request. It must come from the same rule the topology endpoint applies.
+# ---------------------------------------------------------------------------
+
+from dmf_cms.media_workloads import _service_to_instance  # noqa: E402
+from dmf_cms.switch_source import SwitchSourceError, resolve_topology_for_receiver  # noqa: E402
+
+
+def _has_topology(name: str, catalog_dir: str):
+    svc = _service(name, ["dmf-catalog", f"app:{name}", "lifecycle:active", "workload:test"])
+    return _service_to_instance(svc, catalog_dir=catalog_dir)["has_topology"]
+
+
+def test_has_topology_true_for_entry_with_topology_ref(tmp_path: Path):
+    _write_parent_entry(tmp_path)
+    (tmp_path / "topology-params.j1.yaml").write_text(_TOPOLOGY_J1)
+    assert _has_topology("mxl-videotest-view", str(tmp_path)) is True
+
+
+def test_has_topology_false_for_entry_without_topology_ref(tmp_path: Path):
+    _write_parent_entry(tmp_path, topology_ref=None)
+    assert _has_topology("mxl-videotest-view", str(tmp_path)) is False
+
+
+def test_has_topology_false_for_instance_without_catalog_entry(tmp_path: Path):
+    _write_parent_entry(tmp_path)
+    assert _has_topology("mxl-videotest-view-source-a", str(tmp_path)) is False
+
+
+def test_has_topology_null_when_catalog_unreadable(tmp_path: Path):
+    assert _has_topology("mxl-videotest-view", str(tmp_path / "missing")) is None
+
+
+def test_has_topology_false_agrees_with_endpoint_refusal(tmp_path: Path):
+    _write_parent_entry(tmp_path, topology_ref=None)
+    assert _has_topology("mxl-videotest-view", str(tmp_path)) is False
+    with pytest.raises(SwitchSourceError) as exc:
+        resolve_topology_for_receiver(
+            receiver_instance="mxl-videotest-view", catalog_dir=str(tmp_path)
+        )
+    assert exc.value.code == "receiver-not-topology"
+
+
+def test_has_topology_true_agrees_with_endpoint_resolving(tmp_path: Path):
+    _write_parent_entry(tmp_path)
+    (tmp_path / "topology-params.j1.yaml").write_text(_TOPOLOGY_J1)
+    assert _has_topology("mxl-videotest-view", str(tmp_path)) is True
+    params = resolve_topology_for_receiver(
+        receiver_instance="mxl-videotest-view", catalog_dir=str(tmp_path)
+    )
+    assert params["sources"]
+
+
+# ---------------------------------------------------------------------------
+# has_topology must be false only after a complete catalog read, and the
+# catalog is read once per inventory request.
+# ---------------------------------------------------------------------------
+
+import os  # noqa: E402
+
+from dmf_cms import media_workloads as media_workloads_module  # noqa: E402
+
+
+def test_has_topology_null_when_an_entry_file_is_malformed(tmp_path: Path):
+    # The unparseable file could be the receiver's own entry, so an empty
+    # lookup is not evidence of "no topology".
+    _write_parent_entry(tmp_path, key="other", topology_ref=None)
+    (tmp_path / "mxl-videotest-view.yaml").write_text("key: [unterminated\n")
+    assert _has_topology("mxl-videotest-view", str(tmp_path)) is None
+
+
+def test_has_topology_recovers_once_the_entry_file_is_repaired(tmp_path: Path):
+    (tmp_path / "mxl-videotest-view.yaml").write_text("key: [unterminated\n")
+    assert _has_topology("mxl-videotest-view", str(tmp_path)) is None
+    _write_parent_entry(tmp_path)
+    (tmp_path / "topology-params.j1.yaml").write_text(_TOPOLOGY_J1)
+    assert _has_topology("mxl-videotest-view", str(tmp_path)) is True
+
+
+def test_has_topology_still_false_when_other_files_are_topology_contracts(tmp_path: Path):
+    _write_parent_entry(tmp_path, key="other", topology_ref=None)
+    (tmp_path / "topology-params.j1.yaml").write_text(_TOPOLOGY_J1)
+    assert _has_topology("mxl-videotest-view", str(tmp_path)) is False
+
+
+@pytest.mark.skipif(os.geteuid() == 0, reason="root ignores directory permissions")
+def test_has_topology_null_when_catalog_directory_is_unreadable(tmp_path: Path):
+    _write_parent_entry(tmp_path, topology_ref=None)
+    tmp_path.chmod(0o000)
+    try:
+        assert _has_topology("mxl-videotest-view", str(tmp_path)) is None
+    finally:
+        tmp_path.chmod(0o755)
+
+
+def test_inventory_reads_the_catalog_once_for_many_instances(monkeypatch, tmp_path: Path):
+    _write_parent_entry(tmp_path)
+    (tmp_path / "topology-params.j1.yaml").write_text(_TOPOLOGY_J1)
+    real = media_workloads_module.load_catalog_snapshot
+    loads: list[str] = []
+
+    def counting(catalog_dir):
+        loads.append(catalog_dir)
+        return real(catalog_dir)
+
+    monkeypatch.setattr(media_workloads_module, "load_catalog_snapshot", counting)
+
+    def fake_request(netbox_url, netbox_token, path, ssl_context=None):
+        return {
+            "results": [
+                _service(f"inst-{i}", ["dmf-catalog", f"app:inst-{i}", "lifecycle:active", "workload:test"])
+                for i in range(5)
+            ]
+        }
+
+    monkeypatch.setattr(netbox_module, "_request", fake_request)
+
+    flat = list_instances("http://netbox.test", "tok", True, None, catalog_dir=str(tmp_path))
+    assert len(flat["instances"]) == 5
+    assert len(loads) == 1
+    grouped = list_workloads_grouped("http://netbox.test", "tok", True, None, catalog_dir=str(tmp_path))
+    assert len(grouped["workloads"][0]["instances"]) == 5
+    assert len(loads) == 2

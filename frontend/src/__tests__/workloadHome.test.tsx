@@ -794,3 +794,69 @@ describe('the header rail during a failed background refetch (PR #90 review, dmf
     expect(screen.queryByRole('navigation', { name: 'Media workload lifecycle' })).toBeNull()
   })
 })
+
+describe('topology capability gate', () => {
+  const topologyUrls = (calls: Array<{ url: string }>) =>
+    calls.map((c) => c.url).filter((u) => u.endsWith('/topology'))
+
+  it('never requests the topology of an instance whose inventory says it has none', async () => {
+    const wl = workload({
+      instances: [
+        instance({ instance: 'viewer-1', function_key: 'viewer', has_topology: true }),
+        instance({ instance: 'crosspoint-2', function_key: 'crosspoint', netbox_id: 2, has_topology: false }),
+      ],
+      functions: [
+        { function_key: 'viewer', count: 1, running: 1, reconcile_pending: 0 },
+        { function_key: 'crosspoint', count: 1, running: 1, reconcile_pending: 0 },
+      ],
+    })
+    const { calls } = mkFetch({
+      workload: wl,
+      catalog: [catalogEntry(), catalogEntry({ key: 'viewer', display_name: 'MXL Viewer' })],
+      topology: { 'viewer-1': freshTopology() },
+    })
+    renderHome()
+    await screen.findByRole('heading', { name: 'Active source' })
+
+    const urls = topologyUrls(calls)
+    expect(urls.some((u) => u.includes('/viewer-1/topology'))).toBe(true)
+    expect(urls.some((u) => u.includes('/crosspoint-2/topology'))).toBe(false)
+  })
+
+  it('withdraws a shown active source when inventory later says the instance has no topology', async () => {
+    const withTopology = workload({
+      instances: [instance({ instance: 'viewer-1', function_key: 'viewer', has_topology: true })],
+      functions: [{ function_key: 'viewer', count: 1, running: 1, reconcile_pending: 0 }],
+    })
+    const without = workload({
+      instances: [instance({ instance: 'viewer-1', function_key: 'viewer', has_topology: false })],
+      functions: [{ function_key: 'viewer', count: 1, running: 1, reconcile_pending: 0 }],
+    })
+    mkFetch({
+      workload: withTopology,
+      catalog: [catalogEntry({ key: 'viewer', display_name: 'MXL Viewer' })],
+      topology: { 'viewer-1': freshTopology() },
+      workloadAfter: { reads: 1, workload: without },
+    })
+    const queryClient = renderHome()
+    await screen.findByRole('heading', { name: 'Active source' })
+
+    await queryClient.invalidateQueries({ queryKey: ['media-workloads-grouped'] })
+    await waitFor(() => expect(screen.queryByRole('heading', { name: 'Active source' })).toBeNull())
+  })
+
+  it('still requests the topology when capability is unknown', async () => {
+    const wl = workload({
+      instances: [instance({ instance: 'viewer-1', function_key: 'viewer', has_topology: null })],
+      functions: [{ function_key: 'viewer', count: 1, running: 1, reconcile_pending: 0 }],
+    })
+    const { calls } = mkFetch({
+      workload: wl,
+      catalog: [catalogEntry({ key: 'viewer', display_name: 'MXL Viewer' })],
+      topology: { 'viewer-1': freshTopology() },
+    })
+    renderHome()
+    await screen.findByRole('heading', { name: 'Active source' })
+    expect(topologyUrls(calls).some((u) => u.includes('/viewer-1/topology'))).toBe(true)
+  })
+})

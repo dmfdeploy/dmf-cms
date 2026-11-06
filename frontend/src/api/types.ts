@@ -724,6 +724,12 @@ export interface MediaWorkloadInstance {
   // pattern"; an ordinary (non-topology) instance is also null. Optional,
   // same fixture-compatibility reasoning as the two fields above.
   topology_source_pattern?: string | null
+  // Whether this instance's catalog entry can carry a topology, by the same
+  // rule the topology endpoint applies. false: the endpoint can only answer
+  // "no topology", so the console does not ask. null: the catalog could not
+  // be read, so capability is unknown. Optional for fixture compatibility;
+  // absent is treated like null.
+  has_topology?: boolean | null
 }
 
 export interface MediaWorkloadFunction {
