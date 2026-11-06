@@ -401,7 +401,7 @@ class _Episode:
         self.reads = []
         for i in range(count):
             self.clock.now = T0 + 5 * i
-            self.reads.append(mw._begin_read(self.clock, self.clock))
+            self.reads.append(mw._begin_read(self.key, self.clock, self.clock))
         self.clock.now = T0 + 5 * count
 
     def ok(self, i):
@@ -462,3 +462,52 @@ def test_suppressed_success_with_no_failure_after_it_leaves_no_episode(kind):
     # A failure older than a success already seen records nothing.
     assert ep.fail(0)["failure_since"] is None
     assert ep.blocked() is None
+
+
+def _state(ep):
+    return mw._read_states[ep.key]
+
+
+def test_sustained_sequential_failures_keep_one_entry(kind):
+    ep = _Episode(kind, 0)
+    first = None
+    for i in range(1_000):
+        ep.clock.now = T0 + i
+        ticket, started, _ = mw._begin_read(ep.key, ep.clock, ep.clock)
+        got = mw._on_read_failure(ep.key, _DEGRADED, ticket, started, ep.clock)
+        first = first if first is not None else got["failure_since"]
+        assert len(_state(ep).failure_starts) <= 1
+    assert got["failure_since"] == first == mw._iso_utc(T0)
+    assert mw._in_flight == {}
+
+
+def test_failure_between_an_in_flight_read_and_its_success_is_kept(kind):
+    ep = _Episode(kind, 3)  # A=0 fails, B=1 in flight, C=2 fails, B succeeds
+    ep.fail(0)
+    ep.fail(2)
+    assert _state(ep).failure_starts.keys() == {ep.reads[0][0], ep.reads[2][0]}
+    assert ep.ok(1)["failure_since"] == _at(2)
+    assert mw._in_flight == {}
+
+
+def test_many_failures_while_an_older_read_is_in_flight_stay_bounded(kind):
+    ep = _Episode(kind, 1)  # read 0 stays in flight throughout
+    for i in range(1, 501):
+        ep.clock.now = T0 + 5 * i
+        ticket, started, _ = mw._begin_read(ep.key, ep.clock, ep.clock)
+        mw._on_read_failure(ep.key, _DEGRADED, ticket, started, ep.clock)
+        assert len(_state(ep).failure_starts) <= 2
+    assert ep.ok(0)["failure_since"] == _at(1)
+    assert len(_state(ep).failure_starts) <= 1
+
+
+def test_abandoned_read_leaves_no_in_flight_ticket(monkeypatch, kind):
+    Source(monkeypatch)
+
+    def boom(*args, **kwargs):
+        raise KeyboardInterrupt
+
+    monkeypatch.setattr(mw, "load_catalog_snapshot", boom)
+    with pytest.raises(KeyboardInterrupt):
+        _read(kind, Clock())
+    assert mw._in_flight == {}
