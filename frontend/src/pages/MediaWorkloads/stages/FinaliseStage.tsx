@@ -18,6 +18,7 @@ import AutomationInProgressNotice, {
 import type { CatalogEntry, MediaWorkload, Operation, SwitchSourceResult, UserIdentity } from '../../../api/types'
 import type { StageActionId, StageState } from '../../../lib/workloadLifecycle'
 import StageCard from './StageCard'
+import { switchFailureText } from '../switchResultText'
 import { JobStatusLine, OPERATION_LABEL, OperationStatusLine } from './JobProgress'
 import { settleQuery } from '../../../lib/queryState'
 import { useGuardWrite } from '../../../lib/inventoryFreshness'
@@ -524,16 +525,18 @@ export default function FinaliseStage({
                   <p className="text-muted">
                     Last switch outcome:{' '}
                     <span className={lastSwitchResult.status === 'active' ? 'text-green-400' : 'text-red-300'}>
-                      {lastSwitchResult.outcome_message ??
-                        (lastSwitchResult.status === 'active'
-                          ? 'Switch completed.'
-                          : 'Switch did not complete. Check the current source before you retry.')}
+                      {lastSwitchResult.status === 'active'
+                        ? (lastSwitchResult.outcome_message ?? 'Switch completed.')
+                        : switchFailureText(lastSwitchResult)}
                     </span>
                   </p>
-                  <p className="mt-1 font-mono text-muted">
-                    request {lastSwitchResult.request_id}
-                    {lastSwitchResult.outcome ? ` · ${lastSwitchResult.outcome}` : ''}
-                  </p>
+                  <details className="mt-1 text-muted">
+                    <summary className="cursor-pointer select-none opacity-80 hover:opacity-100">System details</summary>
+                    <p className="mt-1 pl-4 font-mono">
+                      request {lastSwitchResult.request_id}
+                      {lastSwitchResult.outcome ? ` · ${lastSwitchResult.outcome}` : ''}
+                    </p>
+                  </details>
                 </div>
               )}
               {purgeReview && (

@@ -41,6 +41,7 @@ from dmf_cms.switch_source import (
     SwitchStatus,
     classify_switch_job_failure,
     dispatch_switch_source,
+    switch_failure_message,
     switch_outcome_from_awx_events,
     switch_outcome_message,
 )
@@ -320,7 +321,8 @@ def test_actuator_template_missing_sets_failed_rollback_required(monkeypatch):
     # job to classify) — outcome deliberately stays unclassified, never a
     # fabricated switch_* value.
     assert command.outcome is None
-    assert command.outcome_message is None
+    assert command.outcome_message == switch_failure_message(command.error, None)
+    assert "template is not available" in command.outcome_message
 
 
 def test_actuator_launch_exception_sets_launch_failed(monkeypatch):
@@ -665,6 +667,55 @@ def test_actuator_watch_timeout_and_lost_carry_operator_copy():
         command = _pending_command()
         ReconnectViaAwxActuator._fail(command, "x", outcome=outcome)
         assert command.outcome_message == switch_outcome_message(outcome)
+
+
+# Truth checks for the late stages: each message must convey what the play
+# cannot rule out, and must not assert a state the play cannot guarantee.
+
+
+def test_select_copy_asserts_neither_state():
+    message = switch_outcome_message("switch_refused_select").lower()
+    assert "may or may not have taken effect" in message
+    assert "check the current source" in message
+    assert "no source is active" not in message
+    assert "unchanged" not in message
+
+
+def test_repoint_copy_says_rollback_and_source_state_are_unknown():
+    message = switch_outcome_message("switch_refused_repoint").lower()
+    for phrase in ("rolled back", "restored", "cleared", "cannot tell", "check that the viewer recovered"):
+        assert phrase in message
+    assert "no rollback ran" not in message
+    assert "unchanged" not in message
+
+
+def test_error_and_timeout_copy_say_the_result_is_unknown():
+    for outcome in ("switch_job_error", SWITCH_OUTCOME_WATCH_TIMEOUT):
+        message = switch_outcome_message(outcome).lower()
+        assert "result is unknown" in message
+        assert "could not run" not in message and "did not finish in time" not in message
+
+
+@pytest.mark.parametrize(
+    ("error", "expected"),
+    [
+        ("switch-launch-failed", "could not confirm that the switch job started"),
+        ("switch-watch-crashed", "result is unknown"),
+        ("switch-job-template-missing: no AWX job template named 'x' (internal detail)", "template is not available"),
+        ("switch-something-new", "no description"),
+    ],
+)
+def test_failures_without_an_outcome_get_plain_copy(error, expected):
+    message = switch_failure_message(error, None)
+    assert expected in message
+    assert "switch-" not in message and "umbrella" not in message
+
+
+def test_fail_sets_a_message_for_a_failure_without_an_outcome():
+    command = _pending_command()
+    ReconnectViaAwxActuator._fail(command, "switch-launch-failed")
+    assert command.outcome is None
+    assert command.outcome_message == switch_failure_message("switch-launch-failed", None)
 
 
 # ── DMF_CONSOLE_L3_SWITCH_SOURCE_TIMEOUT_SECONDS (umbrella #306) ────────

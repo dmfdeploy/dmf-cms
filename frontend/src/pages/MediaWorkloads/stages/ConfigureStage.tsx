@@ -5,6 +5,7 @@ import ReasonConfirm from '../../../components/ReasonConfirm'
 import type { MediaWorkload, SwitchSourceResult } from '../../../api/types'
 import type { StageActionId, StageState } from '../../../lib/workloadLifecycle'
 import StageCard from './StageCard'
+import { switchFailureText } from '../switchResultText'
 import { settleQuery } from '../../../lib/queryState'
 import { useGuardWrite } from '../../../lib/inventoryFreshness'
 
@@ -320,10 +321,9 @@ function InstanceSwitchControl({
       ) : result ? (
         <div className="mt-1">
           <div className={`text-xs ${result.status === 'active' ? 'text-green-400' : 'text-red-300'}`}>
-            {result.outcome_message ??
-              (result.status === 'active'
-                ? `Active source: ${result.source_instance}`
-                : `Switch failed (${result.error ?? 'failed_rollback_required'}) — operator retry/rollback required.`)}
+            {result.status === 'active'
+              ? (result.outcome_message ?? `Active source: ${result.source_instance}`)
+              : switchFailureText(result)}
           </div>
           <details className="mt-1 text-xs text-muted">
             <summary className="cursor-pointer select-none opacity-80 hover:opacity-100">System details</summary>
