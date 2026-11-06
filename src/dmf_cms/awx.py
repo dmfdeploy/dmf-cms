@@ -605,6 +605,13 @@ def get_job_stdout(
 # contract expects to hit.
 _JOB_EVENTS_MAX_PAGES = 10
 
+# AWX flips a job's status to terminal before every job_event row has landed;
+# the job detail's ``event_processing_finished`` flag says when they have.
+# Callers that read an outcome event after a terminal status wait for that flag
+# for at most this many extra polls, so a job whose event processor is stuck
+# cannot hang the caller.
+EVENT_INGESTION_MAX_EXTRA_POLLS = 6
+
 
 def get_job_events_for_task(
     *,

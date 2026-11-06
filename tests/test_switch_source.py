@@ -376,7 +376,10 @@ def _mock_failed_job(monkeypatch, events: list, *, status: str = "failed") -> No
     """
     monkeypatch.setattr(awx, "lookup_job_template_by_name", lambda **k: {"id": 7})
     monkeypatch.setattr(awx, "launch_job", lambda **k: 42)
-    monkeypatch.setattr(awx, "get_job", lambda **k: {"status": status})
+    # Events are already ingested, so the actuator does not wait for them.
+    monkeypatch.setattr(
+        awx, "get_job", lambda **k: {"status": status, "event_processing_finished": True}
+    )
     monkeypatch.setattr(awx, "get_job_events_for_task", lambda **k: events)
 
     def stdout_must_not_be_read(**k):
@@ -727,6 +730,92 @@ def test_fail_sets_a_message_for_a_failure_without_an_outcome():
     ReconnectViaAwxActuator._fail(command, "switch-launch-failed")
     assert command.outcome is None
     assert command.outcome_message == switch_failure_message("switch-launch-failed", None)
+
+
+# ── event-ingestion lag (AWX reports terminal before events land) ───────
+
+
+def _lagging_job(monkeypatch, *, finished_after_polls: int | None, event: dict):
+    """A failed job whose outcome event only exists once ingestion finished.
+
+    ``finished_after_polls`` is the number of ``get_job`` calls that report
+    ``event_processing_finished`` false; ``None`` means it never finishes.
+    Returns the call counters and the sleeps the actuator asked for.
+    """
+    import dmf_cms.switch_source as switch_source
+
+    state = {"get_job": 0, "events": 0, "sleeps": []}
+    monkeypatch.setattr(awx, "lookup_job_template_by_name", lambda **k: {"id": 7})
+    monkeypatch.setattr(awx, "launch_job", lambda **k: 42)
+
+    def finished() -> bool:
+        return finished_after_polls is not None and state["get_job"] > finished_after_polls
+
+    def get_job(**k):
+        state["get_job"] += 1
+        return {"status": "failed", "event_processing_finished": finished()}
+
+    def get_events(**k):
+        state["events"] += 1
+        return [event] if finished() else []
+
+    async def fake_sleep(seconds):
+        state["sleeps"].append(seconds)
+
+    monkeypatch.setattr(awx, "get_job", get_job)
+    monkeypatch.setattr(awx, "get_job_events_for_task", get_events)
+    monkeypatch.setattr(switch_source.asyncio, "sleep", fake_sleep)
+    return state
+
+
+_RECOVERY_EVENT = _outcome_event("DMF_L3_SWITCH_OUTCOME: rollback_verification_failed run_id=r1")
+
+
+def test_actuator_waits_for_lagging_events_before_classifying(monkeypatch):
+    state = _lagging_job(monkeypatch, finished_after_polls=2, event=_RECOVERY_EVENT)
+    command = _pending_command()
+    asyncio.run(_actuator().execute(command, _TOPOLOGY_PARAMS))
+    assert command.outcome == SWITCH_OUTCOME_RECOVERY_UNVERIFIED
+    # One terminal poll, then two waits: the first still lags, the second is done.
+    assert state["get_job"] == 3 and len(state["sleeps"]) == 2
+    assert state["events"] == 1  # fetched once, after ingestion finished
+
+
+def test_actuator_falls_back_honestly_when_events_never_land(monkeypatch):
+    from dmf_cms import awx as awx_module
+
+    state = _lagging_job(monkeypatch, finished_after_polls=None, event=_RECOVERY_EVENT)
+    command = _pending_command()
+    asyncio.run(_actuator().execute(command, _TOPOLOGY_PARAMS))
+    extra = awx_module.EVENT_INGESTION_MAX_EXTRA_POLLS
+    assert state["get_job"] == 1 + extra and len(state["sleeps"]) == extra
+    assert command.outcome == "switch_job_failed"
+    message = command.outcome_message.lower()
+    assert "refused or rolled back" in message and "check the current source" in message
+
+
+def test_actuator_does_not_wait_when_events_are_already_ingested(monkeypatch):
+    state = _lagging_job(monkeypatch, finished_after_polls=0, event=_RECOVERY_EVENT)
+    command = _pending_command()
+    asyncio.run(_actuator().execute(command, _TOPOLOGY_PARAMS))
+    assert command.outcome == SWITCH_OUTCOME_RECOVERY_UNVERIFIED
+    assert state["get_job"] == 1 and state["sleeps"] == []
+
+
+def test_actuator_wait_survives_a_single_get_job_failure(monkeypatch):
+    state = _lagging_job(monkeypatch, finished_after_polls=3, event=_RECOVERY_EVENT)
+    real_get_job = awx.get_job
+
+    def flaky(**k):
+        if state["get_job"] == 1:  # the first wait poll
+            state["get_job"] += 1
+            raise RuntimeError("blip")
+        return real_get_job(**k)
+
+    monkeypatch.setattr(awx, "get_job", flaky)
+    command = _pending_command()
+    asyncio.run(_actuator().execute(command, _TOPOLOGY_PARAMS))
+    assert command.outcome == SWITCH_OUTCOME_RECOVERY_UNVERIFIED
 
 
 # ── DMF_CONSOLE_L3_SWITCH_SOURCE_TIMEOUT_SECONDS (umbrella #306) ────────

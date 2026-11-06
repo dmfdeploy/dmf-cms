@@ -83,7 +83,9 @@ def _patch_catalog(monkeypatch, *, entries, topology_ok=True, topology_error="br
 def _mock_awx_terminal(monkeypatch, *, status="successful"):
     monkeypatch.setattr(awx, "lookup_job_template_by_name", lambda **k: {"id": 7})
     monkeypatch.setattr(awx, "launch_job", lambda **k: 42)
-    monkeypatch.setattr(awx, "get_job", lambda **k: {"status": status})
+    monkeypatch.setattr(
+        awx, "get_job", lambda **k: {"status": status, "event_processing_finished": True}
+    )
     monkeypatch.setattr(awx, "get_job_events_for_task", lambda **k: [])
 
 
