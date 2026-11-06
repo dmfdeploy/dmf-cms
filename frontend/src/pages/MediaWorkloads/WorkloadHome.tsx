@@ -682,7 +682,12 @@ function ActiveSourceSection({ instances }: { instances: MediaWorkloadInstance[]
   // nothing prunes hasTopology on unmount and a departed instance's last
   // report is not evidence for a panel that describes the current fleet.
   const rows = instances.map((inst) => (
-    <InstanceActiveSource key={inst.instance} instance={inst.instance} onResolved={reportTopology} />
+    <InstanceActiveSource
+      key={inst.instance}
+      instance={inst.instance}
+      hasTopology={inst.has_topology}
+      onResolved={reportTopology}
+    />
   ))
 
   if (!instances.some((inst) => hasTopology[inst.instance])) {
@@ -705,12 +710,14 @@ function ActiveSourceSection({ instances }: { instances: MediaWorkloadInstance[]
 /** One instance's row: its declared sources and which one is active. */
 function InstanceActiveSource({
   instance,
+  hasTopology,
   onResolved,
 }: {
   instance: string
+  hasTopology?: boolean | null
   onResolved: (instance: string, has: boolean) => void
 }) {
-  const topology = useInstanceTopology(instance)
+  const topology = useInstanceTopology(instance, { enabled: hasTopology !== false })
   const has = !topology.isError && Boolean(topology.data && Array.isArray(topology.data.sources))
   useEffect(() => onResolved(instance, has), [instance, has, onResolved])
 

@@ -160,7 +160,7 @@ export default function DesignStage({
             {[...workload.instances]
               .sort((a, b) => a.instance.localeCompare(b.instance))
               .map((inst) => (
-                <InstanceComposition key={inst.instance} instance={inst.instance} />
+                <InstanceComposition key={inst.instance} instance={inst.instance} hasTopology={inst.has_topology} />
               ))}
           </div>
         </div>
@@ -178,7 +178,7 @@ export default function DesignStage({
  * already established, so an ordinary source instance doesn't grow a
  * confusing empty box.
  */
-function InstanceComposition({ instance }: { instance: string }) {
+function InstanceComposition({ instance, hasTopology }: { instance: string; hasTopology?: boolean | null }) {
   // This is the twin of
   // WorkloadHome.tsx's InstanceActiveSource — same seam, same missing check. An
   // errored read is unknown, not absence: a failed refetch can retain the
@@ -191,7 +191,7 @@ function InstanceComposition({ instance }: { instance: string }) {
   // the newest read is the one it speaks for.
   //
   // (umbrella #385) retrofitted onto settleQuery.
-  const topology = settleQuery(useInstanceTopology(instance))
+  const topology = settleQuery(useInstanceTopology(instance, { enabled: hasTopology !== false }))
   if (topology.failed || !topology.data || !Array.isArray(topology.data.sources)) return null
 
   const { sources, active_source } = topology.data

@@ -495,6 +495,7 @@ export function useInstanceMxlStatus(
 // of backoff-computed — keeps fake-timer tests exact instead of timing-
 // flaky.
 export function useInstanceTopology(instance: string, opts?: { enabled?: boolean }) {
+  const enabled = opts?.enabled ?? true
   return useQuery({
     queryKey: ['media-workloads-topology', instance],
     queryFn: async (): Promise<InstanceTopology | null> => {
@@ -507,8 +508,22 @@ export function useInstanceTopology(instance: string, opts?: { enabled?: boolean
         throw e
       }
     },
-    enabled: opts?.enabled ?? true,
-    refetchInterval: 5000,
+    enabled,
+    // A disabled query keeps whatever the cache already holds (an earlier
+    // read, or another view's), and a response in flight when it was
+    // disabled still lands there. Presenting that as the current topology
+    // would show a source the instance no longer has, so a disabled query
+    // reports "no topology" whatever the cache says. Every consumer reads
+    // through this hook, so the rule lives here once.
+    select: (data) => (enabled ? data : null),
+    // A null (404) can turn into a topology later: the catalog entry may be
+    // missing or unreadable for a moment, or appear after a change. While the
+    // query is enabled, never stop polling, or the active source and switch
+    // control stay hidden after recovery. Back off to a slow cadence while the last good answer
+    // is null; the 5s cadence the fuse needs applies to a real topology and
+    // to the first fetch. An error keeps the previous data, so a null that
+    // errors stays on the slow cadence and keeps polling.
+    refetchInterval: (query) => (query.state.data === null ? 60_000 : 5000),
     retry: 1,
     retryDelay: 300,
   })

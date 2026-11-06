@@ -42,7 +42,7 @@ from typing import Any, Optional, Protocol
 from starlette.concurrency import run_in_threadpool
 
 from . import awx as _awx
-from .catalog import CATALOG_DIR, load_catalog_entries, load_topology_instance
+from .catalog import CATALOG_DIR, load_catalog_entries, load_topology_instance, topology_state_for
 from .l3_detail_tokens import KV_DETAIL_TOKENS
 from .log_safety import sanitize_audit_field
 
@@ -698,14 +698,15 @@ def resolve_topology_for_receiver(
         (a catalog-authoring defect, WP1's concern, not this command's).
     """
     entries = load_catalog_entries(catalog_dir)
-    entry = next((e for e in entries if e.key == receiver_instance), None)
-    if entry is None:
+    state = topology_state_for(entries, receiver_instance)
+    if state == "not-found":
         raise SwitchSourceError("receiver-not-found", f"no catalog entry named '{receiver_instance}'")
-    if not entry.topology_ref:
+    if state == "not-topology":
         raise SwitchSourceError(
             "receiver-not-topology",
             f"catalog entry '{receiver_instance}' carries no topology_ref — not a topology-shaped instance",
         )
+    entry = next(e for e in entries if e.key == receiver_instance)
     topology_params, error = load_topology_instance(catalog_dir, entry.topology_ref)
     if error is not None or topology_params is None:
         raise SwitchSourceError("topology-invalid", error or "topology_params failed to load")

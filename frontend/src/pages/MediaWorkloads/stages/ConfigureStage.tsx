@@ -112,6 +112,7 @@ export default function ConfigureStage({
           <InstanceSwitchControl
             key={inst.instance}
             instance={inst.instance}
+            hasTopology={inst.has_topology}
             allowed={allowed}
             onPendingChange={pendingCallbackFor(inst.instance)}
             onResult={onSwitchResult}
@@ -125,12 +126,14 @@ export default function ConfigureStage({
 
 function InstanceSwitchControl({
   instance,
+  hasTopology,
   allowed,
   onPendingChange,
   onResult,
   onJobStart,
 }: {
   instance: string
+  hasTopology?: boolean | null
   allowed: boolean
   onPendingChange: (pending: boolean) => void
   onResult: (result: SwitchSourceResult) => void
@@ -140,7 +143,7 @@ function InstanceSwitchControl({
   // raw query is kept alongside for `.refetch()` (not part of the settled
   // shape, which is deliberately read-only), used below on a successful
   // switch.
-  const topologyQuery = useInstanceTopology(instance)
+  const topologyQuery = useInstanceTopology(instance, { enabled: hasTopology !== false })
   const topology = settleQuery(topologyQuery)
   const switchMutation = useSwitchSource()
   const recordAwxWrite = useActivityStore((s) => s.recordAwxWrite)

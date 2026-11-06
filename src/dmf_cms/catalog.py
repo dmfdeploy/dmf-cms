@@ -138,21 +138,27 @@ def _is_topology_contract_file(raw: dict[str, Any]) -> bool:
     return False
 
 
-def _load_one_yaml(path: Path) -> Optional[CatalogEntry]:
+def _load_one_yaml_checked(path: Path) -> tuple[Optional[CatalogEntry], bool]:
     """Parse a single catalog YAML file into a CatalogEntry.
 
     Returns None when the file is unparseable, lacks a ``key`` field, or
     violates the ADR-0046 ebu classification rule (fail-closed).
+
+    The second value says whether the skip was expected. It is False when a
+    file that might be a function entry could not be read as one (read or
+    parse error, not a mapping, no key, or a failed ebu check), and True for
+    a loaded entry or a topology_params contract file. Callers that must tell
+    "no such entry" from "an entry may be missing from this load" use it.
     """
     try:
         raw = yaml.safe_load(path.read_text())
     except Exception as exc:
         logger.warning("catalog: failed to parse %s: %s", path, exc)
-        return None
+        return None, False
 
     if not isinstance(raw, dict):
         logger.warning("catalog: %s did not yield a mapping", path)
-        return None
+        return None, False
 
     key = raw.get("key")
     if not key:
@@ -161,13 +167,13 @@ def _load_one_yaml(path: Path) -> Optional[CatalogEntry]:
                 "catalog: %s is a topology_params contract/instance file, not a "
                 "function entry — skipping", path,
             )
-        else:
-            logger.warning("catalog: %s lacks 'key' — skipping", path)
-        return None
+            return None, True
+        logger.warning("catalog: %s lacks 'key' — skipping", path)
+        return None, False
 
     ebu = raw.get("ebu")
     if not _validate_ebu(str(key), ebu):
-        return None
+        return None, False
 
     topology_ref = raw.get("topology_ref")
     topology_source_noun: Optional[str] = None
@@ -189,7 +195,7 @@ def _load_one_yaml(path: Path) -> Optional[CatalogEntry]:
             if isinstance(noun, str) and noun:
                 topology_source_noun = noun
 
-    return CatalogEntry(
+    entry = CatalogEntry(
         key=str(key),
         display_name=str(raw.get("display_name", key)),
         summary=str(raw.get("summary", "")),
@@ -202,6 +208,46 @@ def _load_one_yaml(path: Path) -> Optional[CatalogEntry]:
         topology_ref=str(topology_ref) if topology_ref else None,
         topology_source_noun=topology_source_noun,
     )
+    return entry, True
+
+
+def _load_one_yaml(path: Path) -> Optional[CatalogEntry]:
+    """Parse a single catalog YAML file; None when it yields no entry."""
+    return _load_one_yaml_checked(path)[0]
+
+
+def load_catalog_snapshot(catalog_dir: str = CATALOG_DIR) -> tuple[list[CatalogEntry], bool]:
+    """Load the catalog once and say whether the load was complete.
+
+    The flag is False when the directory cannot be listed or when a file that
+    might be an entry could not be read as one (see ``_load_one_yaml_checked``).
+    An entry absent from an incomplete load may only be missing because of
+    the failure.
+    """
+    directory = Path(catalog_dir)
+    if not directory.is_dir():
+        logger.warning("catalog: directory %s does not exist — returning empty", catalog_dir)
+        return [], False
+
+    try:
+        # iterdir raises on an unreadable directory; glob would hide it as
+        # an empty listing.
+        children = list(directory.iterdir())
+        paths = sorted(c for c in children if c.suffix == ".yaml") + sorted(
+            c for c in children if c.suffix == ".yml"
+        )
+    except OSError as exc:
+        logger.warning("catalog: cannot list %s: %s", catalog_dir, exc)
+        return [], False
+
+    entries: list[CatalogEntry] = []
+    complete = True
+    for ypath in paths:
+        entry, ok = _load_one_yaml_checked(ypath)
+        complete = complete and ok
+        if entry is not None:
+            entries.append(entry)
+    return entries, complete
 
 
 def load_catalog_entries(catalog_dir: str = CATALOG_DIR) -> list[CatalogEntry]:
@@ -209,24 +255,38 @@ def load_catalog_entries(catalog_dir: str = CATALOG_DIR) -> list[CatalogEntry]:
 
     Files that fail to parse or lack ``key`` are skipped with a warning.
     """
-    directory = Path(catalog_dir)
-    if not directory.is_dir():
-        logger.warning("catalog: directory %s does not exist — returning empty", catalog_dir)
-        return []
+    return load_catalog_snapshot(catalog_dir)[0]
 
-    entries: list[CatalogEntry] = []
-    for ypath in sorted(directory.glob("*.yaml")):
-        entry = _load_one_yaml(ypath)
-        if entry is not None:
-            entries.append(entry)
 
-    # Also accept *.yml
-    for ypath in sorted(directory.glob("*.yml")):
-        entry = _load_one_yaml(ypath)
-        if entry is not None:
-            entries.append(entry)
+def topology_state_for(entries: list[CatalogEntry], instance: str) -> str:
+    """Whether the catalog entry keyed ``instance`` can carry a topology.
 
-    return entries
+    The one place the "entry exists and has a topology_ref" rule lives: the
+    topology endpoint's refusals and the inventory's ``has_topology`` flag
+    both read it, so they cannot disagree. Returns ``"not-found"`` when no
+    entry has this key, ``"not-topology"`` when the entry has no
+    ``topology_ref``, and ``"topology"`` otherwise.
+    """
+    entry = next((e for e in entries if e.key == instance), None)
+    if entry is None:
+        return "not-found"
+    return "topology" if entry.topology_ref else "not-topology"
+
+
+def inventory_has_topology(
+    instance: str, entries: list[CatalogEntry], complete: bool
+) -> Optional[bool]:
+    """Inventory view of ``topology_state_for``: True, False, or None.
+
+    False only when the catalog loaded completely and the entry is missing
+    or has no ``topology_ref``. After an incomplete load, anything short of
+    a found topology entry is unknown (None): the entry may be the one that
+    failed to load, and False would stop the console polling a real receiver.
+    """
+    state = topology_state_for(entries, instance)
+    if state == "topology":
+        return True
+    return False if complete else None
 
 
 def load_topology_instance(

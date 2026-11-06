@@ -25,7 +25,7 @@ import time
 import urllib.parse
 from typing import Any, Callable, Optional
 
-from .catalog import CATALOG_DIR, load_catalog_entries, load_topology_instance
+from .catalog import CATALOG_DIR, CatalogEntry, load_catalog_entries, inventory_has_topology, load_catalog_snapshot, load_topology_instance
 from .log_safety import sanitize_audit_field
 
 logger = logging.getLogger(__name__)
@@ -171,7 +171,10 @@ def _service_to_instance(
     sidecar_namespaces: frozenset[str] = _DEFAULT_SIDECAR_NAMESPACES,
     sidecar_ports: frozenset[int] = _DEFAULT_SIDECAR_PORTS,
     catalog_dir: str = CATALOG_DIR,
+    catalog_snapshot: Optional[tuple[list[CatalogEntry], bool]] = None,
 ) -> dict[str, Any]:
+    if catalog_snapshot is None:
+        catalog_snapshot = load_catalog_snapshot(catalog_dir)
     names = _tag_names(svc)
     parent = svc.get("device") or svc.get("virtual_machine") or {}
     topology_parent_key = _tag_suffix(names, "topology-parent")
@@ -194,6 +197,12 @@ def _service_to_instance(
         # "genuinely unresolvable via this path", never a guess.
         "topology_parent_key": topology_parent_key,
         "topology_source_id": topology_source_id,
+        # Whether this instance can have a topology at all, by the SAME rule
+        # the topology endpoint applies (catalog.topology_state_for). False
+        # lets the console skip the topology request entirely; null means
+        # the catalog could not be read completely, which the console treats as
+        # "maybe" rather than "no".
+        "has_topology": inventory_has_topology(svc.get("name", ""), *catalog_snapshot),
         # umbrella #452 — see _resolve_topology_source_pattern's own
         # docstring for the exact resolution + null-on-miss rules.
         "topology_source_pattern": _resolve_topology_source_pattern(
@@ -355,12 +364,16 @@ def list_instances(
         logger.warning("media-workloads: unexpected NetBox error: %s", exc)
         return {"degraded": True, "reason": "netbox-error", "instances": [], "functions": []}
 
+    # One catalog read per inventory request, shared by every instance's
+    # has_topology.
+    catalog_snapshot = load_catalog_snapshot(catalog_dir)
     instances = [
         _service_to_instance(
             svc,
             sidecar_namespaces=sidecar_namespaces,
             sidecar_ports=sidecar_ports,
             catalog_dir=catalog_dir,
+            catalog_snapshot=catalog_snapshot,
         )
         for svc in services
     ]
@@ -620,12 +633,16 @@ def list_workloads_grouped(
         logger.warning("media-workloads: unexpected NetBox error: %s", exc)
         return {"degraded": True, "reason": "netbox-error", "workloads": [], "invalid_instances": []}
 
+    # One catalog read per inventory request, shared by every instance's
+    # has_topology.
+    catalog_snapshot = load_catalog_snapshot(catalog_dir)
     instances = [
         _service_to_instance(
             svc,
             sidecar_namespaces=sidecar_namespaces,
             sidecar_ports=sidecar_ports,
             catalog_dir=catalog_dir,
+            catalog_snapshot=catalog_snapshot,
         )
         for svc in services
     ]
