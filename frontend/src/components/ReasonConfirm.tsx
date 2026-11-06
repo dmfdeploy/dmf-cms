@@ -82,6 +82,7 @@ export default function ReasonConfirm({
   pendingLabel = 'Recording…',
   pending = false,
   error,
+  errorMessage,
   onConfirm,
   onCancel,
   extraField,
@@ -94,6 +95,9 @@ export default function ReasonConfirm({
   pendingLabel?: string
   pending?: boolean
   error?: unknown
+  // Replaces the default failure text for a caller whose request can fail
+  // after it has already taken effect, where "nothing was changed" may be untrue.
+  errorMessage?: string
   onConfirm: (reason: string) => void
   onCancel: () => void
   // Optional single extra text input above the Confirm/Cancel row (e.g. #239
@@ -187,7 +191,8 @@ export default function ReasonConfirm({
           {/* Art. 8: the operator gets what happened and what is safe to do
               next, not a stringified exception. Fixed here so all three
               stages inherit it rather than each growing its own copy. */}
-          That didn&apos;t go through — nothing was changed. Check your access, then retry.
+          {errorMessage ??
+            "That didn't go through — nothing was changed. Check your access, then retry."}
         </p>
       )}
       {writesBlocked && (

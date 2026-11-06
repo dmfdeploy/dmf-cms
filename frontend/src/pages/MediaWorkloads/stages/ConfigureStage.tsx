@@ -5,7 +5,7 @@ import ReasonConfirm from '../../../components/ReasonConfirm'
 import type { MediaWorkload, SwitchSourceResult } from '../../../api/types'
 import type { StageActionId, StageState } from '../../../lib/workloadLifecycle'
 import StageCard from './StageCard'
-import { switchFailureText } from '../switchResultText'
+import { SWITCH_REQUEST_FAILED_TEXT, switchFailureText } from '../switchResultText'
 import { settleQuery } from '../../../lib/queryState'
 import { useGuardWrite } from '../../../lib/inventoryFreshness'
 
@@ -284,6 +284,7 @@ function InstanceSwitchControl({
             pendingLabel="Switching…"
             pending={switchMutation.isPending}
             error={switchMutation.isError ? switchMutation.error : undefined}
+            errorMessage={SWITCH_REQUEST_FAILED_TEXT}
             onConfirm={submit}
             onCancel={() => {
               setArming(false)
