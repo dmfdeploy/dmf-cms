@@ -830,9 +830,9 @@ describe('switch source on the Configure stage (umbrella #201 WP5)', () => {
     fireEvent.change(screen.getByRole('combobox'), { target: { value: 'source-b' } })
     fireEvent.click(screen.getByRole('button', { name: 'Confirm switch' }))
 
-    await screen.findByText(/Switch failed/)
-    expect(screen.getByText(/switch-job-failed/)).toBeTruthy()
-    expect(screen.getByText(/operator retry\/rollback required/)).toBeTruthy()
+    await screen.findAllByText('Switch did not complete. Check the current source before you retry.')
+    expect(screen.queryByText(/switch-job-failed/)).toBeNull()
+    expect(screen.queryByText(/failed_rollback_required/)).toBeNull()
     expect(screen.queryByText(/Active source: source-b/)).toBeNull()
   })
 
@@ -876,8 +876,8 @@ describe('switch source on the Configure stage (umbrella #201 WP5)', () => {
     await screen.findAllByText(
       'Switch did not complete; the previous source was restored. Safe to retry.',
     )
-    // The coarse fallback text must NOT also render alongside the canned message.
-    expect(screen.queryByText(/Switch failed \(switch-job-failed\)/)).toBeNull()
+    // The generic fallback must NOT also render alongside the backend's message.
+    expect(screen.queryByText('Switch did not complete. Check the current source before you retry.')).toBeNull()
     // Expert detail (request_id + raw outcome code) stays available, just out
     // of the primary line — never a raw-stdout debug view.
     expect(screen.getAllByText(/req-switch-3/).length).toBeGreaterThan(0)

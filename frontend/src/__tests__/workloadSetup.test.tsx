@@ -941,6 +941,8 @@ describe('Provision: deploy click path', () => {
   })
 })
 
+const GENERIC_FAILURE = 'Switch did not complete. Check the current source before you retry.'
+
 describe('Configure: switch click path', () => {
   it('offers a target only against a fresh observation, requires target + reason, then POSTs and reviews', async () => {
     const wl = viewerWorkload()
@@ -1017,14 +1019,21 @@ describe('Configure: switch click path', () => {
     })
     fireEvent.change(within(configureSection).getByRole('combobox'), { target: { value: 'source-b' } })
     fireEvent.click(within(configureSection).getByRole('button', { name: 'Confirm switch' }))
-    await within(configureSection).findByText(/Switch failed \(switch-job-failed\)/)
-    expect(within(configureSection).queryByText('switch_refused_future-stage')).toBeNull()
+    await within(configureSection).findByText(GENERIC_FAILURE)
+    // No machine string is the primary text: not the error code, the status
+    // or the outcome token. The token is only in System details.
+    for (const raw of ['switch-job-failed', 'failed_rollback_required', 'switch_refused_future-stage']) {
+      expect(within(configureSection).queryByText(raw)).toBeNull()
+    }
+    expect(within(configureSection).queryByText(/Switch failed \(/)).toBeNull()
+    const configureDetails = within(configureSection).getByText('System details').closest('details')!
+    expect(configureDetails.textContent).toContain('switch_refused_future-stage')
 
     const finaliseSection = await selectStep('Finalise & Review')
-    expect(
-      within(finaliseSection).getByText('Switch did not complete. Check the current source before you retry.'),
-    ).toBeTruthy()
-    expect(within(finaliseSection).queryByText('switch_refused_future-stage')).toBeNull()
+    expect(within(finaliseSection).getByText(GENERIC_FAILURE)).toBeTruthy()
+    const finaliseDetails = within(finaliseSection).getByText('System details').closest('details')!
+    expect(finaliseDetails.textContent).toContain('switch_refused_future-stage')
+    expect(within(finaliseSection).queryByText(/switch_refused_future-stage/, { ignore: 'details *' })).toBeNull()
   })
 
   it('fails closed (no target offered) when the observation is stale', async () => {

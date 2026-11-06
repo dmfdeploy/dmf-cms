@@ -368,17 +368,21 @@ _SWITCH_OUTCOME_OPERATOR_COPY = {
         "Switch did not complete and the job did not report why. The viewer may have no "
         "active source. Check the current source, then retry."
     ),
+    # An AWX "error" job can fail after it started, so its result is unknown.
     "switch_job_error": (
-        "Switch could not run because the job hit an error. The viewer may have no "
-        "active source. Check the current source, then retry."
+        "The switch job ended with an error, so its result is unknown. It may have "
+        "changed the source. Check the current source before you retry."
     ),
     "switch_job_canceled": (
         "The switch job was canceled before it finished. The viewer may have no active "
         "source, or one that was not verified. Check the current source, then retry."
     ),
+    # The watch checks its own deadline before it reads the job's status, so
+    # the job may have finished just before the console stopped waiting.
     SWITCH_OUTCOME_WATCH_TIMEOUT: (
-        "The switch job did not finish in time, so its result is unknown. The viewer may "
-        "still be switching. Wait, check the current source, then retry."
+        "The console stopped waiting for the switch job, so its result is unknown. "
+        "The job may still be running or may have finished. "
+        "Check the current source before you retry."
     ),
     SWITCH_OUTCOME_WATCH_LOST: (
         "The console lost contact with the switch job, so its result is unknown. "
@@ -387,9 +391,19 @@ _SWITCH_OUTCOME_OPERATOR_COPY = {
 }
 
 # ``refused detail=<stage>`` copy, keyed by the stage the play was in. The
-# stage order and what each stage can already have changed come from
-# dmf-runbooks' switch-mxl-fabrics-demo.yml: the stages up to
-# baseline-capture only read; quiesce is the first stage that mutates.
+# label is set BEFORE the stage's tasks run, and the outer rescue reports
+# whichever label is current, so each message claims only what holds for every
+# task that can run under that label (dmf-runbooks' switch-mxl-fabrics-demo.yml):
+#
+# * Up to baseline-capture the play only reads (plus the facility lock).
+# * quiesce clears the coordinator's active-source and target-info.
+# * repoint covers the Helm re-point, the readiness verify and the whole
+#   verify-failed branch: a verified helm rollback and the restore of the
+#   previous source. A failure inside that branch before its own outcome is
+#   recorded lands here, so rollback and source state are both unknown.
+# * select covers the one Kubernetes write that sets the new source. That write
+#   can apply even when the client reports an error.
+# * final-readback covers the readback, its assert and the lock release.
 _SWITCH_NOTHING_CHANGED_COPY = (
     "Switch was refused before it changed anything. The current source is unchanged. "
     "Check the request, then retry."
@@ -410,13 +424,14 @@ _SWITCH_REFUSED_STAGE_COPY = {
         "Check the current source, then retry."
     ),
     "repoint": (
-        "Switch stopped while it re-pointed the viewer. The active source is cleared, "
-        "the viewer may already point at the new source, and no rollback ran. "
-        "Check the viewer, then retry."
+        "Switch stopped after it started to re-point the viewer. The viewer may be "
+        "re-pointed, rolled back or restored, and the active source may be cleared or "
+        "restored. The console cannot tell which. Check that the viewer recovered and "
+        "check the current source before you retry."
     ),
     "select": (
-        "Switch stopped before it set the new active source. The viewer was re-pointed "
-        "and verified, but no source is active. Retry the switch."
+        "Switch stopped while it set the new active source. The selection may or may "
+        "not have taken effect. Check the current source before you retry."
     ),
     "final-readback": (
         "Switch set the new source but could not confirm it, so it may have taken "
@@ -433,6 +448,35 @@ _SWITCH_UNKNOWN_OUTCOME_COPY = (
     "Switch did not complete, and the console has no description for the result. "
     "Check the current source before you retry."
 )
+
+
+# Failures that have no outcome, keyed by the actuator's own error code.
+_SWITCH_ERROR_COPY = {
+    "switch-launch-failed": (
+        "The console could not confirm that the switch job started. "
+        "Check the current source before you retry."
+    ),
+    "switch-watch-crashed": (
+        "The console could not read the switch job's status, so the result is unknown. "
+        "Check the current source before you retry."
+    ),
+}
+_SWITCH_TEMPLATE_MISSING_COPY = (
+    "The switch job template is not available, so the switch did not run. "
+    "Ask an administrator to check the automation setup."
+)
+
+
+def switch_failure_message(error: str, outcome: Optional[str]) -> str:
+    """Operator copy for a failed switch: the outcome's message, else the
+    message for the actuator's error code, else the unknown-outcome copy."""
+    if outcome:
+        message = switch_outcome_message(outcome)
+        if message:
+            return message
+    if error.startswith("switch-job-template-missing"):
+        return _SWITCH_TEMPLATE_MISSING_COPY
+    return _SWITCH_ERROR_COPY.get(error, _SWITCH_UNKNOWN_OUTCOME_COPY)
 
 
 def switch_outcome_message(outcome: str) -> Optional[str]:
@@ -780,7 +824,7 @@ class ReconnectViaAwxActuator:
         command.status = SwitchStatus.FAILED_ROLLBACK_REQUIRED
         command.error = error
         command.outcome = outcome
-        command.outcome_message = switch_outcome_message(outcome) if outcome else None
+        command.outcome_message = switch_failure_message(error, outcome)
         command.updated_at = datetime.now(timezone.utc)
 
 
