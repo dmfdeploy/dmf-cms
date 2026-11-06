@@ -136,3 +136,44 @@ def test_healthz_stays_fast_while_a_catalog_read_hangs_on_netbox(monkeypatch, si
             return elapsed
 
     assert asyncio.run(scenario()) < HEALTHZ_BUDGET_SECONDS
+
+
+def test_admin_health_pings_run_off_the_loop_and_side_by_side(monkeypatch):
+    """Four pings that each hang 1.5 s must not delay /healthz, and one admin
+    request must cost about one ping, not four."""
+    from dmf_cms import prometheus
+    from dmf_cms.settings import AuthentikSettings, AWXSettings, PrometheusSettings
+
+    def hang(*args, **kwargs):
+        time.sleep(1.5)
+        return []
+
+    monkeypatch.setattr("dmf_cms.main.list_users", hang)
+    monkeypatch.setattr("dmf_cms.main.list_job_templates", hang)
+    monkeypatch.setattr(netbox, "ping", hang)
+    monkeypatch.setattr(prometheus, "ping", hang)
+    settings = Settings(
+        dev_groups=("dmf-console-admin",),
+        authentik=AuthentikSettings(api_url="http://a.invalid", api_token="t"),
+        awx=AWXSettings(api_url="http://b.invalid", api_token="t"),
+        netbox=NetboxSettings(api_url="http://c.invalid", api_token="t"),
+        prometheus=PrometheusSettings(url="http://d.invalid"),
+    )
+    app = create_app(settings=settings)
+
+    async def scenario():
+        transport = httpx.ASGITransport(app=app)
+        async with httpx.AsyncClient(transport=transport, base_url="http://console") as client:
+            await client.get("/auth/login", follow_redirects=False)
+            started = time.monotonic()
+            admin = asyncio.create_task(client.get("/api/admin/health"))
+            await asyncio.sleep(0.3)
+            health = await client.get("/healthz")
+            health_delay = time.monotonic() - started - 0.3
+            response = await admin
+            return health.status_code, health_delay, response.status_code, time.monotonic() - started
+
+    health_status, health_delay, admin_status, admin_total = asyncio.run(scenario())
+    assert health_status == 200 and admin_status == 200
+    assert health_delay < HEALTHZ_BUDGET_SECONDS
+    assert admin_total < 3.0  # four sequential pings would take 6 s

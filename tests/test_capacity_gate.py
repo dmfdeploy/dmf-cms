@@ -496,7 +496,8 @@ def test_threadpool_dispatch_on_fit_path(monkeypatch, awx_spy):
     resp = client.post("/api/catalog/mxl-videotestsrc/deploy", json={"reason": "x"})
     assert resp.status_code == 200, resp.text
     # Must FAIL if either read regresses to a direct (non-threadpooled) call.
-    assert set(dispatched) == {capacity.read_ee_reserve, capacity.read_node_supply}
+    # The route's AWX calls are threadpooled too; only the capacity reads matter here.
+    assert {capacity.read_ee_reserve, capacity.read_node_supply} <= set(dispatched)
 
 
 def test_threadpool_dispatch_on_override_path(monkeypatch, awx_spy):
@@ -510,7 +511,8 @@ def test_threadpool_dispatch_on_override_path(monkeypatch, awx_spy):
         json={"reason": "x", "l3_override": True},
     )
     assert resp.status_code == 200, resp.text
-    assert set(dispatched) == {capacity.read_ee_reserve, capacity.read_node_supply}
+    # The route's AWX calls are threadpooled too; only the capacity reads matter here.
+    assert {capacity.read_ee_reserve, capacity.read_node_supply} <= set(dispatched)
 
 
 # ---------------------------------------------------------------------------
