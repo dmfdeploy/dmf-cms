@@ -205,9 +205,11 @@ export function StaleInventoryNotice({
  * dmfdeploy#319: wraps a page that sends writes outside the media-workloads
  * screens (Catalog, Create). It reads the same inventory the rest of the
  * console polls and withdraws every write below it, through the same context
- * `useGuardWrite` and the shared confirm panels read, while that read is
- * stale or has failed, including when the request to the console's own API
- * failed, since the console then cannot confirm anything. A degraded read
+ * `useGuardWrite` and the shared confirm panels read, until a read has
+ * settled successfully and while a later read is stale or has failed,
+ * including when the request to the console's own API failed, since the
+ * console then cannot confirm anything. Before the first read settles there
+ * is no confirmed inventory, so that counts as blocked too. A degraded read
  * caused by a conflicting workload tag is not a failed read and does not block.
  */
 export function InventoryWritesGate({ children }: { children: ReactNode }) {
@@ -216,10 +218,12 @@ export function InventoryWritesGate({ children }: { children: ReactNode }) {
     data?.degraded === true &&
     (data.reason === 'netbox-unreachable' || data.reason === 'netbox-error')
   const stale = data?.stale === true
+  const checking = data === undefined && !isError
   const blockReason =
-    stale || failedRead || isError
+    stale || failedRead || isError || checking
       ? {
           stale,
+          checking,
           reason: failedRead ? data?.reason : undefined,
           last_success: data?.last_success,
           failure_since: data?.failure_since,
@@ -238,6 +242,16 @@ export function InventoryWritesGate({ children }: { children: ReactNode }) {
 export function InventoryWritesNotice() {
   const blocked = useContext(InventoryWritesBlockReasonContext)
   if (blocked === null) return null
+  if (blocked.checking) {
+    return (
+      <div
+        role="status"
+        className="panel mt-4 border border-border px-4 py-3 text-sm text-muted"
+      >
+        <p>Checking the facility inventory. The console offers changes once that check finishes.</p>
+      </div>
+    )
+  }
   if (blocked.stale) return <StaleInventoryNotice data={blocked} />
   return (
     <div

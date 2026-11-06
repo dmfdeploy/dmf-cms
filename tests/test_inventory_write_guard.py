@@ -9,6 +9,7 @@ through the real read path, so the tests fail if the route stops asking.
 
 from __future__ import annotations
 
+import threading
 import time
 
 import pytest
@@ -56,9 +57,15 @@ ROUTE_IDS = [r[0] for r in ROUTES]
 class Source:
     def __init__(self, monkeypatch) -> None:
         self.fail = False
+        self.calls = 0
+        self.gate: threading.Event | None = None
         monkeypatch.setattr(mw, "_fetch_services", self)
+        monkeypatch.setattr(mw, "_observed_by_identity", lambda url: {})
 
     def __call__(self, *args, **kwargs):
+        self.calls += 1
+        if self.gate is not None:
+            self.gate.wait(10)
         if self.fail:
             raise netbox_module.NetboxAPIError(504, "starved")
         return [dict(SERVICE)]
@@ -147,9 +154,120 @@ def test_write_not_refused_by_the_guard_when_inventory_is_fresh(source, label, p
 
 
 @pytest.mark.parametrize("label,path,extra", ROUTES, ids=ROUTE_IDS)
-def test_write_not_refused_by_the_guard_on_a_cold_process(source, label, path, extra):
+def test_cold_process_with_netbox_failing_refuses_the_write(source, label, path, extra):
+    """No read state yet: the guard reads first, and a failed read refuses."""
+    source.fail = True
+    resp = _write(_client(), path, extra)
+    assert resp.status_code == 409
+    assert resp.json()["error"] == DEGRADED
+    assert source.calls >= 1
+
+
+@pytest.mark.parametrize("label,path,extra", ROUTES, ids=ROUTE_IDS)
+def test_cold_process_with_netbox_healthy_lets_the_write_proceed_and_records_the_read(
+    source, label, path, extra
+):
     resp = _write(_client(), path, extra)
     assert resp.json().get("error") not in (STALE, DEGRADED)
+    assert source.calls >= 1
+    assert mw.inventory_write_block(NETBOX, None, require_read=True) is None
+    # The recorded read is a real snapshot: a later failure serves it as stale.
+    source.fail = True
+    assert _read("grouped")["stale"] is True
+
+
+def test_cold_read_that_raises_before_recording_refuses(source, monkeypatch):
+    def boom(*args, **kwargs):
+        raise RuntimeError("catalog unreadable")
+
+    monkeypatch.setattr(mw, "list_workloads_grouped", boom)
+    resp = _write(_client(), "/api/catalog/none/deploy", {})
+    assert resp.status_code == 409
+    assert resp.json()["error"] == DEGRADED
+
+
+def test_cold_read_that_times_out_refuses(source, monkeypatch):
+    monkeypatch.setattr(mw, "COLD_READ_TIMEOUT_SECONDS", 0.2)
+    source.gate = threading.Event()
+    try:
+        started = time.monotonic()
+        resp = _write(_client(), "/api/catalog/none/deploy", {})
+        assert time.monotonic() - started < 5
+    finally:
+        source.gate.set()
+    assert resp.status_code == 409
+    assert resp.json()["error"] == DEGRADED
+
+
+def test_a_warm_scope_is_not_read_again_by_the_guard(source):
+    _read("flat")
+    calls = source.calls
+    client = _client()
+    _write(client, "/api/catalog/none/deploy", {})
+    _write(client, "/api/catalog/none/teardown", {})
+    assert source.calls == calls
+
+
+def test_concurrent_cold_writes_share_one_read_and_record_one_state(source):
+    """Eight cold writers: the first reads, the rest wait for that read."""
+    source.gate = threading.Event()
+    results: list[str | None] = []
+    lock = threading.Lock()
+
+    def read():
+        mw.list_workloads_grouped(
+            NETBOX, "tok", False, None, catalog_dir="/nonexistent-catalog"
+        )
+
+    def writer():
+        mw.ensure_inventory_read(NETBOX, None, read, timeout=10)
+        code = mw.inventory_write_block(NETBOX, None, require_read=True)
+        with lock:
+            results.append(code)
+
+    threads = [threading.Thread(target=writer) for _ in range(8)]
+    for t in threads:
+        t.start()
+    deadline = time.monotonic() + 5
+    while source.calls < 1 and time.monotonic() < deadline:
+        time.sleep(0.01)
+    time.sleep(0.2)  # the other seven reach the wait while the read is held
+    source.gate.set()
+    for t in threads:
+        t.join(10)
+    assert source.calls == 1
+    assert results == [None] * 8
+    state = mw._read_states[mw._read_key("grouped", NETBOX, None)]
+    assert state.success_ticket > 0
+    assert state.failure_since is None
+
+
+def test_cold_read_failure_is_recorded_once_for_concurrent_writers(source):
+    source.fail = True
+    source.gate = threading.Event()
+    results: list[str | None] = []
+    lock = threading.Lock()
+
+    def read():
+        mw.list_workloads_grouped(
+            NETBOX, "tok", False, None, catalog_dir="/nonexistent-catalog"
+        )
+
+    def writer():
+        mw.ensure_inventory_read(NETBOX, None, read, timeout=10)
+        code = mw.inventory_write_block(NETBOX, None, require_read=True)
+        with lock:
+            results.append(code)
+
+    threads = [threading.Thread(target=writer) for _ in range(4)]
+    for t in threads:
+        t.start()
+    time.sleep(0.3)
+    source.gate.set()
+    for t in threads:
+        t.join(10)
+    assert source.calls == 1
+    assert results == [DEGRADED] * 4
 
 
 @pytest.mark.parametrize("label,path,extra", ROUTES, ids=ROUTE_IDS)

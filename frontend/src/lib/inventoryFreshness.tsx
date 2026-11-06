@@ -14,10 +14,12 @@ export const InventoryWritesBlockedProvider = InventoryWritesBlockedContext.Prov
 
 /**
  * What a page needs to tell the user why writes are withdrawn: the read that
- * blocked them. Null while writes are allowed.
+ * blocked them, or the first read that has not settled yet. Null while writes are allowed.
  */
 export interface InventoryWritesBlockReason {
   stale: boolean
+  /** The first inventory read has not settled yet; not a failure. */
+  checking?: boolean
   reason?: string
   last_success?: string | null
   failure_since?: string | null

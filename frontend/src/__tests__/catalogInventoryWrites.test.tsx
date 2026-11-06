@@ -34,8 +34,14 @@ const ENTRY: CatalogEntry = {
 
 const minutesAgo = (n: number) => new Date(Date.now() - n * 60_000).toISOString()
 
-function setup(lifecycle: CatalogEntry['lifecycle'] = 'bootstrapped') {
-  const state = { grouped: {} as Record<string, unknown>, groupedStatus: 200, posts: [] as string[] }
+function setup(lifecycle: CatalogEntry['lifecycle'] = 'bootstrapped', hold: Promise<void> | null = null) {
+  const state = {
+    grouped: {} as Record<string, unknown>,
+    groupedStatus: 200,
+    posts: [] as string[],
+    // While set, the grouped read stays unsettled until the promise resolves.
+    hold: null as Promise<void> | null,
+  }
   vi.stubGlobal(
     'fetch',
     vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
@@ -45,6 +51,7 @@ function setup(lifecycle: CatalogEntry['lifecycle'] = 'bootstrapped') {
       }
       if (url.endsWith('/api/catalog')) return json({ entries: [{ ...ENTRY, lifecycle }] })
       if (url.endsWith('/api/media-workloads/grouped')) {
+        if (state.hold) await state.hold
         if (state.groupedStatus !== 200) return json({ error: 'boom' }, state.groupedStatus)
         return json({ configured: true, degraded: false, workloads: [], invalid_instances: [], ...state.grouped })
       }
@@ -55,8 +62,9 @@ function setup(lifecycle: CatalogEntry['lifecycle'] = 'bootstrapped') {
       return json({})
     }),
   )
+  state.hold = hold
   const qc = new QueryClient({ defaultOptions: { queries: { retry: false } } })
-  render(
+  const view = render(
     <QueryClientProvider client={qc}>
       <MemoryRouter>
         <Catalog />
@@ -67,7 +75,7 @@ function setup(lifecycle: CatalogEntry['lifecycle'] = 'bootstrapped') {
     act(async () => {
       await qc.refetchQueries({ queryKey: ['media-workloads-grouped'] })
     })
-  return { state, refetch }
+  return { state, refetch, view, qc }
 }
 
 afterEach(() => {
@@ -143,5 +151,60 @@ describe('Catalog: writes are withdrawn while the inventory read is stale or fai
     state.grouped = { degraded: true }
     await refetch()
     expect((screen.getByRole('button', { name: 'Confirm deploy' }) as HTMLButtonElement).disabled).toBe(false)
+  })
+})
+
+describe('Catalog: writes are withdrawn until the first inventory read settles', () => {
+  function deferred() {
+    let release!: () => void
+    const promise = new Promise<void>((resolve) => {
+      release = resolve
+    })
+    return { promise, release }
+  }
+
+  it('keeps an armed Confirm disabled and sends no POST before the first read settles', async () => {
+    const gate = deferred()
+    const { state } = setup('bootstrapped', gate.promise)
+    await arm(/Deploy/)
+    await screen.findByText(/Checking the facility inventory/)
+    const confirm = screen.getByRole('button', { name: 'Confirm deploy' }) as HTMLButtonElement
+    expect(confirm.disabled).toBe(true)
+    fireEvent.click(confirm)
+    expect(state.posts).toHaveLength(0)
+
+    gate.release()
+    await waitFor(() =>
+      expect((screen.getByRole('button', { name: 'Confirm deploy' }) as HTMLButtonElement).disabled).toBe(false),
+    )
+    expect(screen.queryByText(/Checking the facility inventory/)).toBeNull()
+    fireEvent.click(screen.getByRole('button', { name: 'Confirm deploy' }))
+    await waitFor(() => expect(state.posts).toHaveLength(1))
+  })
+
+  it('stays blocked when the first read fails instead of settling', async () => {
+    const gate = deferred()
+    const { state } = setup('bootstrapped', gate.promise)
+    state.groupedStatus = 500
+    await arm(/Deploy/)
+    gate.release()
+    await screen.findByText(/could not refresh the facility inventory just now/)
+    expect((screen.getByRole('button', { name: 'Confirm deploy' }) as HTMLButtonElement).disabled).toBe(true)
+    expect(state.posts).toHaveLength(0)
+  })
+
+  it('is blocked again after an unmount while the read is pending and a remount', async () => {
+    const gate = deferred()
+    const first = setup('bootstrapped', gate.promise)
+    await screen.findByRole('button', { name: /Deploy/ })
+    first.view.unmount()
+    const second = setup('bootstrapped', gate.promise)
+    await arm(/Deploy/)
+    expect((screen.getByRole('button', { name: 'Confirm deploy' }) as HTMLButtonElement).disabled).toBe(true)
+    gate.release()
+    await waitFor(() =>
+      expect((screen.getByRole('button', { name: 'Confirm deploy' }) as HTMLButtonElement).disabled).toBe(false),
+    )
+    expect(second.state.posts).toHaveLength(0)
   })
 })
