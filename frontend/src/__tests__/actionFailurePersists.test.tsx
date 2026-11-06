@@ -377,3 +377,347 @@ describe('Activity Jobs lane: a refused launch stays legible at the point of act
     expect(screen.getByRole('button', { name: 'Confirm launch' })).toBeTruthy()
   })
 })
+
+// ---------------------------------------------------------------------------
+// A lost response leaves the outcome unknown
+// ---------------------------------------------------------------------------
+
+// The refused cases above use a 400 the console itself sent, the one shape that
+// proves nothing was changed. Here the response is lost, a 5xx, or an error
+// passed through from AWX or NetBox, so the request may already have taken
+// effect and the copy must not claim otherwise.
+describe('an unconfirmed response says the outcome is unknown, never "nothing was changed"', () => {
+  const UNKNOWN = /could not confirm the result, so the action may have run/
+
+  function stubRoutes(routes: [RegExp, () => Response][], lostPath: RegExp, answer?: () => Response) {
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(async (input: RequestInfo | URL) => {
+        const url = (typeof input === 'string' ? input : (input as Request).url).toString()
+        if (lostPath.test(url)) {
+          if (answer) return answer()
+          throw new TypeError('Failed to fetch')
+        }
+        for (const [pattern, respond] of routes) {
+          if (pattern.test(url)) return respond()
+        }
+        return json({})
+      }),
+    )
+  }
+
+  function renderSetup() {
+    const queryClient = new QueryClient({ defaultOptions: { queries: { retry: false } } })
+    render(
+      <QueryClientProvider client={queryClient}>
+        <MemoryRouter initialEntries={['/media-workloads/studio-a/setup']}>
+          <Routes>
+            <Route path="/media-workloads/:slug/setup" element={<WorkloadSetup />} />
+          </Routes>
+          <HeaderSlotProbe />
+        </MemoryRouter>
+      </QueryClientProvider>,
+    )
+  }
+
+  function renderCatalogPage() {
+    const queryClient = new QueryClient({ defaultOptions: { queries: { retry: false } } })
+    render(
+      <QueryClientProvider client={queryClient}>
+        <MemoryRouter>
+          <Catalog />
+        </MemoryRouter>
+      </QueryClientProvider>,
+    )
+  }
+
+  function groupedFor(lifecycle: MediaWorkload['lifecycle'], withInstance = false): MediaWorkloadsGroupedResponse {
+    return {
+      configured: true,
+      degraded: false,
+      scope: [],
+      workloads: [
+        {
+          slug: 'studio-a',
+          name: 'studio-a',
+          lifecycle,
+          health: 'ok',
+          instances: withInstance
+            ? [
+                {
+                  instance: 'studio-a-1',
+                  netbox_id: 1,
+                  function_key: 'crosspoint',
+                  requested_state: 'bootstrapped',
+                  observed_state: 'unknown',
+                  reconcile_pending: false,
+                  placement: { node: 'node-1', ports: [], protocol: null },
+                  workload_assignment: 'ok',
+                },
+              ]
+            : [],
+          functions: [
+            {
+              function_key: 'crosspoint',
+              count: withInstance ? 1 : lifecycle === 'operate' ? 1 : 0,
+              running: lifecycle === 'operate' ? 1 : 0,
+              reconcile_pending: 0,
+            },
+          ],
+        },
+      ],
+      invalid_instances: [],
+    }
+  }
+
+  async function stage(heading: string) {
+    const h = await screen.findByRole('heading', { name: heading, level: 2 })
+    return h.closest('[data-step-state]') as HTMLElement
+  }
+
+  it('Provision deploy', async () => {
+    stubRoutes(
+      [
+        [/\/api\/catalog$/, () => json({ entries: [catalogEntry()] })],
+        [/\/api\/media-workloads\/grouped$/, () => json(groupedFor('provision'))],
+      ],
+      /\/api\/catalog\/crosspoint\/deploy$/,
+    )
+    renderSetup()
+    const provision = await stage('Provision')
+
+    fireEvent.click(await within(provision).findByRole('button', { name: /Deploy/ }))
+    fireEvent.change(within(provision).getAllByRole('textbox')[0], { target: { value: 'scheduled' } })
+    fireEvent.click(within(provision).getByRole('button', { name: 'Confirm deploy' }))
+
+    expect(await within(provision).findByText(UNKNOWN)).toBeTruthy()
+    expect(within(provision).queryByText(/nothing was changed/)).toBeNull()
+  })
+
+  it('Provision clear for deployment', async () => {
+    stubRoutes(
+      [
+        [/\/api\/catalog$/, () => json({ entries: [] })],
+        [/\/api\/media-workloads\/grouped$/, () => json(groupedFor('provision', true))],
+      ],
+      /\/api\/media-workloads\/studio-a-1\/clear$/,
+    )
+    renderSetup()
+    const provision = await stage('Provision')
+
+    fireEvent.click(await within(provision).findByText('Desired state (expert)'))
+    fireEvent.click(within(provision).getByRole('button', { name: 'Clear for deployment' }))
+    fireEvent.change(within(provision).getByRole('textbox'), { target: { value: 'go' } })
+    fireEvent.click(within(provision).getByRole('button', { name: 'Confirm' }))
+
+    // The panel closes on submit; the stage owns the one failure line.
+    const message = await within(provision).findByText(UNKNOWN)
+    expect(within(provision).getAllByText(UNKNOWN)).toHaveLength(1)
+    expect(message.textContent).not.toMatch(/nothing/)
+    expect(within(provision).queryByText(/nothing changed/)).toBeNull()
+    expect(within(provision).queryByText(/nothing was changed/)).toBeNull()
+  })
+
+  it('Finalise teardown', async () => {
+    stubRoutes(
+      [
+        [/\/api\/catalog$/, () => json({ entries: [catalogEntry({ lifecycle: 'active' })] })],
+        [/\/api\/media-workloads\/grouped$/, () => json(groupedFor('operate'))],
+      ],
+      /\/api\/catalog\/crosspoint\/teardown$/,
+    )
+    renderSetup()
+    const finalise = await stage('Finalise & Review')
+
+    fireEvent.click(await within(finalise).findByRole('button', { name: /Teardown/ }))
+    fireEvent.change(within(finalise).getByRole('textbox'), { target: { value: 'scheduled' } })
+    fireEvent.click(within(finalise).getByRole('button', { name: 'Confirm teardown' }))
+
+    expect(await within(finalise).findByText(UNKNOWN)).toBeTruthy()
+    expect(within(finalise).queryByText(/nothing was changed/)).toBeNull()
+  })
+
+  it('Finalise delete permanently', async () => {
+    stubRoutes(
+      [
+        [/\/api\/me$/, () => json(identity({ role: 'operator', real_role: 'operator' }))],
+        [/\/api\/catalog$/, () => json({ entries: [] })],
+        [/\/api\/media-workloads\/grouped$/, () => json(groupedFor('provision', true))],
+      ],
+      /\/api\/media-workloads\/studio-a\/purge$/,
+    )
+    renderSetup()
+    const rail = await screen.findByRole('navigation', { name: 'Media workload lifecycle' })
+    fireEvent.click(await waitFor(() => within(rail).getByRole('button', { name: 'Finalise & Review' })))
+    const finalise = await stage('Finalise & Review')
+
+    fireEvent.click(await within(finalise).findByRole('button', { name: 'Delete permanently' }))
+    fireEvent.change(within(finalise).getByPlaceholderText(/Reason \(required/), { target: { value: 'go' } })
+    fireEvent.change(within(finalise).getByPlaceholderText('studio-a'), { target: { value: 'studio-a' } })
+    fireEvent.click(within(finalise).getByRole('button', { name: 'Delete permanently' }))
+
+    expect(await within(finalise).findByText(UNKNOWN)).toBeTruthy()
+    expect(within(finalise).queryByText(/nothing was changed/)).toBeNull()
+  })
+
+  it('Catalog deploy', async () => {
+    stubRoutes(
+      [
+        [/\/api\/me$/, () => json(identity())],
+        [/\/api\/catalog$/, () => json({ entries: [catalogEntry()] })],
+      ],
+      /\/deploy$/,
+    )
+    renderCatalogPage()
+    fireEvent.click(await screen.findByRole('button', { name: /Deploy/ }))
+    fireEvent.change(await screen.findByPlaceholderText(/Reason \(required/), { target: { value: 'scheduled' } })
+    fireEvent.click(screen.getByRole('button', { name: 'Confirm deploy' }))
+
+    expect(await screen.findByText(UNKNOWN)).toBeTruthy()
+    expect(screen.queryByText(/nothing was changed/)).toBeNull()
+  })
+
+  it('Catalog teardown', async () => {
+    stubRoutes(
+      [
+        [/\/api\/me$/, () => json(identity())],
+        [/\/api\/catalog$/, () => json({ entries: [catalogEntry({ lifecycle: 'active' })] })],
+      ],
+      /\/teardown$/,
+    )
+    renderCatalogPage()
+    fireEvent.click(await screen.findByRole('button', { name: /Teardown/ }))
+    fireEvent.change(await screen.findByPlaceholderText(/Reason \(required/), { target: { value: 'x' } })
+    fireEvent.click(screen.getByRole('button', { name: 'Confirm teardown' }))
+
+    expect(await screen.findByText(UNKNOWN)).toBeTruthy()
+    expect(screen.queryByText(/nothing was changed/)).toBeNull()
+  })
+
+  it('Activity Jobs lane launch', async () => {
+    stubRoutes(
+      [
+        [/\/api\/me$/, () => json(identity())],
+        [
+          /\/api\/workflows$/,
+          () => json({ templates: [{ id: 1, name: 'day0-bootstrap', description: 'Bootstrap a facility', type: 'job' }] }),
+        ],
+      ],
+      /\/launch$/,
+    )
+    const queryClient = new QueryClient({ defaultOptions: { queries: { retry: false } } })
+    render(
+      <QueryClientProvider client={queryClient}>
+        <MemoryRouter>
+          <JobsLane />
+        </MemoryRouter>
+      </QueryClientProvider>,
+    )
+    fireEvent.click(await screen.findByRole('button', { name: /Launch/ }))
+    fireEvent.change(await screen.findByPlaceholderText(/Reason \(required/), { target: { value: 'scheduled' } })
+    fireEvent.click(screen.getByRole('button', { name: 'Confirm launch' }))
+
+    expect(await screen.findByText(UNKNOWN)).toBeTruthy()
+    expect(screen.queryByText(/nothing was changed/)).toBeNull()
+  })
+
+  // Responses that reach the browser as an APIError yet do not prove the
+  // request was refused: the console passes AWX and NetBox errors through as
+  // JSON after the call may have gone out, and a proxy can answer 5xx with JSON.
+  const unconfirmed: [string, () => Response][] = [
+    ['502 from AWX after the launch', () => json({ error: 'upstream-error', upstream: 'AWX' }, 502)],
+    ['4xx passed through from AWX', () => json({ error: 'upstream-error', upstream: 'AWX' }, 400)],
+    ['502 from a proxy without an upstream field', () => json({ error: 'bad-gateway' }, 502)],
+  ]
+
+  it.each(unconfirmed)('Activity Jobs lane launch: %s', async (_name, answer) => {
+    stubRoutes(
+      [
+        [/\/api\/me$/, () => json(identity())],
+        [
+          /\/api\/workflows$/,
+          () => json({ templates: [{ id: 1, name: 'day0-bootstrap', description: 'Bootstrap a facility', type: 'job' }] }),
+        ],
+      ],
+      /\/launch$/,
+      answer,
+    )
+    const queryClient = new QueryClient({ defaultOptions: { queries: { retry: false } } })
+    render(
+      <QueryClientProvider client={queryClient}>
+        <MemoryRouter>
+          <JobsLane />
+        </MemoryRouter>
+      </QueryClientProvider>,
+    )
+    fireEvent.click(await screen.findByRole('button', { name: /Launch/ }))
+    fireEvent.change(await screen.findByPlaceholderText(/Reason \(required/), { target: { value: 'scheduled' } })
+    fireEvent.click(screen.getByRole('button', { name: 'Confirm launch' }))
+
+    expect(await screen.findByText(UNKNOWN)).toBeTruthy()
+    expect(screen.queryByText(/nothing was changed/)).toBeNull()
+  })
+
+  it.each(unconfirmed)('Catalog deploy: %s', async (_name, answer) => {
+    stubRoutes(
+      [
+        [/\/api\/me$/, () => json(identity())],
+        [/\/api\/catalog$/, () => json({ entries: [catalogEntry()] })],
+      ],
+      /\/deploy$/,
+      answer,
+    )
+    renderCatalogPage()
+    fireEvent.click(await screen.findByRole('button', { name: /Deploy/ }))
+    fireEvent.change(await screen.findByPlaceholderText(/Reason \(required/), { target: { value: 'scheduled' } })
+    fireEvent.click(screen.getByRole('button', { name: 'Confirm deploy' }))
+
+    expect(await screen.findByText(UNKNOWN)).toBeTruthy()
+    expect(screen.queryByText(/nothing was changed/)).toBeNull()
+  })
+
+  it.each([
+    ['502 after the NetBox write', () => json({ error: 'netbox-unreachable' }, 502)],
+    ['4xx passed through from NetBox', () => json({ error: 'upstream-error', upstream: 'NetBox' }, 400)],
+  ] as [string, () => Response][])('Provision clear for deployment: %s', async (_name, answer) => {
+    stubRoutes(
+      [
+        [/\/api\/catalog$/, () => json({ entries: [] })],
+        [/\/api\/media-workloads\/grouped$/, () => json(groupedFor('provision', true))],
+      ],
+      /\/api\/media-workloads\/studio-a-1\/clear$/,
+      answer,
+    )
+    renderSetup()
+    const provision = await stage('Provision')
+
+    fireEvent.click(await within(provision).findByText('Desired state (expert)'))
+    fireEvent.click(within(provision).getByRole('button', { name: 'Clear for deployment' }))
+    fireEvent.change(within(provision).getByRole('textbox'), { target: { value: 'go' } })
+    fireEvent.click(within(provision).getByRole('button', { name: 'Confirm' }))
+
+    expect(await within(provision).findByText(UNKNOWN)).toBeTruthy()
+    expect(within(provision).queryByText(/nothing was changed/)).toBeNull()
+  })
+
+  it('Provision clear for deployment: a 409 already-active from the console still says nothing was changed', async () => {
+    stubRoutes(
+      [
+        [/\/api\/catalog$/, () => json({ entries: [] })],
+        [/\/api\/media-workloads\/grouped$/, () => json(groupedFor('provision', true))],
+      ],
+      /\/api\/media-workloads\/studio-a-1\/clear$/,
+      () => json({ error: 'already-active', request_id: 'r1' }, 409),
+    )
+    renderSetup()
+    const provision = await stage('Provision')
+
+    fireEvent.click(await within(provision).findByText('Desired state (expert)'))
+    fireEvent.click(within(provision).getByRole('button', { name: 'Clear for deployment' }))
+    fireEvent.change(within(provision).getByRole('textbox'), { target: { value: 'go' } })
+    fireEvent.click(within(provision).getByRole('button', { name: 'Confirm' }))
+
+    expect(await within(provision).findByText(/nothing was changed/)).toBeTruthy()
+    expect(within(provision).queryByText(UNKNOWN)).toBeNull()
+  })
+})

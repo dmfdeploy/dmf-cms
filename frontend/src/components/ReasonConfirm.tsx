@@ -2,6 +2,7 @@ import { useId, useState } from 'react'
 import { Input, Select, Textarea } from './FormField'
 import { capacityRefusalMessage } from '../lib/capacityRefusal'
 import { useInventoryWritesBlocked } from '../lib/inventoryFreshness'
+import { isConsoleRefusal, requestFailureText } from '../lib/requestFailureText'
 
 /**
  * Armed-confirm + mandatory-reason panel for a consequential write (the C5
@@ -95,8 +96,9 @@ export default function ReasonConfirm({
   pendingLabel?: string
   pending?: boolean
   error?: unknown
-  // Replaces the default failure text for a caller whose request can fail
-  // after it has already taken effect, where "nothing was changed" may be untrue.
+  // Replaces the default failure text for a caller that needs its own copy.
+  // The default says "nothing was changed" only for the console's own refusal
+  // (see isConsoleRefusal); any other failure gets the unknown-result text.
   errorMessage?: string
   onConfirm: (reason: string) => void
   onCancel: () => void
@@ -115,10 +117,11 @@ export default function ReasonConfirm({
   const extraInvalid = extraField?.invalid ?? false
   const danger = variant === 'danger'
   // A caller that supplies its own error copy owns every error shape. The
-  // capacity copy says "Nothing was changed", which only holds for the deploy
-  // preflight, so it must not override a caller whose request can fail after
-  // it took effect.
-  const capacityRefusal = errorMessage ? null : capacityRefusalMessage(error)
+  // capacity copy says "Nothing was changed", which only holds for the
+  // console's own refusal, so it shows only for one (see isConsoleRefusal),
+  // never for a 5xx or an upstream error that happens to carry the same code.
+  const capacityRefusal =
+    errorMessage || !isConsoleRefusal(error) ? null : capacityRefusalMessage(error)
   const writesBlocked = useInventoryWritesBlocked()
 
   return (
@@ -195,8 +198,7 @@ export default function ReasonConfirm({
           {/* Art. 8: the operator gets what happened and what is safe to do
               next, not a stringified exception. Fixed here so all three
               stages inherit it rather than each growing its own copy. */}
-          {errorMessage ??
-            "That didn't go through — nothing was changed. Check your access, then retry."}
+          {errorMessage ?? requestFailureText(error)}
         </p>
       )}
       {writesBlocked && (
