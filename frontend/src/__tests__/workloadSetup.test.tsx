@@ -174,6 +174,9 @@ interface FetchOpts {
    */
   operationResponses?: Record<string, Record<string, unknown>>
   switchResult?: Record<string, unknown>
+  // How the switch request itself fails: an HTTP error, a lost response, or
+  // a response body that is not JSON.
+  switchRequestFailure?: 'http-500' | 'lost' | 'bad-json'
   clearResult?: Record<string, unknown>
   facilitySites?: Array<{ name: string; slug: string | null; device_count: number }>
   // Holds the switch-source POST open until releaseSwitch() is called — the
@@ -275,6 +278,11 @@ function mkFetch(opts: FetchOpts = {}) {
     if (url.match(/\/api\/media-workloads\/[^/]+\/switch-source$/)) {
       calls.switch.push({ url, init })
       await switchGate
+      if (opts.switchRequestFailure === 'http-500') return json({ error: 'boom' }, 500)
+      if (opts.switchRequestFailure === 'lost') throw new TypeError('Failed to fetch')
+      if (opts.switchRequestFailure === 'bad-json') {
+        return new Response('<html>gateway timeout</html>', { status: 200 })
+      }
       return json(
         opts.switchResult ?? {
           command_id: 'cmd-1',
@@ -1035,6 +1043,36 @@ describe('Configure: switch click path', () => {
     expect(finaliseDetails.textContent).toContain('switch_refused_future-stage')
     expect(within(finaliseSection).queryByText(/switch_refused_future-stage/, { ignore: 'details *' })).toBeNull()
   })
+
+  // The switch endpoint runs the switch before it answers, so a failed
+  // request can follow a switch that already ran. None of these may say
+  // nothing changed.
+  it.each(['http-500', 'lost', 'bad-json'] as const)(
+    'shows unknown-result copy, not "nothing was changed", when the request fails (%s)',
+    async (switchRequestFailure) => {
+      mkFetch({
+        workload: viewerWorkload(),
+        catalog: [catalogEntry({ key: 'viewer', display_name: 'MXL Viewer', lifecycle: 'active' })],
+        topology: { 'viewer-1': freshTopology() },
+        switchRequestFailure,
+      })
+      renderDetail()
+      await findRail()
+
+      const configureSection = await selectStep('Configure')
+      fireEvent.click(await within(configureSection).findByRole('button', { name: 'Switch source' }))
+      fireEvent.change(within(configureSection).getByPlaceholderText(REASON_PLACEHOLDER), {
+        target: { value: 'operator requested' },
+      })
+      fireEvent.change(within(configureSection).getByRole('combobox'), { target: { value: 'source-b' } })
+      fireEvent.click(within(configureSection).getByRole('button', { name: 'Confirm switch' }))
+
+      const message = await within(configureSection).findByText(/could not confirm the switch request/)
+      expect(message.textContent).toContain('the switch may have run')
+      expect(message.textContent).toContain('Check the current source before you retry')
+      expect(within(configureSection).queryByText(/nothing was changed/)).toBeNull()
+    },
+  )
 
   it('fails closed (no target offered) when the observation is stale', async () => {
     const wl = viewerWorkload()

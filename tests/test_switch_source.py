@@ -669,6 +669,17 @@ def test_actuator_watch_timeout_and_lost_carry_operator_copy():
         assert command.outcome_message == switch_outcome_message(outcome)
 
 
+def test_final_readback_copy_asserts_neither_the_write_nor_the_confirmation():
+    """The play re-reads because the write's own success is not trusted, and a
+    lock-release failure after a passing readback also lands on this stage.
+    So a failure here can mean the source was never set, or set and confirmed."""
+    message = switch_outcome_message("switch_refused_final-readback").lower()
+    assert "may have taken effect" in message
+    assert "check the current source" in message
+    for claim in ("set the new source", "could not confirm", "unchanged", "no source is active"):
+        assert claim not in message
+
+
 # Truth checks for the late stages: each message must convey what the play
 # cannot rule out, and must not assert a state the play cannot guarantee.
 

@@ -403,13 +403,18 @@ _SWITCH_OUTCOME_OPERATOR_COPY = {
 #   recorded lands here, so rollback and source state are both unknown.
 # * select covers the one Kubernetes write that sets the new source. That write
 #   can apply even when the client reports an error.
-# * final-readback covers the readback, its assert and the lock release.
+# * final-readback covers the readback, its assert and the lock release. The
+#   play re-reads because the write's own success is not trusted, so a failure
+#   here can mean the source was never set. A failure of the lock release after a
+#   passing readback means it was set and confirmed. The copy asserts neither.
+# * The lock is a facility lock, not source state, so "unchanged" copy speaks
+#   of the source only.
 _SWITCH_NOTHING_CHANGED_COPY = (
-    "Switch was refused before it changed anything. The current source is unchanged. "
+    "Switch was refused before it changed the source. The current source is unchanged. "
     "Check the request, then retry."
 )
 _SWITCH_READ_ONLY_STAGE_COPY = (
-    "Switch was refused while it read the current state, before any change. "
+    "Switch was refused while it read the current state, before any change to the source. "
     "The current source is unchanged. Retry; if it repeats, check the viewer's status."
 )
 _SWITCH_REFUSED_STAGE_COPY = {
@@ -434,8 +439,8 @@ _SWITCH_REFUSED_STAGE_COPY = {
         "not have taken effect. Check the current source before you retry."
     ),
     "final-readback": (
-        "Switch set the new source but could not confirm it, so it may have taken "
-        "effect. Check the active source before you retry."
+        "Switch stopped while it confirmed the new source. The selection may have "
+        "taken effect. Check the current source before you retry."
     ),
 }
 # Any other allowlisted detail: the console cannot tell how far the play got.
