@@ -114,7 +114,11 @@ export default function ReasonConfirm({
   const extraFieldId = useId()
   const extraInvalid = extraField?.invalid ?? false
   const danger = variant === 'danger'
-  const capacityRefusal = capacityRefusalMessage(error)
+  // A caller that supplies its own error copy owns every error shape. The
+  // capacity copy says "Nothing was changed", which only holds for the deploy
+  // preflight, so it must not override a caller whose request can fail after
+  // it took effect.
+  const capacityRefusal = errorMessage ? null : capacityRefusalMessage(error)
   const writesBlocked = useInventoryWritesBlocked()
 
   return (
