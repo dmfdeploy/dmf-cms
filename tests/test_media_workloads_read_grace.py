@@ -240,6 +240,11 @@ def test_older_success_cannot_clear_a_newer_failure(monkeypatch, kind):
     # and its own response reports the failure state, not its own payload.
     assert box["outer"]["stale"] is True
     assert box["outer"]["failure_since"] == "2027-01-15T08:00:05Z"
+    # Nor may it replace the retained snapshot: the newest observation is the
+    # failure, so the inventory served stale is the one read before both.
+    assert _names(box["inner"], kind) == ["mxl-vm"]
+    assert _names(box["outer"], kind) == ["mxl-vm"]
+    assert box["outer"]["last_success"] == "2027-01-15T08:00:00Z"
     monkeypatch.setattr(
         mw, "_fetch_services",
         lambda *a, **k: (_ for _ in ()).throw(netbox_module.NetboxAPIError(504, "x")),
@@ -248,7 +253,46 @@ def test_older_success_cannot_clear_a_newer_failure(monkeypatch, kind):
     got = _read(kind, clock)
     assert got["stale"] is True
     assert got["failure_since"] == "2027-01-15T08:00:05Z"
+    assert _names(got, kind) == ["mxl-vm"]
+    assert got["last_success"] == "2027-01-15T08:00:00Z"
+    # The window still runs from the retained snapshot's start.
+    clock.now = T0 + mw.READ_GRACE_SECONDS + 1
+    assert _read(kind, clock)["degraded"] is True
     del ok
+
+
+def test_older_success_after_newer_failure_keeps_write_gate_and_next_success_recovers(
+    monkeypatch, kind
+):
+    clock = Clock()
+    Source(monkeypatch)
+    _read(kind, clock)
+    _overlap(monkeypatch, kind, clock, outer="old", inner="fail")
+    args = ("http://netbox.test", None)
+    assert mw.inventory_write_block(*args, monotonic=clock) == "inventory-stale"
+    # Past the window the same state is degraded, never "fresh from A".
+    clock.now = T0 + mw.READ_GRACE_SECONDS + 1
+    assert mw.inventory_write_block(*args, monotonic=clock) == "inventory-degraded"
+    # A read that starts after the failure clears it and replaces the snapshot.
+    monkeypatch.setattr(mw, "_fetch_services", lambda *a, **k: [_svc("newest")])
+    got = _read(kind, clock)
+    assert got["stale"] is False and got["degraded"] is False
+    assert got["failure_since"] is None
+    assert _names(got, kind) == ["newest"]
+    assert mw.inventory_write_block(*args, monotonic=clock) is None
+
+
+def test_older_success_after_newer_failure_with_no_snapshot_stays_degraded(monkeypatch, kind):
+    clock = Clock()
+    box = _overlap(monkeypatch, kind, clock, outer="old", inner="fail")
+    assert box["inner"]["degraded"] is True
+    # A has no snapshot to fall back on and is older than the failure, so it
+    # reports the failure rather than seeding the cache with its payload.
+    assert box["outer"]["degraded"] is True
+    assert box["outer"]["last_success"] is None
+    assert _names(box["outer"], kind) == []
+    (state,) = mw._read_states.values()
+    assert state.last_good is None
 
 
 def test_older_failure_cannot_degrade_a_newer_success(monkeypatch, kind):

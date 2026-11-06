@@ -468,16 +468,19 @@ def _remember_success(
     started_mono: float,
     monotonic: Callable[[], float],
 ) -> dict[str, Any]:
-    """Record a successful read, unless a newer one already did.
+    """Record a successful read, unless a newer observation supersedes it.
 
-    The snapshot is replaced only by a read that started after the cached one;
-    the failure state is cleared only by a read that started after the latest
-    failure. The caller gets the current response, which is its own payload
-    only while that payload is the newest observation.
+    The snapshot is replaced only by a read that started after both the cached
+    snapshot and the latest failure; the failure state is cleared only by a
+    read that started after the latest failure. A success older than a
+    recorded failure is not the newest observation, so it must not become the
+    inventory served stale or move ``last_success``. The caller gets the
+    current response, which is its own payload only while that payload is the
+    newest observation.
     """
     with _read_states_lock:
         state = _read_states.setdefault(key, _ReadState())
-        if ticket > state.success_ticket:
+        if ticket > state.success_ticket and ticket > state.failure_ticket:
             state.last_good = copy.deepcopy(payload)
             state.last_success = started
             state.last_success_mono = started_mono
