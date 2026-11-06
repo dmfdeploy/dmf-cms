@@ -53,7 +53,44 @@ def silent_netbox():
 
 
 def test_netbox_timeout_is_well_inside_the_liveness_window():
-    assert netbox.REQUEST_TIMEOUT_SECONDS * 2 <= LIVENESS_WINDOW_SECONDS
+    assert netbox.READ_TIMEOUT_SECONDS * 2 <= LIVENESS_WINDOW_SECONDS
+
+
+@pytest.mark.parametrize("method", ["PATCH", "POST", "PUT", "DELETE"])
+def test_writes_keep_the_longer_budget(method):
+    assert netbox.request_timeout(method) == netbox.WRITE_TIMEOUT_SECONDS == 30
+    assert netbox.request_timeout("GET") == netbox.READ_TIMEOUT_SECONDS
+
+
+def test_a_patch_that_answers_after_the_read_budget_still_succeeds(monkeypatch):
+    """The reply arrives after the read budget but inside the write budget."""
+    import http.server
+
+    class Slow(http.server.BaseHTTPRequestHandler):
+        def do_PATCH(self):
+            self.rfile.read(int(self.headers.get("Content-Length", 0)))
+            time.sleep(1.5)
+            body = b'{"ok": true}'
+            self.send_response(200)
+            self.send_header("Content-Length", str(len(body)))
+            self.end_headers()
+            self.wfile.write(body)
+
+        def log_message(self, *args):
+            pass
+
+    server = http.server.ThreadingHTTPServer(("127.0.0.1", 0), Slow)
+    thread = threading.Thread(target=server.serve_forever, daemon=True)
+    thread.start()
+    # Scaled down: 1 s read budget, 4 s write budget, 1.5 s reply.
+    monkeypatch.setattr(netbox, "READ_TIMEOUT_SECONDS", 1)
+    monkeypatch.setattr(netbox, "WRITE_TIMEOUT_SECONDS", 4)
+    base = f"http://127.0.0.1:{server.server_address[1]}"
+    try:
+        assert netbox._request(base, "t", "/api/ipam/services/1/", method="PATCH", payload={"a": 1}) == {"ok": True}
+    finally:
+        server.shutdown()
+        thread.join()
 
 
 def test_netbox_requests_use_the_bounded_timeout(monkeypatch):
@@ -66,7 +103,7 @@ def test_netbox_requests_use_the_bounded_timeout(monkeypatch):
     monkeypatch.setattr(urllib.request, "urlopen", fake_urlopen)
     with pytest.raises(OSError):
         netbox._request("http://nb.invalid", "t", "/api/status/")
-    assert seen["timeout"] == netbox.REQUEST_TIMEOUT_SECONDS
+    assert seen["timeout"] == netbox.READ_TIMEOUT_SECONDS
 
 
 @pytest.mark.parametrize("path", ["/api/catalog", "/api/catalog/entries"])
@@ -79,7 +116,7 @@ def test_healthz_stays_fast_while_a_catalog_read_hangs_on_netbox(monkeypatch, si
     )
     monkeypatch.setattr("dmf_cms.main.load_catalog_entries", lambda: [entry])
     # Short enough to keep the suite quick, longer than the healthz budget.
-    monkeypatch.setattr(netbox, "REQUEST_TIMEOUT_SECONDS", 3, raising=False)
+    monkeypatch.setattr(netbox, "READ_TIMEOUT_SECONDS", 3, raising=False)
     settings = Settings(netbox=NetboxSettings(api_url=silent_netbox, api_token="t"))
     app = create_app(settings=settings)
 

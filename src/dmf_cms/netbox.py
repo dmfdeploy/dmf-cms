@@ -10,7 +10,16 @@ import urllib.request
 
 # A stalled NetBox must give up well inside the liveness window (3 probes x
 # 20 s) so a hung read frees its worker thread long before kubelet acts.
-REQUEST_TIMEOUT_SECONDS = 10
+READ_TIMEOUT_SECONDS = 10
+
+# A write that commits after the client gives up would be reported as a
+# failure while the change stands, so writes keep the longer budget.
+WRITE_TIMEOUT_SECONDS = 30
+
+
+def request_timeout(method: str) -> int:
+    """The one place that decides how long a NetBox request may wait."""
+    return READ_TIMEOUT_SECONDS if method.upper() == "GET" else WRITE_TIMEOUT_SECONDS
 
 
 class NetboxAPIError(Exception):
@@ -47,7 +56,7 @@ def _request(
     req = urllib.request.Request(url, headers=headers, method=method, data=data)
 
     try:
-        with urllib.request.urlopen(req, timeout=REQUEST_TIMEOUT_SECONDS, context=ssl_context) as resp:
+        with urllib.request.urlopen(req, timeout=request_timeout(method), context=ssl_context) as resp:
             raw = resp.read()
             return json.loads(raw) if raw else {}
     except urllib.error.HTTPError as exc:

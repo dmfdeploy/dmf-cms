@@ -205,3 +205,47 @@ def test_the_watcher_start_records_its_job(caplog, monkeypatch):
 
     asyncio.run(run())
     assert any("outcome=job-attached" in r.getMessage() and "job_id=103" in r.getMessage() for r in caplog.records)
+
+
+def preflight(rid, outcome="capacity-skipped", action="deploy"):
+    return _line(action=action, actor="alice", role="operator", request_id=rid, target="wl", outcome=outcome)
+
+
+@pytest.mark.parametrize("token", ["capacity-skipped", "capacity-override"])
+def test_a_preflight_row_is_never_called_a_restart_loss(monkeypatch, token):
+    # One request writes a preflight row and a dispatch row under one id; the
+    # dispatch finished. The preflight row must not claim a restart ate a job.
+    lines = [
+        (1000, preflight("rid-1", token)), (1001, dispatch("rid-1", action="deploy")),
+        (1002, attached("rid-1", 103, action="deploy")), (1050, terminal("rid-1", action="deploy")),
+    ]
+    events = audit_events_by_row(monkeypatch, lines)
+    pre = next(e for e in events if e["outcome"]["detail"] == token or e["at_ns"] == str(1000 * S))
+    assert "restarted" not in pre["outcome"].get("headline", "")
+    assert pre["outcome"]["state"] == "in_flight"
+
+
+def audit_events_by_row(monkeypatch, timed_lines):
+    def query_range(*, url, selector, start_ns, end_ns, limit, timeout=10):
+        return [{"stream": {}, "values": [[str(ts * S), line] for ts, line in timed_lines]}]
+
+    monkeypatch.setattr(audit_events.loki, "query_range", query_range)
+    monkeypatch.setattr(
+        audit_events.loki, "raw_runtime_config",
+        lambda *, url, timeout=10: "compactor:\n  retention_enabled: true\nlimits_config:\n  retention_period: 168h\n",
+    )
+    return audit_events.list_audit_events(
+        loki_url="http://loki.test", loki_configured=True, role="admin", groups=(),
+        now_ns=NOW, max_in_flight_age_seconds=3600, process_started_ns=PROCESS_STARTED,
+    )["events"]
+
+
+def test_a_dispatch_with_a_job_names_the_job_in_plain_words(monkeypatch):
+    out = read(monkeypatch, [(1000, dispatch("rid-1")), (1010, attached("rid-1", 103))])["rid-1"]
+    assert out["meaning"].startswith("The console restarted while automation job 103 was running")
+
+
+def test_a_dispatch_without_a_job_does_not_claim_a_job_ran(monkeypatch):
+    out = read(monkeypatch, [(1000, dispatch("rid-1"))])["rid-1"]
+    assert "was running" not in out["meaning"]
+    assert "may not have started" in out["meaning"]

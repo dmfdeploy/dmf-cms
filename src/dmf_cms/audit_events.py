@@ -1033,17 +1033,25 @@ def _unknown_outcome() -> dict[str, object]:
 
 def _restarted_outcome(job_id: str) -> dict[str, object]:
     """The honest answer for a dispatch whose watcher died with the process
-    that held it: the job may have finished, failed or still be running, and
-    the console did not see which."""
-    job = f" The automation job is number {job_id}." if job_id else ""
+    that held it. The console did not see how the request ended."""
+    if job_id:
+        meaning = (
+            f"The console restarted while automation job {job_id} was running, "
+            "so it did not see the job finish. The job may have succeeded, "
+            "failed or still be running."
+        )
+    else:
+        # The dispatch line is written before AWX wakes, so with no attach
+        # record there is no evidence a job ever started.
+        meaning = (
+            "The console restarted before it saw this request finish. An "
+            "automation job may not have started, or may have run without the "
+            "console seeing it."
+        )
     return {
         "state": "unknown",
         "headline": "Outcome unknown: the console restarted",
-        "meaning": (
-            "The console restarted while this job was running, so it did not "
-            "see the job finish. The job may have succeeded, failed or still "
-            f"be running.{job}"
-        ),
+        "meaning": meaning,
         "next_step": (
             "Check the workload's current state in Workspace or Activity → "
             "Jobs before you try again."
@@ -1398,7 +1406,7 @@ def list_audit_events(
                     terminal_fields = terminal_by_job.get((action, run_job))
             if terminal_fields is not None and is_dispatch_row:
                 outcome = build_terminal_join_outcome(terminal_fields.get("outcome", ""))
-            elif _written_before_process_start(outcome, ts_ns_str, process_started_ns):
+            elif is_dispatch_row and _written_before_process_start(outcome, ts_ns_str, process_started_ns):
                 outcome = _restarted_outcome(job_by_request_id.get(run_id, ""))
             else:
                 # No ELIGIBLE join for this row —

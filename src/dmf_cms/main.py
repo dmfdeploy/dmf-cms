@@ -1289,9 +1289,26 @@ def _bootstrap_console_groups(settings: Settings) -> None:
             )
 
 
+async def _bootstrap_console_groups_in_background(settings: Settings) -> None:
+    """Seed the console groups without holding up startup.
+
+    Seeding is best-effort and nothing in the request path reads its result:
+    roles come from the signed-in user's own claims. Running it before the
+    app serves let a slow Authentik (five calls, up to 15 s each) outlast the
+    liveness probe, so the pod restarted before it ever answered.
+    """
+    try:
+        await run_in_threadpool(_bootstrap_console_groups, settings)
+    except Exception as exc:
+        logger.warning("console group bootstrap failed: %s", _sanitize_audit_field(str(exc)))
+
+
 @asynccontextmanager
 async def lifespan(app: FastAPI):
-    _bootstrap_console_groups(app.state.settings)
+    # Kept on app.state so the task is not garbage-collected mid-run.
+    app.state.group_bootstrap_task = asyncio.create_task(
+        _bootstrap_console_groups_in_background(app.state.settings)
+    )
     app.state.operations = OperationStore(ttl_seconds=3600)
     app.state.operation_tasks: set[asyncio.Task] = set()
     # Watchers live in this process. The audit read compares a dispatch row's
@@ -1301,7 +1318,11 @@ async def lifespan(app: FastAPI):
     # umbrella #201 WP5: a dedicated store, not folded into OperationStore —
     # see switch_source.SwitchCommandStore's own docstring for why.
     app.state.switch_commands = SwitchCommandStore(ttl_seconds=3600)
-    yield
+    try:
+        yield
+    finally:
+        # The seeding call may still be waiting on Authentik; shutdown must not.
+        app.state.group_bootstrap_task.cancel()
 
 
 async def _post_wake_template_lookup(settings, name: str) -> dict | None:
