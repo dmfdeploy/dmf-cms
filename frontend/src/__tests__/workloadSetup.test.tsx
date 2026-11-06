@@ -2067,7 +2067,7 @@ describe('failure and loop-closure are visible and atomic', () => {
 
     // Panel closed, failure still stated — no re-arming required to see it.
     await waitFor(() =>
-      expect(within(stageSection('Provision')).getByText(/was not recorded/)).toBeTruthy(),
+      expect(within(stageSection('Provision')).getByText(/could not confirm the result/)).toBeTruthy(),
     )
     expect(within(stageSection('Provision')).queryByRole('textbox')).toBeNull()
     expect(h.calls.clear).toHaveLength(1)

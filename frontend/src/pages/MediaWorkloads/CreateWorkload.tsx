@@ -13,6 +13,7 @@ import { useDraftWorkloadStore } from '../../store/draftWorkload'
 import PageHeading from '../../components/PageHeading'
 import { usePageTitle } from '../../hooks/usePageTitle'
 import { capacityRefusalMessage } from '../../lib/capacityRefusal'
+import { isConsoleRefusal } from '../../lib/requestFailureText'
 import { useGuardWrite } from '../../lib/inventoryFreshness'
 import { InventoryWritesGate, InventoryWritesNotice } from '.'
 
@@ -349,11 +350,12 @@ function CreateWorkloadPage() {
       // fact of the step is what keeps this loop closed (Art. 2) instead of
       // a toast that could vanish before it is read.
       //
-      // THE DISTINCTION THAT MATTERS (GATE-B P1). An APIError means the
-      // server answered and refused — nothing was launched, and saying so is
-      // safe. ANY OTHER throw means the request may have reached AWX and we
-      // simply never learned the outcome: a dropped connection after the
-      // POST left, a reply we could not parse. Reporting that as "nothing
+      // THE DISTINCTION THAT MATTERS (GATE-B P1). Only the console's own
+      // refusal (a 4xx without an `upstream` field, see isConsoleRefusal)
+      // proves nothing was launched, and saying so is safe. ANYTHING ELSE
+      // means the request may have reached AWX: a dropped connection after
+      // the POST left, a reply we could not parse, a 5xx, or an AWX error the
+      // console passed through. Reporting that as "nothing
       // was created" would be a claim the console cannot support, and the
       // expensive direction to be wrong in — an operator told nothing
       // happened will deploy again, on top of a workload that may already be
@@ -361,7 +363,7 @@ function CreateWorkloadPage() {
       console.error('Provision failed:', e)
       setArming(false)
       setDeployOutcome(
-        e instanceof APIError
+        e instanceof APIError && isConsoleRefusal(e)
           ? { kind: 'refused', status: e.status, capacity: capacityRefusalMessage(e) }
           : { kind: 'unknown' },
       )
@@ -1025,15 +1027,15 @@ function ProvisionSection({
               'The facility refused the request. Check your access and the reason, then try again.'}
           </p>
         )}
-        {/* The honest half of the split. The console lost the connection
-            before it learned what happened, so it says exactly that and
+        {/* The honest half of the split. The console could not confirm what
+            happened, so it says exactly that and
             sends the operator to look — never "nothing was created", which
             would invite a second deploy on top of a workload that may
             already be starting. */}
         {!arming && outcome?.kind === 'unknown' && (
           <p className="mt-2 text-xs text-amber-300">
-            Outcome unknown — the connection was lost before the facility answered, so
-            the console cannot tell whether the deploy for workload:{slug} started.
+            Outcome unknown — the console could not confirm the result, so
+            it cannot tell whether the deploy for workload:{slug} started.
             Check Media Workloads before trying again: deploying a second time when the
             first one did start is the more expensive mistake.
           </p>

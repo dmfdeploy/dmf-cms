@@ -725,7 +725,7 @@ describe('Provision: the deploy POST', () => {
   })
 
   it('leaves a persistent, non-vanishing failure on the step when the deploy fails', async () => {
-    mkFetch({ deployStatus: 500 })
+    mkFetch({ deployStatus: 400 })
     renderCreate()
     await screen.findByRole('heading', { name: 'Identity' })
     const provision = await reachProvision()
@@ -1590,6 +1590,19 @@ describe('an outcome the console never learned is never reported as "nothing hap
     // establish that nothing was created.
     expect(provision.textContent).not.toMatch(/nothing was created/)
     expect(provision.textContent).toMatch(/Check Media Workloads before trying again/)
+  })
+
+  it.each([
+    ['a 502 from AWX after the launch', 502, { error: 'upstream-error', upstream: 'AWX' }],
+    ['a 4xx passed through from AWX', 400, { error: 'upstream-error', upstream: 'AWX' }],
+    ['a 502 from a proxy', 502, { error: 'bad-gateway' }],
+  ])('says OUTCOME UNKNOWN for %s', async (_name, deployStatus, deployBody) => {
+    mkFetch({ deployStatus, deployBody })
+    await armAndConfirm()
+
+    const provision = stepSection('Provision')
+    await waitFor(() => expect(provision.textContent).toMatch(/Outcome unknown/))
+    expect(provision.textContent).not.toMatch(/nothing was created/)
   })
 
   it('DOES say nothing was created when the server itself refused', async () => {

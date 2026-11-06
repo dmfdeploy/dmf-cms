@@ -10,6 +10,7 @@ import {
 } from '../../../api/hooks'
 import { useActivityStore } from '../../../store/activity'
 import ReasonConfirm from '../../../components/ReasonConfirm'
+import { requestFailureText } from '../../../lib/requestFailureText'
 import { isValidWorkloadSlug } from '../../../lib/workloadSlug'
 import type { CatalogEntry, ClearForDeploymentResult, MediaWorkload } from '../../../api/types'
 import type { StageActionId, StageState } from '../../../lib/workloadLifecycle'
@@ -404,7 +405,6 @@ export default function ProvisionStage({
                     instance={inst.instance}
                     onConfirm={onClearConfirm}
                     pending={clearMutation.isPending}
-                    failed={clearMutation.isError}
                   />
                 </div>
               ))}
@@ -415,8 +415,7 @@ export default function ProvisionStage({
                 happened at all (GATE-S1-RV3 P2, item 16). */}
             {clearMutation.isError && (
               <p className="mt-2 text-xs text-red-300">
-                The desired state was not recorded — nothing changed. Check your
-                access, then retry.
+                {requestFailureText(clearMutation.error)}
               </p>
             )}
             {lastClearResult && (

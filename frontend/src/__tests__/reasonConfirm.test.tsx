@@ -13,7 +13,7 @@ import { cleanup, render, screen, fireEvent, waitFor } from '@testing-library/re
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query'
 import { MemoryRouter } from 'react-router-dom'
 import ReasonConfirm from '../components/ReasonConfirm'
-import { APIError } from '../api/client'
+import { APIError, apiCall } from '../api/client'
 import Catalog from '../pages/Catalog'
 import type { CatalogEntry, CatalogListResponse, UserIdentity } from '../api/types'
 
@@ -282,7 +282,7 @@ describe('ReasonConfirm variant="danger" (umbrella #347, delete-permanently)', (
         confirmLabel="Delete permanently"
         pendingLabel="Deleting…"
         pending
-        error={new Error('boom')}
+        error={new APIError(400, JSON.stringify({ error: 'boom' }), 'boom')}
         onConfirm={vi.fn()}
         onCancel={() => {}}
         extraField={typedSlugField('studio-a')}
@@ -291,6 +291,71 @@ describe('ReasonConfirm variant="danger" (umbrella #347, delete-permanently)', (
     expect(screen.getByText('Deleting…')).toBeTruthy()
     expect(screen.getByText(/nothing was changed/)).toBeTruthy()
     expect((screen.getByRole('button', { name: 'Deleting…' }) as HTMLButtonElement).disabled).toBe(true)
+  })
+
+  it.each([
+    ['a lost connection', new TypeError('Failed to fetch')],
+    ['an unparseable body', new SyntaxError('Unexpected token < in JSON at position 0')],
+  ])('says the outcome is unknown, not "nothing was changed", after %s', (_name, error) => {
+    render(
+      <ReasonConfirm title="T" description="D" error={error} onConfirm={vi.fn()} onCancel={() => {}} />,
+    )
+    expect(screen.getByText(/could not confirm the result, so the action may have run/)).toBeTruthy()
+    expect(screen.queryByText(/nothing was changed/)).toBeNull()
+  })
+
+  it.each([
+    ['a 5xx with a JSON body', 502, { error: 'bad-gateway' }, false],
+    ['a 5xx that names its upstream', 502, { error: 'upstream-error', upstream: 'AWX' }, false],
+    ['a 4xx that names its upstream', 404, { error: 'upstream-error', upstream: 'NetBox' }, false],
+    ['a 4xx from the console', 409, { error: 'already-active' }, true],
+  ])('through the real client, %s', async (_name, status, body, refused) => {
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(async () => new Response(JSON.stringify(body), { status, headers: { 'Content-Type': 'application/json' } })),
+    )
+    const error = await apiCall('/api/x').catch((e: unknown) => e)
+    render(<ReasonConfirm title="T" description="D" error={error} onConfirm={vi.fn()} onCancel={() => {}} />)
+    expect(!!screen.queryByText(/nothing was changed/)).toBe(refused)
+    expect(!!screen.queryByText(/could not confirm the result/)).toBe(!refused)
+  })
+
+  it('an APIError whose body cannot be parsed reads as unknown', () => {
+    render(
+      <ReasonConfirm
+        title="T"
+        description="D"
+        error={new APIError(400, 'not json', 'bad')}
+        onConfirm={vi.fn()}
+        onCancel={() => {}}
+      />,
+    )
+    expect(screen.queryByText(/nothing was changed/)).toBeNull()
+    expect(screen.getByText(/could not confirm the result/)).toBeTruthy()
+  })
+
+  it('an unparseable body from the real client reads as unknown, a refusal as nothing changed', async () => {
+    const refusedBody = new Response(JSON.stringify({ error: 'forbidden' }), {
+      status: 403,
+      headers: { 'Content-Type': 'application/json' },
+    })
+    const garbled = new Response('<html>bad gateway</html>', { status: 502 })
+    const caught: unknown[] = []
+    for (const response of [garbled, refusedBody]) {
+      vi.stubGlobal('fetch', vi.fn(async () => response))
+      await apiCall('/api/x').catch((e: unknown) => caught.push(e))
+    }
+    expect(caught[0]).toBeInstanceOf(SyntaxError)
+    expect(caught[1]).toBeInstanceOf(APIError)
+    for (const error of caught) {
+      const { unmount } = render(
+        <ReasonConfirm title="T" description="D" error={error} onConfirm={vi.fn()} onCancel={() => {}} />,
+      )
+      const refused = error instanceof APIError
+      expect(!!screen.queryByText(/nothing was changed/)).toBe(refused)
+      expect(!!screen.queryByText(/could not confirm the result/)).toBe(!refused)
+      unmount()
+    }
   })
 
   it('the default (omitted) variant is unaffected — no destructive badge, unchanged styling', () => {
@@ -440,6 +505,24 @@ describe('ReasonConfirm capacity refusal', () => {
     expect(screen.getByText(/CPU short by 1500m, memory short by 2048Mi/)).toBeTruthy()
     expect(screen.getByText(/Finalise a running workload/)).toBeTruthy()
     expect(screen.queryByText(/Check your access/)).toBeNull()
+  })
+
+  it.each([
+    ['a 502', 502, { error: 'capacity-preflight-refused', kind: 'no-fit' }],
+    ['a 409 that names its upstream', 409, { error: 'capacity-preflight-refused', kind: 'no-fit', upstream: 'AWX' }],
+  ])('shows the unknown-result text, not the capacity copy, for %s', (_name, status, body) => {
+    render(
+      <ReasonConfirm
+        title="T"
+        description="D"
+        error={new APIError(status, JSON.stringify(body), 'capacity-preflight-refused')}
+        onConfirm={vi.fn()}
+        onCancel={() => {}}
+      />,
+    )
+    expect(screen.getByText(/could not confirm the result, so the action may have run/)).toBeTruthy()
+    expect(screen.queryByText(/nothing was changed/i)).toBeNull()
+    expect(screen.queryByText(/Finalise a running workload/)).toBeNull()
   })
 
   it.each(['budget-unavailable', 'multi-node-unsupported', 'missing-budget', 'invalid-budget'])(

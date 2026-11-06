@@ -36,13 +36,11 @@ export default function ClearForDeployment({
   instance,
   onConfirm,
   pending = false,
-  failed = false,
 }: {
   instance: string
   /** The stage owns the mutation; this reports the operator's intent. */
   onConfirm: (instance: string, reason: string) => void
   pending?: boolean
-  failed?: boolean
 }) {
   const [confirming, setConfirming] = useState(false)
   const [reason, setReason] = useState('')
@@ -84,11 +82,6 @@ export default function ClearForDeployment({
         onChange={(e) => setReason(e.target.value)}
         rows={2}
       />
-      {failed && (
-        <p className="mt-1.5 text-sm text-red-300">
-          The desired state was not recorded — nothing changed. Check your access, then retry.
-        </p>
-      )}
       <div className="mt-3 flex gap-2">
         <button
           className="btn btn-primary btn-sm"
