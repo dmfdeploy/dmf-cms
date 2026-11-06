@@ -3,7 +3,7 @@
  * runs on pull requests against the base branch's lock (umbrella #741).
  */
 import { describe, expect, it } from 'vitest'
-import { decideVersionBump, parseLock } from '../../scripts/check-selector-contract-version.mjs'
+import { decideVersionBump, parseLock } from '../lib/selectorContractVersion.mjs'
 
 const base = { version: 1, digest: 'aaa' }
 
