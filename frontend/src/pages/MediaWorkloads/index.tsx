@@ -202,6 +202,36 @@ export function StaleInventoryNotice({
 }
 
 /**
+ * dmfdeploy#319: true when the payload holds no inventory because the source
+ * was not read (`degraded` with a stated reason). A read that excluded
+ * conflicting-tag instances is degraded with no reason, and is not one.
+ */
+export function inventoryUnread(data: { degraded?: boolean; reason?: string } | undefined): boolean {
+  return Boolean(data?.degraded && data?.reason)
+}
+
+/**
+ * Why a workload page cannot confirm the workload: the stale notice when it
+ * holds a last-good inventory, else the reason the source was not read.
+ */
+export function UnconfirmedInventoryNotice({
+  data,
+}: {
+  data: { stale?: boolean; reason?: string; last_success?: string | null; failure_since?: string | null }
+}) {
+  if (data.stale) return <StaleInventoryNotice data={data} />
+  return (
+    <div
+      role="status"
+      className="panel mt-4 border border-amber-500/20 bg-amber-500/10 px-4 py-3 text-sm text-amber-200"
+    >
+      <p>{degradedReasonCopy(data.reason)}</p>
+      {(data.last_success || data.failure_since) && <p className="mt-1">{freshnessCopy(data)}</p>}
+    </div>
+  )
+}
+
+/**
  * dmfdeploy#319: wraps a page that sends writes outside the media-workloads
  * screens (Catalog, Create). It reads the same inventory the rest of the
  * console polls and withdraws every write below it, through the same context
@@ -352,7 +382,7 @@ export default function MediaWorkloads() {
   // source. The generic `isError` banner just below already covers a failed
   // *console* fetch with its own honest, non-overclaiming text, so this
   // stays reason-scoped rather than duplicating that banner.
-  const sourceUnreachable = Boolean(data?.degraded && data?.reason)
+  const sourceUnreachable = inventoryUnread(data)
   // dmfdeploy#319: a failed read inside the server's grace window serves the
   // last good inventory with `stale: true`. That data is shown, but marked.
   const showingStale = Boolean(data?.stale) && !isError

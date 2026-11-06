@@ -251,6 +251,79 @@ describe('WorkloadHome: stale qualifies what it shows', () => {
   })
 })
 
+/** The grouped response is `body` as given, for payloads `mockApi` cannot shape. */
+function mockGrouped(body: Record<string, unknown>) {
+  vi.stubGlobal(
+    'fetch',
+    vi.fn(async (input: RequestInfo | URL) => {
+      const url = (typeof input === 'string' ? input : (input as Request).url).toString()
+      const json = (b: unknown) =>
+        new Response(JSON.stringify(b), { status: 200, headers: { 'Content-Type': 'application/json' } })
+      if (url.endsWith('/api/me')) {
+        return json({ subject: 'ops', display_name: 'Ops', email: 'o@x', role: 'engineer', real_role: 'engineer', groups: [] })
+      }
+      if (url.endsWith('/api/catalog')) return json({ entries: [CATALOG] })
+      if (url.endsWith('/api/media-workloads/grouped')) return json(body)
+      return json({})
+    }),
+  )
+}
+
+/** What the grouped endpoint returns once the read-grace window has passed. */
+const GRACE_EXPIRED = () => ({
+  configured: true,
+  degraded: true,
+  reason: 'netbox-unreachable',
+  workloads: [],
+  invalid_instances: [],
+  stale: false,
+  last_success: ONE_MINUTE_AGO(),
+  failure_since: ONE_MINUTE_AGO(),
+})
+
+/** A read that succeeded but excluded a conflicting-tag instance: degraded, no reason. */
+const CONFLICTING_TAGS = {
+  configured: true,
+  degraded: true,
+  workloads: [],
+  invalid_instances: [
+    { instance: 'x-1', function_key: 'crosspoint', workload_assignment: 'invalid-multiple', conflicting_workloads: ['a', 'b'] },
+  ],
+  stale: false,
+}
+
+const UNREAD_COPY = /could not read the facility inventory system/
+
+describe('an unread inventory after the grace window is not a "not found"', () => {
+  it('WorkloadSetup', async () => {
+    mockGrouped(GRACE_EXPIRED())
+    mount('/media-workloads/gone/setup', '/media-workloads/:slug/setup', <WorkloadSetup />)
+    expect(await screen.findByText(UNREAD_COPY)).toBeTruthy()
+    expect(screen.getByText(/could not be confirmed right now/)).toBeTruthy()
+    expect(screen.getByText(/Last confirmed 1 minute ago/)).toBeTruthy()
+    expect(screen.queryByText('Workload not found')).toBeNull()
+    expect(screen.queryByText(/is in your scope right now/)).toBeNull()
+  })
+
+  it('WorkloadHome', async () => {
+    mockGrouped(GRACE_EXPIRED())
+    mount('/media-workloads/gone', '/media-workloads/:slug', <WorkloadHome />)
+    expect(await screen.findByText(UNREAD_COPY)).toBeTruthy()
+    expect(screen.getByText(/could not be loaded right now/)).toBeTruthy()
+    expect(screen.queryByText('Workload not found')).toBeNull()
+    expect(screen.queryByText(/is in your scope right now/)).toBeNull()
+  })
+
+  it('a read that only excluded conflicting tags still reports the workload as not found', async () => {
+    mockGrouped(CONFLICTING_TAGS)
+    mount('/media-workloads/gone/setup', '/media-workloads/:slug/setup', <WorkloadSetup />)
+    expect(await screen.findByText('Workload not found')).toBeTruthy()
+    cleanup()
+    mount('/media-workloads/gone', '/media-workloads/:slug', <WorkloadHome />)
+    expect(await screen.findByText('Workload not found')).toBeTruthy()
+  })
+})
+
 describe('Media Workloads list: a stale empty inventory is not a healthy empty one', () => {
   it('shows the stale warning and no "ready for your first workload" canvas', async () => {
     const inv: Inventory = { workloads: [], stale: false }
