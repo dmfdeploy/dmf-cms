@@ -84,6 +84,21 @@ describe('Settings: setup receipt request', () => {
     expect(screen.queryByText(/secret.?id|token/i)).toBeNull()
   })
 
+  it('tells the operator the reason is recorded and must not hold credentials', async () => {
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(async (input: RequestInfo | URL) => {
+        if (String(input) === '/api/me') return json(identity())
+        throw new Error(`unexpected API request: ${String(input)}`)
+      }),
+    )
+    renderSettings()
+    expect(await screen.findByText('Bootstrap inventory setup')).toBeTruthy()
+    expect(
+      screen.getByText(/recorded in the receipt and the audit log.*do not enter passwords/i),
+    ).toBeTruthy()
+  })
+
   it('hides the request action from viewers and break-glass accounts', async () => {
     for (const user of [
       identity({ role: 'viewer', real_role: 'viewer' }),

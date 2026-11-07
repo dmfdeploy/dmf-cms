@@ -46,6 +46,13 @@ class UserIdentity:
     email: str
     groups: tuple[str, ...]
     role: str
+    # The authenticated login name (the OIDC preferred_username claim), kept
+    # beside the subject because a subject can be opaque.
+    username: str = ""
+    # True only when the subject is a non-blank string from the OIDC sub claim,
+    # not a fallback and not a value of another type. Sessions written before
+    # this field existed read as False.
+    subject_from_claim: bool = False
 
 
 def current_role(groups: tuple[str, ...]) -> str:
@@ -78,6 +85,9 @@ def user_from_claims(claims: dict[str, object]) -> UserIdentity:
     else:
         groups = ()
     subject = str(claims.get("sub", "") or claims.get("preferred_username", "") or "unknown")
+    raw_sub = claims.get("sub")
+    subject_from_claim = isinstance(raw_sub, str) and bool(raw_sub.strip())
+    username = str(claims.get("preferred_username", "") or "")
     display_name = str(claims.get("name", "") or claims.get("preferred_username", "") or subject)
     email = str(claims.get("email", "") or "")
     return UserIdentity(
@@ -86,6 +96,8 @@ def user_from_claims(claims: dict[str, object]) -> UserIdentity:
         email=email,
         groups=groups,
         role=current_role(groups),
+        username=username,
+        subject_from_claim=subject_from_claim,
     )
 
 
@@ -118,6 +130,8 @@ def session_user(session: dict[str, object]) -> UserIdentity | None:
         email=str(raw.get("email", "")),
         groups=normalized_groups,
         role=str(raw.get("role", "viewer")),
+        username=str(raw.get("username", "")),
+        subject_from_claim=raw.get("subject_from_claim") is True,
     )
 
 
@@ -152,6 +166,8 @@ def store_user(session: dict[str, object], user: UserIdentity) -> None:
         "email": user.email,
         "groups": list(user.groups),
         "role": user.role,
+        "username": user.username,
+        "subject_from_claim": user.subject_from_claim,
     }
     # Never inherit a stale downgrade across a fresh login / identity refresh:
     # every path that (re)establishes the real user drops any prior view-as.

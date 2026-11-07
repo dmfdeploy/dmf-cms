@@ -231,6 +231,9 @@ export default function Settings() {
                 className="w-full rounded-lg border border-border bg-bg px-3 py-2 text-sm text-text"
                 placeholder="Why are you running the initial inventory setup?"
               />
+              <p className="mt-1 text-xs text-muted">
+                The reason is recorded in the receipt and the audit log. Do not enter passwords, keys or other credentials.
+              </p>
               <button
                 type="button"
                 onClick={handleCreateSetupRequest}
