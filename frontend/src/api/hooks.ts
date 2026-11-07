@@ -412,6 +412,11 @@ export function useCatalogJobStatus(key: string, jobId: number | null) {
     queryKey: ['catalog-job', key, jobId],
     queryFn: () => apiCall<CatalogJobStatus>(`/api/catalog/${key}/status/${jobId}`),
     enabled: jobId !== null,
+    // Same reasoning as useOperationStatus: a teardown outlasts the time an
+    // operator stays on the tab, so the poll keeps running while it is hidden,
+    // and returning to a job that is still running refreshes it at once.
+    refetchIntervalInBackground: true,
+    refetchOnWindowFocus: (query) => !query.state.data?.is_done,
     refetchInterval: 2000,
   })
 }
