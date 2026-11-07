@@ -8,6 +8,7 @@ import StageCard from './StageCard'
 import { SWITCH_REQUEST_FAILED_TEXT, switchFailureText } from '../switchResultText'
 import { settleQuery } from '../../../lib/queryState'
 import { useGuardWrite } from '../../../lib/inventoryFreshness'
+import { hasValidSources } from '../../../lib/topologySources'
 
 /**
  * Configure — source selection and the switch, relocated from
@@ -184,7 +185,7 @@ function InstanceSwitchControl({
   const pending = switchMutation.isPending
   const frozen = pending ? submitted : null
   const live =
-    topology.failed || !topology.data || !Array.isArray(topology.data.sources) ? null : topology.data
+    topology.failed || !hasValidSources(topology.data) ? null : topology.data
   if (!live && !frozen) return null
 
   const sources = live?.sources ?? []

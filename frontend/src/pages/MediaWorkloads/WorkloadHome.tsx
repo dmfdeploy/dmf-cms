@@ -11,6 +11,7 @@ import { LOCKED_REASON } from './WorkloadSetup'
 import WorkloadTile from './WorkloadTile'
 import InstanceLiveModal from './InstanceLiveModal'
 import { settleQuery } from '../../lib/queryState'
+import { hasValidSources } from '../../lib/topologySources'
 import { LIVE_TILE_CAP, useDocumentVisible, usePrefersReducedMotion } from './liveView'
 import PageHeading from '../../components/PageHeading'
 import { usePageTitle } from '../../hooks/usePageTitle'
@@ -745,7 +746,7 @@ function InstanceActiveSource({
   onResolved: (instance: string, has: boolean) => void
 }) {
   const topology = useInstanceTopology(instance, { enabled: hasTopology !== false })
-  const has = !topology.isError && Boolean(topology.data && Array.isArray(topology.data.sources))
+  const has = !topology.isError && hasValidSources(topology.data)
   useEffect(() => onResolved(instance, has), [instance, has, onResolved])
 
   // An instance without a topology renders nothing — not an empty card, not

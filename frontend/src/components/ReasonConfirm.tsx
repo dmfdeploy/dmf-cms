@@ -207,7 +207,9 @@ export default function ReasonConfirm({
           {errorMessage ?? requestFailureText(error)}
         </p>
       )}
-      {writesBlocked && (
+      {/* Hidden while the request is in flight: it was already sent, so there
+          is nothing to confirm again. The guidance returns once it settles. */}
+      {writesBlocked && !pending && (
         <p role="status" className="mt-1.5 text-sm text-amber-200">
           The inventory is out of date, so this change cannot be sent right now. Your reason is
           kept. Confirm again after the next successful read.
