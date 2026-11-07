@@ -591,7 +591,10 @@ export function classifyForwardExit(input: WorkloadLifecycleInput): ForwardExit 
  *   'setup'      — a TRUSTED read reports a real workload that has not
  *                   reached Operate, with nothing observed running for it
  *                   yet — the "isn't running yet, continue setup" cold-entry
- *                   state, with its one CTA into the guided flow.
+ *                   state, with its one CTA into the guided flow. Home
+ *                   withholds that CTA when isAwaitingHealthResult (below)
+ *                   is true: every member is requested `active` and has no
+ *                   health check result yet, so the page waits instead.
  *   'unresolved' — every other case: the read itself cannot be stood behind
  *                   (loading, errored, stale, degraded, or the backend could
  *                   not place the workload at all — 'unknown'), OR the read
@@ -606,7 +609,8 @@ export function classifyForwardExit(input: WorkloadLifecycleInput): ForwardExit 
  *                   success affordance dmfdeploy#412 exists to rule out.
  *                   In one of these causes nothing is failing, and
  *                   isAwaitingHealthResult (below) picks it out so Home can
- *                   say which members have no health check result.
+ *                   say which members have no health check result. That
+ *                   predicate is also true for one 'setup' case.
  *
  * "Trusted" reused classifyForwardExit's and store/headerSlot.ts's TRUST
  * side table's notion of trust (WorkloadLifecycleInput.membersDataTrustworthy)
@@ -651,28 +655,34 @@ export function classifyHomeState(input: WorkloadLifecycleInput): HomeState {
 }
 
 /**
- * dmfdeploy/dmfdeploy#860: one 'unresolved' cause, defined by all of these.
- * The retained read (`membersDataRetained`: error-free, configured and not
- * degraded, even while a background poll is in flight) puts the workload at
- * `configure` with something already observed running (the ambiguous case
- * above). Every member is requested `active`, none is observed failing, and
- * at least one has no health check result right now (`awaitingHealthResult`,
- * built in workloadLifecycle.ts).
+ * dmfdeploy/dmfdeploy#860: true when every one of these holds.
+ *   - The read is retained (`membersDataRetained`: error-free, configured
+ *     and not degraded, even while a background poll is in flight).
+ *   - The backend position is `configure`.
+ *   - The workload has members, and every member is requested `active`.
+ *   - Every member is observed `running` or `unknown`, so none is observed
+ *     failing.
+ *   - At least one member is observed `unknown`, which means it has no
+ *     health check result right now (`awaitingHealthResult`, built in
+ *     workloadLifecycle.ts).
+ *
+ * Nothing needs to be running. With one or more members running,
+ * `classifyHomeState` returns 'unresolved'. With every member `unknown`, it
+ * returns 'setup', and this predicate is still true, so the caller can
+ * withhold the "Continue setup" link and show the wait notice instead.
  *
  * The read carries no probe history and no deploy time. This state covers a
  * member that has not been probed yet and a member whose probe result is
  * missing now, and it cannot tell the two apart. A caller can say only that
  * no result exists for those members.
  *
- * This returns false for every other 'unresolved' cause. A degraded or
- * errored read and an unplaced workload (`unknown`) fail the retained or
- * `configure` check. A member observed failing, a member still bootstrapped
- * and a member stopped on intent but still answering probes each fail
- * `awaitingHealthResult`.
+ * This returns false for every other case. A degraded or errored read and an
+ * unplaced workload (`unknown`) fail the retained or `configure` check. A
+ * member observed failing, a member still bootstrapped and a member stopped
+ * on intent but still answering probes each fail `awaitingHealthResult`.
  */
 export function isAwaitingHealthResult(input: WorkloadLifecycleInput): boolean {
   return (
-    classifyHomeState(input) === 'unresolved' &&
     input.membersDataRetained === true &&
     input.lifecycle === 'configure' &&
     input.awaitingHealthResult === true
