@@ -12,6 +12,10 @@
  * 3. With two functions, each pending entry has to stay guarded until its own
  *    inventory record changes, whatever happens to the other entry's teardown
  *    (T5a, T5b), and the catalog poll has to keep running in a hidden tab (T6).
+ * 4. A teardown can also hand off from the operation to its automation job
+ *    (`launched` with a job id). That path has to reach the same inventory
+ *    confirmation (T7a, T7b, T7c) and has to keep polling in a hidden tab
+ *    (T8a, T8b).
  *
  * jsdom and TanStack Query: @tanstack/query-core 5.100.7 listens only for
  * `visibilitychange` on `window` and reads `document.visibilityState`. It no
@@ -21,11 +25,11 @@
  * hidden state is simulated by redefining `document.visibilityState`.
  */
 import { afterEach, describe, expect, it, vi } from 'vitest'
-import { cleanup, fireEvent, render, screen, waitFor, within } from '@testing-library/react'
+import { act, cleanup, fireEvent, render, screen, waitFor, within } from '@testing-library/react'
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query'
 import { MemoryRouter, Route, Routes } from 'react-router-dom'
 import WorkloadSetup from '../pages/MediaWorkloads/WorkloadSetup'
-import { OperationStatusLine } from '../pages/MediaWorkloads/stages/JobProgress'
+import { JobStatusLine, OperationStatusLine } from '../pages/MediaWorkloads/stages/JobProgress'
 import HeaderSlotProbe from './testUtils/HeaderSlotProbe'
 import type { CatalogEntry, MediaWorkload, MediaWorkloadsGroupedResponse } from '../api/types'
 
@@ -162,6 +166,55 @@ function stubTwoFunctionServer(initial: Partial<TwoServer> = {}): TwoServer {
           operation_id: `op-${key}`, action: 'teardown', target: key, state: server.outcome[key],
           job_id: 9001, error: server.outcome[key] === 'run_failed' ? 'ansible-timeout' : null,
           created_at: 't0', updated_at: 't1',
+        })
+      }
+      return json({})
+    }),
+  )
+  return server
+}
+
+interface JobServer {
+  catalogLifecycle: CatalogEntry['lifecycle']
+  jobStatus: string
+  jobDone: boolean
+  catalogReads: number
+  jobReads: number
+}
+
+// The `launched` -> job-id path: the teardown operation reports `launched`
+// with a job id (and never moves on), and the job itself is polled by id.
+function stubJobPathServer(initial: Partial<JobServer> = {}): JobServer {
+  const server: JobServer = {
+    catalogLifecycle: 'active',
+    jobStatus: 'successful',
+    jobDone: true,
+    catalogReads: 0,
+    jobReads: 0,
+    ...initial,
+  }
+  const grouped: MediaWorkloadsGroupedResponse = {
+    configured: true, degraded: false, scope: [], invalid_instances: [],
+    workloads: [offFlowWorkload()],
+  }
+  vi.stubGlobal(
+    'fetch',
+    vi.fn(async (input: RequestInfo | URL) => {
+      const url = (typeof input === 'string' ? input : (input as Request).url).toString()
+      if (url.endsWith('/api/catalog')) {
+        server.catalogReads += 1
+        return json({ entries: [catalogEntry({ lifecycle: server.catalogLifecycle })] })
+      }
+      if (url.endsWith('/api/media-workloads/grouped')) return json(grouped)
+      if (url.match(/\/api\/catalog\/crosspoint\/teardown$/)) {
+        return json({ ...operation('waking'), job_id: null, request_id: 'req-inv' })
+      }
+      if (url.endsWith('/api/operations/op-inv')) return json({ ...operation('launched'), job_id: 7001 })
+      if (url.match(/\/api\/catalog\/crosspoint\/status\/7001$/)) {
+        server.jobReads += 1
+        return json({
+          job_id: 7001, status: server.jobStatus, is_done: server.jobDone,
+          is_running: !server.jobDone,
         })
       }
       return json({})
@@ -374,6 +427,75 @@ describe('Finalise & Review: the inventory poll runs in a hidden tab', () => {
   }, 40_000)
 })
 
+describe('Finalise & Review: the launched -> job-id path confirms against the inventory too', () => {
+  it('T7a: a successful job with the catalog still active shows the waiting line and no Teardown button, then confirms', async () => {
+    const server = stubJobPathServer({ catalogLifecycle: 'active', jobStatus: 'successful', jobDone: true })
+    const { finalise } = await mountFinalise(newQueryClient())
+    armAndConfirmTeardown(finalise)
+
+    // Hand-off to the job (about 1 s), then the paced completion (2 s).
+    await waitFor(() => expect(finalise.textContent).toMatch(waitingFor('crosspoint')), { timeout: 10_000 })
+    expect(within(finalise).queryByRole('button', { name: /Teardown/ })).toBeNull()
+
+    server.catalogLifecycle = 'bootstrapped'
+    await waitFor(() => expect(within(finalise).getByText('Not currently deployed.')).toBeTruthy(), { timeout: 5000 })
+    expect(finalise.textContent).not.toMatch(waitingFor('crosspoint'))
+    expect(within(finalise).queryByRole('button', { name: /Teardown/ })).toBeNull()
+  }, 40_000)
+
+  it('T7b: a failed job never claims the inventory is pending, and offers Teardown again', async () => {
+    stubJobPathServer({ catalogLifecycle: 'active', jobStatus: 'failed', jobDone: true })
+    const { finalise } = await mountFinalise(newQueryClient())
+    armAndConfirmTeardown(finalise)
+
+    await waitFor(() => expect(finalise.textContent).toMatch(/Last job: #7001/), { timeout: 10_000 })
+    // The in-flight tracker clears (the Teardown button returns) once the job completes.
+    await within(finalise).findByRole('button', { name: /Teardown/ }, { timeout: 5000 })
+    expect(finalise.textContent).not.toMatch(waitingFor('crosspoint'))
+  }, 40_000)
+
+  it('T7c: a pending key is released even when the catalog already read non-active, so a later redeploy is not held back', async () => {
+    const server = stubJobPathServer({ catalogLifecycle: 'active', jobStatus: 'running', jobDone: false })
+    const queryClient = newQueryClient()
+    const refreshCatalog = () => act(() => queryClient.invalidateQueries({ queryKey: ['catalog'] }))
+    const { finalise } = await mountFinalise(queryClient)
+    armAndConfirmTeardown(finalise)
+    await within(finalise).findByText(/job #7001/, {}, { timeout: 5000 })
+
+    // The inventory catches up before the job is reported done, and the stage
+    // reads it. When the job then finishes, the catalog read it triggers is
+    // identical to the one already held, so the stage's data does not change.
+    server.catalogLifecycle = 'bootstrapped'
+    await refreshCatalog()
+    server.jobStatus = 'successful'
+    server.jobDone = true
+    await waitFor(() => expect(within(finalise).getByText('Not currently deployed.')).toBeTruthy(), { timeout: 10_000 })
+    expect(finalise.textContent).not.toMatch(waitingFor('crosspoint'))
+
+    // The entry is deployed again. Nothing about the finished teardown may
+    // still hold it back.
+    server.catalogLifecycle = 'active'
+    await refreshCatalog()
+    await within(finalise).findByRole('button', { name: /Teardown/ }, { timeout: 5000 })
+    expect(finalise.textContent).not.toMatch(waitingFor('crosspoint'))
+  }, 40_000)
+
+  it('T8a: the job finishes while the tab is hidden: the stage still reaches the waiting line, then confirms while hidden', async () => {
+    const server = stubJobPathServer({ catalogLifecycle: 'active', jobStatus: 'running', jobDone: false })
+    const { finalise } = await mountFinalise(newQueryClient())
+    armAndConfirmTeardown(finalise)
+    await within(finalise).findByText(/job #7001/, {}, { timeout: 5000 })
+
+    setTabHidden(true)
+    server.jobStatus = 'successful'
+    server.jobDone = true
+    await waitFor(() => expect(finalise.textContent).toMatch(waitingFor('crosspoint')), { timeout: 10_000 })
+
+    server.catalogLifecycle = 'bootstrapped'
+    await waitFor(() => expect(within(finalise).getByText('Not currently deployed.')).toBeTruthy(), { timeout: 6000 })
+  }, 40_000)
+})
+
 describe('useOperationStatus: a hidden tab does not delay the outcome', () => {
   function renderLine() {
     const queryClient = newQueryClient()
@@ -422,4 +544,25 @@ describe('useOperationStatus: a hidden tab does not delay the outcome', () => {
 
     expect(server.operationReads).toBe(reads)
   })
+})
+
+describe('useCatalogJobStatus: a hidden tab does not delay the job outcome', () => {
+  it('T8b: becoming visible again fetches the job outcome faster than the next 2 s tick', async () => {
+    const server = stubJobPathServer({ jobStatus: 'running', jobDone: false })
+    render(
+      <QueryClientProvider client={newQueryClient()}>
+        <JobStatusLine entryKey="crosspoint" jobId={7001} onComplete={() => {}} />
+      </QueryClientProvider>,
+    )
+    await screen.findByText(/Running/)
+    const reads = server.jobReads
+
+    setTabHidden(true)
+    server.jobStatus = 'successful'
+    server.jobDone = true
+    setTabHidden(false)
+
+    await screen.findByText('Successful', {}, { timeout: 1500 })
+    expect(server.jobReads).toBeGreaterThan(reads)
+  }, 20_000)
 })

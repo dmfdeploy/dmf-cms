@@ -271,7 +271,7 @@ export default function FinaliseStage({
       const next = prev.filter((key) => catalogData.entries.some((e) => e.key === key && e.lifecycle === 'active'))
       return next.length === prev.length ? prev : next
     })
-  }, [catalogData])
+  }, [catalogData, awaitingKeys])
 
   const allowed = actions.includes('tear-down')
   const purgeAllowed = actions.includes('delete-permanently')
@@ -301,8 +301,15 @@ export default function FinaliseStage({
     }))
   }
 
-  const handleJobComplete = (key: string) => {
+  const handleJobComplete = (key: string, jobStatus: string) => {
     setTrack((prev) => ({ ...prev, [key]: EMPTY_TRACK }))
+    // A finished job is the same news as a `run_complete` operation: the
+    // inventory still has to confirm it. A failed job releases only its own
+    // entry.
+    setAwaitingKeys((prev) => {
+      const others = prev.filter((k) => k !== key)
+      return jobStatus === 'successful' ? [...others, key] : others
+    })
     void queryClient.invalidateQueries({ queryKey: ['media-workloads-grouped'] })
     void queryClient.invalidateQueries({ queryKey: ['catalog'] })
   }
@@ -395,7 +402,7 @@ export default function FinaliseStage({
                     onOpError={() => setTrack((prev) => ({ ...prev, [entry.key]: EMPTY_TRACK }))}
                     onOpTerminal={(operation) => handleOpTerminal(entry.key, operation)}
                     onStatusChange={statusCallbackFor(entry.key)}
-                    onJobComplete={() => handleJobComplete(entry.key)}
+                    onJobComplete={(status) => handleJobComplete(entry.key, status)}
                     runningReadout={runningReadout}
                   />
                 )
@@ -554,10 +561,15 @@ export default function FinaliseStage({
                   )}
                 </div>
               )}
-              {/* The last outcome names one entry; any other entry still
-                  waiting on the inventory keeps its own line. */}
+              {/* The last operation outcome renders its own waiting line;
+                  any other entry still waiting on the inventory, including
+                  one that finished through the job-id path, keeps its own. */}
               {awaitingKeys
-                .filter((key) => key !== lastOpOutcome?.entryKey && isAwaitingInventory(key))
+                .filter(
+                  (key) =>
+                    !(lastOpOutcome?.entryKey === key && lastOpOutcome.operation.state === 'run_complete') &&
+                    isAwaitingInventory(key),
+                )
                 .map((key) => (
                   <div key={key} className="text-xs">
                     {awaitingLine(key)}
@@ -644,7 +656,7 @@ function FinaliseEntry({
   onOpError: () => void
   onOpTerminal: (operation: Operation) => void
   onStatusChange: (status: string) => void
-  onJobComplete: () => void
+  onJobComplete: (status: string) => void
   runningReadout: AutomationRunningReadout
 }) {
   const [arming, setArming] = useState(false)
@@ -803,7 +815,7 @@ function FinaliseEntry({
           <JobStatusLine
             entryKey={entry.key}
             jobId={track.jobId}
-            onComplete={onJobComplete}
+            onComplete={(_key, status) => onJobComplete(status)}
             onStatusChange={onStatusChange}
           />
         </div>

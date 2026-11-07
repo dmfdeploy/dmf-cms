@@ -232,7 +232,9 @@ export function JobStatusLine({
 }: {
   entryKey: string
   jobId: number
-  onComplete: (key: string) => void
+  // `status` is the job's final status, so a caller can tell success from
+  // failure without keeping its own copy of it.
+  onComplete: (key: string, status: string) => void
   onStatusChange?: (status: string) => void
   onDoneChange?: (done: boolean) => void
 }) {
@@ -251,9 +253,10 @@ export function JobStatusLine({
 
   useEffect(() => {
     if (!jobStatus?.is_done) return
-    const timer = setTimeout(() => onComplete(entryKey), 2000)
+    const finalStatus = jobStatus.status
+    const timer = setTimeout(() => onComplete(entryKey, finalStatus), 2000)
     return () => clearTimeout(timer)
-  }, [jobStatus?.is_done, onComplete, entryKey])
+  }, [jobStatus?.is_done, jobStatus?.status, onComplete, entryKey])
 
   if (!jobStatus) {
     return (
