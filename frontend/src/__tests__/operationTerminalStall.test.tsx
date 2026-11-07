@@ -112,13 +112,20 @@ describe('Finalise & Review: a teardown operation that never passes through `lau
     const grouped: MediaWorkloadsGroupedResponse = {
       configured: true, degraded: false, scope: [], workloads: [wl], invalid_instances: [],
     }
+    // The inventory records the teardown as soon as the job is launched, as
+    // it does once it catches up. While it still said `active` after
+    // run_complete, the stage would (correctly) hold back "completed".
+    let tornDown = false
     vi.stubGlobal(
       'fetch',
       vi.fn(async (input: RequestInfo | URL) => {
         const url = (typeof input === 'string' ? input : (input as Request).url).toString()
-        if (url.endsWith('/api/catalog')) return json({ entries: [catalogEntry()] })
+        if (url.endsWith('/api/catalog')) {
+          return json({ entries: [catalogEntry({ lifecycle: tornDown ? 'bootstrapped' : 'active' })] })
+        }
         if (url.endsWith('/api/media-workloads/grouped')) return json(grouped)
         if (url.match(/\/api\/catalog\/crosspoint\/teardown$/)) {
+          tornDown = true
           return json({
             operation_id: 'op-t1', action: 'teardown', target: 'crosspoint', state: 'waking',
             job_id: null, error: null, created_at: 't0', updated_at: 't0', request_id: 'req-t1',

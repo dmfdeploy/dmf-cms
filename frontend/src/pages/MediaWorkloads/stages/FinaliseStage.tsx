@@ -134,12 +134,18 @@ export default function FinaliseStage({
    */
   runningReadout: AutomationRunningReadout
 }) {
+  // `awaitingKeys` are the entries whose teardown job finished but whose
+  // inventory record may still read `active`: while any does, the catalog is
+  // polled (see useCatalog). Each key is tracked on its own, so a later
+  // teardown of another entry never releases it. It is component state on
+  // purpose, so a remount starts from the catalog alone.
+  const [awaitingKeys, setAwaitingKeys] = useState<string[]>([])
   // `catalogFailed` threaded into
   // the absence claim below — see ProvisionStage.tsx's identical fix for
   // the full reasoning (same shared PlanStage/CreateWorkload precedent).
   //
   // (umbrella #385) retrofitted onto settleQuery.
-  const { data: catalogData, loading: catalogLoading, failed: catalogFailed } = settleQuery(useCatalog())
+  const { data: catalogData, loading: catalogLoading, failed: catalogFailed } = settleQuery(useCatalog(awaitingKeys))
   const guardWrite = useGuardWrite()
   const teardownMutation = useTeardownCatalog()
   const purgeMutation = usePurgeWorkload()
@@ -247,6 +253,26 @@ export default function FinaliseStage({
 
   const entries = (catalogData?.entries ?? []).filter((e) => functionKeys.includes(e.key))
 
+  // A key leaves the list the moment its own entry stops reporting as active.
+  // Clearing the key then, not just hiding the text, keeps a later redeploy of
+  // the same entry from reading as a teardown still unconfirmed.
+  const stillActive = (key: string) =>
+    catalogData?.entries.some((e) => e.key === key && e.lifecycle === 'active') ?? false
+  const isAwaitingInventory = (key: string) => awaitingKeys.includes(key) && stillActive(key)
+  const awaitingLine = (key: string) => (
+    <p className="text-muted">
+      The teardown job for <span className="font-mono">{key}</span> finished.
+      Waiting for the inventory to confirm.
+    </p>
+  )
+  useEffect(() => {
+    if (!catalogData) return
+    setAwaitingKeys((prev) => {
+      const next = prev.filter((key) => catalogData.entries.some((e) => e.key === key && e.lifecycle === 'active'))
+      return next.length === prev.length ? prev : next
+    })
+  }, [catalogData])
+
   const allowed = actions.includes('tear-down')
   const purgeAllowed = actions.includes('delete-permanently')
 
@@ -292,6 +318,11 @@ export default function FinaliseStage({
   const handleOpTerminal = (key: string, operation: Operation) => {
     setTrack((prev) => ({ ...prev, [key]: EMPTY_TRACK }))
     setLastOpOutcome({ entryKey: key, operation })
+    // Only this entry's own outcome changes its own pending state.
+    setAwaitingKeys((prev) => {
+      const others = prev.filter((k) => k !== key)
+      return operation.state === 'run_complete' ? [...others, key] : others
+    })
     void queryClient.invalidateQueries({ queryKey: ['media-workloads-grouped'] })
     void queryClient.invalidateQueries({ queryKey: ['catalog'] })
   }
@@ -347,6 +378,7 @@ export default function FinaliseStage({
                     entry={entry}
                     allowed={allowed}
                     track={entryTrack}
+                    awaitingInventory={isAwaitingInventory(entry.key)}
                     isTearingDown={teardownMutation.isPending && teardownMutation.variables?.key === entry.key}
                     teardownError={teardownMutation.variables?.key === entry.key ? teardownMutation.error : null}
                     onTeardown={(reason) => handleTeardown(entry, reason)}
@@ -506,7 +538,9 @@ export default function FinaliseStage({
               )}
               {lastOpOutcome && (
                 <div className="text-xs">
-                  {lastOpOutcome.operation.state === 'run_complete' ? (
+                  {lastOpOutcome.operation.state === 'run_complete' && isAwaitingInventory(lastOpOutcome.entryKey) ? (
+                    awaitingLine(lastOpOutcome.entryKey)
+                  ) : lastOpOutcome.operation.state === 'run_complete' ? (
                     <p className="text-green-400">
                       Teardown of <span className="font-mono">{lastOpOutcome.entryKey}</span> completed.
                     </p>
@@ -520,6 +554,15 @@ export default function FinaliseStage({
                   )}
                 </div>
               )}
+              {/* The last outcome names one entry; any other entry still
+                  waiting on the inventory keeps its own line. */}
+              {awaitingKeys
+                .filter((key) => key !== lastOpOutcome?.entryKey && isAwaitingInventory(key))
+                .map((key) => (
+                  <div key={key} className="text-xs">
+                    {awaitingLine(key)}
+                  </div>
+                ))}
               {lastSwitchResult && (
                 <div className="text-xs">
                   <p className="text-muted">
@@ -577,6 +620,7 @@ function FinaliseEntry({
   entry,
   allowed,
   track,
+  awaitingInventory,
   isTearingDown,
   teardownError,
   onTeardown,
@@ -590,6 +634,9 @@ function FinaliseEntry({
   entry: CatalogEntry
   allowed: boolean
   track: EntryTrack
+  // The teardown job finished but the inventory still lists the entry as
+  // active, so offering Teardown again would act on a stale record.
+  awaitingInventory: boolean
   isTearingDown: boolean
   teardownError: unknown
   onTeardown: (reason: string) => Promise<void>
@@ -663,7 +710,7 @@ function FinaliseEntry({
             difference trying to encode both (which is also what
             btn-danger-outline vs btn-secondary encoded no better before
             §D2 — visually identical to "← Previous"). */}
-        {allowed && !inFlight && entry.lifecycle === 'active' && !arming && (
+        {allowed && !inFlight && !awaitingInventory && entry.lifecycle === 'active' && !arming && (
           <button className="btn btn-danger btn-sm shrink-0" onClick={() => setArming(true)}>
             ⏏ Teardown
           </button>

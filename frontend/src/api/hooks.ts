@@ -138,18 +138,30 @@ export const _WATCHED_TERMINAL_STATES: OperationState[] = [
   'run_complete', 'run_failed', 'failed_rollback_required', 'rollback_incomplete', 'run_status_unknown',
 ]
 
+// True once polling an operation can no longer change what the page shows.
+function isOperationSettled(data: Operation | undefined): boolean {
+  if (!data) return false
+  if (data.state === 'error') return true
+  if (data.action === 'launch' && data.state === 'launched') return true
+  return _WATCHED_TERMINAL_STATES.includes(data.state)
+}
+
 export function useOperationStatus(operationId: string | null) {
   return useQuery({
     queryKey: ['operation', operationId],
     queryFn: () => apiCall<Operation>(`/api/operations/${operationId}`),
     enabled: operationId !== null,
+    // TanStack skips interval ticks while the tab is hidden. A teardown takes
+    // minutes, so the operator often switches away, and the outcome would then
+    // wait for the tab to come back and show up late.
+    refetchIntervalInBackground: true,
+    // The app turns window-focus refetching off globally. An operation that is
+    // still running needs it on, so returning to the tab refreshes the status
+    // at once instead of waiting for the next tick.
+    refetchOnWindowFocus: (query) => !isOperationSettled(query.state.data),
     refetchInterval: (query) => {
       // Stop polling when operation reaches terminal state
-      const data = query.state.data
-      if (!data) return 3000
-      if (data.state === 'error') return false
-      if (data.action === 'launch' && data.state === 'launched') return false
-      if (_WATCHED_TERMINAL_STATES.includes(data.state)) return false
+      if (isOperationSettled(query.state.data)) return false
       return 3000 // Poll every 3s for non-terminal states
     },
   })
@@ -349,12 +361,25 @@ export function useAdminGroups() {
 // Catalog (Media Functions)
 // ------------------------------------------------------------------
 
-export function useCatalog() {
+const NO_KEYS: readonly string[] = []
+
+// `awaitingKeys` names entries whose automation job has finished but whose
+// inventory record may not have caught up. While any of them still reports
+// `active`, the catalog is re-read every 3 s, tab hidden or not: a hidden tab
+// would otherwise skip every tick and a return within the stale time would not
+// refetch either. The poll stops once none of them reads `active`, or when the
+// component that passed the keys unmounts.
+export function useCatalog(awaitingKeys: readonly string[] = NO_KEYS) {
   return useQuery({
     queryKey: ['catalog'],
     queryFn: () => apiCall<CatalogListResponse>('/api/catalog'),
     refetchOnWindowFocus: true,
     staleTime: 30_000,
+    refetchIntervalInBackground: true,
+    refetchInterval: (query) => {
+      const entries = query.state.data?.entries ?? []
+      return entries.some((e) => awaitingKeys.includes(e.key) && e.lifecycle === 'active') ? 3000 : false
+    },
   })
 }
 

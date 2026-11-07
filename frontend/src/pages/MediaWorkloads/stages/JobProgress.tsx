@@ -95,8 +95,7 @@ export function OperationStatusLine({
    * for a watched action — `launched` (what onLaunched depends on) is
    * transient, and a watched action keeps running right past it toward a
    * real terminal state whether or not any poll happened to land during
-   * that window (a missed tick, a backgrounded tab — refetchInterval does
-   * not run there). Optional: existing callers, and
+   * that window (a missed tick or a failed read). Optional: existing callers, and
    * jobProgressHonesty.test.tsx, only ever needed onLaunched/onError.
    */
   onTerminal?: (operation: Operation) => void
