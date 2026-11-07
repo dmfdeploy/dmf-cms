@@ -9,8 +9,9 @@ image:
   tag: "0.41.0"
   pullPolicy: IfNotPresent
 
-imagePullSecrets:
-  - name: registry-creds
+# Set this only when the registry requires credentials for reads. The platform
+# registry serves anonymous reads (ADR-0033), so the default is empty.
+imagePullSecrets: []
 
 service:
   type: ClusterIP
