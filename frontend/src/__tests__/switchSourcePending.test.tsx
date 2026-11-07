@@ -54,7 +54,7 @@ const SOURCES = [
 ]
 
 const KEY = ['media-workloads-topology', 'viewer-1']
-type TopologyMode = 'ok' | 'error' | 'malformed'
+type TopologyMode = 'ok' | 'error' | 'malformed' | 'null-entry' | 'idless-entry'
 
 function setup() {
   let active = 'source-a'
@@ -84,7 +84,14 @@ function setup() {
         if (mode === 'error') return json({ error: 'boom' }, 500)
         return json({
           receiver_instance: 'viewer-1',
-          sources: mode === 'malformed' ? 'not-a-list' : sources,
+          sources:
+            mode === 'malformed'
+              ? 'not-a-list'
+              : mode === 'null-entry'
+                ? [null]
+                : mode === 'idless-entry'
+                  ? [{}]
+                  : sources,
           active_source: active,
           provenance: 'observed-flow',
           observed_at: new Date().toISOString(),
@@ -122,6 +129,8 @@ function setup() {
       const state = qc.getQueryState(KEY)
       if (mode === 'error') expect(state?.status).toBe('error')
       else if (mode === 'malformed') expect(qc.getQueryData<{ sources: unknown }>(KEY)?.sources).toBe('not-a-list')
+      else if (mode === 'null-entry') expect(qc.getQueryData<{ sources: unknown }>(KEY)?.sources).toEqual([null])
+      else if (mode === 'idless-entry') expect(qc.getQueryData<{ sources: unknown }>(KEY)?.sources).toEqual([{}])
       else expect(qc.getQueryData<{ active_source: string }>(KEY)?.active_source).toBe(active)
     })
     // The query notifies React on a later task; let that render happen.
@@ -232,6 +241,25 @@ describe('switch source while the request is pending (#861)', () => {
     expect((screen.getByTestId('confirm-switch-source') as HTMLButtonElement).disabled).toBe(false)
     settlePost('ok')
     await act(async () => {})
+  })
+})
+
+describe.each(['null-entry', 'idless-entry'] as const)('a sources array with a %s (#863)', (mode) => {
+  it('fails closed like a non-array when nothing is pending, without throwing', async () => {
+    const { poll } = setup()
+    await screen.findByRole('button', { name: 'Switch source' })
+    await poll({ mode })
+    expect(screen.queryByRole('button', { name: 'Switch source' })).toBeNull()
+    expect(screen.queryByText(/Live source is unknown or stale/)).toBeNull()
+  })
+
+  it('keeps the snapshot panel while a switch is pending', async () => {
+    const { poll, settlePost } = setup()
+    await armAndPick('source-b')
+    await submitAndWaitPending()
+    await poll({ mode })
+    expectPendingPanel()
+    settlePost('ok')
   })
 })
 

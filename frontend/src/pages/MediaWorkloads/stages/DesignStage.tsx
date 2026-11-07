@@ -1,4 +1,5 @@
 import { useInstanceTopology } from '../../../api/hooks'
+import { hasValidSources } from '../../../lib/topologySources'
 import type { CatalogEntry, MediaWorkload } from '../../../api/types'
 import type { StageState } from '../../../lib/workloadLifecycle'
 import StageCard from './StageCard'
@@ -192,7 +193,7 @@ function InstanceComposition({ instance, hasTopology }: { instance: string; hasT
   //
   // (umbrella #385) retrofitted onto settleQuery.
   const topology = settleQuery(useInstanceTopology(instance, { enabled: hasTopology !== false }))
-  if (topology.failed || !topology.data || !Array.isArray(topology.data.sources)) return null
+  if (topology.failed || !hasValidSources(topology.data)) return null
 
   const { sources, active_source } = topology.data
   if (sources.length === 0) return null
