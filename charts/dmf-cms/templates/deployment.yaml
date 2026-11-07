@@ -16,6 +16,9 @@
 {{- fail "env.runtimeMode=cluster requires env.secretKeySecret.existingSecretName" -}}
 {{- end -}}
 {{- end }}
+{{- if and (include "dmf-cms.setupRequestsEnabled" .) .Values.serviceAccountName -}}
+{{- fail "serviceAccountName must stay blank when both setupRequests bindings are set: the pod then uses the dedicated dmf-cms-setup-requests ServiceAccount" -}}
+{{- end }}
 apiVersion: apps/v1
 kind: Deployment
 metadata:
@@ -34,7 +37,9 @@ spec:
         checksum/catalog-config: {{ include (print $.Template.BasePath "/configmap-catalog.yaml") . | sha256sum }}
       {{- end }}
     spec:
-      {{- if .Values.serviceAccountName }}
+      {{- if include "dmf-cms.setupRequestsEnabled" . }}
+      serviceAccountName: {{ include "dmf-cms.setupRequestsServiceAccount" . | quote }}
+      {{- else if .Values.serviceAccountName }}
       serviceAccountName: {{ .Values.serviceAccountName | quote }}
       {{- end }}
       {{- with .Values.imagePullSecrets }}

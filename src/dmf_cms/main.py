@@ -3912,22 +3912,29 @@ def create_app(settings: Settings | None = None, contract: AppContract | None = 
             return JSONResponse({"error": "same-origin request required"}, status_code=403)
 
         settings = request.app.state.settings
-        if (
-            settings.runtime_mode != "cluster"
-            or settings.dev_login_enabled
-            or not settings.oidc.configured
-            or not settings.setup_requests.configured
-        ):
-            return JSONResponse({"error": "setup request action unavailable"}, status_code=503)
-
+        # Authentication and session authorization come first, so a caller who
+        # is not allowed in cannot learn whether the action is configured.
         user, err = _require_min_role(request, "operator")
         if err is not None:
             return err
         real_user = session_user(request.session)
         if real_user is None:
             return JSONResponse({"error": "unauthorized"}, status_code=401)
-        if real_user.subject == "akadmin" or "break-glass" in real_user.groups:
+        # Break-glass is recognised by either name signal (the OIDC subject
+        # can be opaque, so the login name is checked too) or by group. A
+        # session whose subject came from a fallback and not from the OIDC sub
+        # claim has no attributable actor, so it is rejected as well.
+        if (
+            settings.runtime_mode != "cluster"
+            or settings.dev_login_enabled
+            or not real_user.subject_from_claim
+            or real_user.subject in BREAK_GLASS_USERNAMES
+            or real_user.username in BREAK_GLASS_USERNAMES
+            or BREAK_GLASS_GROUP in real_user.groups
+        ):
             return JSONResponse({"error": "forbidden"}, status_code=403)
+        if not settings.oidc.configured or not settings.setup_requests.configured:
+            return JSONResponse({"error": "setup request action unavailable"}, status_code=503)
 
         content_type = request.headers.get("content-type", "").split(";", 1)[0].strip().lower()
         if content_type != "application/json":
@@ -3956,18 +3963,40 @@ def create_app(settings: Settings | None = None, contract: AppContract | None = 
         except ValueError as exc:
             return JSONResponse({"error": str(exc)}, status_code=400)
 
+        data = receipt["data"]
+        assert isinstance(data, dict)
+        # The audit line records the same actor, effective role, request id
+        # and reason as the receipt. The reason is bounded, operator-supplied
+        # free text that the plan requires to be non-secret. Both the receipt
+        # and this line record it after surrounding whitespace is trimmed
+        # (control characters are rejected before trimming). Each call spells
+        # out a literal action, which the outcome-completeness test requires.
+        receipt_name = f"request-{data['request_id']}"
         try:
             await asyncio.to_thread(
                 request.app.state.setup_request_writer.create_and_verify,
                 receipt,
             )
         except ReceiptAlreadyExists:
+            _audit_awx_write(
+                request, user, action="born-inventory-secretid-issue", target=receipt_name,
+                request_id=str(data["request_id"]), reason=str(data["reason"]),
+                outcome="request-id-collision",
+            )
             return JSONResponse({"error": "request id collision; retry"}, status_code=409)
         except ReceiptStoreError:
+            _audit_awx_write(
+                request, user, action="born-inventory-secretid-issue", target=receipt_name,
+                request_id=str(data["request_id"]), reason=str(data["reason"]),
+                outcome="store-failed",
+            )
             return JSONResponse({"error": "setup request could not be recorded"}, status_code=503)
 
-        data = receipt["data"]
-        assert isinstance(data, dict)
+        _audit_awx_write(
+            request, user, action="born-inventory-secretid-issue", target=receipt_name,
+            request_id=str(data["request_id"]), reason=str(data["reason"]),
+            outcome="issued",
+        )
         return JSONResponse(
             {
                 "request_id": data["request_id"],

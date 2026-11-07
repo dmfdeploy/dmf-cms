@@ -1,0 +1,44 @@
+{{- if include "dmf-cms.setupRequestsEnabled" . }}
+{{- /*
+The Role and RoleBinding live in the dmf-setup-requests namespace. The chart
+does not create that namespace, so it must exist before you install with both
+setupRequests bindings set.
+*/ -}}
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: {{ include "dmf-cms.setupRequestsServiceAccount" . }}
+  namespace: {{ .Release.Namespace }}
+  labels:
+    {{- include "dmf-cms.labels" . | nindent 4 }}
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: Role
+metadata:
+  name: {{ include "dmf-cms.setupRequestsServiceAccount" . }}
+  namespace: dmf-setup-requests
+  labels:
+    {{- include "dmf-cms.labels" . | nindent 4 }}
+rules:
+  # Create writes the receipt and get reads it back. There is no list, update,
+  # patch or delete verb, and no access to Leases: the executor owns those.
+  - apiGroups: [""]
+    resources: ["configmaps"]
+    verbs: ["create", "get"]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata:
+  name: {{ include "dmf-cms.setupRequestsServiceAccount" . }}
+  namespace: dmf-setup-requests
+  labels:
+    {{- include "dmf-cms.labels" . | nindent 4 }}
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: Role
+  name: {{ include "dmf-cms.setupRequestsServiceAccount" . }}
+subjects:
+  - kind: ServiceAccount
+    name: {{ include "dmf-cms.setupRequestsServiceAccount" . }}
+    namespace: {{ .Release.Namespace }}
+{{- end }}

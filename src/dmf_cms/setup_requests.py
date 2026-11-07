@@ -70,9 +70,21 @@ class SetupRequestBindings:
         return bool(self.env_id.strip()) and is_cluster_uid(self.cluster_uid.strip())
 
 
-def _safe_c5_value(value: str, *, field: str, max_length: int) -> str:
-    cleaned = value.strip()
-    if not cleaned or len(cleaned) > max_length or _CONTROL_RE.search(cleaned):
+def _safe_c5_value(value: str, *, field: str, max_length: int, trim: bool = True) -> str:
+    """Return value if it is a valid C5 string; raise ValueError otherwise.
+
+    Control characters are rejected before any trimming, so trimming never
+    turns a control-bearing value into a valid one. With ``trim=True`` the
+    surrounding whitespace is removed before the length check, and the trimmed
+    text is what the caller records. With ``trim=False`` the value is kept
+    exactly as given, and surrounding whitespace is an error.
+    """
+    if _CONTROL_RE.search(value):
+        raise ValueError(f"invalid {field}")
+    cleaned = value.strip() if trim else value
+    if not cleaned or len(cleaned) > max_length:
+        raise ValueError(f"invalid {field}")
+    if not trim and cleaned != cleaned.strip():
         raise ValueError(f"invalid {field}")
     return cleaned
 
@@ -95,7 +107,7 @@ def make_receipt(
     cluster_uid = _safe_c5_value(cluster_uid, field="cluster uid", max_length=128)
     if not is_cluster_uid(cluster_uid):
         raise ValueError("invalid cluster uid")
-    actor = _safe_c5_value(actor, field="actor", max_length=256)
+    actor = _safe_c5_value(actor, field="actor", max_length=256, trim=False)
     role = _safe_c5_value(role, field="role", max_length=32)
     if role not in {"operator", "engineer", "admin"}:
         raise ValueError("invalid effective role")
