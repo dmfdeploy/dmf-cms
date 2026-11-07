@@ -15,12 +15,19 @@
 #   scripts/build-image.sh --check   # verify versions in sync, no build
 #   scripts/build-image.sh --no-hint # build, but print no publish/deploy next steps
 #   scripts/build-image.sh --platform linux/arm64   # the default; see below
+#   scripts/build-image.sh --oci     # store the image with OCI media types
 #
 # The target platform is ARM64 (the k3s nodes), so the build always passes an
 # explicit --platform. The default is linux/arm64; DMF_CMS_PLATFORM or
 # --platform overrides it. On Apple Silicon this is the native platform, so a
 # local build is unchanged. On an amd64 host without an arm64 daemon the build
 # fails or emulates; the release workflow runs on an arm64 runner.
+#
+# The release workflow passes --oci. `docker push` sends a manifest as the
+# daemon stores it, and a plain `docker build` stores Docker v2 media types, so
+# the image has to be built with the OCI ones for the pushed platform images
+# and the index joined from them to be OCI. Only a daemon that uses the
+# containerd image store can keep that manifest; --oci refuses any other.
 #
 # Refuses to run if:
 #   - VERSION is not in semver MAJOR.MINOR.PATCH form
@@ -39,12 +46,13 @@ DOCKERFILE="${DMF_CMS_DOCKERFILE:-Dockerfile}"
 ALLOW_DIRTY=0
 CHECK_ONLY=0
 PRINT_HINT=1
+OCI=0
 PLATFORM="${DMF_CMS_PLATFORM:-linux/arm64}"
 TAG_SUFFIX="${DMF_CMS_TAG_SUFFIX:-}"
 
 usage() {
     cat <<EOF
-Usage: $0 [--no-push] [--dirty] [--check] [--no-hint] [--platform OS/ARCH] [--tag-suffix SUFFIX]
+Usage: $0 [--no-push] [--dirty] [--check] [--no-hint] [--oci] [--platform OS/ARCH] [--tag-suffix SUFFIX]
 
   --no-push    No-op, accepted for compatibility (this script never pushes)
   --dirty      Allow build with uncommitted changes (NOT for cluster deployment)
@@ -52,6 +60,8 @@ Usage: $0 [--no-push] [--dirty] [--check] [--no-hint] [--platform OS/ARCH] [--ta
   --no-hint    Do not print the publish/deploy next steps (release.sh passes this
                and prints its own post-merge steps)
 
+  --oci        Build the image with OCI media types (manifest, config and
+               layers). Needs a daemon that uses the containerd image store.
   --platform   Target platform for the image (default: linux/arm64)
   --tag-suffix Append SUFFIX to the local tag (for example -amd64), so one
                checkout can hold a build per platform. Default: none.
@@ -73,6 +83,7 @@ while [[ $# -gt 0 ]]; do
         --dirty)    ALLOW_DIRTY=1 ;;
         --check)    CHECK_ONLY=1 ;;
         --no-hint)  PRINT_HINT=0 ;;
+        --oci)      OCI=1 ;;
         --platform)
             [[ $# -ge 2 ]] || { echo "ERROR: --platform needs a value" >&2; usage; }
             PLATFORM="$2"; shift ;;
@@ -148,15 +159,37 @@ fi
 # Build
 echo ""
 echo "[3/3] Building image..."
-docker build \
-    --platform "$PLATFORM" \
-    --provenance=false --sbom=false \
-    --label "org.opencontainers.image.version=$VERSION" \
-    --label "org.opencontainers.image.revision=$GIT_SHA" \
-    --label "org.opencontainers.image.source=https://github.com/dmfdeploy/dmf-cms" \
-    -t "$IMAGE_TAG" \
-    -f "$DOCKERFILE" \
-    .
+if [[ $OCI -eq 1 ]]; then
+    # Without the containerd image store the daemon would convert the image to
+    # Docker v2 types on push, so stop before spending a build on it.
+    driver_status="$(docker info --format '{{json .DriverStatus}}')"
+    if [[ "$driver_status" != *io.containerd.snapshotter.v1* ]]; then
+        echo "ERROR: --oci needs a Docker daemon that uses the containerd image store." >&2
+        echo "       See https://docs.docker.com/engine/storage/containerd/" >&2
+        exit 1
+    fi
+    # Same flags as the plain build, but the export names the image and asks for
+    # OCI media types instead of taking them from -t.
+    docker buildx build \
+        --platform "$PLATFORM" \
+        --provenance=false --sbom=false \
+        --output "type=image,name=$IMAGE_TAG,oci-mediatypes=true" \
+        --label "org.opencontainers.image.version=$VERSION" \
+        --label "org.opencontainers.image.revision=$GIT_SHA" \
+        --label "org.opencontainers.image.source=https://github.com/dmfdeploy/dmf-cms" \
+        -f "$DOCKERFILE" \
+        .
+else
+    docker build \
+        --platform "$PLATFORM" \
+        --provenance=false --sbom=false \
+        --label "org.opencontainers.image.version=$VERSION" \
+        --label "org.opencontainers.image.revision=$GIT_SHA" \
+        --label "org.opencontainers.image.source=https://github.com/dmfdeploy/dmf-cms" \
+        -t "$IMAGE_TAG" \
+        -f "$DOCKERFILE" \
+        .
+fi
 
 echo "  ✓ built $IMAGE_TAG"
 

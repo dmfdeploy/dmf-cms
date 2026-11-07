@@ -7,6 +7,11 @@
 # those two images, named by digest. It copies no layers: the images are
 # already in the registry.
 #
+# The index takes its media type from its children: OCI manifests give an OCI
+# index, Docker v2 manifests a Docker manifest list, and `imagetools create` has
+# no option to choose. The release workflow therefore checks the two images with
+# `release-gate.py check-oci` before this script runs.
+#
 # The GHCR token arrives on standard input as one line, never in argv. Docker
 # logs in with an isolated DOCKER_CONFIG that a trap removes.
 #

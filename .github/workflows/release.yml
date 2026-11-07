@@ -130,6 +130,36 @@ jobs:
           private-key: ${{ secrets.RELEASE_APP_PRIVATE_KEY }}
           permission-contents: write
 
+      # `docker push` sends a manifest as the daemon stores it. The runner's
+      # default image store converts images to Docker v2 types, so switch to the
+      # containerd image store before the first build. The restart drops the
+      # images the runner ships with, which the build does not use.
+      - name: Use the containerd image store
+        run: |
+          set -euo pipefail
+          daemon_json=/etc/docker/daemon.json
+          uses_containerd() {
+            local status
+            status="$(docker info --format '{{json .DriverStatus}}')"
+            [[ "$status" == *io.containerd.snapshotter.v1* ]]
+          }
+          if ! uses_containerd; then
+            # Render and check the merged file first. A failed merge must leave
+            # the current file in place and must not restart the daemon.
+            merged="$(mktemp)"
+            trap 'rm -f "$merged"' EXIT
+            existing='{}'
+            if [ -s "$daemon_json" ]; then existing="$(cat "$daemon_json")"; fi
+            printf '%s' "$existing" \
+              | jq '. + {features: ((.features // {}) + {"containerd-snapshotter": true})}' \
+              > "$merged"
+            jq -e '.features["containerd-snapshotter"] == true' "$merged" >/dev/null
+            sudo mkdir -p "$(dirname "$daemon_json")"
+            sudo install -m 0644 "$merged" "$daemon_json"
+            sudo systemctl restart docker
+          fi
+          uses_containerd
+
       # The runner is arm64, so arm64 builds natively. QEMU supplies the foreign
       # amd64 platform; the frontend stage always builds natively.
       - name: Set up QEMU for the amd64 build
@@ -142,11 +172,11 @@ jobs:
         run: |
           set -eu
           [ "$(git rev-parse HEAD)" = "$RELEASE_SHA" ]
-          scripts/build-image.sh --no-hint --platform linux/arm64 --tag-suffix -arm64
+          scripts/build-image.sh --no-hint --oci --platform linux/arm64 --tag-suffix -arm64
 
       - name: Build the amd64 image from the verified commit
         working-directory: src
-        run: scripts/build-image.sh --no-hint --platform linux/amd64 --tag-suffix -amd64
+        run: scripts/build-image.sh --no-hint --oci --platform linux/amd64 --tag-suffix -amd64
 
       - name: Check each image's platform, labels and start-up before any push
         env:
@@ -160,6 +190,7 @@ jobs:
               | python3 tools/scripts/release-gate.py check-labels \
                   --version "$RELEASE_VERSION" --sha "$RELEASE_SHA" \
                   --platform "$platform" --expect "linux/$arch"
+            python3 tools/scripts/release-gate.py check-local-oci --image "$image"
             docker run --rm --platform "linux/$arch" "$image" python -c 'import dmf_cms'
           done
 
@@ -216,6 +247,18 @@ jobs:
               --format '{{json .RepoDigests}}' \
               | python3 tools/scripts/release-gate.py digest --name "$arch"
           done
+
+      # The join copies no layers and takes its child types from these
+      # images, so check them before the immutable version tag exists.
+      - name: Check the pushed platform images use OCI media types
+        if: steps.ghcr_image.outputs.exists != 'true'
+        env:
+          ARM64_DIGEST: ${{ steps.platform_digests.outputs.arm64 }}
+          AMD64_DIGEST: ${{ steps.platform_digests.outputs.amd64 }}
+        run: |
+          set -eu
+          python3 tools/scripts/release-gate.py check-oci --digest "$ARM64_DIGEST"
+          python3 tools/scripts/release-gate.py check-oci --digest "$AMD64_DIGEST"
 
       - name: Join the platforms into one index under the version tag
         if: steps.ghcr_image.outputs.exists != 'true'

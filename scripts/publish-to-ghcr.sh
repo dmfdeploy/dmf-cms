@@ -16,6 +16,10 @@
 # (publish-index-to-ghcr.sh). A single-platform image at <VERSION> would block
 # that index for good. Set IMAGE_TAG_SUFFIX to a platform suffix.
 #
+# The push sends the image's manifest as the daemon stores it, so the image
+# has to be built with `build-image.sh --oci` for the release to be OCI. This
+# script reads the stored types before it pushes and refuses a Docker v2 image.
+#
 # Before any push it also requires a clean tree at the commit v<VERSION> names
 # (or, until the workflow creates that tag, RELEASE_SHA) and an image whose
 # revision label is that commit.
@@ -194,7 +198,7 @@ ERROR: $1
 
 Nothing was pushed. To rebuild, check out the expected commit, then run:
 
-  scripts/build-image.sh --no-push --platform linux/${IMAGE_TAG_SUFFIX#-} --tag-suffix ${IMAGE_TAG_SUFFIX}
+  scripts/build-image.sh --no-push --oci --platform linux/${IMAGE_TAG_SUFFIX#-} --tag-suffix ${IMAGE_TAG_SUFFIX}
 REVISION
   exit 1
 }
@@ -216,6 +220,23 @@ if [[ -z "$IMAGE_COMMIT" ]]; then
 fi
 if [[ "$IMAGE_COMMIT" != "$EXPECTED_COMMIT" ]]; then
   revision_refusal "the image revision label differs from ${EXPECTED_FROM}."
+fi
+
+# Media-type check -----------------------------------------------------------
+#
+# The push sends the manifest the daemon stores. Read it from the daemon, not
+# from how the image was built, so a build that skipped --oci is stopped here
+# with nothing pushed. The gate in this checkout is the same commit as this
+# script.
+if ! python3 "${SCRIPT_DIR}/release-gate.py" check-local-oci --image "${LOCAL_IMAGE}"; then
+  cat >&2 <<NOTOCI
+ERROR: ${LOCAL_IMAGE} is not stored with OCI media types.
+
+Nothing was pushed. To rebuild, run:
+
+  scripts/build-image.sh --no-push --oci --platform linux/${IMAGE_TAG_SUFFIX#-} --tag-suffix ${IMAGE_TAG_SUFFIX}
+NOTOCI
+  exit 1
 fi
 
 exec "${UMBRELLA_DIR}/bin/publish-image-to-ghcr.sh" \

@@ -11,12 +11,15 @@ from __future__ import annotations
 
 import base64
 import importlib.util
+import io
 import json
+import os
 import subprocess
 from pathlib import Path
 from typing import Any
 
 import pytest
+import saved_image
 
 _SPEC = importlib.util.spec_from_file_location(
     "release_gate", Path(__file__).resolve().parents[1] / "scripts" / "release-gate.py"
@@ -811,8 +814,6 @@ def test_the_platform_is_checked_even_when_the_labels_are_wrong_too():
 
 
 def test_check_labels_on_the_command_line_requires_platform_and_expectation(monkeypatch):
-    import io
-
     argv = ["check-labels", "--version", VERSION, "--sha", SHA]
 
     def run(*extra):
@@ -904,12 +905,19 @@ class Registry:
         self.images: Any = {"linux/arm64": _config("arm64"), "linux/amd64": _config("amd64")}
         self.error: str | None = None
         self.calls: list[list[str]] = []
+        # Raw manifest of each child by digest; an unlisted digest is a plain OCI image.
+        self.raw: dict[str, Any] = {}
 
     def install(self, monkeypatch) -> None:
         def fake_run(command, **kwargs):
             self.calls.append(command)
             if self.error:
                 return subprocess.CompletedProcess(command, 1, "", self.error)
+            if "--raw" in command:
+                digest = command[-1].rsplit("@", 1)[1]
+                return subprocess.CompletedProcess(
+                    command, 0, json.dumps(self.raw.get(digest, _oci_image())), ""
+                )
             template = command[command.index("--format") + 1]
             body = self.manifest if template == "{{json .Manifest}}" else self.images
             return subprocess.CompletedProcess(command, 0, json.dumps(body, indent=2), "")
@@ -929,11 +937,24 @@ def test_an_index_with_both_platforms_and_good_labels_passes(registry):
     assert gate.check_index(*found, VERSION, SHA) == INDEX_DIGEST
     assert gate.inspect_existing_image(VERSION, SHA) == INDEX_DIGEST
     assert registry.calls[0][:4] == ["docker", "buildx", "imagetools", "inspect"]
+    # Every child is read by digest, so its config and layer types are checked too.
+    raw = [c[-1] for c in registry.calls if "--raw" in c]
+    assert raw == [f"{gate.IMAGE}@{ARM_DIGEST}", f"{gate.IMAGE}@{AMD_DIGEST}"]
 
 
-def test_the_docker_manifest_list_media_type_is_also_an_index(registry):
+def test_a_docker_manifest_list_is_not_accepted_as_the_index(registry):
     registry.manifest["mediaType"] = "application/vnd.docker.distribution.manifest.list.v2+json"
-    assert gate.inspect_existing_image(VERSION, SHA) == INDEX_DIGEST
+    with pytest.raises(gate.GateError, match="index media type"):
+        gate.inspect_existing_image(VERSION, SHA)
+
+
+@pytest.mark.parametrize("arch", ["arm64", "amd64"])
+def test_an_index_child_with_a_docker_manifest_type_fails(registry, arch):
+    for child in registry.manifest["manifests"]:
+        if child["platform"]["architecture"] == arch:
+            child["mediaType"] = "application/vnd.docker.distribution.manifest.v2+json"
+    with pytest.raises(gate.GateError, match="index child"):
+        gate.inspect_existing_image(VERSION, SHA)
 
 
 def test_an_absent_version_tag_is_reported_absent(registry):
@@ -1035,6 +1056,246 @@ def test_malformed_inspect_output_fails_closed(registry, monkeypatch):
         gate.inspect_existing_image(VERSION, SHA)
 
 
+@pytest.mark.parametrize("arch, digest", [("arm64", ARM_DIGEST), ("amd64", AMD_DIGEST)])
+@pytest.mark.parametrize("where", ["config", "layer"])
+def test_an_existing_index_with_a_docker_config_or_layer_in_a_child_is_rejected(
+    registry, arch, digest, where
+):
+    # The index and the child's own descriptor look right, and the labels match.
+    child = _oci_image()
+    if where == "config":
+        child["config"]["mediaType"] = "application/vnd.docker.container.image.v1+json"
+    else:
+        child["layers"][0]["mediaType"] = "application/vnd.docker.image.rootfs.diff.tar.gzip"
+    registry.raw[digest] = child
+    with pytest.raises(gate.GateError, match="media type"):
+        gate.inspect_existing_image(VERSION, SHA)
+    assert gate.main(["verify-index", "--version", VERSION, "--sha", SHA]) == 1
+
+
+def test_a_child_that_cannot_be_read_by_digest_fails_the_index(registry, monkeypatch):
+    real = gate.subprocess.run
+
+    def fail_raw(command, **kwargs):
+        if "--raw" in command:
+            return subprocess.CompletedProcess(command, 1, "", "ERROR: 502 Bad Gateway")
+        return real(command, **kwargs)
+
+    monkeypatch.setattr(gate.subprocess, "run", fail_raw)
+    with pytest.raises(gate.GateError, match="could not safely inspect"):
+        gate.inspect_existing_image(VERSION, SHA)
+
+
+def test_an_index_child_with_a_malformed_digest_fails(registry):
+    registry.manifest["manifests"][0]["digest"] = "sha256:short"
+    with pytest.raises(gate.GateError, match="digest"):
+        gate.inspect_existing_image(VERSION, SHA)
+
+
+# ------------------------------------------- one pushed platform image is OCI
+
+
+def _oci_image() -> dict[str, Any]:
+    return {
+        "schemaVersion": 2,
+        "mediaType": "application/vnd.oci.image.manifest.v1+json",
+        "config": {"mediaType": "application/vnd.oci.image.config.v1+json", "digest": "sha256:" + "5" * 64, "size": 984},
+        "layers": [
+            {"mediaType": "application/vnd.oci.image.layer.v1.tar+gzip", "digest": "sha256:" + "6" * 64, "size": 10}
+        ],
+    }
+
+
+def test_an_oci_image_manifest_passes():
+    gate.check_oci_image(_oci_image())
+
+
+@pytest.mark.parametrize(
+    "path, value",
+    [
+        (("mediaType",), "application/vnd.docker.distribution.manifest.v2+json"),
+        (("config", "mediaType"), "application/vnd.docker.container.image.v1+json"),
+        (("layers", 0, "mediaType"), "application/vnd.docker.image.rootfs.diff.tar.gzip"),
+    ],
+)
+def test_a_docker_type_anywhere_in_an_image_manifest_fails(path, value):
+    manifest = _oci_image()
+    target = manifest
+    for key in path[:-1]:
+        target = target[key]
+    target[path[-1]] = value
+    with pytest.raises(gate.GateError, match="media type"):
+        gate.check_oci_image(manifest)
+
+
+@pytest.mark.parametrize("layers", [[], None, ["not a descriptor"]])
+def test_an_image_without_usable_layers_fails(layers):
+    manifest = _oci_image()
+    manifest["layers"] = layers
+    with pytest.raises(gate.GateError, match="layer"):
+        gate.check_oci_image(manifest)
+
+
+def _install_raw(monkeypatch, body: Any, returncode: int = 0) -> list[list[str]]:
+    calls: list[list[str]] = []
+
+    def fake_run(command, **kwargs):
+        calls.append(command)
+        return subprocess.CompletedProcess(command, returncode, json.dumps(body), "boom" if returncode else "")
+
+    monkeypatch.setattr(gate.subprocess, "run", fake_run)
+    return calls
+
+
+def test_check_oci_reads_the_raw_manifest_of_the_digest(monkeypatch):
+    calls = _install_raw(monkeypatch, _oci_image())
+    assert gate.main(["check-oci", "--digest", ARM_DIGEST]) == 0
+    assert calls == [["docker", "buildx", "imagetools", "inspect", "--raw", f"{gate.IMAGE}@{ARM_DIGEST}"]]
+
+
+def test_check_oci_fails_for_a_docker_image(monkeypatch):
+    docker_image = _oci_image()
+    docker_image["mediaType"] = "application/vnd.docker.distribution.manifest.v2+json"
+    _install_raw(monkeypatch, docker_image)
+    assert gate.main(["check-oci", "--digest", ARM_DIGEST]) == 1
+
+
+def test_check_oci_fails_when_the_registry_cannot_be_read(monkeypatch):
+    _install_raw(monkeypatch, {}, returncode=1)
+    assert gate.main(["check-oci", "--digest", ARM_DIGEST]) == 1
+
+
+def test_check_oci_refuses_a_malformed_digest_without_running_docker(monkeypatch):
+    calls = _install_raw(monkeypatch, _oci_image())
+    assert gate.main(["check-oci", "--digest", "latest"]) == 1
+    assert calls == []
+
+
+# ------------------------------------------- the image as the local daemon stores it
+
+
+def _check_saved(tar: bytes) -> None:
+    gate.check_saved_layout(*gate.load_saved_layout(io.BytesIO(tar)))
+
+
+def test_an_image_stored_as_oci_passes():
+    _check_saved(saved_image.layout_tar())
+
+
+def test_an_image_stored_as_docker_v2_fails_even_with_nothing_else_wrong():
+    with pytest.raises(gate.GateError, match="stored as"):
+        _check_saved(saved_image.docker_typed_tar())
+
+
+@pytest.mark.parametrize(
+    "manifest_type, config_type, layer_type",
+    [
+        (saved_image.DOCKER_MANIFEST, saved_image.OCI_CONFIG, saved_image.OCI_LAYER),
+        (saved_image.OCI_MANIFEST, saved_image.DOCKER_CONFIG, saved_image.OCI_LAYER),
+        (saved_image.OCI_MANIFEST, saved_image.OCI_CONFIG, saved_image.DOCKER_LAYER),
+    ],
+)
+def test_one_docker_type_in_a_saved_manifest_fails(manifest_type, config_type, layer_type):
+    manifest = saved_image.image_manifest(manifest_type, config_type, layer_type)
+    with pytest.raises(gate.GateError, match="media type"):
+        _check_saved(saved_image.layout_tar(manifest))
+
+
+def test_a_docker_typed_descriptor_over_an_oci_looking_manifest_fails():
+    # The descriptor type is what `docker push` sends.
+    with pytest.raises(gate.GateError, match="stored as"):
+        _check_saved(saved_image.layout_tar(descriptor_type=saved_image.DOCKER_MANIFEST))
+
+
+def test_a_saved_oci_index_of_oci_images_passes_and_a_docker_child_fails():
+    def index_tar(child_type: str, child_manifest: dict[str, Any]) -> bytes:
+        child_body = saved_image.dumps(child_manifest)
+        child = {"mediaType": child_type, "digest": saved_image.digest_of(child_body), "size": len(child_body)}
+        index_body = saved_image.dumps(
+            {"schemaVersion": 2, "mediaType": saved_image.OCI_INDEX, "manifests": [child]}
+        )
+        return saved_image.layout_tar(
+            json.loads(index_body), saved_image.OCI_INDEX, extra_blobs={saved_image.digest_of(child_body): child_body}
+        )
+
+    _check_saved(index_tar(saved_image.OCI_MANIFEST, saved_image.image_manifest()))
+    docker_child = saved_image.image_manifest(
+        saved_image.DOCKER_MANIFEST, saved_image.DOCKER_CONFIG, saved_image.DOCKER_LAYER
+    )
+    with pytest.raises(gate.GateError, match="child media type"):
+        _check_saved(index_tar(saved_image.DOCKER_MANIFEST, docker_child))
+
+
+def test_a_saved_image_with_two_top_level_descriptors_fails():
+    with pytest.raises(gate.GateError, match="exactly one"):
+        _check_saved(saved_image.layout_tar(top_level_extra=1))
+
+
+def test_a_saved_image_missing_its_manifest_blob_fails():
+    tar = saved_image.build_tar(
+        {"index.json": saved_image.dumps({"manifests": [{"mediaType": saved_image.OCI_MANIFEST, "digest": "sha256:" + "a" * 64}]})}
+    )
+    with pytest.raises(gate.GateError, match="no blob"):
+        gate.check_saved_layout(*gate.load_saved_layout(io.BytesIO(tar)))
+
+
+def test_a_saved_blob_that_does_not_match_its_digest_fails():
+    body = saved_image.dumps(saved_image.image_manifest())
+    wrong = "sha256:" + "b" * 64
+    tar = saved_image.build_tar(
+        {
+            "index.json": saved_image.dumps({"manifests": [{"mediaType": saved_image.OCI_MANIFEST, "digest": wrong}]}),
+            "blobs/sha256/" + "b" * 64: body,
+        }
+    )
+    with pytest.raises(gate.GateError, match="does not match"):
+        gate.check_saved_layout(*gate.load_saved_layout(io.BytesIO(tar)))
+
+
+def test_load_saved_layout_skips_layer_sized_blobs_and_rejects_non_tar_input():
+    big = b"x" * (gate.MAX_SAVED_BLOB + 1)
+    index, blobs = gate.load_saved_layout(
+        io.BytesIO(saved_image.build_tar({"index.json": b"{}", "blobs/sha256/" + "c" * 64: big}))
+    )
+    assert index == {} and blobs == {}
+    with pytest.raises(gate.GateError, match="could not read the saved image"):
+        gate.load_saved_layout(io.BytesIO(b"this is not a tar archive" * 100))
+    with pytest.raises(gate.GateError, match="no index.json"):
+        gate.load_saved_layout(io.BytesIO(saved_image.build_tar({"oci-layout": b"{}"})))
+
+
+def _fake_docker_save(tmp_path, monkeypatch, tar: bytes, status: int = 0):
+    saved = tmp_path / "saved.tar"
+    saved.write_bytes(tar)
+    fake_bin = tmp_path / "bin"
+    fake_bin.mkdir()
+    docker = fake_bin / "docker"
+    docker.write_text(f'#!/bin/sh\n[ "$1" = save ] || exit 9\ncat "{saved}"\necho save-failed >&2\nexit {status}\n')
+    docker.chmod(0o755)
+    monkeypatch.setenv("PATH", f"{fake_bin}:{os.environ['PATH']}")
+
+
+def test_check_local_oci_command_accepts_oci_and_refuses_docker_v2(tmp_path, monkeypatch):
+    image = "registry.dmf.example.com/dmf-cms:0.1.0-arm64"
+    (tmp_path / "oci").mkdir()
+    _fake_docker_save(tmp_path / "oci", monkeypatch, saved_image.layout_tar())
+    assert gate.main(["check-local-oci", "--image", image]) == 0
+    (tmp_path / "docker-typed").mkdir()
+    _fake_docker_save(tmp_path / "docker-typed", monkeypatch, saved_image.docker_typed_tar())
+    assert gate.main(["check-local-oci", "--image", image]) == 1
+
+
+def test_check_local_oci_fails_when_docker_save_fails(tmp_path, monkeypatch):
+    _fake_docker_save(tmp_path, monkeypatch, saved_image.layout_tar(), status=1)
+    assert gate.main(["check-local-oci", "--image", "registry.dmf.example.com/dmf-cms:0.1.0-arm64"]) == 1
+
+
+@pytest.mark.parametrize("image", ["", "--all-tags"])
+def test_check_local_oci_refuses_an_empty_or_option_like_image(image):
+    with pytest.raises(gate.GateError, match="empty or looks like an option"):
+        gate.check_local_oci(image)
+
+
 def test_the_verify_index_command_prints_the_index_digest(registry, tmp_path, monkeypatch):
     out = tmp_path / "out"
     monkeypatch.setenv("GITHUB_OUTPUT", str(out))
@@ -1043,8 +1304,6 @@ def test_the_verify_index_command_prints_the_index_digest(registry, tmp_path, mo
 
 
 def test_the_digest_command_names_its_output(monkeypatch, tmp_path):
-    import io
-
     out = tmp_path / "out"
     monkeypatch.setenv("GITHUB_OUTPUT", str(out))
     monkeypatch.setattr("sys.stdin", io.StringIO(json.dumps([f"{gate.IMAGE}@{ARM_DIGEST}"])))
