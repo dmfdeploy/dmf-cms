@@ -9,7 +9,11 @@ key through `env`.
 from __future__ import annotations
 
 import importlib.util
+import json
+import os
 import re
+import shutil
+import subprocess
 from pathlib import Path
 from typing import Any
 
@@ -397,6 +401,111 @@ def test_both_platforms_are_built_with_an_explicit_platform_and_suffix(release):
     amd = next(r for n, r in runs.items() if "amd64" in n)
     assert "--platform linux/arm64 --tag-suffix -arm64" in arm
     assert "--platform linux/amd64 --tag-suffix -amd64" in amd
+
+
+def test_both_platforms_are_built_with_oci_media_types(release):
+    job_steps = steps(release["jobs"]["release"])
+    for step in named(job_steps, "Build the "):
+        assert "build-image.sh --no-hint --oci " in step["run"], step["name"]
+
+
+def test_the_containerd_image_store_is_on_before_the_first_build(release):
+    job_steps = steps(release["jobs"]["release"])
+    store = named(job_steps, "Use the containerd image store")
+    assert len(store) == 1
+    first_build = min(index_of(job_steps, s) for s in named(job_steps, "Build the "))
+    assert index_of(job_steps, store[0]) < first_build
+    run = store[0]["run"]
+    assert "containerd-snapshotter" in run
+    # The step ends by checking the daemon, so a restart that did not take
+    # effect stops the job before any build or push.
+    assert run.rstrip().splitlines()[-1].strip() == "uses_containerd"
+
+
+def test_each_image_media_types_are_read_from_the_daemon_before_any_push(release):
+    job_steps = steps(release["jobs"]["release"])
+    check = next(i for i, s in enumerate(job_steps) if "check-labels" in s.get("run", ""))
+    first_push = min(index_of(job_steps, s) for s in named(job_steps, "Publish the verified"))
+    run = job_steps[check]["run"]
+    assert check < first_push
+    assert 'release-gate.py check-local-oci --image "$image"' in run
+    # Inside the same per-platform loop as the label check.
+    assert run.index("check-labels") < run.index("check-local-oci") < run.index("done")
+
+
+def _store_step_run(tmp_path: Path, *, jq_fails: bool = False, existing: str | None = None):
+    """Run the "Use the containerd image store" step with a fake Docker, sudo and
+    systemctl. Returns the result, the daemon file and the logged calls."""
+    run = named(steps(load(RELEASE)["jobs"]["release"]), "Use the containerd image store")[0]["run"]
+    daemon_json = tmp_path / "daemon.json"
+    if existing is not None:
+        daemon_json.write_text(existing, encoding="utf-8")
+    assert "daemon_json=/etc/docker/daemon.json" in run
+    script = run.replace("daemon_json=/etc/docker/daemon.json", f"daemon_json={daemon_json}")
+    fake_bin = tmp_path / "bin"
+    fake_bin.mkdir()
+    calls = tmp_path / "calls"
+    restarted = tmp_path / "restarted"
+
+    def tool(name: str, body: str) -> None:
+        (fake_bin / name).write_text("#!/bin/bash\n" + body, encoding="utf-8")
+        (fake_bin / name).chmod(0o755)
+
+    # The daemon reports the containerd store only after a restart.
+    tool("docker", f'echo "docker $*" >> {calls}\nif [ -e {restarted} ]; then echo \'[["driver-type","io.containerd.snapshotter.v1"]]\'; else echo \'[["Backing Filesystem","extfs"]]\'; fi\n')
+    tool("sudo", f'echo "sudo $*" >> {calls}\nexec "$@"\n')
+    tool("systemctl", f'echo "systemctl $*" >> {calls}\ntouch {restarted}\n')
+    if jq_fails:
+        tool("jq", f'echo "jq $*" >> {calls}\necho jq: broken >&2\nexit 3\n')
+    elif shutil.which("jq") is None:
+        pytest.skip("jq is not installed")
+    env = {**os.environ, "PATH": f"{fake_bin}:{os.environ['PATH']}"}
+    result = subprocess.run(
+        ["bash", "-e", "-c", script], text=True, capture_output=True, env=env, check=False
+    )
+    return result, daemon_json, (calls.read_text(encoding="utf-8") if calls.exists() else "")
+
+
+def test_the_store_step_merges_the_setting_and_restarts_once(tmp_path):
+    result, daemon_json, calls = _store_step_run(tmp_path, existing='{"log-level":"warn","features":{"buildkit":true}}')
+    assert result.returncode == 0, result.stdout + result.stderr
+    assert json.loads(daemon_json.read_text(encoding="utf-8")) == {
+        "log-level": "warn",
+        "features": {"buildkit": True, "containerd-snapshotter": True},
+    }
+    assert calls.splitlines().count("systemctl restart docker") == 1
+
+
+def test_the_store_step_creates_the_file_when_there_is_none(tmp_path):
+    result, daemon_json, calls = _store_step_run(tmp_path)
+    assert result.returncode == 0, result.stdout + result.stderr
+    assert daemon_json.exists()
+    assert calls.splitlines().count("systemctl restart docker") == 1
+
+
+@pytest.mark.parametrize(
+    "jq_fails, existing",
+    [(True, '{"log-level":"warn"}'), (False, '{"features":"not-an-object"}'), (False, "not json at all")],
+)
+def test_a_failed_merge_leaves_the_file_alone_and_does_not_restart(tmp_path, jq_fails, existing):
+    result, daemon_json, calls = _store_step_run(tmp_path, jq_fails=jq_fails, existing=existing)
+    assert result.returncode != 0
+    assert daemon_json.read_text(encoding="utf-8") == existing
+    assert "systemctl" not in calls
+    assert "sudo install" not in calls
+
+
+def test_the_pushed_images_are_checked_for_oci_before_the_index_join(release):
+    job_steps = steps(release["jobs"]["release"])
+    digests = named(job_steps, "Read the pushed platform digests")[0]
+    check = named(job_steps, "Check the pushed platform images use OCI media types")[0]
+    join = named(job_steps, "Join the platforms")[0]
+    assert index_of(job_steps, digests) < index_of(job_steps, check) < index_of(job_steps, join)
+    assert check["if"] == "steps.ghcr_image.outputs.exists != 'true'"
+    assert check["env"]["ARM64_DIGEST"] == f"${{{{ steps.{digests['id']}.outputs.arm64 }}}}"
+    assert check["env"]["AMD64_DIGEST"] == f"${{{{ steps.{digests['id']}.outputs.amd64 }}}}"
+    assert 'check-oci --digest "$ARM64_DIGEST"' in check["run"]
+    assert 'check-oci --digest "$AMD64_DIGEST"' in check["run"]
 
 
 def test_qemu_is_set_up_before_the_amd64_build_and_pinned(release):

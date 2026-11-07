@@ -18,6 +18,7 @@ from pathlib import Path
 
 import pytest
 import yaml
+from saved_image import docker_typed_tar, layout_tar
 
 REPO = Path(__file__).resolve().parents[1]
 FAKE_TOKEN = "test-token-never-log"
@@ -29,6 +30,7 @@ printf '%s|%s\\n' "$*" "${DOCKER_HOST:-}" >> "$DOCKER_CALLS"
 case "$1" in
   login) cat > "$DOCKER_TOKEN"; exit 0 ;;
   info) exit 0 ;;
+  save) cat "$FAKE_SAVE_TAR"; exit 0 ;;
   image)
     if [[ "$2" == inspect && "${4:-}" == --format ]]; then
       case "$5" in
@@ -71,6 +73,7 @@ def make_checkout(tmp_path: Path, *, tag: str | None = None, extra_commit: bool 
     checkout = tmp_path / "checkout"
     (checkout / "scripts").mkdir(parents=True)
     shutil.copy(REPO / "scripts" / "publish-to-ghcr.sh", checkout / "scripts")
+    shutil.copy(REPO / "scripts" / "release-gate.py", checkout / "scripts")
     shutil.copy(REPO / "VERSION", checkout)
     version = (REPO / "VERSION").read_text(encoding="utf-8").strip()
 
@@ -110,7 +113,16 @@ def publish_step(arch: str = "arm64") -> dict:
     )
 
 
-def run_block(tmp_path: Path, command: str, arch: str) -> tuple[subprocess.CompletedProcess, str, Path]:
+def write_saved_image(tmp_path: Path, *, docker_typed: bool) -> str:
+    """What `docker save` prints for the image: OCI as stored, or Docker v2."""
+    saved = tmp_path / "saved-image.tar"
+    saved.write_bytes(docker_typed_tar() if docker_typed else layout_tar())
+    return str(saved)
+
+
+def run_block(
+    tmp_path: Path, command: str, arch: str, *, docker_typed: bool = False
+) -> tuple[subprocess.CompletedProcess, str, Path]:
     fake_bin = tmp_path / "bin"
     fake_bin.mkdir()
     calls = tmp_path / "docker-calls"
@@ -139,6 +151,7 @@ def run_block(tmp_path: Path, command: str, arch: str) -> tuple[subprocess.Compl
             "HOME": str(tmp_path),
             "DOCKER_CALLS": str(calls),
             "DOCKER_TOKEN": str(received),
+            "FAKE_SAVE_TAR": write_saved_image(tmp_path, docker_typed=docker_typed),
             "DMFDEPLOY_UMBRELLA": str(umbrella_dir()),
         }
     )
@@ -199,6 +212,7 @@ def run_wrapper(
     extra_commit: bool = False,
     dirty: bool = False,
     release_sha: str | None = "head",
+    docker_typed: bool = False,
 ) -> tuple[subprocess.CompletedProcess, str]:
     """`revision` is the image's revision label: None means the checkout's HEAD,
     "" means no label. `release_sha` is the workflow's verified commit: "head" means
@@ -219,6 +233,7 @@ def run_wrapper(
             "HOME": str(tmp_path),
             "DOCKER_CALLS": str(calls),
             "DOCKER_TOKEN": str(tmp_path / "received-token"),
+            "FAKE_SAVE_TAR": write_saved_image(tmp_path, docker_typed=docker_typed),
             "DMFDEPLOY_UMBRELLA": str(umbrella_dir()),
             "GHCR_USER": "github-actions[bot]",
         }
@@ -237,6 +252,41 @@ def run_wrapper(
         input=FAKE_TOKEN + "\n", text=True, capture_output=True, env=env, cwd=checkout, check=False,
     )
     return result, (calls.read_text(encoding="utf-8") if calls.exists() else "")
+
+
+@pytest.mark.parametrize("arch", ["arm64", "amd64"])
+def test_the_wrapper_reads_the_stored_media_types_before_it_logs_in(tmp_path, arch):
+    version = (REPO / "VERSION").read_text(encoding="utf-8").strip()
+    result, docker_calls = run_wrapper(tmp_path, f"-{arch}")
+    assert result.returncode == 0, result.stdout + result.stderr
+    calls = docker_calls.splitlines()
+    save = next(i for i, c in enumerate(calls) if c.startswith("save "))
+    login = next(i for i, c in enumerate(calls) if c.startswith("login "))
+    assert calls[save].startswith(f"save registry.dmf.example.com/dmf-cms:{version}-{arch}|")
+    assert save < login
+
+
+@pytest.mark.parametrize("arch", ["arm64", "amd64"])
+def test_the_wrapper_pushes_nothing_for_a_docker_typed_image(tmp_path, arch):
+    """Platform and labels are correct, so every earlier check passes. Only the
+    stored media types are wrong, as when a build skipped --oci."""
+    result, docker_calls = run_wrapper(tmp_path, f"-{arch}", docker_typed=True)
+    assert result.returncode != 0
+    assert "not stored with OCI media types" in result.stderr
+    assert f"--oci --platform linux/{arch} --tag-suffix -{arch}" in result.stderr
+    assert "Nothing was pushed" in result.stderr
+    assert [c.split()[0] for c in docker_calls.splitlines()].count("save") == 1
+    for forbidden in ("login", "tag ", "push "):
+        assert forbidden not in docker_calls, docker_calls
+
+
+@pytest.mark.parametrize("arch", ["arm64", "amd64"])
+def test_the_publish_step_pushes_nothing_for_a_docker_typed_image(tmp_path, arch):
+    result, docker_calls, received = run_block(tmp_path, publish_step(arch)["run"], arch, docker_typed=True)
+    assert result.returncode != 0
+    assert not received.exists()  # the token never reached docker login
+    for forbidden in ("login", "tag ", "push "):
+        assert forbidden not in docker_calls, docker_calls
 
 
 @pytest.mark.parametrize("suffix", [None, ""])

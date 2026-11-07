@@ -98,7 +98,10 @@ default is `linux/arm64`; override it with `--platform` or `DMF_CMS_PLATFORM`.
 On Apple Silicon that is the native platform, so a local build does not change.
 `--tag-suffix` (for example `-amd64`) keeps one checkout's builds apart. The
 build adds no provenance or SBOM attestation manifests to the image, because the
-release index must list exactly the two platforms. The frontend build stage runs
+release index must list exactly the two platforms. A release is OCI throughout:
+the release workflow builds with `--oci`, which stores the image with OCI media
+types and needs a Docker daemon that uses the containerd image store, and the
+index joined from the two images is then an OCI index. The frontend build stage runs
 natively on the build host (`FROM --platform=$BUILDPLATFORM`): its HTML, JavaScript
 and CSS do not depend on the CPU architecture.
 
@@ -322,17 +325,25 @@ The workflow has two jobs:
    4. No existing `v*` tag is higher than `VERSION`. An equal tag is accepted
       only at this commit, and then tag creation is skipped.
 
-   It then mints the release App token, builds the image from the exact commit
-   with `scripts/build-image.sh`. The job runs on GitHub's hosted arm64 runner
-   (`ubuntu-24.04-arm`, free and unlimited for public repositories), so arm64
-   builds natively and amd64 builds under QEMU. For each platform it checks the
-   image's platform, labels and start-up (`import dmf_cms`) before any push, then
-   pushes it through `scripts/publish-to-ghcr.sh` under a staging tag
-   (`<VERSION>-arm64`, `<VERSION>-amd64`). `scripts/publish-index-to-ghcr.sh`
-   joins the two digests into the index at `<VERSION>`, and the gate verifies
-   every child of the index: exactly the two platforms, each with the version,
-   revision and source labels. It creates a build-provenance attestation for the
-   index digest, and creates the `v<VERSION>` tag last, as the release App.
+   It then mints the release App token, switches the runner's Docker daemon to
+   the containerd image store (so `docker push` keeps OCI media types), and
+   builds the image from the exact commit with `scripts/build-image.sh --oci`.
+   The job runs on GitHub's hosted arm64 runner (`ubuntu-24.04-arm`, free and
+   unlimited for public repositories), so arm64 builds natively and amd64 builds
+   under QEMU. For each platform it checks the image's platform, labels, stored
+   media types and start-up (`import dmf_cms`) before any push. The media-type
+   check reads the manifest, config and layer types as the local daemon stores
+   them (`release-gate.py check-local-oci`, from `docker save`), and
+   `scripts/publish-to-ghcr.sh` repeats it before it logs in, so a Docker v2
+   image is never pushed. The job then pushes the image through that script under
+   a staging tag (`<VERSION>-arm64`, `<VERSION>-amd64`) and checks the pushed
+   image again. `scripts/publish-index-to-ghcr.sh` joins the two digests into the
+   index at `<VERSION>`, and the gate verifies the index: an OCI index with
+   exactly the two platforms, every child read by digest and required to be an
+   OCI image, and each child carrying the version, revision and source labels.
+   The same verification runs when the index already exists. The job then
+   creates a build-provenance attestation for the index digest, and creates the
+   `v<VERSION>` tag last, as the release App.
 
    A re-run replaces a staging tag with a rebuild of the same verified commit.
    It never replaces the version tag: if the index exists and passes, the push

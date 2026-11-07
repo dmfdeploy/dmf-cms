@@ -277,3 +277,54 @@ def test_build_image_tag_suffix_and_attestation_flags(tmp_path) -> None:
     assert "-t registry.dmf.example.com/dmf-cms:0.1.0 " in log.read_text()
     for bad in ("amd64", "-AMD", "-a b", "--x"):
         assert build("--tag-suffix", bad).returncode != 0
+
+
+def _oci_build(tmp_path, driver_status: str):
+    """Run the real build-image.sh --oci against a fake docker that logs its calls."""
+    repo = make_scratch_repo(tmp_path)
+    env = _use_real_build_image(repo)
+    log = tmp_path / "docker-args"
+    (repo.parent / "fakebin" / "docker").write_text(
+        "#!/usr/bin/env bash\n"
+        f'echo "$@" >> {log}\n'
+        f'[[ "$1" == info ]] && echo \'{driver_status}\'\n'
+        "exit 0\n"
+    )
+    result = subprocess.run(
+        ["bash", str(repo / "scripts" / "build-image.sh"), "--no-hint", "--oci",
+         "--platform", "linux/amd64", "--tag-suffix", "-amd64"],
+        check=False, cwd=repo, capture_output=True, text=True, env=env,
+    )
+    return result, log
+
+
+def test_build_image_oci_asks_buildx_for_oci_media_types(tmp_path) -> None:
+    result, log = _oci_build(tmp_path, '[["driver-type","io.containerd.snapshotter.v1"]]')
+    assert result.returncode == 0, result.stdout + result.stderr
+    build = [line for line in log.read_text().splitlines() if line.startswith("buildx build")]
+    assert len(build) == 1
+    assert "--output type=image,name=registry.dmf.example.com/dmf-cms:0.1.0-amd64,oci-mediatypes=true" in build[0]
+    assert "--platform linux/amd64" in build[0]
+    assert "--provenance=false" in build[0] and "--sbom=false" in build[0]
+    assert "org.opencontainers.image.revision=" in build[0]
+
+
+def test_build_image_oci_refuses_a_daemon_without_the_containerd_image_store(tmp_path) -> None:
+    result, log = _oci_build(tmp_path, '[["Backing Filesystem","extfs"]]')
+    assert result.returncode != 0
+    assert "containerd image store" in result.stderr
+    assert not any(line.startswith("buildx build") for line in log.read_text().splitlines())
+
+
+def test_plain_build_image_still_uses_docker_build(tmp_path) -> None:
+    repo = make_scratch_repo(tmp_path)
+    env = _use_real_build_image(repo)
+    log = tmp_path / "docker-args"
+    (repo.parent / "fakebin" / "docker").write_text(f'#!/usr/bin/env bash\necho "$@" >> {log}\nexit 0\n')
+    result = subprocess.run(
+        ["bash", str(repo / "scripts" / "build-image.sh"), "--no-hint"],
+        check=False, cwd=repo, capture_output=True, text=True, env=env,
+    )
+    assert result.returncode == 0, result.stdout + result.stderr
+    assert log.read_text().startswith("build ")
+    assert "oci-mediatypes" not in log.read_text()

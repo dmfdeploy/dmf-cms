@@ -31,8 +31,15 @@ Subcommands:
                     VERSION and SHA, and its platform with --expect.
     inspect-ghcr    Reports whether the version tag exists as an index, and
                     verifies the whole index when it does.
-    verify-index    Verifies the published index: exactly linux/arm64 and
-                    linux/amd64, and every child labelled. Prints its digest.
+    check-local-oci Checks that one built image, as the local daemon stores
+                    it, has an OCI manifest, config and layers. Run before a
+                    push, because the push sends the stored manifest as it is.
+    check-oci       Checks that one pushed platform image, named by digest, has
+                    an OCI manifest, config and layers.
+    verify-index    Verifies the published index: an OCI index with exactly
+                    linux/arm64 and linux/amd64, every child an OCI image
+                    (manifest, config and layers, read by digest), and every
+                    child labelled. Prints its digest.
     digest          Reads RepoDigests (JSON on stdin) and prints one digest.
 
 Reads use GH_TOKEN. The tag POST uses RELEASE_TAG_TOKEN only, so the release
@@ -43,12 +50,14 @@ from __future__ import annotations
 
 import argparse
 import base64
+import hashlib
 import json
 import os
 import re
 import subprocess
 import sys
-from typing import Any, NamedTuple
+import tarfile
+from typing import Any, BinaryIO, NamedTuple
 
 REPOSITORY = "dmfdeploy/dmf-cms"
 SOURCE_URL = "https://github.com/dmfdeploy/dmf-cms"
@@ -67,10 +76,16 @@ QUALIFIED_ISSUE_RE = re.compile(r"(?<![\w/])dmfdeploy/dmfdeploy#[1-9][0-9]*(?![0
 # platforms. arm64 is primary: the k3s nodes are ARM64. v0.40.1 was published
 # as a single linux/amd64 image, which the nodes cannot run.
 EXPECTED_PLATFORMS = frozenset({"linux/arm64", "linux/amd64"})
-INDEX_MEDIA_TYPES = frozenset(
+# The in-cluster registry stores OCI natively and takes Docker v2 types only
+# through a compatibility mode, so a release publishes OCI types throughout.
+OCI_INDEX = "application/vnd.oci.image.index.v1+json"
+OCI_MANIFEST = "application/vnd.oci.image.manifest.v1+json"
+OCI_CONFIG = "application/vnd.oci.image.config.v1+json"
+OCI_LAYERS = frozenset(
     {
-        "application/vnd.oci.image.index.v1+json",
-        "application/vnd.docker.distribution.manifest.list.v2+json",
+        "application/vnd.oci.image.layer.v1.tar",
+        "application/vnd.oci.image.layer.v1.tar+gzip",
+        "application/vnd.oci.image.layer.v1.tar+zstd",
     }
 )
 DIGEST_RE = re.compile(r"^sha256:[0-9a-f]{64}$")
@@ -572,8 +587,11 @@ def check_index(manifest: Any, images: Any, version: str, sha: str) -> str:
     and a child with a wrong label all fail.
     """
     manifest = _as_dict(manifest, "index manifest")
-    if manifest.get("mediaType") not in INDEX_MEDIA_TYPES:
+    media_type = manifest.get("mediaType")
+    if media_type in (OCI_MANIFEST, "application/vnd.docker.distribution.manifest.v2+json"):
         raise GateError("image is a single manifest, not a multi-platform index")
+    if media_type != OCI_INDEX:
+        raise GateError(f"index media type is {media_type!r}, expected {OCI_INDEX!r}")
     digest = manifest.get("digest")
     if not isinstance(digest, str) or not DIGEST_RE.fullmatch(digest):
         raise GateError("index digest is missing or malformed")
@@ -586,6 +604,11 @@ def check_index(manifest: Any, images: Any, version: str, sha: str) -> str:
         if not isinstance(platform, dict):
             raise GateError("index holds a manifest with no platform")
         listed.append(f"{platform.get('os')}/{platform.get('architecture')}")
+        if child.get("mediaType") != OCI_MANIFEST:
+            raise GateError(
+                f"index child {listed[-1]} has media type {child.get('mediaType')!r}, "
+                f"expected {OCI_MANIFEST!r}"
+            )
     _require_platform_set(listed, "index")
 
     images = _as_dict(images, "index image configs")
@@ -597,6 +620,137 @@ def check_index(manifest: Any, images: Any, version: str, sha: str) -> str:
         check_labels(inner.get("Labels") if isinstance(inner, dict) else None, version, sha)
     _require_platform_set(configs, "child image configs")
     return digest
+
+
+def check_oci_image(manifest: Any) -> None:
+    """One platform image's raw manifest must use OCI types throughout.
+
+    `manifest` is `docker buildx imagetools inspect --raw` for the image. The
+    index join copies no layers and takes its child types from these
+    manifests, so a Docker v2 image here would make a Docker v2 index.
+    """
+    manifest = _as_dict(manifest, "image manifest")
+    if manifest.get("mediaType") != OCI_MANIFEST:
+        raise GateError(f"image media type is {manifest.get('mediaType')!r}, expected {OCI_MANIFEST!r}")
+    config = _as_dict(manifest.get("config"), "image config descriptor")
+    if config.get("mediaType") != OCI_CONFIG:
+        raise GateError(f"image config media type is {config.get('mediaType')!r}, expected {OCI_CONFIG!r}")
+    layers = manifest.get("layers")
+    if not isinstance(layers, list) or not layers:
+        raise GateError("image lists no layers")
+    for layer in layers:
+        media_type = layer.get("mediaType") if isinstance(layer, dict) else None
+        if media_type not in OCI_LAYERS:
+            raise GateError(f"image layer media type is {media_type!r}, expected an OCI layer type")
+
+
+MAX_SAVED_BLOB = 1 << 20  # manifests and configs are small; layers are skipped
+
+
+def load_saved_layout(stream: BinaryIO) -> tuple[Any, dict[str, bytes]]:
+    """Read `docker save` output: the OCI layout index and its small blobs.
+
+    The daemon writes the manifest it stores, with the media types it stores,
+    under blobs/sha256/. Layer blobs are skipped: only the manifest, the
+    config and an index are needed to read the types.
+    """
+    index: Any = None
+    blobs: dict[str, bytes] = {}
+    try:
+        with tarfile.open(fileobj=stream, mode="r|") as archive:
+            for member in archive:
+                if not member.isfile():
+                    continue
+                name = member.name.removeprefix("./")
+                if name == "index.json":
+                    handle = archive.extractfile(member)
+                    index = json.loads(handle.read()) if handle else None
+                elif name.startswith("blobs/sha256/") and member.size <= MAX_SAVED_BLOB:
+                    handle = archive.extractfile(member)
+                    if handle:
+                        blobs["sha256:" + name.rsplit("/", 1)[1]] = handle.read()
+    except (tarfile.TarError, json.JSONDecodeError, OSError) as exc:
+        raise GateError(f"could not read the saved image: {exc}") from exc
+    if index is None:
+        raise GateError("saved image has no index.json")
+    return index, blobs
+
+
+def _saved_blob(descriptor: Any, blobs: dict[str, bytes]) -> tuple[str, Any]:
+    descriptor = _as_dict(descriptor, "saved descriptor")
+    digest = descriptor.get("digest")
+    if not isinstance(digest, str) or not DIGEST_RE.fullmatch(digest):
+        raise GateError("saved descriptor digest is missing or malformed")
+    body = blobs.get(digest)
+    if body is None:
+        raise GateError(f"saved image has no blob {digest}")
+    if "sha256:" + hashlib.sha256(body).hexdigest() != digest:
+        raise GateError(f"saved blob {digest} does not match its digest")
+    try:
+        return str(descriptor.get("mediaType")), json.loads(body)
+    except json.JSONDecodeError as exc:
+        raise GateError(f"saved blob {digest} is not JSON") from exc
+
+
+def check_saved_layout(index: Any, blobs: dict[str, bytes]) -> None:
+    """The one image a save holds must be OCI as stored.
+
+    The descriptor's media type is what `docker push` will send, so it is
+    checked as well as the manifest it names.
+    """
+    index = _as_dict(index, "saved image index")
+    descriptors = index.get("manifests")
+    if not isinstance(descriptors, list) or len(descriptors) != 1:
+        raise GateError("saved image must hold exactly one top-level descriptor")
+    media_type, body = _saved_blob(descriptors[0], blobs)
+    if media_type == OCI_MANIFEST:
+        check_oci_image(body)
+    elif media_type == OCI_INDEX:
+        body = _as_dict(body, "saved index")
+        if body.get("mediaType") != OCI_INDEX:
+            raise GateError(f"saved index media type is {body.get('mediaType')!r}, expected {OCI_INDEX!r}")
+        children = body.get("manifests")
+        if not isinstance(children, list) or not children:
+            raise GateError("saved index lists no manifests")
+        for child in children:
+            child_type, child_body = _saved_blob(child, blobs)
+            if child_type != OCI_MANIFEST:
+                raise GateError(f"saved index child media type is {child_type!r}, expected {OCI_MANIFEST!r}")
+            check_oci_image(child_body)
+    else:
+        raise GateError(f"image is stored as {media_type!r}, expected {OCI_MANIFEST!r}")
+
+
+def check_local_oci(image: str) -> None:
+    """Refuse an image the local daemon stores with Docker v2 media types."""
+    if not image or image.startswith("-"):
+        raise GateError("image reference is empty or looks like an option")
+    proc = subprocess.Popen(["docker", "save", image], stdout=subprocess.PIPE, stderr=subprocess.PIPE)
+    assert proc.stdout is not None and proc.stderr is not None
+    try:
+        index, blobs = load_saved_layout(proc.stdout)
+        proc.stdout.read()  # drain what the tar reader left, so the exit code is real
+    finally:
+        proc.stdout.close()
+        error = proc.stderr.read().decode("utf-8", "replace").strip()
+        proc.stderr.close()
+        status = proc.wait()
+    if status:
+        raise GateError(f"docker save {image} failed: {error[:200]}")
+    check_saved_layout(index, blobs)
+
+
+def check_index_children(manifest: Any) -> None:
+    """Read each child of a published index by digest and require an OCI image.
+
+    The index lists only each child's own type, so the config and layer types
+    are visible only in the child's manifest.
+    """
+    for child in _as_dict(manifest, "index manifest").get("manifests") or []:
+        digest = child.get("digest") if isinstance(child, dict) else None
+        if not isinstance(digest, str) or not DIGEST_RE.fullmatch(digest):
+            raise GateError("index child digest is missing or malformed")
+        check_oci_image(fetch_raw_manifest(f"{IMAGE}@{digest}"))
 
 
 def _require_platform_set(found: list[str], what: str) -> None:
@@ -627,6 +781,17 @@ def fetch_index(ref: str) -> tuple[Any, Any] | None:
     return results[0], results[1]
 
 
+def fetch_raw_manifest(ref: str) -> Any:
+    """Return the raw manifest of a published ref, parsed."""
+    result = _docker(["buildx", "imagetools", "inspect", "--raw", ref])
+    if result.returncode:
+        raise GateError(f"could not safely inspect {ref}: {result.stderr.strip()[:200]}")
+    try:
+        return json.loads(result.stdout)
+    except json.JSONDecodeError as exc:
+        raise GateError(f"{ref} manifest is not JSON") from exc
+
+
 def inspect_existing_image(version: str, sha: str) -> str | None:
     """Return the index digest when the version tag exists and passes, else None.
 
@@ -636,7 +801,9 @@ def inspect_existing_image(version: str, sha: str) -> str | None:
     found = fetch_index(f"{IMAGE}:{version}")
     if found is None:
         return None
-    return check_index(found[0], found[1], version, sha)
+    digest = check_index(found[0], found[1], version, sha)
+    check_index_children(found[0])
+    return digest
 
 
 def pick_digest(repo_digests: Any) -> str:
@@ -723,6 +890,10 @@ def main(argv: list[str] | None = None) -> int:
         if name == "check-labels":
             cmd.add_argument("--platform", required=True, help="actual Os/Architecture of the image")
             cmd.add_argument("--expect", required=True, help="the platform this build must be")
+    local = sub.add_parser("check-local-oci")
+    local.add_argument("--image", required=True, help="a locally built image reference")
+    oci = sub.add_parser("check-oci")
+    oci.add_argument("--digest", required=True, help="digest of one pushed platform image")
     digest = sub.add_parser("digest")
     digest.add_argument("--name", default="digest", help="name of the output to write")
     args = parser.parse_args(argv)
@@ -744,6 +915,14 @@ def main(argv: list[str] | None = None) -> int:
             print(f"tag v{version}: {outcome}")
         elif args.command == "digest":
             _write_output({args.name: pick_digest(json.load(sys.stdin))})
+        elif args.command == "check-local-oci":
+            check_local_oci(args.image)
+            print(f"{args.image}: stored with an OCI manifest, config and layers")
+        elif args.command == "check-oci":
+            if not DIGEST_RE.fullmatch(args.digest):
+                raise GateError("image digest is malformed")
+            check_oci_image(fetch_raw_manifest(f"{IMAGE}@{args.digest}"))
+            print(f"{args.digest}: OCI manifest, config and layers")
         else:
             if not SEMVER_RE.fullmatch(args.version):
                 raise GateError("version must be strict MAJOR.MINOR.PATCH")
@@ -756,7 +935,9 @@ def main(argv: list[str] | None = None) -> int:
                 found = fetch_index(f"{IMAGE}:{args.version}")
                 if found is None:
                     raise GateError(f"{IMAGE}:{args.version} does not exist")
-                _write_output({"index_digest": check_index(found[0], found[1], args.version, args.sha)})
+                digest = check_index(found[0], found[1], args.version, args.sha)
+                check_index_children(found[0])
+                _write_output({"index_digest": digest})
             else:
                 digest = inspect_existing_image(args.version, args.sha)
                 _write_output({"exists": "true" if digest else "false"})
