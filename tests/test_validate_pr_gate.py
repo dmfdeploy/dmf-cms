@@ -14,8 +14,18 @@ spec.loader.exec_module(gate)
 
 REPO = "dmfdeploy/dmf-cms"
 PUSHED = "f" * 40
+# Built from parts so this file holds no real session link.
+LINK = "https://claude.ai/" + "code/session_" + "01Example"
+ULINK = "https://" + "CLAUDE" + ".AI/" + "code/session_" + "01Example"
 GOOD_BODY = "Summary.\n\nRefs dmfdeploy/dmfdeploy#568\n"
 SIGNOFF = "\n\nSigned-off-by: A Dev <dev@example.com>"
+PR_EVENT = {
+    "GITHUB_EVENT_NAME": "pull_request",
+    "GITHUB_REPOSITORY": REPO,
+    "PR_NUMBER": "7",
+    "PR_BODY": GOOD_BODY,
+    "PR_LABELS": "",
+}
 
 
 def commit(subject: str, signoff: bool = True, sha: str = "a" * 40) -> dict[str, Any]:
@@ -34,15 +44,23 @@ def pr(number: int = 7, merged: bool = True, base: str = "main", body: str = GOO
 
 
 class FakeApi:
-    """Serves one page of data per path, then an empty page."""
+    """Serves one page of data per path, then an empty page.
 
-    def __init__(self, prs: list[dict], commits: list[dict]) -> None:
+    `reported` is the commit count the pull request itself reports.
+    """
+
+    def __init__(
+        self, prs: list[dict], commits: list[dict], reported: int | None = None
+    ) -> None:
         self.prs = prs
         self.commits = commits
         self.calls: list[str] = []
+        self.reported = reported
 
     def __call__(self, path: str) -> Any:
         self.calls.append(path)
+        if "page=" not in path:
+            return {"commits": len(self.commits) if self.reported is None else self.reported}
         page = int(path.rsplit("page=", 1)[1])
         if "/commits/" in path and "/pulls" in path:
             data = self.prs
@@ -83,7 +101,10 @@ def test_dco_flags_each_missing_trailer() -> None:
 def test_commitlint_flags_non_conventional_and_skips_merge() -> None:
     api = FakeApi([pr()], [commit("Fix things"), commit("Merge branch x"), commit("feat(a): ok")])
     errors = gate.run_gate("commitlint", push_env(), api)
-    assert errors == ["non-conventional commit subject: Fix things"]
+    assert errors == [
+        f"commit {'a' * 12} has a non-conventional subject; use type(scope): summary"
+    ]
+    assert "Fix things" not in "\n".join(errors)
 
 
 @pytest.mark.parametrize("name", ["dco", "issue-link", "commitlint"])
@@ -133,7 +154,8 @@ def test_pull_request_event_reads_payload_and_given_number() -> None:
     api = FakeApi([], [commit("fix: x")])
     assert gate.run_gate("issue-link", env, api) == []
     assert gate.run_gate("dco", env, api) == []
-    assert all("/pulls/42/commits" in c for c in api.calls)
+    assert all("/pulls/42" in c for c in api.calls)
+    assert any("/pulls/42/commits" in c for c in api.calls)
     env["PR_BODY"] = ""
     assert len(gate.run_gate("issue-link", env, api)) == 1
     env["PR_LABELS"] = "bug no-issue"
@@ -164,3 +186,97 @@ def test_main_exit_codes(monkeypatch: pytest.MonkeyPatch, capsys: pytest.Capture
     assert gate.main(["x", "dco"]) == 1
     assert "::error::no merged pull request" in capsys.readouterr().out
     assert gate.main(["x", "bogus"]) == 2
+
+
+def event_env(event: str) -> dict[str, str]:
+    return dict(PR_EVENT) if event == "pull_request" else push_env()
+
+
+@pytest.mark.parametrize("event", ["pull_request", "push"])
+@pytest.mark.parametrize("name", ["dco", "commitlint"])
+@pytest.mark.parametrize("where", ["subject", "body", "merge"])
+def test_session_link_in_a_commit_fails_with_sha_only(event: str, name: str, where: str) -> None:
+    sha = "c" * 40
+    message = {
+        "subject": f"fix(ci): see {LINK}",
+        "body": f"fix(ci): x\n\nDetails at {LINK}",
+        "merge": f"Merge branch x\n\n{LINK}",
+    }[where]
+    bad = {"sha": sha, "commit": {"message": message + SIGNOFF}}
+    api = FakeApi([pr()], [commit("fix(ci): ok"), bad])
+    errors = gate.run_gate(name, event_env(event), api)
+    assert any(sha[:12] in e and "agent session" in e for e in errors)
+    assert LINK not in "\n".join(errors)
+    assert "claude" not in "\n".join(errors)
+    assert "Details at" not in "\n".join(errors)
+
+
+@pytest.mark.parametrize("event", ["pull_request", "push"])
+@pytest.mark.parametrize("name", ["dco", "commitlint"])
+def test_clean_commits_pass_both_events(event: str, name: str) -> None:
+    api = FakeApi([pr()], [commit("fix(ci): a"), commit("Merge branch x", sha="d" * 40)])
+    assert gate.run_gate(name, event_env(event), api) == []
+
+
+@pytest.mark.parametrize("event", ["pull_request", "push"])
+@pytest.mark.parametrize("name", ["dco", "commitlint"])
+def test_listing_fewer_commits_than_reported_fails_closed(event: str, name: str) -> None:
+    api = FakeApi([pr()], [commit("fix(ci): a")], reported=300)
+    with pytest.raises(gate.GateError, match="checked 1 of 300"):
+        gate.run_gate(name, event_env(event), api)
+
+
+@pytest.mark.parametrize("labels", ["", "no-issue"])
+def test_issue_link_fails_on_session_link_in_description(labels: str) -> None:
+    env = dict(PR_EVENT, PR_BODY=f"{GOOD_BODY}\n{LINK}\n", PR_LABELS=labels)
+    errors = gate.run_gate("issue-link", env, FakeApi([], []))
+    assert errors == ["PR body links to an agent session; remove the link"]
+
+
+def test_issue_link_session_link_on_push_event() -> None:
+    api = FakeApi([pr(body=f"{GOOD_BODY}{LINK}")], [])
+    assert len(gate.run_gate("issue-link", push_env(), api)) == 1
+
+
+def test_issue_link_clean_description_passes() -> None:
+    assert gate.run_gate("issue-link", dict(PR_EVENT), FakeApi([], [])) == []
+
+
+@pytest.mark.parametrize("event", ["pull_request", "push"])
+@pytest.mark.parametrize("name", ["dco", "commitlint"])
+@pytest.mark.parametrize("where", ["subject", "body", "merge"])
+def test_uppercase_hostname_in_a_commit_fails_with_sha_only(event: str, name: str, where: str) -> None:
+    sha = "e" * 40
+    message = {
+        "subject": f"fix(ci): see {ULINK}",
+        "body": f"fix(ci): x\n\nDetails at {ULINK}",
+        "merge": f"Merge branch x\n\n{ULINK}",
+    }[where]
+    bad = {"sha": sha, "commit": {"message": message + SIGNOFF}}
+    api = FakeApi([pr()], [commit("fix(ci): ok"), bad])
+    errors = gate.run_gate(name, event_env(event), api)
+    assert any(sha[:12] in e and "agent session" in e for e in errors)
+    assert ULINK not in "\n".join(errors)
+    assert "Details at" not in "\n".join(errors)
+
+
+@pytest.mark.parametrize("labels", ["", "no-issue"])
+def test_uppercase_hostname_in_description_fails(labels: str) -> None:
+    env = dict(PR_EVENT, PR_BODY=f"{GOOD_BODY}\n{ULINK}\n", PR_LABELS=labels)
+    errors = gate.run_gate("issue-link", env, FakeApi([], []))
+    assert errors == ["PR body links to an agent session; remove the link"]
+
+
+@pytest.mark.parametrize("event", ["pull_request", "push"])
+@pytest.mark.parametrize("name", ["dco", "commitlint"])
+@pytest.mark.parametrize("reported", [None, "3", "", True, 1.5])
+def test_missing_or_non_integer_commit_count_fails_closed(event: str, name: str, reported: Any) -> None:
+    class NoCount(FakeApi):
+        def __call__(self, path: str) -> Any:
+            if "page=" not in path and reported is None:
+                return {}
+            return super().__call__(path)
+
+    api = NoCount([pr()], [commit("fix(ci): a")], reported=reported)
+    with pytest.raises(gate.GateError, match="no usable commit count"):
+        gate.run_gate(name, event_env(event), api)

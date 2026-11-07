@@ -42,6 +42,11 @@ ISSUE_REF_RE = re.compile(
     r"(dmfdeploy/dmfdeploy#[0-9]+|https://github\.com/dmfdeploy/dmfdeploy/issues/[0-9]+)",
     re.IGNORECASE,
 )
+# A link to a private agent session does not belong in a public PR or commit
+# (dmfdeploy/dmfdeploy#838). Built from parts so this file holds no such link.
+# The match is case-insensitive because hostnames are; it targets accidental
+# links, not deliberate obfuscation.
+SESSION_LINK_RE = re.compile("claude" + r"\.ai/code/" + "session", re.IGNORECASE)
 NO_ISSUE_LABEL = "no-issue"
 LOOKUP_ATTEMPTS = 4
 LOOKUP_DELAY_SECONDS = 5
@@ -107,10 +112,35 @@ def find_merged_pr(
 
 
 def pr_commits(api: Api, repo: str, number: int) -> list[dict[str, Any]]:
+    """Return every commit of a pull request, or raise if the list is short.
+
+    The commits endpoint returns at most 250 commits however you page it, so
+    the list is compared with the commit count the pull request reports.
+    """
     commits = paginate(api, f"repos/{repo}/pulls/{number}/commits")
     if not commits:
         raise GateError(f"pull request #{number} has no commits to validate.")
+    expected = api(f"repos/{repo}/pulls/{number}").get("commits")
+    if not isinstance(expected, int) or isinstance(expected, bool):
+        raise GateError(
+            f"pull request #{number} reports no usable commit count; "
+            "cannot verify every commit."
+        )
+    if len(commits) != expected:
+        raise GateError(
+            f"checked {len(commits)} of {expected} commits in pull request "
+            f"#{number}; the commits API cannot list them all. Split the pull request."
+        )
     return commits
+
+
+def check_session_links(commits: list[dict[str, Any]]) -> list[str]:
+    """Name each commit whose message links an agent session, by SHA only."""
+    return [
+        f"commit {c['sha'][:12]} links to an agent session; remove the link from its message"
+        for c in commits
+        if SESSION_LINK_RE.search(c["commit"]["message"])
+    ]
 
 
 def check_dco(commits: list[dict[str, Any]]) -> list[str]:
@@ -129,22 +159,25 @@ def check_commitlint(commits: list[dict[str, Any]]) -> list[str]:
         if subject.startswith("Merge "):
             continue
         if not CONVENTIONAL_RE.match(subject):
-            errors.append(f"non-conventional commit subject: {subject}")
+            errors.append(
+                f"commit {c['sha'][:12]} has a non-conventional subject; "
+                "use type(scope): summary"
+            )
     return errors
 
 
 def check_issue_link(body: str, labels: list[str]) -> list[str]:
-    if NO_ISSUE_LABEL in labels:
-        return []
-    if ISSUE_REF_RE.search(body or ""):
-        return []
-    return [
-        (
-            "PR body must reference its tracking issue FULLY QUALIFIED, e.g. "
-            "'Refs dmfdeploy/dmfdeploy#32'. Bare #N points at THIS repo, not the "
-            "canonical backlog. Trivial change? Add the 'no-issue' label."
-        )
-    ]
+    errors = []
+    if SESSION_LINK_RE.search(body or ""):
+        errors.append("PR body links to an agent session; remove the link")
+    if NO_ISSUE_LABEL in labels or ISSUE_REF_RE.search(body or ""):
+        return errors
+    errors.append(
+        "PR body must reference its tracking issue FULLY QUALIFIED, e.g. "
+        "'Refs dmfdeploy/dmfdeploy#32'. Bare #N points at THIS repo, not the "
+        "canonical backlog. Trivial change? Add the 'no-issue' label."
+    )
+    return errors
 
 
 def run_gate(gate: str, env: dict[str, str], api: Api | None = None) -> list[str]:
@@ -167,12 +200,11 @@ def run_gate(gate: str, env: dict[str, str], api: Api | None = None) -> list[str
 
     if gate == "issue-link":
         return check_issue_link(body, labels)
+    if gate not in {"dco", "commitlint"}:
+        raise GateError(f"unknown gate: {gate}")
     commits = pr_commits(api, repo, number)
-    if gate == "dco":
-        return check_dco(commits)
-    if gate == "commitlint":
-        return check_commitlint(commits)
-    raise GateError(f"unknown gate: {gate}")
+    check = check_dco if gate == "dco" else check_commitlint
+    return check_session_links(commits) + check(commits)
 
 
 def main(argv: list[str]) -> int:
