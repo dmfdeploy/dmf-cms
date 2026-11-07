@@ -551,3 +551,20 @@ describe('ReasonConfirm capacity refusal', () => {
     expect(screen.getByText(/Check your access, then retry/)).toBeTruthy()
   })
 })
+
+describe('ReasonConfirm pending indicator (dmfdeploy/dmfdeploy#861)', () => {
+  it('shows a progress indicator and announces progress only while pending', () => {
+    const props = { title: 'T', description: 'D', pendingLabel: 'Working…', onConfirm: vi.fn(), onCancel: () => {} }
+    const { rerender } = render(<ReasonConfirm {...props} />)
+    expect(screen.queryByTestId('reason-confirm-spinner')).toBeNull()
+    expect(screen.getByRole('status').textContent).toBe('')
+
+    rerender(<ReasonConfirm {...props} pending />)
+    expect(screen.getByTestId('reason-confirm-spinner')).toBeTruthy()
+    expect(screen.getByRole('status').textContent).toBe('In progress')
+    expect(document.querySelector('.throbber-spin')).not.toBeNull()
+
+    rerender(<ReasonConfirm {...props} />)
+    expect(screen.queryByTestId('reason-confirm-spinner')).toBeNull()
+  })
+})
