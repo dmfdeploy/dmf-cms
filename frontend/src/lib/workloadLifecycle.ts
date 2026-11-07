@@ -160,6 +160,16 @@ export interface WorkloadLifecycleInput {
   /** At least one member's observed state is `running` right now. */
   anyMemberObservedRunning?: boolean
   /**
+   * Every member is cleared to run (requested `active`), none is observed
+   * failing, and at least one has no health check result right now (observed
+   * `unknown`). The backend reports `unknown` for a member that has no probe
+   * result in the current read. The read carries no probe history and no
+   * deploy time, so this covers both a member that has not been probed yet
+   * and a member whose probe result is missing now. The flag cannot tell the
+   * two apart and has no time bound.
+   */
+  awaitingHealthResult?: boolean
+  /**
    * The member-state read this input was built from is fresh, error-free,
    * AND complete (umbrella #378a widens umbrella #343's original
    * `!isError && !isFetching`): the grouped endpoint can return HTTP 200
@@ -193,7 +203,8 @@ export interface WorkloadLifecycleInput {
    * itself: that field's meaning must not shift out from under
    * `stageActions`'s purge gate, `LifecycleStrip`'s run-readout count, or
    * `store/headerSlot.ts`'s TRUST binding — none of which this field is
-   * consumed by. Only `classifyHomeState` reads it.
+   * consumed by. Only `classifyHomeState` and `isAwaitingHealthResult`
+   * (workloadFlow.ts) read it.
    */
   membersDataRetained?: boolean
   /**
@@ -453,6 +464,12 @@ export function buildWorkloadLifecycleInput(
     allMembersBootstrapped:
       workload.instances.length > 0 && workload.instances.every((i) => i.requested_state === 'bootstrapped'),
     anyMemberObservedRunning: workload.instances.some((i) => i.observed_state === 'running'),
+    awaitingHealthResult:
+      workload.instances.length > 0 &&
+      workload.instances.every(
+        (i) => i.requested_state === 'active' && (i.observed_state === 'running' || i.observed_state === 'unknown'),
+      ) &&
+      workload.instances.some((i) => i.observed_state === 'unknown'),
     membersDataTrustworthy: isGroupedReadTrustworthy(facts.groupedRead),
     membersDataRetained: isGroupedReadRetained(facts.groupedRead),
     purgeAuthorized: isPurgeAuthorized(facts.userRead),

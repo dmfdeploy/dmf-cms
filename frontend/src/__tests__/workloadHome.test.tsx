@@ -348,6 +348,181 @@ describe('cold entry (dmfdeploy#414)', () => {
     expect(screen.queryByText(/The monitoring surface for this workload/)).toBeNull()
   })
 
+  // dmfdeploy#860: the read carries no probe history and no deploy time, so
+  // "active members, none failing, some with no health check result" covers a
+  // member that has not been probed yet and a member whose result is missing
+  // now. The notice says only that no result exists and names those members.
+  // The usual wait after a deploy is a conditional, never a claim that the
+  // workload is new. Every other cause keeps the general notice.
+  const GENERAL_COPY = "This workload's status isn't clear enough right now to recommend a next step."
+  const NO_RESULT_COPY = /No health check result yet for/
+  const USUAL_WAIT = 'Right after a deploy, this usually takes a minute or two.'
+
+  const memberCatalog = [
+    catalogEntry(),
+    catalogEntry({ key: 'viewer', display_name: 'MXL Viewer' }),
+    ...[1, 2, 3, 4, 5].map((n) => catalogEntry({ key: `fn-${n}`, display_name: `Function ${n}` })),
+  ]
+
+  function expectGeneralNoticeOnly() {
+    expect(screen.queryByText(NO_RESULT_COPY)).toBeNull()
+    expect(screen.queryByText(/usually takes a minute or two/)).toBeNull()
+    expect(screen.queryByRole('link', { name: 'Continue setup' })).toBeNull()
+  }
+
+  it('active members, one running, one with no health check result: names the member, no CTA', async () => {
+    mkFetch({
+      catalog: memberCatalog,
+      workload: workload({
+        lifecycle: 'configure',
+        instances: [
+          instance({ instance: 'crosspoint-1', requested_state: 'active', observed_state: 'running' }),
+          instance({ instance: 'viewer-1', function_key: 'viewer', netbox_id: 2, requested_state: 'active', observed_state: 'unknown', reconcile_pending: true }),
+        ],
+      }),
+    })
+    renderHome()
+    expect(
+      await screen.findByText(`No health check result yet for MXL Viewer. ${USUAL_WAIT}`),
+    ).toBeTruthy()
+    expect(screen.queryByText(GENERAL_COPY)).toBeNull()
+    expect(screen.queryByRole('link', { name: 'Continue setup' })).toBeNull()
+    expect(screen.queryByText(/The monitoring surface for this workload/)).toBeNull()
+  })
+
+  it('an established workload shape (two active members, one running, one unknown): the copy does not claim the workload or the check is new', async () => {
+    mkFetch({
+      catalog: memberCatalog,
+      workload: workload({
+        lifecycle: 'configure',
+        instances: [
+          instance({ instance: 'crosspoint-1', requested_state: 'active', observed_state: 'running' }),
+          instance({ instance: 'crosspoint-2', netbox_id: 2, requested_state: 'active', observed_state: 'unknown' }),
+        ],
+      }),
+    })
+    renderHome()
+    const notice = await screen.findByText(NO_RESULT_COPY)
+    const text = notice.textContent ?? ''
+    expect(text).toContain('MXL Crosspoint')
+    expect(text).not.toMatch(/first/i)
+    expect(text).not.toMatch(/new workload/i)
+    expect(text).not.toMatch(/has not landed/i)
+    expect(text).toContain('Right after a deploy,')
+  })
+
+  it('three members with no result are all named, with no "more"', async () => {
+    mkFetch({
+      catalog: memberCatalog,
+      workload: workload({
+        lifecycle: 'configure',
+        instances: [
+          instance({ instance: 'member-1', function_key: 'fn-1', requested_state: 'active', observed_state: 'running' }),
+          instance({ instance: 'member-2', function_key: 'fn-2', netbox_id: 2, requested_state: 'active', observed_state: 'unknown' }),
+          instance({ instance: 'member-3', function_key: 'fn-3', netbox_id: 3, requested_state: 'active', observed_state: 'unknown' }),
+          instance({ instance: 'member-4', function_key: 'fn-4', netbox_id: 4, requested_state: 'active', observed_state: 'unknown' }),
+        ],
+      }),
+    })
+    renderHome()
+    expect(
+      await screen.findByText(`No health check result yet for Function 2, Function 3 and Function 4. ${USUAL_WAIT}`),
+    ).toBeTruthy()
+  })
+
+  it('more than three members with no result: names three and counts the rest', async () => {
+    mkFetch({
+      catalog: memberCatalog,
+      workload: workload({
+        lifecycle: 'configure',
+        instances: [
+          instance({ instance: 'member-0', requested_state: 'active', observed_state: 'running' }),
+          ...[1, 2, 3, 4, 5].map((n) =>
+            instance({ instance: `member-${n}`, function_key: `fn-${n}`, netbox_id: n + 1, requested_state: 'active', observed_state: 'unknown' }),
+          ),
+        ],
+      }),
+    })
+    renderHome()
+    expect(
+      await screen.findByText(`No health check result yet for Function 1, Function 2, Function 3 and 2 more. ${USUAL_WAIT}`),
+    ).toBeTruthy()
+  })
+
+  it('a member observed failing next to a running one: general notice, never says the wait is normal', async () => {
+    mkFetch({
+      workload: workload({
+        lifecycle: 'configure',
+        instances: [
+          instance({ instance: 'crosspoint-1', requested_state: 'active', observed_state: 'running' }),
+          instance({ instance: 'crosspoint-2', netbox_id: 2, requested_state: 'active', observed_state: 'failing', reconcile_pending: true }),
+          instance({ instance: 'crosspoint-3', netbox_id: 3, requested_state: 'active', observed_state: 'unknown', reconcile_pending: true }),
+        ],
+      }),
+    })
+    renderHome()
+    expect(await screen.findByText(GENERAL_COPY)).toBeTruthy()
+    expectGeneralNoticeOnly()
+  })
+
+  it('a member not yet cleared to run next to a running one (partial bring-up): general notice', async () => {
+    mkFetch({
+      workload: workload({
+        lifecycle: 'configure',
+        instances: [
+          instance({ instance: 'crosspoint-1', requested_state: 'active', observed_state: 'running' }),
+          instance({ instance: 'crosspoint-2', netbox_id: 2, requested_state: 'bootstrapped', observed_state: 'unknown' }),
+        ],
+      }),
+    })
+    renderHome()
+    expect(await screen.findByText(GENERAL_COPY)).toBeTruthy()
+    expectGeneralNoticeOnly()
+  })
+
+  it('a member stopped on intent but still answering probes: general notice', async () => {
+    mkFetch({
+      workload: workload({
+        lifecycle: 'provision',
+        instances: [instance({ requested_state: 'bootstrapped', observed_state: 'running' })],
+      }),
+    })
+    renderHome()
+    expect(await screen.findByText(GENERAL_COPY)).toBeTruthy()
+    expectGeneralNoticeOnly()
+  })
+
+  it('a degraded read of a awaiting-result-shaped workload: general notice', async () => {
+    mkFetch({
+      degraded: true,
+      workload: workload({
+        lifecycle: 'configure',
+        instances: [
+          instance({ instance: 'crosspoint-1', requested_state: 'active', observed_state: 'running' }),
+          instance({ instance: 'crosspoint-2', netbox_id: 2, requested_state: 'active', observed_state: 'unknown', reconcile_pending: true }),
+        ],
+      }),
+    })
+    renderHome()
+    expect(await screen.findByText(GENERAL_COPY)).toBeTruthy()
+    expectGeneralNoticeOnly()
+  })
+
+  it('an unplaced workload (lifecycle=unknown) with awaiting-result-shaped members: general notice', async () => {
+    mkFetch({
+      workload: workload({
+        lifecycle: 'unknown',
+        instances: [
+          instance({ instance: 'crosspoint-1', requested_state: 'active', observed_state: 'running' }),
+          instance({ instance: 'crosspoint-2', netbox_id: 2, requested_state: 'active', observed_state: 'unknown', reconcile_pending: true }),
+        ],
+      }),
+    })
+    renderHome()
+    expect(await screen.findByText(GENERAL_COPY)).toBeTruthy()
+    expectGeneralNoticeOnly()
+  })
+
   it('lifecycle=operate always renders live, regardless of the running-instance count', async () => {
     mkFetch({ workload: workload({ lifecycle: 'operate', instances: [] }) })
     renderHome()

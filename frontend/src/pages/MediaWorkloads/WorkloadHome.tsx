@@ -4,7 +4,7 @@ import { useCatalog, useCurrentUser, useMediaWorkloadsGrouped, useInstanceTopolo
 import type { CatalogEntry, MediaWorkloadInstance } from '../../api/types'
 import { classifyWorkloadForHeaderSlot, buildHeaderSlotRail, useRegisterHeaderSlot } from '../../store/headerSlot'
 import { buildWorkloadLifecycleInput, type WorkloadLifecycleInput } from '../../lib/workloadLifecycle'
-import { FLOW_STEPS, classifyHomeState, type FlowStepId } from '../../lib/workloadFlow'
+import { FLOW_STEPS, classifyHomeState, isAwaitingHealthResult, type FlowStepId } from '../../lib/workloadFlow'
 import { workloadSetupPath } from '../../lib/routes'
 import { topologySourceLabel } from '../../lib/labels'
 import { LOCKED_REASON } from './WorkloadSetup'
@@ -111,6 +111,19 @@ import {
  * legacy-hash sweep above exists to close, this time for the rail's own
  * link rather than an old bookmark).
  */
+
+// The "no health check result" notice names at most this many members, then
+// counts the rest.
+const MAX_NAMED_MEMBERS = 3
+
+// "A", "A and B", "A, B and C", or "A, B, C and 2 more".
+function listMemberNames(names: string[]): string {
+  const shown = names.slice(0, MAX_NAMED_MEMBERS)
+  const more = names.length - shown.length
+  if (more > 0) return `${shown.join(', ')} and ${more} more`
+  if (shown.length < 2) return shown.join('')
+  return `${shown.slice(0, -1).join(', ')} and ${shown[shown.length - 1]}`
+}
 
 // Mirrors the first four designed states WorkloadSetup.tsx uses for this
 // same grouped-inventory read, so a workload that fails to resolve reads
@@ -364,6 +377,11 @@ export default function WorkloadHome() {
   // `workloadForRail`, the exact condition railInput's own ternary tests.
   const input = railInput as WorkloadLifecycleInput
   const homeState = classifyHomeState(input)
+  const awaitingHealthResult = isAwaitingHealthResult(input)
+  // Same display names the member tiles show (nameFor above).
+  const membersWithoutResult = awaitingHealthResult
+    ? instances.filter((i) => i.observed_state === 'unknown').map(nameFor)
+    : []
   // This used to be named/commented as "current
   // confirmed observation", which overclaimed. `homeState === 'live'` is a
   // VALUE, and that value persists through an ordinary in-flight background
@@ -467,18 +485,25 @@ export default function WorkloadHome() {
         dmfdeploy#414 Addendum 2 / umbrella #432: loading and
         a genuine FIRST-load failure are their own branches above (this
         component's own firstLoadFailed/isUnconfigured/isLoading checks) —
-        these two notices cover what classifyHomeState alone can tell apart
+        these notices cover what classifyHomeState alone can tell apart
         once past those: a BACKGROUND refetch that just failed with retained
         data still around (`hasReadError`, specific copy — item 2), or every
         other reason a read cannot be stood behind: a degraded payload, an
         undetermined backend position, or a genuinely ambiguous one (position
         `configure` yet something already observed running — neither
-        "nothing running" nor a trusted Operate position). The two are
-        mutually exclusive so only one notice ever shows at once. Neither
-        carries a CTA — Art. 1: an affordance here would assert a next action
-        the console cannot currently stand behind, in either direction.
+        "nothing running" nor a trusted Operate position). In one of those
+        reads nothing is failing: every member is cleared to run and some
+        have no health check result right now (isAwaitingHealthResult,
+        dmfdeploy#860). That notice names those members and says only that
+        no result exists, plus the usual wait after a deploy as a
+        conditional. The read carries no probe history and no deploy time,
+        so the notice cannot say whether a member is new or has lost its
+        result. No other cause shows that copy. The notices are mutually
+        exclusive so only one ever shows at once. None carries a CTA — Art. 1: an
+        affordance here would assert a next action the console cannot
+        currently stand behind, in either direction.
 
-        Both are NOTICES, not replacements — content persists alongside them
+        All of these are NOTICES, not replacements — content persists alongside them
         (see `showLiveGrid`'s own comment for why a poll in flight no longer
         even reaches this branch at all; what still does is a REAL change:
         an actual error, a degraded payload, or the backend's own position
@@ -492,7 +517,14 @@ export default function WorkloadHome() {
 
       {!hasReadError && data?.stale && <StaleInventoryNotice data={data} />}
 
-      {!hasReadError && !data?.stale && homeState === 'unresolved' && (
+      {!hasReadError && !data?.stale && homeState === 'unresolved' && awaitingHealthResult && (
+        <div className="panel mt-6 border-white/10 px-4 py-3 text-sm text-muted">
+          No health check result yet for {listMemberNames(membersWithoutResult)}. Right after a deploy,
+          this usually takes a minute or two.
+        </div>
+      )}
+
+      {!hasReadError && !data?.stale && homeState === 'unresolved' && !awaitingHealthResult && (
         <div className="panel mt-6 border border-amber-500/20 bg-amber-500/10 px-4 py-3 text-sm text-amber-200">
           This workload&apos;s status isn&apos;t clear enough right now to recommend a next step.
         </div>
