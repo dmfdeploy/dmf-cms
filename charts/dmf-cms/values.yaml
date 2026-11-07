@@ -1,7 +1,9 @@
 replicaCount: 1
 
-# Optional existing Kubernetes ServiceAccount for the CMS pod. The bootstrap
-# setup-receipt role sets this to its narrowly scoped request-writer identity.
+# Optional existing Kubernetes ServiceAccount for the CMS pod. Leave it blank
+# when both setupRequests bindings are set: the pod then runs as the dedicated
+# dmf-cms-setup-requests ServiceAccount that this chart creates, and the chart
+# refuses to render if you also name another account here.
 serviceAccountName: ""
 
 image:
@@ -37,7 +39,11 @@ env:
 
 setupRequests:
   # Both bindings must be supplied by trusted deployment inventory. Blank
-  # values keep the one-shot setup receipt endpoint disabled.
+  # values keep the one-shot setup receipt endpoint disabled, and the chart then
+  # creates no ServiceAccount, Role or RoleBinding for it. When both are set,
+  # the chart creates the dmf-cms-setup-requests ServiceAccount, plus a Role and
+  # RoleBinding in the dmf-setup-requests namespace that grant only create and
+  # get on ConfigMaps. That namespace must already exist.
   envId: ""
   clusterUid: ""
 
