@@ -295,11 +295,11 @@ describe('cold entry (dmfdeploy#414)', () => {
     expect(screen.queryByText(/isn't clear enough right now/)).toBeNull()
   })
 
-  it('lifecycle=configure, nothing observed running, trustworthy: copy says "configuring", not "provision it" (already provisioned)', async () => {
+  it('lifecycle=configure, nothing observed running, a member still bootstrapped: copy says "configuring", not "provision it" (already provisioned)', async () => {
     mkFetch({
       workload: workload({
         lifecycle: 'configure',
-        instances: [instance({ requested_state: 'active', observed_state: 'unknown' })],
+        instances: [instance({ requested_state: 'bootstrapped', observed_state: 'unknown' })],
       }),
     })
     renderHome()
@@ -307,6 +307,7 @@ describe('cold entry (dmfdeploy#414)', () => {
       await screen.findByText("This workload isn't running yet. Continue setup to finish configuring it."),
     ).toBeTruthy()
     expect(screen.getByRole('link', { name: 'Continue setup' })).toBeTruthy()
+    expect(screen.queryByText(/No health check result yet for/)).toBeNull()
   })
 
   it('lifecycle=unknown: honest unresolved state, no affordance asserting setup is the right next action', async () => {
@@ -352,6 +353,8 @@ describe('cold entry (dmfdeploy#414)', () => {
   // "active members, none failing, some with no health check result" covers a
   // member that has not been probed yet and a member whose result is missing
   // now. The notice says only that no result exists and names those members.
+  // It also shows when every member has no result and none is running, in
+  // place of the "Continue setup" link.
   // The usual wait after a deploy is a conditional, never a claim that the
   // workload is new. Every other cause keeps the general notice.
   const GENERAL_COPY = "This workload's status isn't clear enough right now to recommend a next step."
@@ -388,6 +391,47 @@ describe('cold entry (dmfdeploy#414)', () => {
     expect(screen.queryByText(GENERAL_COPY)).toBeNull()
     expect(screen.queryByRole('link', { name: 'Continue setup' })).toBeNull()
     expect(screen.queryByText(/The monitoring surface for this workload/)).toBeNull()
+  })
+
+  it('every member active and none has a health check result yet: names all members, no "Continue setup"', async () => {
+    mkFetch({
+      catalog: memberCatalog,
+      workload: workload({
+        lifecycle: 'configure',
+        instances: [
+          instance({ instance: 'crosspoint-1', requested_state: 'active', observed_state: 'unknown', reconcile_pending: true }),
+          instance({ instance: 'viewer-1', function_key: 'viewer', netbox_id: 2, requested_state: 'active', observed_state: 'unknown', reconcile_pending: true }),
+        ],
+      }),
+    })
+    renderHome()
+    expect(
+      await screen.findByText(`No health check result yet for MXL Crosspoint and MXL Viewer. ${USUAL_WAIT}`),
+    ).toBeTruthy()
+    expect(screen.queryByRole('link', { name: 'Continue setup' })).toBeNull()
+    expect(screen.queryByText(/isn't running yet/)).toBeNull()
+    expect(screen.queryByText(GENERAL_COPY)).toBeNull()
+    expect(screen.queryByText(/The monitoring surface for this workload/)).toBeNull()
+  })
+
+  it('a member still bootstrapped next to members with no result: keeps "Continue setup", shows no wait notice', async () => {
+    mkFetch({
+      catalog: memberCatalog,
+      workload: workload({
+        lifecycle: 'configure',
+        instances: [
+          instance({ instance: 'crosspoint-1', requested_state: 'active', observed_state: 'unknown' }),
+          instance({ instance: 'viewer-1', function_key: 'viewer', netbox_id: 2, requested_state: 'bootstrapped', observed_state: 'unknown' }),
+        ],
+      }),
+    })
+    renderHome()
+    expect(
+      await screen.findByText("This workload isn't running yet. Continue setup to finish configuring it."),
+    ).toBeTruthy()
+    expect(screen.getByRole('link', { name: 'Continue setup' })).toBeTruthy()
+    expect(screen.queryByText(NO_RESULT_COPY)).toBeNull()
+    expect(screen.queryByText(/usually takes a minute or two/)).toBeNull()
   })
 
   it('an established workload shape (two active members, one running, one unknown): the copy does not claim the workload or the check is new', async () => {

@@ -166,7 +166,8 @@ export interface WorkloadLifecycleInput {
    * result in the current read. The read carries no probe history and no
    * deploy time, so this covers both a member that has not been probed yet
    * and a member whose probe result is missing now. The flag cannot tell the
-   * two apart and has no time bound.
+   * two apart and has no time bound. It does not need a running member: it is
+   * also true when every member is `unknown`.
    */
   awaitingHealthResult?: boolean
   /**

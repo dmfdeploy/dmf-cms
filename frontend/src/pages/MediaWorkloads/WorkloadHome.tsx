@@ -51,13 +51,15 @@ import {
  * the retired Operate route rendered), 'setup' (a trusted read reports a
  * real workload short of Operate with nothing observed running — the
  * "isn't running yet" cold-entry state, one sentence, one CTA into the
- * guided flow), or 'unresolved' (every other case — loading, errored,
- * stale, degraded, unknown, or genuinely ambiguous — with NO affordance
- * asserting setup is the right next action). This route NEVER redirects on
- * its own account: an unconditional redirect would guess a destination on a
- * read the console cannot yet stand behind, and would make the same
- * bookmark mean two different things depending on timing — exactly what the
- * operator ruling this file implements rules out. The one exception is the
+ * guided flow, unless every member is requested active and has no health
+ * check result yet, which shows the wait notice instead), or 'unresolved'
+ * (every other case — loading, errored, stale, degraded, unknown, or
+ * genuinely ambiguous — with NO affordance asserting setup is the right
+ * next action). This route NEVER redirects on its own account: an
+ * unconditional redirect would guess a destination on a read the console
+ * cannot yet stand behind, and would make the same bookmark mean two
+ * different things depending on timing — exactly what the operator ruling
+ * this file implements rules out. The one exception is the
  * LEGACY HASH sweep just below, which is a URL-SHAPE correction, not a
  * guess about workload state.
  *
@@ -461,14 +463,17 @@ export default function WorkloadHome() {
     <div className="flex-1 overflow-y-auto p-6">
       <PageHeading>{workload.name}</PageHeading>
 
-      {homeState === 'setup' && (
+      {homeState === 'setup' && !awaitingHealthResult && (
         // dmfdeploy#414 Addendum 2: cold entry — "a real page identity, one
         // sentence, one CTA to setup", gated on the SAME trusted facts as
         // the rest of the page (classifyHomeState). Copy is lifecycle-aware
         // rather than the issue's single example sentence verbatim: a
         // workload already at `configure` HAS been provisioned, so saying
         // "continue setup to provision it" there would misstate what
-        // Provision already did.
+        // Provision already did. dmfdeploy#860: withheld while
+        // isAwaitingHealthResult is true. In a 'setup' read that means every
+        // member is requested `active` and observed `unknown`, and the wait
+        // notice below replaces this link.
         <div className="panel mt-6 border-white/10 px-4 py-6 text-center text-sm">
           <p className="text-text">
             {input.lifecycle === 'provision'
@@ -491,17 +496,19 @@ export default function WorkloadHome() {
         other reason a read cannot be stood behind: a degraded payload, an
         undetermined backend position, or a genuinely ambiguous one (position
         `configure` yet something already observed running — neither
-        "nothing running" nor a trusted Operate position). In one of those
-        reads nothing is failing: every member is cleared to run and some
-        have no health check result right now (isAwaitingHealthResult,
-        dmfdeploy#860). That notice names those members and says only that
-        no result exists, plus the usual wait after a deploy as a
-        conditional. The read carries no probe history and no deploy time,
-        so the notice cannot say whether a member is new or has lost its
-        result. No other cause shows that copy. The notices are mutually
-        exclusive so only one ever shows at once. None carries a CTA — Art. 1: an
-        affordance here would assert a next action the console cannot
-        currently stand behind, in either direction.
+        "nothing running" nor a trusted Operate position). One more read
+        shows the wait notice instead: nothing is failing, every member is
+        cleared to run and some have no health check result right now
+        (isAwaitingHealthResult, dmfdeploy#860). That read is 'unresolved'
+        when a member is running and 'setup' when none is, and the setup
+        link above is withheld in the second case. The notice names the
+        members and says only that no result exists, plus the usual wait
+        after a deploy as a conditional. The read carries no probe history
+        and no deploy time, so the notice cannot say whether a member is new
+        or has lost its result. No other cause shows that copy. The notices
+        are mutually exclusive so only one ever shows at once. None carries a
+        CTA — Art. 1: an affordance here would assert a next action the
+        console cannot currently stand behind, in either direction.
 
         All of these are NOTICES, not replacements — content persists alongside them
         (see `showLiveGrid`'s own comment for why a poll in flight no longer
@@ -517,7 +524,7 @@ export default function WorkloadHome() {
 
       {!hasReadError && data?.stale && <StaleInventoryNotice data={data} />}
 
-      {!hasReadError && !data?.stale && homeState === 'unresolved' && awaitingHealthResult && (
+      {!hasReadError && !data?.stale && awaitingHealthResult && (
         <div className="panel mt-6 border-white/10 px-4 py-3 text-sm text-muted">
           No health check result yet for {listMemberNames(membersWithoutResult)}. Right after a deploy,
           this usually takes a minute or two.
