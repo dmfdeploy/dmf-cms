@@ -1,4 +1,5 @@
 import { useId, useState } from 'react'
+import { Disc3 } from 'lucide-react'
 import { Input, Select, Textarea } from './FormField'
 import { capacityRefusalMessage } from '../lib/capacityRefusal'
 import { useInventoryWritesBlocked } from '../lib/inventoryFreshness'
@@ -69,6 +70,8 @@ export interface ReasonConfirmExtraField {
   onChange: (value: string) => void
   invalid?: boolean
   invalidHint?: string
+  // Locks the field, e.g. while the write it feeds is in flight.
+  disabled?: boolean
   // umbrella #201 WP5: when provided, renders a <select> of these options
   // (e.g. the switch-source target picker) instead of the default free-text
   // <input> — every other consumer (the #239 workload field) omits this and
@@ -159,6 +162,7 @@ export default function ReasonConfirm({
               id={extraFieldId}
               className="mt-1.5"
               value={extraField.value}
+              disabled={extraField.disabled}
               onChange={(e) => extraField.onChange(e.target.value)}
             >
               <option value="" disabled>
@@ -177,6 +181,7 @@ export default function ReasonConfirm({
               className="mt-1.5"
               placeholder={extraField.placeholder}
               value={extraField.value}
+              disabled={extraField.disabled}
               onChange={(e) => extraField.onChange(e.target.value)}
             />
           )}
@@ -215,8 +220,22 @@ export default function ReasonConfirm({
           onClick={() => onConfirm(reason.trim())}
           {...(confirmId ? { 'data-testid': confirmId } : {})}
         >
+          {pending && (
+            // umbrella #861: the label swap alone was the only sign of work in
+            // progress. Same glyph and class as AutomationInProgressNotice, so
+            // the reduced-motion rule in index.css stops it.
+            <span aria-hidden="true" className="throbber-spin mr-1.5 inline-block align-middle">
+              <Disc3 className="h-4 w-4" data-testid="reason-confirm-spinner" />
+            </span>
+          )}
           {pending ? pendingLabel : confirmLabel}
         </button>
+        {/* The live region is always mounted so the change to pending is
+            announced; the button's own text swap is not. It carries its own
+            wording so the pending label stays unique on the page. */}
+        <span role="status" className="sr-only">
+          {pending ? 'In progress' : ''}
+        </span>
         <button className="btn btn-secondary btn-sm" onClick={onCancel} disabled={pending}>
           Cancel
         </button>

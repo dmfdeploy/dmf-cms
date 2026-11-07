@@ -126,6 +126,8 @@ export default function ConfigureStage({
   )
 }
 
+type SourceOption = { value: string; label: string }
+
 function InstanceSwitchControl({
   instance,
   hasTopology,
@@ -152,6 +154,7 @@ function InstanceSwitchControl({
   const recordAwxWrite = useActivityStore((s) => s.recordAwxWrite)
   const [arming, setArming] = useState(false)
   const [target, setTarget] = useState('')
+  const [submitted, setSubmitted] = useState<{ target: string; options: SourceOption[] } | null>(null)
 
   useEffect(() => onPendingChange(switchMutation.isPending), [switchMutation.isPending, onPendingChange])
 
@@ -172,9 +175,20 @@ function InstanceSwitchControl({
   // regardless of isError (observed_at goes stale on its own), but the
   // withdraw-on-error contract should read the same everywhere this
   // topology shape is consumed.
-  if (topology.failed || !topology.data || !Array.isArray(topology.data.sources)) return null
+  // umbrella #861: while the switch request is in flight the panel renders
+  // from what the operator submitted, so a poll that errors, returns bad
+  // data or leaves no other source cannot remove the pending indicator or
+  // change the target shown, and the pre-submit "unknown or stale" line
+  // stays hidden. `frozen` is null whenever nothing is pending, so the checks
+  // below behave as before then.
+  const pending = switchMutation.isPending
+  const frozen = pending ? submitted : null
+  const live =
+    topology.failed || !topology.data || !Array.isArray(topology.data.sources) ? null : topology.data
+  if (!live && !frozen) return null
 
-  const { sources, active_source, provenance, observed_at } = topology.data
+  const sources = live?.sources ?? []
+  const { active_source, provenance, observed_at } = live ?? {}
   const isObservedFresh =
     provenance === 'observed-flow' &&
     !!active_source &&
@@ -182,9 +196,11 @@ function InstanceSwitchControl({
     Date.now() - new Date(observed_at).getTime() < OBSERVED_SOURCE_STALE_MS
 
   const otherSources = isObservedFresh ? sources.filter((s) => s.id !== active_source) : []
-  if (isObservedFresh && otherSources.length === 0) return null
+  if (!frozen && isObservedFresh && otherSources.length === 0) return null
 
   const result = switchMutation.data
+
+  const targetOffered = otherSources.some((s) => s.id === target)
 
   const submit = (reason: string) => {
     if (!target) return
@@ -199,6 +215,10 @@ function InstanceSwitchControl({
     } catch {
       return
     }
+    setSubmitted({
+      target,
+      options: otherSources.map((s) => ({ value: s.id, label: `${s.id} (${s.pattern})` })),
+    })
     onJobStart()
     switchMutation.mutate(
       { instance, sourceInstance: target, reason },
@@ -265,7 +285,7 @@ function InstanceSwitchControl({
           stale under the operator mid-form, Confirm goes dead — and a dead
           Confirm with no stated reason is the honesty gap, not the block
           itself (Art. 1). */}
-      {!isObservedFresh && (
+      {!frozen && !isObservedFresh && (
         <p className="mt-1 text-[11px] text-amber-200/60">{OBSERVED_SOURCE_UNKNOWN_MESSAGE}</p>
       )}
       {!arming && isObservedFresh && !allowed && !result && (
@@ -282,7 +302,7 @@ function InstanceSwitchControl({
             description="Coarse reconfigure/reconnect actuator — not a live IS-05 switch. Re-points this viewer to a different source and is recorded in the audit trail with your reason."
             confirmLabel="Confirm switch"
             pendingLabel="Switching…"
-            pending={switchMutation.isPending}
+            pending={pending}
             error={switchMutation.isError ? switchMutation.error : undefined}
             errorMessage={SWITCH_REQUEST_FAILED_TEXT}
             onConfirm={submit}
@@ -294,7 +314,7 @@ function InstanceSwitchControl({
             extraField={{
               label: 'Target source',
               placeholder: 'Select a source…',
-              value: target,
+              value: frozen ? frozen.target : target,
               // umbrella #402: `topology` now polls while armed (it didn't
               // before), so `target` — plain state, not re-derived from
               // `otherSources` — can point at a source that a poll landing
@@ -309,13 +329,23 @@ function InstanceSwitchControl({
               // submit()'s own freshness re-check, both out of scope here —
               // this only widens the existing Confirm-disable condition to a
               // fact already available at render time.
-              invalid: target === '' || !isObservedFresh || !otherSources.some((s) => s.id === target),
+              //
+              // umbrella #861: none of the above applies once the request is
+              // in flight. The select is disabled and shows the submitted
+              // target from the options shown at submit. After the request
+              // settles with an error the live check applies again: if the
+              // control is still rendered, a target that became active or
+              // vanished mid-request shows the hint and disables Confirm.
+              // If the early returns above withdraw the control (the poll
+              // failed, or the target is now the only source), nothing shows.
+              invalid: frozen ? false : target === '' || !isObservedFresh || !targetOffered,
               invalidHint:
-                target !== '' && isObservedFresh && !otherSources.some((s) => s.id === target)
+                !frozen && target !== '' && isObservedFresh && !targetOffered
                   ? 'Selected source is no longer available — choose again.'
                   : undefined,
+              disabled: pending,
               onChange: setTarget,
-              options: otherSources.map((s) => ({ value: s.id, label: `${s.id} (${s.pattern})` })),
+              options: frozen ? frozen.options : otherSources.map((s) => ({ value: s.id, label: `${s.id} (${s.pattern})` })),
             }}
           />
         </div>
