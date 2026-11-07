@@ -604,6 +604,9 @@ export function classifyForwardExit(input: WorkloadLifecycleInput): ForwardExit 
  *                   affordance asserting setup is the right next action —
  *                   inventing one here would be exactly the sometimes-false
  *                   success affordance dmfdeploy#412 exists to rule out.
+ *                   In one of these causes nothing is failing, and
+ *                   isAwaitingHealthResult (below) picks it out so Home can
+ *                   say which members have no health check result.
  *
  * "Trusted" reused classifyForwardExit's and store/headerSlot.ts's TRUST
  * side table's notion of trust (WorkloadLifecycleInput.membersDataTrustworthy)
@@ -645,4 +648,33 @@ export function classifyHomeState(input: WorkloadLifecycleInput): HomeState {
   // 'provision' or 'configure': a retained record short of Operate.
   if (input.anyMemberObservedRunning) return 'unresolved'
   return 'setup'
+}
+
+/**
+ * dmfdeploy/dmfdeploy#860: one 'unresolved' cause, defined by all of these.
+ * The retained read (`membersDataRetained`: error-free, configured and not
+ * degraded, even while a background poll is in flight) puts the workload at
+ * `configure` with something already observed running (the ambiguous case
+ * above). Every member is requested `active`, none is observed failing, and
+ * at least one has no health check result right now (`awaitingHealthResult`,
+ * built in workloadLifecycle.ts).
+ *
+ * The read carries no probe history and no deploy time. This state covers a
+ * member that has not been probed yet and a member whose probe result is
+ * missing now, and it cannot tell the two apart. A caller can say only that
+ * no result exists for those members.
+ *
+ * This returns false for every other 'unresolved' cause. A degraded or
+ * errored read and an unplaced workload (`unknown`) fail the retained or
+ * `configure` check. A member observed failing, a member still bootstrapped
+ * and a member stopped on intent but still answering probes each fail
+ * `awaitingHealthResult`.
+ */
+export function isAwaitingHealthResult(input: WorkloadLifecycleInput): boolean {
+  return (
+    classifyHomeState(input) === 'unresolved' &&
+    input.membersDataRetained === true &&
+    input.lifecycle === 'configure' &&
+    input.awaitingHealthResult === true
+  )
 }
