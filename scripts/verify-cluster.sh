@@ -45,31 +45,37 @@
 #                         the digest check below — deliberately independent of
 #                         DMF_CMS_REGISTRY, which points at the cluster-local
 #                         Zot mirror, not the GHCR source of truth.
-#   DMF_CMS_IMAGE_ARCH    Platform architecture to verify the digest against
+#   DMF_CMS_IMAGE_ARCH    Architecture every checked pod's node must report
 #                         (default: arm64 — every DMF env today is Hetzner
 #                         CAX21 or the aliyun sandbox lane, both arm64).
-#                         Override if a non-arm64 env is ever added; the
-#                         script does not detect the control node's arch
-#                         for you.
+#                         The script reads each pod's node platform from
+#                         the cluster and fails when a node's architecture
+#                         differs from this value.
 #
 # What this script checks, in order:
 #   1. The deployment spec's image *tag* matches local VERSION (necessary,
 #      not sufficient — this is the tag the cluster was told to run, not
 #      proof of what's actually running).
 #   2. The rollout has completed.
-#   3. The running pod's *resolved* image digest
-#      (.status.containerStatuses[0].imageID — what was actually pulled,
-#      not the requested tag) matches the DMF_CMS_IMAGE_ARCH platform child
-#      digest of the published GHCR index for that tag. This is the real
-#      proof: a tag match only says the right string was requested.
+#   3. For every pod the deployment's selector returns (except finished
+#      pods, phase Succeeded or Failed), the dmf-cms container is currently
+#      running and its *resolved* image digest
+#      (.status.containerStatuses[].imageID — what was actually pulled,
+#      not the requested tag) matches the published GHCR digest for that
+#      tag. If the tag is an index, the pod's digest must equal the index
+#      digest (the sha256 of the raw bytes `skopeo inspect --raw` returns)
+#      or the digest of the one index manifest for the pod's node
+#      (.status.nodeInfo operatingSystem and architecture). If the tag is
+#      a single-platform manifest, the pod's digest must equal that
+#      manifest's digest and the image config's os and architecture must
+#      equal the node's. Every pod's node architecture must also equal
+#      DMF_CMS_IMAGE_ARCH. A tag match only says the right string was
+#      requested; this check does not.
 #   4. /healthz returns 200.
 #
-# Known limitation: the digest check reads exactly one pod
-# (`.items[0]`) matching the deployment's selector. charts/dmf-cms sets
-# replicaCount: 1 by default, so this is exhaustive for the shipped chart;
-# if an operator ever scales a deployment out by hand, a stale extra
-# replica would not be caught by this check alone — `kubectl get pods -o
-# wide` on the control node is still the authority for that case.
+# Assumption: the container runtime selects the index manifest for the
+# node's own platform (the default). A runtime configured to pull another
+# platform is out of scope.
 
 set -euo pipefail
 
@@ -173,9 +179,9 @@ ssh "${SSH_KEY_OPTS[@]+"${SSH_KEY_OPTS[@]}"}" -o ConnectTimeout=10 "$CONTROL_NOD
     "sudo kubectl --kubeconfig /etc/rancher/k3s/k3s.yaml -n $NAMESPACE rollout status deploy/$DEPLOYMENT --timeout=30s"
 
 # Digest check — the tag match above only proves the right string was
-# requested. This proves the right bits are what's actually running: the
-# pod's *resolved* imageID against the arm64 child digest of the exact
-# index published to GHCR. A tag match is not acceptance on its own.
+# requested. This compares each pod's *resolved* imageID with the digest
+# published to GHCR for this tag, and the node's platform with the
+# published manifest. A tag match is not acceptance on its own.
 echo ""
 echo "Digest check..."
 
@@ -221,76 +227,150 @@ print(",".join(f"{k}={v}" for k, v in sorted(labels.items())))
     exit 1
 }
 
-POD_IMAGE_ID="$(
+# The dmf-cms container's name in charts/dmf-cms/templates/deployment.yaml.
+CONTAINER_NAME="dmf-cms"
+
+PODS_JSON="$(
     ssh "${SSH_KEY_OPTS[@]+"${SSH_KEY_OPTS[@]}"}" -o ConnectTimeout=10 "$CONTROL_NODE" \
-        "sudo kubectl --kubeconfig /etc/rancher/k3s/k3s.yaml -n $NAMESPACE get pods -l '$POD_SELECTOR' -o jsonpath='{.items[0].status.containerStatuses[0].imageID}'"
+        "sudo kubectl --kubeconfig /etc/rancher/k3s/k3s.yaml -n $NAMESPACE get pods -l '$POD_SELECTOR' -o json"
 )"
-
-if [[ -z "$POD_IMAGE_ID" ]]; then
-    echo "✗ could not read imageID from a running pod (selector: $POD_SELECTOR)" >&2
-    exit 1
-fi
-
-# imageID is typically "<registry>/<repo>@sha256:<digest>"; keep only the
-# digest. If there's no '@' this is a no-op and the raw value is compared
-# as-is, which still fails loud below instead of silently passing.
-POD_DIGEST="${POD_IMAGE_ID##*@}"
-
-echo "Pod imageID:       $POD_IMAGE_ID"
+NODES_JSON="$(
+    ssh "${SSH_KEY_OPTS[@]+"${SSH_KEY_OPTS[@]}"}" -o ConnectTimeout=10 "$CONTROL_NODE" \
+        "sudo kubectl --kubeconfig /etc/rancher/k3s/k3s.yaml get nodes -o json"
+)"
 
 if ! command -v skopeo >/dev/null 2>&1; then
     echo "✗ skopeo not found — required for the digest check (brew install skopeo)" >&2
     exit 1
 fi
 
-GHCR_MANIFEST_JSON="$(skopeo inspect --raw "docker://${GHCR_IMAGE}:${VERSION}")" || {
+# Keep the raw bytes in a file: the index digest is the sha256 of exactly
+# what the registry served, and `$(...)` would strip trailing newlines.
+GHCR_MANIFEST_FILE="$(mktemp)"
+trap 'rm -f "$GHCR_MANIFEST_FILE"' EXIT
+
+skopeo inspect --raw "docker://${GHCR_IMAGE}:${VERSION}" > "$GHCR_MANIFEST_FILE" || {
     echo "✗ could not read the published manifest for ${GHCR_IMAGE}:${VERSION} (network / registry issue?)" >&2
     exit 1
 }
 
-# Assumes `skopeo inspect --raw` returns a multi-platform OCI/Docker index
-# (a top-level "manifests" array) rather than a single-platform manifest —
-# true for every dmf-cms release published so far (spot-checked 0.18.0,
-# 0.19.0, 0.20.0: all publish as an index with an arm64 platform entry
-# plus a buildx attestation-manifest sibling). If the publish pipeline
-# ever changes to emit a bare single-platform manifest instead, this will
-# fail loud below rather than silently mismatch — but the fix at that
-# point is to also accept a manifest without "manifests" and treat its
-# own resolved digest as the expected one, which this does not do today.
-EXPECTED_DIGEST="$(
-    python3 -c '
-import json, sys
+# One step checks every pod. The published manifest is either an index (a
+# "manifests" array) or a single-platform manifest. For each pod that has
+# not finished (phase other than Succeeded or Failed):
+#   - the dmf-cms container must be currently running, and its imageID
+#     digest is the one compared;
+#   - its node's architecture must equal DMF_CMS_IMAGE_ARCH;
+#   - index: the index must list exactly one manifest for the node's os and
+#     architecture, and the pod's digest must equal the index digest (the
+#     sha256 of the raw bytes) or that manifest's digest;
+#   - single manifest: the pod's digest must equal the manifest's digest,
+#     and the image config's os and architecture (`skopeo inspect` of
+#     that digest) must equal the node's.
+# Any parse error or failed pod exits 1.
+python3 -c '
+import hashlib, json, subprocess, sys
 
-data = json.loads(sys.argv[1])
-arch = sys.argv[2]
-matches = [
-    m["digest"] for m in data.get("manifests", [])
-    if m.get("platform", {}).get("architecture") == arch
-]
-if not matches:
+pods_json, nodes_json, manifest_file, container, want_arch, image_ref, image_repo = sys.argv[1:8]
+
+
+def err(msg):
+    print("✗ " + msg, file=sys.stderr)
+
+
+try:
+    pods = json.loads(pods_json)["items"]
+    nodes = {
+        n["metadata"]["name"]: n["status"]["nodeInfo"]
+        for n in json.loads(nodes_json)["items"]
+    }
+    raw = open(manifest_file, "rb").read()
+    manifest = json.loads(raw)
+    index_digest = "sha256:" + hashlib.sha256(raw).hexdigest()
+    children = manifest.get("manifests")
+except (ValueError, KeyError, TypeError, OSError) as e:
+    err("could not parse the pods, nodes or published manifest: %r" % e)
     sys.exit(1)
-print(matches[0])
-' "$GHCR_MANIFEST_JSON" "$IMAGE_ARCH"
-)" || {
-    echo "✗ no $IMAGE_ARCH manifest found in the published index ${GHCR_IMAGE}:${VERSION}" >&2
-    echo "  (expected a multi-arch OCI/Docker manifest list with a platform entry for $IMAGE_ARCH;" >&2
-    echo "  if the publish pipeline now emits a single-platform manifest instead, this check needs updating)" >&2
-    exit 1
-}
 
-echo "GHCR $IMAGE_ARCH digest: $EXPECTED_DIGEST"
+kind = "index" if children is not None else "single"
+print("GHCR %s digest: %s" % (kind, index_digest))
 
-if [[ "$POD_DIGEST" != "$EXPECTED_DIGEST" ]]; then
-    echo ""
-    echo "✗ DIGEST MISMATCH: the running pod is not the $IMAGE_ARCH image published to GHCR."
-    echo "  Pod imageID:      $POD_IMAGE_ID"
-    echo "  Expected (GHCR):  ${GHCR_IMAGE}:${VERSION} ($IMAGE_ARCH) = $EXPECTED_DIGEST"
-    echo "  A tag match is not proof — re-run the release flow and re-verify."
-    echo "  See dmf-cms/docs/DEVELOPMENT-AND-BUILD-RULES.md §4 and §7."
-    exit 1
-fi
 
-echo "✓ digest matches (running pod is the $IMAGE_ARCH image published to GHCR)"
+def single_platform():
+    p = subprocess.run(["skopeo", "inspect", "docker://%s@%s" % (image_repo, index_digest)],
+                       capture_output=True, text=True)
+    if p.returncode != 0:
+        raise ValueError("skopeo inspect failed for %s@%s" % (image_repo, index_digest))
+    info = json.loads(p.stdout)
+    return info["Os"], info["Architecture"]
+
+
+failed = False
+checked = 0
+for pod in pods:
+    name = pod["metadata"]["name"]
+    if pod.get("status", {}).get("phase") in ("Succeeded", "Failed"):
+        continue
+    checked += 1
+    try:
+        node = pod["spec"]["nodeName"]
+        info = nodes[node]
+        node_os, node_arch = info["operatingSystem"], info["architecture"]
+        print("Pod:               %s on %s (%s/%s)" % (name, node, node_os, node_arch))
+        status = [c for c in pod["status"]["containerStatuses"] if c["name"] == container]
+        if not status:
+            raise ValueError("no status for container " + container)
+        if not isinstance(status[0].get("state", {}).get("running"), dict):
+            err("pod %s: container %s is not running (state: %s)"
+                % (name, container, ",".join(k for k, v in status[0].get("state", {}).items() if v is not None) or "unknown"))
+            failed = True
+            continue
+        image_id = status[0]["imageID"]
+        digest = image_id.rsplit("@", 1)[-1]
+        print("Pod imageID:       " + image_id)
+        if node_arch != want_arch:
+            err("node %s runs %s but DMF_CMS_IMAGE_ARCH is %s" % (node, node_arch, want_arch))
+            failed = True
+            continue
+        if kind == "index":
+            kids = [
+                m["digest"] for m in children
+                if m.get("platform", {}).get("os") == node_os
+                and m.get("platform", {}).get("architecture") == node_arch
+            ]
+            if len(kids) != 1:
+                err("the published index %s lists %d %s/%s manifests, expected 1"
+                    % (image_ref, len(kids), node_os, node_arch))
+                failed = True
+                continue
+            print("GHCR %s/%s digest: %s" % (node_os, node_arch, kids[0]))
+            accepted = (index_digest, kids[0])
+        else:
+            published = single_platform()
+            if published != (node_os, node_arch):
+                err("the published manifest %s is %s/%s, not %s/%s"
+                    % ((image_ref,) + published + (node_os, node_arch)))
+                failed = True
+                continue
+            accepted = (index_digest,)
+    except (ValueError, KeyError, TypeError) as e:
+        err("pod %s: could not read its status or platform: %r" % (name, e))
+        failed = True
+        continue
+    if digest in accepted:
+        print("✓ digest matches (pod %s)" % name)
+    else:
+        err("DIGEST MISMATCH: pod %s is not running the image published to GHCR." % name)
+        print("  Pod imageID:      " + image_id, file=sys.stderr)
+        print("  Expected (GHCR):  %s = %s" % (image_ref, " or ".join(accepted)), file=sys.stderr)
+        print("  A tag match is not proof — re-run the release flow and re-verify.", file=sys.stderr)
+        print("  See dmf-cms/docs/DEVELOPMENT-AND-BUILD-RULES.md §4 and §7.", file=sys.stderr)
+        failed = True
+
+if checked == 0:
+    err("no pod matches the deployment selector")
+    sys.exit(1)
+sys.exit(1 if failed else 0)
+' "$PODS_JSON" "$NODES_JSON" "$GHCR_MANIFEST_FILE" "$CONTAINER_NAME" "$IMAGE_ARCH" "${GHCR_IMAGE}:${VERSION}" "$GHCR_IMAGE"
 
 # Healthz
 echo ""
