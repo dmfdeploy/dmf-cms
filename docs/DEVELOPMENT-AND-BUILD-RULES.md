@@ -545,10 +545,18 @@ org.opencontainers.image.source    = https://github.com/dmfdeploy/dmf-cms
 `docker inspect <image>` exposes them; useful for forensics when a pod is on
 a tag you don't recognize.
 
-### Signing (deferred)
+### Provenance and signing
 
-Cosign signing is not yet wired. When it is, `build-image.sh` gains a `cosign sign`
-step after `docker push` and the cluster gates pulls on a verified signature.
+Every release carries a GitHub build-provenance attestation on its index digest
+(see the release workflow above). It is a signed record of the workflow, commit and
+repository that built that digest. To check a release, run
+`gh attestation verify oci://ghcr.io/dmfdeploy/dmf-cms:<VERSION> --repo dmfdeploy/dmf-cms`.
+
+The cluster does not check signatures or attestations when it pulls an image. A
+separate cosign signature would add nothing until something enforces it, so the
+release does not sign with cosign. For a lane that must refuse unverified images,
+both stay open: a cosign signature, and an admission policy that checks the
+signature or the attestation at pull time.
 
 ---
 
