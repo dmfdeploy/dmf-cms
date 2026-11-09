@@ -12,7 +12,7 @@ import { useActivityStore } from '../../../store/activity'
 import ReasonConfirm from '../../../components/ReasonConfirm'
 import { requestFailureText } from '../../../lib/requestFailureText'
 import { isValidWorkloadSlug } from '../../../lib/workloadSlug'
-import type { CatalogEntry, ClearForDeploymentResult, MediaWorkload } from '../../../api/types'
+import type { CatalogEntry, ClearForDeploymentResult, MediaWorkload, Operation } from '../../../api/types'
 import type { StageActionId, StageState } from '../../../lib/workloadLifecycle'
 import ClearForDeployment from '../ClearForDeployment'
 import { lookupState, requestedBadge, requestedLabel, REQUESTED_TITLE } from '../stateBadges'
@@ -92,7 +92,15 @@ export default function ProvisionStage({
   // unhandled error path (verbatim the failure mode PlanStage.tsx's own
   // docstring names, already fixed there and in CreateWorkload.tsx).
   // (umbrella #385) retrofitted onto settleQuery.
-  const { data: catalogData, loading: catalogLoading, failed: catalogFailed } = settleQuery(useCatalog())
+  //
+  // `awaitingKeys` are the entries whose deploy finished but whose inventory
+  // record may not read `active` yet: while any does, the catalog is polled
+  // (see useCatalog). It is component state on purpose, so a remount starts
+  // from the catalog alone.
+  const [awaitingKeys, setAwaitingKeys] = useState<string[]>([])
+  const { data: catalogData, loading: catalogLoading, failed: catalogFailed } = settleQuery(
+    useCatalog({ awaitingDeploy: awaitingKeys }),
+  )
   // (umbrella #385) retrofitted
   // onto settleQuery — behavior-preserving (user is only ever read via
   // `?? 'unknown'` audit-trail fallbacks below, which already degrade
@@ -149,6 +157,19 @@ export default function ProvisionStage({
 
   const entries = (catalogData?.entries ?? []).filter((e) => functionKeys.includes(e.key))
 
+  // A key leaves the list the moment its own entry reads `active`. Clearing
+  // the key then, not just hiding the text, keeps a later teardown of the same
+  // entry from reading as a deploy still unconfirmed.
+  const isAwaitingInventory = (key: string) =>
+    awaitingKeys.includes(key) && (catalogData?.entries.some((e) => e.key === key && e.lifecycle !== 'active') ?? false)
+  useEffect(() => {
+    if (!catalogData) return
+    setAwaitingKeys((prev) => {
+      const next = prev.filter((key) => catalogData.entries.some((e) => e.key === key && e.lifecycle !== 'active'))
+      return next.length === prev.length ? prev : next
+    })
+  }, [catalogData, awaitingKeys])
+
   const allowed = actions.includes('deploy')
 
   // "One btn-primary in source" proves nothing — this stage maps one
@@ -183,7 +204,7 @@ export default function ProvisionStage({
   // why removing it would be its own regression), not to pick which entry to
   // promote.
   const eligibleDeployEntries = allowed && !busy
-    ? entries.filter((e) => e.lifecycle !== 'active' && !activeTrack(track[e.key]))
+    ? entries.filter((e) => e.lifecycle !== 'active' && !activeTrack(track[e.key]) && !isAwaitingInventory(e.key))
     : []
 
   // umbrella #432 §D1: whether THIS stage shows a top-level primary control
@@ -258,8 +279,18 @@ export default function ProvisionStage({
     }))
   }
 
-  const handleJobComplete = (key: string) => {
+  // A finished deploy is not yet a deployed entry: the inventory has to
+  // confirm it. A failed job releases only its own entry.
+  const markDeployOutcome = (key: string, succeeded: boolean) => {
+    setAwaitingKeys((prev) => {
+      const others = prev.filter((k) => k !== key)
+      return succeeded ? [...others, key] : others
+    })
+  }
+
+  const handleJobComplete = (key: string, jobStatus: string) => {
     setTrack((prev) => ({ ...prev, [key]: EMPTY_TRACK }))
+    markDeployOutcome(key, jobStatus === 'successful')
     void queryClient.invalidateQueries({ queryKey: ['media-workloads-grouped'] })
     void queryClient.invalidateQueries({ queryKey: ['catalog'] })
   }
@@ -276,8 +307,9 @@ export default function ProvisionStage({
   // deploy that errors out from a normally-observed `error` state; this
   // isn't a new standard for the stage, just closing the same gap for the
   // states `error` alone didn't cover).
-  const handleOpTerminal = (key: string) => {
+  const handleOpTerminal = (key: string, operation: Operation) => {
     setTrack((prev) => ({ ...prev, [key]: EMPTY_TRACK }))
+    markDeployOutcome(key, operation.state === 'run_complete')
     void queryClient.invalidateQueries({ queryKey: ['media-workloads-grouped'] })
     void queryClient.invalidateQueries({ queryKey: ['catalog'] })
   }
@@ -340,8 +372,9 @@ export default function ProvisionStage({
               }}
               onOpLaunched={(jobId) => setTrack((prev) => ({ ...prev, [entry.key]: { jobId, opId: null } }))}
               onOpError={() => setTrack((prev) => ({ ...prev, [entry.key]: EMPTY_TRACK }))}
-              onOpTerminal={() => handleOpTerminal(entry.key)}
-              onJobComplete={() => handleJobComplete(entry.key)}
+              awaitingInventory={isAwaitingInventory(entry.key)}
+              onOpTerminal={(operation) => handleOpTerminal(entry.key, operation)}
+              onJobComplete={(status) => handleJobComplete(entry.key, status)}
             />
           ))}
         </div>
@@ -444,6 +477,7 @@ function ProvisionEntry({
   onOpError,
   onOpTerminal,
   onJobComplete,
+  awaitingInventory,
 }: {
   entry: CatalogEntry
   workloadSlug: string
@@ -458,16 +492,19 @@ function ProvisionEntry({
   onDismissError: () => void
   onOpLaunched: (jobId: number) => void
   onOpError: () => void
-  /** umbrella #403: see ProvisionStage's handleOpTerminal — this entry
-   *  doesn't need the settled operation itself, only that one reached. */
-  onOpTerminal: () => void
-  onJobComplete: () => void
+  /** See ProvisionStage's handleOpTerminal. */
+  onOpTerminal: (operation: Operation) => void
+  /** `status` is the job's final status. */
+  onJobComplete: (status: string) => void
+  // The deploy job finished but the inventory does not list the entry as
+  // active yet, so offering Deploy again would act on a stale record.
+  awaitingInventory: boolean
 }) {
   const [arming, setArming] = useState(false)
   const [workload, setWorkload] = useState(workloadSlug)
   const workloadInvalid = workload.trim() !== '' && !isValidWorkloadSlug(workload.trim())
   const inFlight = track.jobId !== null || track.opId !== null
-  const offered = allowed && !inFlight && entry.lifecycle !== 'active'
+  const offered = allowed && !inFlight && !awaitingInventory && entry.lifecycle !== 'active'
 
   return (
     <div className="border-t border-white/5 pt-3 first:border-t-0 first:pt-0">
@@ -495,7 +532,13 @@ function ProvisionEntry({
       {entry.lifecycle === 'active' && !inFlight && (
         <p className="mt-1 text-xs text-muted">Already deployed.</p>
       )}
-      {entry.lifecycle !== 'active' && !allowed && !inFlight && (
+      {awaitingInventory && !inFlight && (
+        <p className="mt-1 text-xs text-muted">
+          The deploy job for <span className="font-mono">{entry.key}</span> finished.
+          Waiting for the inventory to confirm.
+        </p>
+      )}
+      {entry.lifecycle !== 'active' && !allowed && !inFlight && !awaitingInventory && (
         <p className="mt-1 text-xs text-muted">
           Provision isn&apos;t currently offering to deploy this template — see the rail
           state above.
@@ -564,7 +607,11 @@ function ProvisionEntry({
       )}
       {track.jobId != null && (
         <div className="mt-2">
-          <JobStatusLine entryKey={entry.key} jobId={track.jobId} onComplete={onJobComplete} />
+          <JobStatusLine
+            entryKey={entry.key}
+            jobId={track.jobId}
+            onComplete={(_key, status) => onJobComplete(status)}
+          />
         </div>
       )}
     </div>

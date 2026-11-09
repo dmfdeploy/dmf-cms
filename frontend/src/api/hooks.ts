@@ -189,12 +189,23 @@ export function useCreateSetupRequestReceipt() {
   })
 }
 
+const SETTLED_JOB_STATUSES: readonly string[] = ['successful', 'failed', 'error', 'canceled']
+
+function isJobSettled(data: WorkflowJobStatus | undefined): boolean {
+  return data !== undefined && SETTLED_JOB_STATUSES.includes(data.status)
+}
+
 export function useWorkflowJobStatus(jobId: number | null) {
   return useQuery({
     queryKey: ['job', jobId],
     queryFn: () => apiCall<WorkflowJobStatus>(`/api/workflows/jobs/${jobId}`),
     enabled: jobId !== null,
-    refetchInterval: 5000,
+    // A job can outlast the time an operator stays on the tab, so the poll
+    // keeps running while the tab is hidden, and returning to a job that is
+    // still running refreshes it at once. Both stop once the job settles.
+    refetchIntervalInBackground: true,
+    refetchOnWindowFocus: (query) => !isJobSettled(query.state.data),
+    refetchInterval: (query) => (isJobSettled(query.state.data) ? false : 5000),
   })
 }
 
@@ -363,13 +374,22 @@ export function useAdminGroups() {
 
 const NO_KEYS: readonly string[] = []
 
-// `awaitingKeys` names entries whose automation job has finished but whose
-// inventory record may not have caught up. While any of them still reports
-// `active`, the catalog is re-read every 3 s, tab hidden or not: a hidden tab
-// would otherwise skip every tick and a return within the stale time would not
-// refetch either. The poll stops once none of them reads `active`, or when the
-// component that passed the keys unmounts.
-export function useCatalog(awaitingKeys: readonly string[] = NO_KEYS) {
+interface CatalogWaits {
+  // Entries whose teardown job finished: pending while the inventory still
+  // reports them `active`.
+  awaitingTeardown?: readonly string[]
+  // Entries whose deploy job finished: pending while the inventory does not
+  // yet report them `active`.
+  awaitingDeploy?: readonly string[]
+}
+
+// The wait lists name entries whose automation job has finished but whose
+// inventory record may not have caught up. While any of them has not reached
+// the state the job should have produced, the catalog is re-read every 3 s,
+// tab hidden or not: a hidden tab would otherwise skip every tick and a return
+// within the stale time would not refetch either. The poll stops once none of
+// them is pending, or when the component that passed the lists unmounts.
+export function useCatalog({ awaitingTeardown = NO_KEYS, awaitingDeploy = NO_KEYS }: CatalogWaits = {}) {
   return useQuery({
     queryKey: ['catalog'],
     queryFn: () => apiCall<CatalogListResponse>('/api/catalog'),
@@ -378,7 +398,12 @@ export function useCatalog(awaitingKeys: readonly string[] = NO_KEYS) {
     refetchIntervalInBackground: true,
     refetchInterval: (query) => {
       const entries = query.state.data?.entries ?? []
-      return entries.some((e) => awaitingKeys.includes(e.key) && e.lifecycle === 'active') ? 3000 : false
+      const pending = entries.some(
+        (e) =>
+          (awaitingTeardown.includes(e.key) && e.lifecycle === 'active') ||
+          (awaitingDeploy.includes(e.key) && e.lifecycle !== 'active'),
+      )
+      return pending ? 3000 : false
     },
   })
 }

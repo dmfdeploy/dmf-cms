@@ -1,9 +1,10 @@
-import { useState, useEffect } from 'react'
+import { useState, useEffect, useRef } from 'react'
 import { useQueryClient } from '@tanstack/react-query'
 import type { CatalogEntry } from '../../api/types'
 import ReasonConfirm from '../../components/ReasonConfirm'
 import { isValidWorkloadSlug } from '../../lib/workloadSlug'
 import { settleQuery } from '../../lib/queryState'
+import { INVENTORY_WAIT_MS } from '../../lib/inventoryWait'
 import {
   useCatalog,
   useCurrentUser,
@@ -33,6 +34,21 @@ interface EntryActionState {
   teardownOpId: string | null
 }
 
+type ActionKind = 'deploy' | 'teardown'
+
+// A finished job whose result the inventory has not confirmed yet. `timedOut`
+// is set once the wait has used up INVENTORY_WAIT_MS.
+interface InventoryWait {
+  kind: ActionKind
+  timedOut: boolean
+}
+
+// The inventory confirms a deploy when the entry reads `active`, and a
+// teardown when it stops reading `active`.
+function inventoryConfirms(entry: CatalogEntry, kind: ActionKind): boolean {
+  return kind === 'deploy' ? entry.lifecycle === 'active' : entry.lifecycle !== 'active'
+}
+
 export default function Catalog() {
   return (
     <InventoryWritesGate>
@@ -55,7 +71,24 @@ function CatalogPage() {
   // direction from every other fix in this arc but the same root cause:
   // the CURRENT read's failure was never distinguished from "nothing to
   // show at all".
-  const { data: catalogData, loading: isLoading, failed: isError } = settleQuery(useCatalog())
+  //
+  // `waits` holds the entries whose job finished but whose inventory record
+  // has not confirmed the result yet. While one is waiting, the catalog is
+  // polled (see useCatalog); once it times out, the poll stops.
+  const [waits, setWaits] = useState<Record<string, InventoryWait>>({})
+  const waitTimers = useRef(new Map<string, ReturnType<typeof setTimeout>>())
+  useEffect(() => {
+    const timers = waitTimers.current
+    return () => {
+      timers.forEach(clearTimeout)
+      timers.clear()
+    }
+  }, [])
+  const waitingKeys = (kind: ActionKind) =>
+    Object.keys(waits).filter((key) => waits[key].kind === kind && !waits[key].timedOut)
+  const { data: catalogData, loading: isLoading, failed: isError } = settleQuery(
+    useCatalog({ awaitingTeardown: waitingKeys('teardown'), awaitingDeploy: waitingKeys('deploy') }),
+  )
   const { data: user } = settleQuery(useCurrentUser())
   const deployMutation = useDeployCatalog()
   const teardownMutation = useTeardownCatalog()
@@ -124,7 +157,45 @@ function CatalogPage() {
     }
   }
 
-  const handleJobComplete = (key: string, kind: 'deploy' | 'teardown') => {
+  const startWait = (key: string, kind: ActionKind) => {
+    const wait: InventoryWait = { kind, timedOut: false }
+    clearTimeout(waitTimers.current.get(key))
+    setWaits((prev) => ({ ...prev, [key]: wait }))
+    waitTimers.current.set(
+      key,
+      setTimeout(() => {
+        // Only the wait that started this timer may expire.
+        setWaits((prev) => (prev[key] === wait ? { ...prev, [key]: { ...wait, timedOut: true } } : prev))
+      }, INVENTORY_WAIT_MS),
+    )
+  }
+
+  const dropWait = (key: string) => {
+    clearTimeout(waitTimers.current.get(key))
+    waitTimers.current.delete(key)
+    setWaits((prev) => {
+      if (!(key in prev)) return prev
+      const { [key]: _dropped, ...rest } = prev
+      return rest
+    })
+  }
+
+  // A wait ends as soon as the entry's own record shows the result, whether
+  // the poll or a later page read brought it in.
+  useEffect(() => {
+    if (!catalogData) return
+    const confirmed = Object.keys(waits).filter((key) => {
+      const entry = catalogData.entries.find((e) => e.key === key)
+      return !entry || inventoryConfirms(entry, waits[key].kind)
+    })
+    confirmed.forEach(dropWait)
+  }, [catalogData, waits])
+
+  const handleJobComplete = (key: string, kind: ActionKind, jobStatus: string) => {
+    // A finished job is not yet a changed entry: the inventory has to confirm
+    // it. A failed job leaves nothing to wait for.
+    if (jobStatus === 'successful') startWait(key, kind)
+    else dropWait(key)
     setEntryActions((prev) => {
       const current = prev[key] ?? {}
       return {
@@ -173,6 +244,13 @@ function CatalogPage() {
 
   const entries = catalogData?.entries ?? []
 
+  // The wait that still applies to an entry: none once its own record
+  // confirms the result.
+  const waitFor = (entry: CatalogEntry): InventoryWait | null => {
+    const wait = waits[entry.key]
+    return wait && !inventoryConfirms(entry, wait.kind) ? wait : null
+  }
+
   return (
     <div className="flex-1 overflow-y-auto p-6">
       <PageHeading>Catalog</PageHeading>
@@ -205,6 +283,7 @@ function CatalogPage() {
               teardownError={teardownMutation.variables?.key === entry.key ? teardownMutation.error : null}
               onJobComplete={handleJobComplete}
               setEntryActions={setEntryActions}
+              inventoryWait={waitFor(entry)}
             />
           ))}
         </div>
@@ -226,6 +305,7 @@ function EntryCard({
   teardownError,
   onJobComplete,
   setEntryActions,
+  inventoryWait,
 }: {
   entry: CatalogEntry
   actionState: EntryActionState
@@ -235,10 +315,16 @@ function EntryCard({
   isTearingDown: boolean
   deployError: unknown
   teardownError: unknown
-  onJobComplete: (key: string, kind: 'deploy' | 'teardown') => void
+  onJobComplete: (key: string, kind: ActionKind, status: string) => void
   setEntryActions: React.Dispatch<React.SetStateAction<Record<string, EntryActionState>>>
+  // Set while a finished job's result is not confirmed by the inventory yet.
+  // The entry's own lifecycle is then the old record, so it is neither shown
+  // as a state nor used to offer an action.
+  inventoryWait: InventoryWait | null
 }) {
-  const deployBadge = lifecycleBadge[entry.lifecycle] ?? 'bg-gray-900/30 text-gray-400'
+  const deployBadge = inventoryWait
+    ? 'bg-gray-900/30 text-gray-400'
+    : (lifecycleBadge[entry.lifecycle] ?? 'bg-gray-900/30 text-gray-400')
   // Graduated friction (hard gate 3): the Deploy/Teardown buttons arm a
   // reason panel; the write fires only on Confirm with a non-empty reason.
   const [arming, setArming] = useState<'deploy' | 'teardown' | null>(null)
@@ -252,12 +338,14 @@ function EntryCard({
   // Gate the buttons on this, not just the sub-second launch mutation
   // (isDeploying/isTearingDown), so they don't re-enable mid-job and invite a
   // double-click. The backend idempotency guard is the real defence; this is UX.
-  const deployInFlight = actionState.deployJobId !== null || actionState.deployOpId !== null
-  const teardownInFlight = actionState.teardownJobId !== null || actionState.teardownOpId !== null
+  // `!= null`, not `!== null`: the first deploy or teardown of an entry spreads
+  // an empty state, which leaves the other action's ids undefined, not null.
+  const deployInFlight = actionState.deployJobId != null || actionState.deployOpId != null
+  const teardownInFlight = actionState.teardownJobId != null || actionState.teardownOpId != null
   const deployDisabled =
-    entry.lifecycle === 'active' || !entry.configure_awx_job_template || isDeploying || deployInFlight
+    entry.lifecycle === 'active' || !entry.configure_awx_job_template || isDeploying || deployInFlight || inventoryWait !== null
   const teardownDisabled =
-    entry.lifecycle === 'bootstrapped' || !entry.finalise_awx_job_template || isTearingDown || teardownInFlight
+    entry.lifecycle === 'bootstrapped' || !entry.finalise_awx_job_template || isTearingDown || teardownInFlight || inventoryWait !== null
 
   return (
     <div className="panel">
@@ -265,7 +353,7 @@ function EntryCard({
         <div className="flex-1">
           <div className="flex items-center gap-3 mb-1">
             <h3 className="text-lg font-semibold">{entry.display_name}</h3>
-            <span className={`badge text-xs ${deployBadge}`}>{entry.lifecycle}</span>
+            <span className={`badge text-xs ${deployBadge}`}>{inventoryWait ? 'unconfirmed' : entry.lifecycle}</span>
           </div>
           <p className="text-sm text-muted">{entry.summary}</p>
           {/* EBU layer/vertical/type ontology is expert-tier vocabulary (UX
@@ -289,7 +377,7 @@ function EntryCard({
         </div>
 
         <div className="flex gap-2 ml-4">
-          {entry.lifecycle === 'active' && entry.ingress_url && (
+          {entry.lifecycle === 'active' && !inventoryWait && entry.ingress_url && (
             <a
               href={entry.ingress_url}
               target="_blank"
@@ -376,6 +464,15 @@ function EntryCard({
             onCancel={() => setArming(null)}
           />
         </div>
+      )}
+
+      {inventoryWait && (
+        <p className={`mt-3 text-xs ${inventoryWait.timedOut ? 'text-amber-200' : 'text-muted'}`}>
+          The {inventoryWait.kind} job for <span className="font-mono">{entry.key}</span> finished
+          {inventoryWait.timedOut
+            ? ', but the inventory has not confirmed it yet. Reload the page to check again.'
+            : '. Waiting for the inventory to confirm.'}
+        </p>
       )}
 
       {entry.dependencies && entry.dependencies.length > 0 && (
@@ -557,8 +654,8 @@ function JobStatusLine({
 }: {
   entryKey: string
   jobId: number
-  kind: 'deploy' | 'teardown'
-  onComplete: (key: string, kind: 'deploy' | 'teardown') => void
+  kind: ActionKind
+  onComplete: (key: string, kind: ActionKind, status: string) => void
 }) {
   // Same shape as OperationStatusLine above.
   const { data: jobStatus, failed } = settleQuery(useCatalogJobStatus(entryKey, jobId))
@@ -566,9 +663,10 @@ function JobStatusLine({
   useEffect(() => {
     if (!jobStatus?.is_done) return
 
-    const timer = setTimeout(() => onComplete(entryKey, kind), 2000)
+    const finalStatus = jobStatus.status
+    const timer = setTimeout(() => onComplete(entryKey, kind, finalStatus), 2000)
     return () => clearTimeout(timer)
-  }, [jobStatus?.is_done, onComplete, entryKey, kind])
+  }, [jobStatus?.is_done, jobStatus?.status, onComplete, entryKey, kind])
 
   if (!jobStatus) {
     return (

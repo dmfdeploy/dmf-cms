@@ -145,7 +145,7 @@ export default function FinaliseStage({
   // the full reasoning (same shared PlanStage/CreateWorkload precedent).
   //
   // (umbrella #385) retrofitted onto settleQuery.
-  const { data: catalogData, loading: catalogLoading, failed: catalogFailed } = settleQuery(useCatalog(awaitingKeys))
+  const { data: catalogData, loading: catalogLoading, failed: catalogFailed } = settleQuery(useCatalog({ awaitingTeardown: awaitingKeys }))
   const guardWrite = useGuardWrite()
   const teardownMutation = useTeardownCatalog()
   const purgeMutation = usePurgeWorkload()
