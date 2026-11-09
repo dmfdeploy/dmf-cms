@@ -547,9 +547,11 @@ a tag you don't recognize.
 
 ### Provenance and signing
 
-Every release carries a GitHub build-provenance attestation on its index digest
-(see the release workflow above). It is a signed record of the workflow, commit and
-repository that built that digest. To check a release, run
+Every release that the release workflow above publishes carries a GitHub
+build-provenance attestation on its index digest. It is a signed record of the
+workflow, commit and repository that built that digest. The first attested release
+is 0.40.1; 0.39.0 and earlier were published before the workflow and have no
+attestation. To check a release from 0.40.1 on, run
 `gh attestation verify oci://ghcr.io/dmfdeploy/dmf-cms:<VERSION> --repo dmfdeploy/dmf-cms`.
 
 The cluster does not check signatures or attestations when it pulls an image. A
