@@ -1,6 +1,6 @@
 import { useState, useEffect, useRef } from 'react'
 import { useQueryClient } from '@tanstack/react-query'
-import type { CatalogEntry } from '../../api/types'
+import type { CatalogEntry, Operation } from '../../api/types'
 import ReasonConfirm from '../../components/ReasonConfirm'
 import { isValidWorkloadSlug } from '../../lib/workloadSlug'
 import { settleQuery } from '../../lib/queryState'
@@ -13,12 +13,14 @@ import {
   useCatalogJobStatus,
   useOperationStatus,
   isOperation,
+  _WATCHED_TERMINAL_STATES,
 } from '../../api/hooks'
 import { useActivityStore } from '../../store/activity'
 import PageHeading from '../../components/PageHeading'
 import { usePageTitle } from '../../hooks/usePageTitle'
 import { useGuardWrite } from '../../lib/inventoryFreshness'
 import { InventoryWritesGate, InventoryWritesNotice } from '../MediaWorkloads'
+import { OPERATION_CLASS, OPERATION_LABEL } from '../MediaWorkloads/stages/JobProgress'
 
 const lifecycleBadge: Record<string, string> = {
   bootstrapped: 'bg-muted/20 text-muted',
@@ -502,6 +504,7 @@ function EntryCard({
                 [entry.key]: { ...prev[entry.key], deployOpId: null },
               }))
             }}
+            onTerminal={(operation) => onJobComplete(entry.key, 'deploy', operationOutcome(operation))}
           />
         </div>
       )}
@@ -526,6 +529,7 @@ function EntryCard({
                 [entry.key]: { ...prev[entry.key], teardownOpId: null },
               }))
             }}
+            onTerminal={(operation) => onJobComplete(entry.key, 'teardown', operationOutcome(operation))}
           />
         </div>
       )}
@@ -561,10 +565,18 @@ function EntryCard({
 
 /* ─── operation status line (polls via hook) ─── */
 
+// A watched operation that finished cleanly counts as a successful job, so the
+// page waits for the inventory to confirm it; any other end leaves nothing to
+// wait for.
+function operationOutcome(operation: Operation): string {
+  return operation.state === 'run_complete' ? 'successful' : operation.state
+}
+
 function OperationStatusLine({
   operationId,
   onLaunched,
   onError,
+  onTerminal,
 }: {
   // entryKey + kind are part of the call-site contract (passed by every caller)
   // but the status line keys off operationId / operation.state; accept them in
@@ -574,6 +586,7 @@ function OperationStatusLine({
   kind: 'deploy' | 'teardown'
   onLaunched: (jobId: number) => void
   onError: () => void
+  onTerminal: (operation: Operation) => void
 }) {
   // (umbrella #385) A settled failed
   // refetch retained the last-good `operation` with no notice at all —
@@ -590,12 +603,21 @@ function OperationStatusLine({
     } else if (operation.state === 'error') {
       console.error('Operation failed:', operation.error)
       timer = setTimeout(() => onError(), 3000)
+    } else if (_WATCHED_TERMINAL_STATES.includes(operation.state)) {
+      // A watched action runs on past `launched`, which a poll can miss, so
+      // its final state is the only signal that always arrives. A clean
+      // finish hands off promptly; anything else stays up long enough to read.
+      const settledOperation = operation
+      timer = setTimeout(
+        () => onTerminal(settledOperation),
+        operation.state === 'run_complete' ? 1000 : 3000,
+      )
     }
 
     return () => {
       if (timer) clearTimeout(timer)
     }
-  }, [operation, onLaunched, onError])
+  }, [operation, onLaunched, onError, onTerminal])
 
   if (!operation) {
     return (
@@ -605,18 +627,15 @@ function OperationStatusLine({
     )
   }
 
-  // umbrella #347: Record<string, string> (not an inferred 4-key literal) —
-  // Operation.state now spans the full #202 WP2 watched-action vocabulary
-  // (run_complete/run_failed/…), which this pre-existing widget never
-  // switched over to observing; the fallback below keeps it honest about an
-  // unrecognized value instead of rendering `undefined`.
+  // Operation.state spans the watched-action states too; those take their
+  // wording from the shared table so no raw state name reaches the page.
   const STATE_LABEL: Record<string, string> = {
     waking: 'Waking AWX',
     launching: 'Launching job',
     launched: 'Launched',
     error: 'Error',
   }
-  const stateLabel = STATE_LABEL[operation.state] ?? operation.state
+  const stateLabel = STATE_LABEL[operation.state] ?? OPERATION_LABEL[operation.state] ?? operation.state
 
   const STATE_CLASS: Record<string, string> = {
     waking: 'text-yellow-300',
@@ -624,7 +643,7 @@ function OperationStatusLine({
     launched: 'text-green-400',
     error: 'text-red-400',
   }
-  const stateClass = STATE_CLASS[operation.state] ?? 'text-muted'
+  const stateClass = STATE_CLASS[operation.state] ?? OPERATION_CLASS[operation.state] ?? 'text-muted'
 
   return (
     <div className="flex items-center gap-2 text-xs">
