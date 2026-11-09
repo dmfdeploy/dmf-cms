@@ -14,7 +14,7 @@ import { cleanup, fireEvent, render, screen, waitFor } from '@testing-library/re
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query'
 import { MemoryRouter } from 'react-router-dom'
 import Catalog from '../pages/Catalog'
-import type { CatalogEntry } from '../api/types'
+import type { CatalogEntry, OperationState } from '../api/types'
 
 function json(body: unknown, status = 200) {
   return new Response(JSON.stringify(body), { status, headers: { 'Content-Type': 'application/json' } })
@@ -43,10 +43,14 @@ interface Server {
   catalogLifecycle: CatalogEntry['lifecycle']
   jobStatus: string
   catalogReads: number
+  // When set, deploy and teardown return a watched operation (202) that
+  // reads at this state from the first poll on, never passing through
+  // `launched`.
+  operationState: OperationState | null
 }
 
 function stubServer(initial: Partial<Server> = {}): Server {
-  const server: Server = { catalogLifecycle: 'bootstrapped', jobStatus: 'successful', catalogReads: 0, ...initial }
+  const server: Server = { catalogLifecycle: 'bootstrapped', jobStatus: 'successful', catalogReads: 0, operationState: null, ...initial }
   vi.stubGlobal(
     'fetch',
     vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
@@ -63,6 +67,17 @@ function stubServer(initial: Partial<Server> = {}): Server {
       }
       if (url.endsWith('/api/media-workloads/grouped')) {
         return json({ configured: true, degraded: false, workloads: [], invalid_instances: [] })
+      }
+      if (/\/api\/catalog\/crosspoint\/(deploy|teardown)$/.test(url) && init?.method === 'POST' && server.operationState) {
+        return json({ operation_id: 'op-0123456789', state: 'waking', request_id: 'req-1' }, 202)
+      }
+      if (url.endsWith('/api/operations/op-0123456789') && server.operationState) {
+        return json({
+          operation_id: 'op-0123456789', action: url.includes('teardown') ? 'teardown' : 'deploy', target: 'crosspoint',
+          state: server.operationState, job_id: null,
+          error: server.operationState === 'run_failed' ? 'job failed' : null,
+          created_at: '2026-01-01T00:00:00Z', updated_at: '2026-01-01T00:00:00Z',
+        })
       }
       if (/\/api\/catalog\/crosspoint\/(deploy|teardown)$/.test(url) && init?.method === 'POST') {
         return json({ job_id: 901, status: 'launched', request_id: 'req-1' })
@@ -182,4 +197,47 @@ describe('Catalog: the inventory has to confirm a finished deploy or teardown', 
     expect(server.catalogReads).toBeGreaterThan(readsWhenFlipped)
     expect(document.body.textContent).not.toMatch(waiting('deploy'))
   }, 40_000)
+
+  it('a deploy operation that goes straight to run_complete waits for the inventory, then confirms', async () => {
+    const server = stubServer({ catalogLifecycle: 'bootstrapped', operationState: 'run_complete' })
+    renderCatalog()
+    await arm(/Deploy/, /Confirm deploy/)
+
+    await waitFor(() => expect(document.body.textContent).toMatch(waiting('deploy')), { timeout: 8000 })
+    expect(screen.getByText('unconfirmed')).toBeTruthy()
+    expect(button(/Deploy/).disabled).toBe(true)
+
+    server.catalogLifecycle = 'active'
+    await waitFor(() => expect(screen.getByText('active')).toBeTruthy(), { timeout: 6000 })
+    expect(document.body.textContent).not.toMatch(waiting('deploy'))
+    expect(screen.queryByText('unconfirmed')).toBeNull()
+    expect(button(/Teardown/).disabled).toBe(false)
+  }, 30_000)
+
+  it('a teardown operation that goes straight to run_complete waits for the inventory, then confirms', async () => {
+    const server = stubServer({ catalogLifecycle: 'active', operationState: 'run_complete' })
+    renderCatalog()
+    await arm(/Teardown/, /Confirm teardown/)
+
+    await waitFor(() => expect(document.body.textContent).toMatch(waiting('teardown')), { timeout: 8000 })
+    expect(screen.getByText('unconfirmed')).toBeTruthy()
+    expect(button(/Teardown/).disabled).toBe(true)
+
+    server.catalogLifecycle = 'bootstrapped'
+    await waitFor(() => expect(screen.getByText('bootstrapped')).toBeTruthy(), { timeout: 6000 })
+    expect(document.body.textContent).not.toMatch(waiting('teardown'))
+    expect(button(/Deploy/).disabled).toBe(false)
+  }, 30_000)
+
+  it('a deploy operation that ends run_failed releases the action and claims no deployed state', async () => {
+    stubServer({ catalogLifecycle: 'bootstrapped', operationState: 'run_failed' })
+    renderCatalog()
+    await arm(/Deploy/, /Confirm deploy/)
+
+    await waitFor(() => expect(button(/Deploy/).disabled).toBe(false), { timeout: 8000 })
+    expect(document.body.textContent).not.toMatch(waiting('deploy'))
+    expect(screen.queryByText('unconfirmed')).toBeNull()
+    expect(screen.getByText('bootstrapped')).toBeTruthy()
+    expect(screen.queryByText('active')).toBeNull()
+  }, 30_000)
 })
