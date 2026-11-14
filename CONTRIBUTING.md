@@ -32,10 +32,13 @@ This section is the one place for development and test commands. The README and
 
 ### Set up the backend
 
-Run these commands from the repository root:
+Run these commands from the repository root. Check first that `python3` is
+version 3.12 or later. If it isn't, use the full name of a newer interpreter,
+such as `python3.13`, in place of `python3`.
 
 ```bash
-python3.12 -m venv .venv
+python3 --version
+python3 -m venv .venv
 . .venv/bin/activate
 pip install -e '.[dev]'
 ```
