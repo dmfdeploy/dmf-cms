@@ -2,33 +2,12 @@
 
 React 19 + Vite + TypeScript frontend for the dmfdeploy platform console.
 
-## Development Setup
+## Development setup
 
-### Prerequisites
-- Node.js 22+
-- npm or yarn
-
-### Installation & Running
-
-```bash
-# Install dependencies
-npm install
-
-# Start dev server (proxies /api to http://localhost:8000)
-npm run dev
-
-# Open http://localhost:5173 in your browser
-```
-
-The dev server will proxy API calls to FastAPI running on port 8000.
-
-### Building for Production
-
-```bash
-npm run build
-```
-
-Output goes to `../src/dmf_cms/static/app/` (automatically served by FastAPI).
+To install, run, test and build the frontend, see
+[Develop and test](../CONTRIBUTING.md#develop-and-test) in `CONTRIBUTING.md`.
+That section is the only copy of these commands. `npm run build` writes to
+`../src/dmf_cms/static/app/`, which the backend serves.
 
 ## Architecture
 
@@ -91,25 +70,13 @@ src/
 - ProtectedRoute redirects to `/auth/login` if not authenticated
 - Settings/Logout links point to backend routes
 
-## Development Workflow
+## Development workflow
 
-1. **FastAPI running on port 8000:**
-   ```bash
-   cd <repos>/dmf-cms
-   DMF_CONSOLE_DEV_LOGIN_ENABLED=true uvicorn src.dmf_cms.main:app --reload
-   ```
-
-2. **Vite dev server on port 5173** (in another terminal):
-   ```bash
-   cd <repos>/dmf-cms/frontend
-   npm run dev
-   ```
-
-3. Open http://localhost:5173
-4. Dev login as "operator"
-5. Navigate to Workflows
-6. Click Launch on a workflow
-7. Watch the job status update in real-time
+Start the backend and the Vite dev server as
+[Run the console locally](../CONTRIBUTING.md#run-the-console-locally) in
+`CONTRIBUTING.md` describes. Then sign in with the dev login as "operator",
+open **Workflows**, select **Launch** on a workflow, and watch the job status
+update.
 
 ## Selector contract
 
