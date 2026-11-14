@@ -1,4 +1,4 @@
-# AGENTS.md — dmf-cms
+# AGENTS.md: dmf-cms
 
 dmf-cms is the operator console of the dmfdeploy platform: a React 19 and
 Tailwind SPA (`frontend/`) on a FastAPI backend (`src/dmf_cms/`). Umbrella repo:
@@ -10,12 +10,9 @@ or a release, read section 0 of the matching umbrella skill.
 
 ## Build and test
 
-```bash
-scripts/sync-version.sh --check                  # must pass before any PR
-( cd frontend && npm ci && npm run lint && npm test && npm run build )
-pip install -e '.[dev]' && rm -rf src/dmf_cms/static/app && pytest -q
-DMF_CONSOLE_DEV_LOGIN_ENABLED=true uvicorn src.dmf_cms.main:app --reload
-```
+The commands for setup, tests, and running locally live in
+[CONTRIBUTING.md](CONTRIBUTING.md#develop-and-test). That file is the only copy;
+do not add another here. Run `scripts/sync-version.sh --check` before any PR.
 
 ## Rules that are easy to miss
 

@@ -208,14 +208,8 @@ Run this after every Ansible deploy.
 
 ### Local dev (no script needed)
 
-```bash
-# Terminal 1 — FastAPI
-DMF_CONSOLE_DEV_LOGIN_ENABLED=true uvicorn src.dmf_cms.main:app --reload
-
-# Terminal 2 — Vite (proxies /api and /auth to :8000)
-cd frontend && npm install && npm run dev
-# → http://localhost:5173
-```
+See [Run the console locally](../CONTRIBUTING.md#run-the-console-locally) in
+`CONTRIBUTING.md`.
 
 ---
 
@@ -475,7 +469,7 @@ dmf-cms/
 
 - `main`: always shippable. No direct commits; every change lands through a
   pull request.
-- Short-lived branches, one per pull request (for example `feature/<name>`, or
+- Short-lived branches, one per pull request (for example `<handle>/<short-slug>`, or
   `release/<NEW>` for a release as described in §4). Each one is rebase-merged
   into `main`.
 
@@ -595,24 +589,13 @@ cluster (`kubectl config current-context`).
 
 ---
 
-## 9. CI hooks (target state)
+## 9. CI
 
-`.forgejo/workflows/ci.yml` should fail the PR if any of these don't hold:
-
-```yaml
-on: [push, pull_request]
-jobs:
-  validate:
-    runs-on: docker
-    steps:
-      - uses: actions/checkout@v4
-      - run: scripts/sync-version.sh --check
-      - run: cd frontend && npm ci && npm run build
-      - run: pip install . && python -c "import dmf_cms"
-      - run: helm lint charts/dmf-cms
-```
-
-Currently the workflow is a placeholder; wiring this up is the next CI task.
+GitHub Actions is the CI for this repository. The workflows live in
+`.github/workflows/`: `ci.yml` runs the backend and frontend checks, and
+`guard.yml`, `dco.yml` and `issue-link.yml` run the pull request gates. The
+commands behind these checks are in
+[`CONTRIBUTING.md`](../CONTRIBUTING.md#develop-and-test).
 
 ---
 
