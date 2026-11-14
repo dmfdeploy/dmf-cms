@@ -8,7 +8,7 @@ serviceAccountName: ""
 
 image:
   repository: registry.dmf.example.com/dmf-cms
-  tag: "0.41.0"
+  tag: "0.42.0"
   pullPolicy: IfNotPresent
 
 # Set this only when the registry requires credentials for reads. The platform
