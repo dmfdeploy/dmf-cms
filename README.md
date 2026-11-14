@@ -109,21 +109,8 @@ imminent:
 
 ## Local development
 
-**Backend**: editable install with dev extras, then Uvicorn:
-
-```sh
-pip install -e '.[dev]'
-uvicorn dmf_cms.main:app --reload
-```
-
-**Frontend**: from `frontend/`:
-
-```sh
-npm install
-npm run dev      # vite dev server
-npm run build    # tsc && vite build
-npm test         # vitest run
-```
+To set up your machine, run the console locally and run the tests, see
+[CONTRIBUTING.md](CONTRIBUTING.md#develop-and-test).
 
 The built SPA is served by the backend from `static/app`. The default app
 contract fixture lives at `config/app-contracts.yaml`.
@@ -145,7 +132,9 @@ with hard gates. They are more than guidelines. The two that most shape the code
 
 ## For contributors
 
-`AGENTS.md`, `CLAUDE.md` and `QWEN.md` hold instructions for AI coding agents that help maintain this repository.
+[CONTRIBUTING.md](CONTRIBUTING.md) covers development, testing and what a pull
+request needs. `AGENTS.md`, `CLAUDE.md` and `QWEN.md` hold instructions for AI
+coding agents that help maintain this repository.
 
 ## License
 
