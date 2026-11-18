@@ -4253,6 +4253,24 @@ def create_app(settings: Settings | None = None, contract: AppContract | None = 
             "authentik_configured": settings.authentik.configured,
         })
 
+    @app.get("/api/platform-trust")
+    async def api_platform_trust(request: Request):
+        """Public facts about the local certificate authority and the sandbox.
+
+        Needs a signed-in user, like /api/me. Nothing here is secret: the
+        fingerprint is the value a user compares with the one on their device.
+        """
+        if session_user(request.session) is None:
+            return JSONResponse({"error": "unauthorized"}, status_code=401)
+        trust = settings.platform_trust
+        return JSONResponse({
+            "network_mode": trust.network_mode,
+            "approval_page_name": trust.approval_page_name,
+            "ca_fingerprint_sha256": trust.ca_fingerprint_sha256,
+            "ca_not_after": trust.ca_not_after,
+            "sandbox": trust.sandbox,
+        })
+
     @app.post("/api/me/view-as")
     async def api_set_view_as(request: Request):
         """Admin-only, session-scoped, strictly-downgrade role simulation.

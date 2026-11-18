@@ -36,6 +36,12 @@ env:
     existingSecretName: dmf-cms-runtime
     key: secretKey
   devLoginEnabled: "false"
+  # Public facts about the local certificate authority. Leave empty when the
+  # environment is not a sandbox. networkMode is "lan" or "public".
+  networkMode: ""
+  approvalPageName: ""
+  caFingerprintSha256: ""
+  caNotAfter: ""
 
 setupRequests:
   # Both bindings must be supplied by trusted deployment inventory. Blank

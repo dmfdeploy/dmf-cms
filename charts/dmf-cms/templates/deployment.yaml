@@ -210,6 +210,22 @@ spec:
               value: {{ .Values.l3.drainPollIntervalSeconds | quote }}
             - name: DMF_CONSOLE_L3_DRAIN_TIMEOUT_SECONDS
               value: {{ .Values.l3.drainTimeoutSeconds | quote }}
+            {{- if .Values.env.networkMode }}
+            - name: DMF_CONSOLE_NETWORK_MODE
+              value: {{ .Values.env.networkMode | quote }}
+            {{- end }}
+            {{- if .Values.env.approvalPageName }}
+            - name: DMF_CONSOLE_APPROVAL_PAGE_NAME
+              value: {{ .Values.env.approvalPageName | quote }}
+            {{- end }}
+            {{- if .Values.env.caFingerprintSha256 }}
+            - name: DMF_CONSOLE_CA_FINGERPRINT_SHA256
+              value: {{ .Values.env.caFingerprintSha256 | quote }}
+            {{- end }}
+            {{- if .Values.env.caNotAfter }}
+            - name: DMF_CONSOLE_CA_NOT_AFTER
+              value: {{ .Values.env.caNotAfter | quote }}
+            {{- end }}
             {{- if .Values.media.tenancy }}
             - name: DMF_CONSOLE_MEDIA_TENANCY
               value: {{ .Values.media.tenancy | quote }}

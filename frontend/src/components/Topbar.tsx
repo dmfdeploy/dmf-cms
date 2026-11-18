@@ -5,6 +5,7 @@ import { useTopbarMessageStore } from '../store/topbarMessage'
 import { useHeaderSlotContent, useShowHeaderSlotRow, deriveWorkloadSlugFromPath } from '../store/headerSlot'
 import { useSetViewAs, useClearViewAs, useFacilityDetail, useMediaWorkloadsGrouped } from '../api/hooks'
 import NotificationBell from './NotificationBell'
+import SandboxBanner from './SandboxBanner'
 import LifecycleStrip, { LifecycleStripPlaceholder } from '../pages/MediaWorkloads/LifecycleStrip'
 import { workloadHomePath, workloadSetupPath } from '../lib/routes'
 import logoSvg from '../assets/dmfdeploy-icon-white.svg'
@@ -377,6 +378,7 @@ export default function Topbar() {
         </div>
       </div>
 
+      <SandboxBanner />
     </header>
 
       {/* Header slot (Arc 4 WP-2), workload-detail routes only, a single

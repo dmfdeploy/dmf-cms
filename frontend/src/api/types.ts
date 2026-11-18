@@ -10,6 +10,14 @@ export interface UserIdentity {
   authentik_configured: boolean
 }
 
+export interface PlatformTrust {
+  network_mode: '' | 'lan' | 'public'
+  approval_page_name: string
+  ca_fingerprint_sha256: string
+  ca_not_after: string
+  sandbox: boolean
+}
+
 export interface AppLink {
   name: string
   url: string
