@@ -35,6 +35,7 @@ const json = (name: string): Handler => () => ({ json: fixture(name) })
 // Every endpoint the console calls. Patterns match the URL pathname exactly.
 const RULES: Rule[] = [
   { method: 'GET', pattern: /^\/api\/me$/, handler: json('me') },
+  { method: 'GET', pattern: /^\/api\/platform-trust$/, handler: json('platform-trust') },
   { method: 'GET', pattern: /^\/api\/contract$/, handler: json('contract') },
   { method: 'GET', pattern: /^\/api\/workflows$/, handler: json('workflows') },
   { method: 'GET', pattern: /^\/api\/workspace\/health$/, handler: json('workspace-health') },
