@@ -4,6 +4,7 @@ import { useCurrentUser, useCreatePasskeyInvitation, useCreateSetupRequestReceip
 import { APIError } from '../api/client'
 import { settleQuery } from '../lib/queryState'
 import PageHeading from '../components/PageHeading'
+import CertificateAuthorityCard from '../components/CertificateAuthorityCard'
 import { usePageTitle } from '../hooks/usePageTitle'
 
 const roleBadgeStyles: Record<string, string> = {
@@ -122,6 +123,8 @@ export default function Settings() {
             Could not be refreshed just now — showing the last successful read. Reload the page to try again.
           </div>
         )}
+
+        <CertificateAuthorityCard />
 
         {/* Profile */}
         <div className="bg-panel border border-border rounded-lg mb-6">

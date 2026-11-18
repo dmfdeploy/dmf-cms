@@ -240,6 +240,26 @@ class LokiSettings:
 
 
 @dataclass(frozen=True)
+class PlatformTrustSettings:
+    """What the console tells a signed-in user about the local certificate authority.
+
+    All four values are optional and public: a fingerprint, an expiry date,
+    the name of the approval page, and the network mode. ``network_mode`` is
+    ``lan`` or ``public`` on a sandbox and empty everywhere else, so a
+    non-empty mode is what marks the environment as a sandbox.
+    """
+
+    network_mode: str = ""  # "" | "lan" | "public"
+    approval_page_name: str = ""
+    ca_fingerprint_sha256: str = ""
+    ca_not_after: str = ""
+
+    @property
+    def sandbox(self) -> bool:
+        return bool(self.network_mode)
+
+
+@dataclass(frozen=True)
 class MediaTenancySettings:
     """Tenancy posture for the Media Workloads surface (ADR-0037).
 
@@ -486,6 +506,7 @@ class Settings:
     forgejo: ForgejoSettings = field(default_factory=ForgejoSettings)
     mxl: MXLSettings = field(default_factory=MXLSettings)
     media_tenancy: MediaTenancySettings = field(default_factory=MediaTenancySettings)
+    platform_trust: PlatformTrustSettings = field(default_factory=PlatformTrustSettings)
     setup_requests: SetupRequestSettings = field(default_factory=SetupRequestSettings)
 
 
@@ -598,6 +619,12 @@ def load_settings() -> Settings:
             group_tenant_map=_parse_group_tenant_map(
                 os.getenv("DMF_CONSOLE_MEDIA_GROUP_TENANT_MAP")
             ),
+        ),
+        platform_trust=PlatformTrustSettings(
+            network_mode=_env_choice("DMF_CONSOLE_NETWORK_MODE", "", ("", "lan", "public")),
+            approval_page_name=os.getenv("DMF_CONSOLE_APPROVAL_PAGE_NAME", "").strip(),
+            ca_fingerprint_sha256=os.getenv("DMF_CONSOLE_CA_FINGERPRINT_SHA256", "").strip(),
+            ca_not_after=os.getenv("DMF_CONSOLE_CA_NOT_AFTER", "").strip(),
         ),
         setup_requests=SetupRequestSettings(
             env_id=os.getenv("DMF_CONSOLE_SETUP_REQUEST_ENV_ID", ""),

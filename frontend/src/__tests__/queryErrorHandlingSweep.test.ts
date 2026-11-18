@@ -306,6 +306,14 @@ const EXEMPT: Record<string, string> = {
     "this is a real, pre-existing gap in a DIFFERENT sense (a settled failed refetch keeps showing a " +
     "retained name past its own staleness with no notice, same as every OTHER retained-data notice this " +
     "arc added elsewhere), tracked separately as it touches no code this PR's rounds 1-8 already changed.",
+  'components/SandboxBanner.tsx':
+    "Reads /api/platform-trust, which the server fills from environment variables at startup, so a " +
+    "retained value cannot go stale during a session. An unread or failed read renders nothing, which " +
+    "makes no absence claim: the banner only ever asserts the warning, never that the environment is safe.",
+  'components/CertificateAuthorityCard.tsx':
+    "Reads /api/platform-trust, which the server fills from environment variables at startup, so a " +
+    "retained fingerprint cannot go stale during a session. An unread or failed read hides the card " +
+    "instead of showing a value, and the card makes no absence or count claim.",
 }
 
 describe('regression net: known delegate classifiers actually call settleQuery at runtime', () => {

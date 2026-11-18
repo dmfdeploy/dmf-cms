@@ -34,6 +34,7 @@ import type {
   SwitchSourceResult,
   Operation,
   OperationState,
+  PlatformTrust,
 } from './types'
 
 // Type guard: check if response is an async operation (has operation_id)
@@ -58,6 +59,17 @@ export function useCurrentUser(enabled: boolean = true) {
     queryKey: ['user'],
     queryFn: () => apiCall<UserIdentity>('/api/me'),
     retry: false,
+    enabled,
+  })
+}
+
+/** Public facts about the local certificate authority and the sandbox. */
+export function usePlatformTrust(enabled: boolean = true) {
+  return useQuery({
+    queryKey: ['platform-trust'],
+    queryFn: () => apiCall<PlatformTrust>('/api/platform-trust'),
+    retry: false,
+    staleTime: 5 * 60 * 1000,
     enabled,
   })
 }
