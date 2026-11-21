@@ -57,6 +57,7 @@ import re
 import subprocess
 import sys
 import tarfile
+import time
 from typing import Any, BinaryIO, NamedTuple
 
 REPOSITORY = "dmfdeploy/dmf-cms"
@@ -89,6 +90,11 @@ OCI_LAYERS = frozenset(
     }
 )
 DIGEST_RE = re.compile(r"^sha256:[0-9a-f]{64}$")
+# The registry does not always serve a manifest by digest right after the push
+# that created it. A read by digest retries "not found" this many times, this
+# many seconds apart, and any other error fails at once.
+MANIFEST_READ_ATTEMPTS = 10
+MANIFEST_READ_DELAY_SECONDS = 6
 
 # Workflow file -> (display name, the contexts its jobs produce). The display
 # name is what `workflow_run.workflows` matches; the contexts are what
@@ -782,10 +788,29 @@ def fetch_index(ref: str) -> tuple[Any, Any] | None:
 
 
 def fetch_raw_manifest(ref: str) -> Any:
-    """Return the raw manifest of a published ref, parsed."""
-    result = _docker(["buildx", "imagetools", "inspect", "--raw", ref])
-    if result.returncode:
-        raise GateError(f"could not safely inspect {ref}: {result.stderr.strip()[:200]}")
+    """Return the raw manifest of a published ref, parsed.
+
+    Retries a "not found" for a bounded time, because a manifest pushed a
+    moment ago may not be readable yet. Any other error fails at once.
+    """
+    for attempt in range(1, MANIFEST_READ_ATTEMPTS + 1):
+        result = _docker(["buildx", "imagetools", "inspect", "--raw", ref])
+        if not result.returncode:
+            break
+        if "not found" not in f"{result.stdout}\n{result.stderr}".lower():
+            raise GateError(f"could not safely inspect {ref}: {result.stderr.strip()[:200]}")
+        if attempt == MANIFEST_READ_ATTEMPTS:
+            waited = (MANIFEST_READ_ATTEMPTS - 1) * MANIFEST_READ_DELAY_SECONDS
+            raise GateError(
+                f"could not safely inspect {ref}: not found after {MANIFEST_READ_ATTEMPTS} "
+                f"attempts over {waited} seconds"
+            )
+        print(
+            f"{ref} not found yet (attempt {attempt} of {MANIFEST_READ_ATTEMPTS}); "
+            f"retrying in {MANIFEST_READ_DELAY_SECONDS} seconds",
+            file=sys.stderr,
+        )
+        time.sleep(MANIFEST_READ_DELAY_SECONDS)
     try:
         return json.loads(result.stdout)
     except json.JSONDecodeError as exc:
