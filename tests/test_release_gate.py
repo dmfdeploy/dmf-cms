@@ -970,6 +970,50 @@ def test_a_registry_error_is_not_mistaken_for_an_absent_tag(registry):
         gate.inspect_existing_image(VERSION, SHA)
 
 
+@pytest.fixture
+def sleeps(monkeypatch) -> list[float]:
+    slept: list[float] = []
+    monkeypatch.setattr(gate.time, "sleep", slept.append)
+    return slept
+
+
+def _raw_ref() -> str:
+    return f"{gate.IMAGE}@{ARM_DIGEST}"
+
+
+def test_a_digest_that_resolves_on_a_later_attempt_is_read(monkeypatch, sleeps):
+    answers = [
+        subprocess.CompletedProcess([], 1, "", "ERROR: not found"),
+        subprocess.CompletedProcess([], 1, "", "ERROR: not found"),
+        subprocess.CompletedProcess([], 0, json.dumps(_oci_image()), ""),
+    ]
+    monkeypatch.setattr(gate, "_docker", lambda args: answers.pop(0))
+    assert gate.fetch_raw_manifest(_raw_ref()) == _oci_image()
+    assert sleeps == [gate.MANIFEST_READ_DELAY_SECONDS] * 2
+
+
+def test_a_digest_that_never_resolves_fails_and_says_how_long_it_waited(monkeypatch, sleeps):
+    calls = []
+
+    def always_missing(args):
+        calls.append(args)
+        return subprocess.CompletedProcess(args, 1, "", "ERROR: not found")
+
+    monkeypatch.setattr(gate, "_docker", always_missing)
+    with pytest.raises(gate.GateError, match=r"not found after 10 attempts over 54 seconds"):
+        gate.fetch_raw_manifest(_raw_ref())
+    assert len(calls) == gate.MANIFEST_READ_ATTEMPTS
+    assert len(sleeps) == gate.MANIFEST_READ_ATTEMPTS - 1
+
+
+def test_another_error_reading_a_digest_fails_without_a_retry(registry, sleeps):
+    registry.error = "ERROR: failed to do request: Head: 502 Bad Gateway"
+    with pytest.raises(gate.GateError, match="could not safely inspect"):
+        gate.fetch_raw_manifest(_raw_ref())
+    assert len(registry.calls) == 1
+    assert sleeps == []
+
+
 def test_an_index_missing_a_platform_fails(registry):
     registry.manifest["manifests"] = [_child("arm64", ARM_DIGEST)]
     registry.images = {"linux/arm64": _config("arm64")}
