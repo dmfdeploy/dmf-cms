@@ -23,8 +23,6 @@ PR_EVENT = {
     "GITHUB_EVENT_NAME": "pull_request",
     "GITHUB_REPOSITORY": REPO,
     "PR_NUMBER": "7",
-    "PR_BODY": GOOD_BODY,
-    "PR_LABELS": "",
 }
 
 
@@ -50,17 +48,20 @@ class FakeApi:
     """
 
     def __init__(
-        self, prs: list[dict], commits: list[dict], reported: int | None = None
+        self, prs: list[dict], commits: list[dict], reported: int | None = None,
+        live: dict | None = None,
     ) -> None:
         self.prs = prs
         self.commits = commits
         self.calls: list[str] = []
         self.reported = reported
+        self.live = live or {}
 
     def __call__(self, path: str) -> Any:
         self.calls.append(path)
         if "page=" not in path:
-            return {"commits": len(self.commits) if self.reported is None else self.reported}
+            count = len(self.commits) if self.reported is None else self.reported
+            return {"commits": count, **self.live}
         page = int(path.rsplit("page=", 1)[1])
         if "/commits/" in path and "/pulls" in path:
             data = self.prs
@@ -69,6 +70,11 @@ class FakeApi:
         else:
             raise AssertionError(path)
         return data if page == 1 else []
+
+
+def live(body: str = GOOD_BODY, labels: tuple[str, ...] = (), user: str = "someone") -> dict:
+    """The pull request as the API returns it at run time."""
+    return {"body": body, "labels": [{"name": n} for n in labels], "user": {"login": user}}
 
 
 def push_env() -> dict[str, str]:
@@ -125,6 +131,24 @@ def test_push_dco_fails_closed_without_a_merged_pr() -> None:
         gate.run_gate("dco", push_env(), FakeApi([], _bot_and_human_commits()))
 
 
+def test_pr_dco_exempts_bot_commit_by_pr_author_not_event_actor() -> None:
+    # A maintainer reopening a Dependabot PR is the event actor; the PR author
+    # still decides.
+    api = FakeApi([], _bot_and_human_commits(), live=live(user="dependabot[bot]"))
+    errors = gate.run_gate("dco", dict(PR_EVENT), api)
+    assert len(errors) == 1 and "b" * 40 in errors[0]
+
+
+def test_pr_dco_does_not_trust_a_bot_authored_commit_in_a_human_pr() -> None:
+    api = FakeApi([], _bot_and_human_commits(), live=live(user="someone"))
+    assert len(gate.run_gate("dco", dict(PR_EVENT), api)) == 2
+
+
+def test_issue_link_sees_a_label_the_event_payload_lacked() -> None:
+    api = FakeApi([], [], live=live("Bump x", ("no-issue",), "dependabot[bot]"))
+    assert gate.run_gate("issue-link", dict(PR_EVENT), api) == []
+
+
 def test_commitlint_flags_non_conventional_and_skips_merge() -> None:
     api = FakeApi([pr()], [commit("Fix things"), commit("Merge branch x"), commit("feat(a): ok")])
     errors = gate.run_gate("commitlint", push_env(), api)
@@ -170,22 +194,19 @@ def test_issue_link_variants() -> None:
     assert gate.run_gate("issue-link", push_env(), waived) == []
 
 
-def test_pull_request_event_reads_payload_and_given_number() -> None:
+def test_pull_request_event_reads_live_pr_and_given_number() -> None:
     env = {
         "GITHUB_EVENT_NAME": "pull_request",
         "GITHUB_REPOSITORY": REPO,
         "PR_NUMBER": "42",
-        "PR_BODY": "Refs dmfdeploy/dmfdeploy#1",
-        "PR_LABELS": "bug",
     }
-    api = FakeApi([], [commit("fix: x")])
+    api = FakeApi([], [commit("fix: x")], live=live("Refs dmfdeploy/dmfdeploy#1", ("bug",)))
     assert gate.run_gate("issue-link", env, api) == []
     assert gate.run_gate("dco", env, api) == []
     assert all("/pulls/42" in c for c in api.calls)
     assert any("/pulls/42/commits" in c for c in api.calls)
-    env["PR_BODY"] = ""
-    assert len(gate.run_gate("issue-link", env, api)) == 1
-    env["PR_LABELS"] = "bug no-issue"
+    assert len(gate.run_gate("issue-link", env, FakeApi([], [], live=live("", ("bug",))))) == 1
+    api = FakeApi([], [], live=live("", ("bug", "no-issue")))
     assert gate.run_gate("issue-link", env, api) == []
 
 
@@ -255,8 +276,8 @@ def test_listing_fewer_commits_than_reported_fails_closed(event: str, name: str)
 
 @pytest.mark.parametrize("labels", ["", "no-issue"])
 def test_issue_link_fails_on_session_link_in_description(labels: str) -> None:
-    env = dict(PR_EVENT, PR_BODY=f"{GOOD_BODY}\n{LINK}\n", PR_LABELS=labels)
-    errors = gate.run_gate("issue-link", env, FakeApi([], []))
+    api = FakeApi([], [], live=live(f"{GOOD_BODY}\n{LINK}\n", tuple(labels.split())))
+    errors = gate.run_gate("issue-link", dict(PR_EVENT), api)
     assert errors == ["PR body links to an agent session; remove the link"]
 
 
@@ -266,7 +287,7 @@ def test_issue_link_session_link_on_push_event() -> None:
 
 
 def test_issue_link_clean_description_passes() -> None:
-    assert gate.run_gate("issue-link", dict(PR_EVENT), FakeApi([], [])) == []
+    assert gate.run_gate("issue-link", dict(PR_EVENT), FakeApi([], [], live=live())) == []
 
 
 @pytest.mark.parametrize("event", ["pull_request", "push"])
@@ -289,8 +310,8 @@ def test_uppercase_hostname_in_a_commit_fails_with_sha_only(event: str, name: st
 
 @pytest.mark.parametrize("labels", ["", "no-issue"])
 def test_uppercase_hostname_in_description_fails(labels: str) -> None:
-    env = dict(PR_EVENT, PR_BODY=f"{GOOD_BODY}\n{ULINK}\n", PR_LABELS=labels)
-    errors = gate.run_gate("issue-link", env, FakeApi([], []))
+    api = FakeApi([], [], live=live(f"{GOOD_BODY}\n{ULINK}\n", tuple(labels.split())))
+    errors = gate.run_gate("issue-link", dict(PR_EVENT), api)
     assert errors == ["PR body links to an agent session; remove the link"]
 
 

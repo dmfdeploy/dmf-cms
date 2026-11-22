@@ -17,8 +17,10 @@ Environment:
   GITHUB_SHA         pushed commit (push only)
   GH_TOKEN           token for the gh CLI
   PR_NUMBER          pull request number (pull_request only)
-  PR_BODY, PR_LABELS body and space-separated label names from the event
-                     payload (pull_request only; a re-run replays them)
+
+On a pull request the body, labels and author are read from the API at run
+time, not from the event payload, which a re-run replays and which can predate
+a label added at once, as Dependabot does.
 """
 from __future__ import annotations
 
@@ -146,9 +148,9 @@ def check_session_links(commits: list[dict[str, Any]]) -> list[str]:
 def check_dco(
     commits: list[dict[str, Any]], dependabot_pr: bool = False
 ) -> list[str]:
-    # dependabot[bot] cannot sign off. On a push the workflow actor is whoever
-    # merged, and a commit's author comes from an email anyone can set. So the
-    # exemption needs an authenticated fact: the merged PR was opened by
+    # dependabot[bot] cannot sign off. The workflow actor is whoever triggered
+    # the run, and a commit's author comes from an email anyone can set. So the
+    # exemption needs an authenticated fact: the PR was opened by
     # dependabot[bot]. The commit author must match too, so a commit a person
     # adds to that PR's branch still needs a sign-off.
     def exempt(c: dict[str, Any]) -> bool:
@@ -199,8 +201,10 @@ def run_gate(gate: str, env: dict[str, str], api: Api | None = None) -> list[str
     dependabot_pr = False
     if event == "pull_request":
         number = int(env["PR_NUMBER"])
-        body = env.get("PR_BODY", "")
-        labels = env.get("PR_LABELS", "").split()
+        live = api(f"repos/{repo}/pulls/{number}")
+        body = live.get("body") or ""
+        labels = [label["name"] for label in live.get("labels", [])]
+        dependabot_pr = (live.get("user") or {}).get("login") == "dependabot[bot]"
     elif event == "push":
         pr = find_merged_pr(api, repo, env["GITHUB_SHA"])
         number = pr["number"]
