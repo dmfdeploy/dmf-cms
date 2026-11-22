@@ -158,7 +158,7 @@ def _drive_gated_write(console: _RunningConsole) -> str:
         f"{console.base_url}/api/workflows/does-not-matter/launch",
         data=body,
         method="POST",
-        headers={"Content-Type": "application/json"},
+        headers={"Content-Type": "application/json", "Origin": console.base_url},
     )
     try:
         console.opener.open(req, timeout=5)

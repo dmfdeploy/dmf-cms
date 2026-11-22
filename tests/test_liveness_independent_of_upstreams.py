@@ -281,7 +281,7 @@ def test_already_active_reattach_never_blocks_healthz(monkeypatch, path, body):
         async with httpx.AsyncClient(transport=transport, base_url="http://console") as client:
             await client.get("/auth/login", follow_redirects=False)
             started = time.monotonic()
-            slow = asyncio.create_task(client.post(path, json=body))
+            slow = asyncio.create_task(client.post(path, json=body, headers={"origin": "http://console"}))
             await asyncio.sleep(0.2)  # a blocked loop delays this wake-up too
             health = await client.get("/healthz")
             delay = time.monotonic() - started - 0.2

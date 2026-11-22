@@ -39,3 +39,22 @@ def inventory_already_read(monkeypatch):
         )
 
     monkeypatch.setattr(media_workloads, "ensure_inventory_read", seed)
+
+
+@pytest.fixture(autouse=True)
+def _browser_like_test_client(monkeypatch):
+    """Send a same-origin Origin header by default, as the console's own pages do.
+
+    The console refuses API writes without a matching Origin. Tests of other
+    behaviour should not each repeat the header. A test that exercises the
+    check sets or removes `client.headers["origin"]`, or passes `headers=`.
+    """
+    from starlette.testclient import TestClient
+
+    original_init = TestClient.__init__
+
+    def init(self, *args, **kwargs):
+        original_init(self, *args, **kwargs)
+        self.headers.setdefault("origin", str(self.base_url).rstrip("/"))
+
+    monkeypatch.setattr(TestClient, "__init__", init)
