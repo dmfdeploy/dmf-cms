@@ -98,6 +98,33 @@ def test_dco_flags_each_missing_trailer() -> None:
     assert len(errors) == 1 and "b" * 40 in errors[0]
 
 
+def _bot_and_human_commits() -> list[dict]:
+    bot = commit("ci(deps): bump x", signoff=False, sha="d" * 40)
+    bot["author"] = {"login": "dependabot[bot]"}
+    human = commit("fix: b", signoff=False, sha="b" * 40)
+    human["author"] = {"login": "someone"}
+    return [bot, human]
+
+
+def test_push_dco_exempts_bot_commit_only_in_a_dependabot_pr() -> None:
+    bot_pr = pr()
+    bot_pr["user"] = {"login": "dependabot[bot]"}
+    errors = gate.run_gate("dco", push_env(), FakeApi([bot_pr], _bot_and_human_commits()))
+    assert len(errors) == 1 and "b" * 40 in errors[0]
+
+
+def test_push_dco_does_not_trust_a_dependabot_author_in_a_human_pr() -> None:
+    human_pr = pr()
+    human_pr["user"] = {"login": "someone"}
+    errors = gate.run_gate("dco", push_env(), FakeApi([human_pr], _bot_and_human_commits()))
+    assert len(errors) == 2
+
+
+def test_push_dco_fails_closed_without_a_merged_pr() -> None:
+    with pytest.raises(gate.GateError):
+        gate.run_gate("dco", push_env(), FakeApi([], _bot_and_human_commits()))
+
+
 def test_commitlint_flags_non_conventional_and_skips_merge() -> None:
     api = FakeApi([pr()], [commit("Fix things"), commit("Merge branch x"), commit("feat(a): ok")])
     errors = gate.run_gate("commitlint", push_env(), api)
