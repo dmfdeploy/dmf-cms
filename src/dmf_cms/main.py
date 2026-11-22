@@ -166,7 +166,7 @@ from .security import (
     store_user,
     user_from_claims,
 )
-from .settings import Settings, load_settings
+from .settings import PLACEHOLDER_SECRET_KEYS, Settings, load_settings
 from .setup_requests import (
     ACTION as SETUP_REQUEST_ACTION,
     RECEIPT_TTL_SECONDS,
@@ -268,8 +268,16 @@ def _require_user(request: Request) -> bool:
     return session_user(request.session) is not None
 
 
+_SAFE_METHODS = frozenset({"GET", "HEAD", "OPTIONS", "TRACE"})
+
+
 def _same_origin_post(request: Request) -> bool:
-    """Require an explicit Origin matching this console for cookie-auth writes."""
+    """Require an explicit Origin matching this console.
+
+    A request without Origin, or with ``null``, is refused. Browsers send
+    Origin on every cross-site write, so its absence means the request did not
+    come from this console's own pages.
+    """
     raw_origin = request.headers.get("origin", "")
     if not raw_origin:
         return False
@@ -3684,6 +3692,11 @@ def create_app(settings: Settings | None = None, contract: AppContract | None = 
             raise RuntimeError("DMF_CONSOLE_DEV_LOGIN_ENABLED is only allowed in local runtime mode")
         if not settings.oidc.configured:
             raise RuntimeError("Authentik OIDC must be configured when DMF_CONSOLE_RUNTIME_MODE is not local")
+        if not settings.secret_key.strip() or settings.secret_key.strip().lower() in PLACEHOLDER_SECRET_KEYS:
+            raise RuntimeError(
+                "DMF_CONSOLE_SECRET_KEY must be set to a random value when DMF_CONSOLE_RUNTIME_MODE is not local"
+                " (for example, the output of `openssl rand -hex 32`)"
+            )
     contract = contract or load_app_contract(settings.app_contract_path)
 
     app = FastAPI(
@@ -3699,6 +3712,17 @@ def create_app(settings: Settings | None = None, contract: AppContract | None = 
     # Per-app 5s TTL cache of the scope-filtered service list, so the live-view
     # endpoints (polled per-tile) don't re-query NetBox on every tick (WP-D).
     scoped_service_cache = media_workloads.ScopedServiceCache()
+    # Added first so it runs inside the proxy-header and base-path middleware:
+    # it sees the public scheme and host, and the path without the base prefix.
+    # The SameSite=Lax cookie does not stop writes from sibling apps on the same
+    # site, so every API write must prove it came from this console's own pages.
+    @app.middleware("http")
+    async def require_same_origin_for_writes(request: Request, call_next):
+        if request.method not in _SAFE_METHODS and request.url.path.startswith("/api/"):
+            if not _same_origin_post(request):
+                return JSONResponse({"error": "same-origin request required"}, status_code=403)
+        return await call_next(request)
+
     app.add_middleware(ProxyHeadersMiddleware, trusted_hosts="*")
     if settings.base_path != "/":
         app.add_middleware(BasePathMiddleware, base_path=settings.base_path)
@@ -3908,9 +3932,6 @@ def create_app(settings: Settings | None = None, contract: AppContract | None = 
     @app.post("/api/setup-requests/born-inventory-secretid-issue")
     async def create_born_inventory_setup_request(request: Request):
         """Persist one authenticated, immutable C5 receipt for setup-only 694."""
-        if not _same_origin_post(request):
-            return JSONResponse({"error": "same-origin request required"}, status_code=403)
-
         settings = request.app.state.settings
         # Authentication and session authorization come first, so a caller who
         # is not allowed in cannot learn whether the action is configured.

@@ -83,6 +83,7 @@ def _client(
     monkeypatch.setattr(main, "fetch_userinfo", lambda *_args: claims)
     settings = Settings(
         runtime_mode=runtime_mode,
+        secret_key="test-session-secret",
         dev_login_enabled=False,
         oidc=OIDCSettings(
             enabled=True,
@@ -373,6 +374,7 @@ def test_setup_request_never_accepts_server_owned_fields(monkeypatch, extra):
 
 def test_setup_request_rejects_missing_origin_and_non_json(monkeypatch):
     client, writer, _ = _client(monkeypatch)
+    client.headers.pop("origin")
     assert client.post(ENDPOINT, json={"reason": "setup"}).status_code == 403
     response = client.post(
         ENDPOINT,
@@ -511,6 +513,7 @@ def test_setup_request_rejections_write_no_audit_line(monkeypatch, caplog):
     client, writer, _ = _client(monkeypatch)
     with caplog.at_level(logging.INFO, logger="dmf_cms.audit"):
         client.post(ENDPOINT, json={"reason": ""}, headers=SAME_ORIGIN)
+        client.headers.pop("origin")
         client.post(ENDPOINT, json={"reason": "setup"})
     assert _audit_lines(caplog) == []
 

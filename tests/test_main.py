@@ -72,6 +72,7 @@ def test_spa_fallback_serves_built_index(monkeypatch, tmp_path):
 def test_login_redirect_uses_forwarded_https_scheme(monkeypatch):
     settings = Settings(
         runtime_mode="cluster",
+        secret_key="test-session-secret",
         dev_login_enabled=False,
         oidc=OIDCSettings(
             enabled=True,
@@ -123,6 +124,7 @@ def test_oidc_callback_uses_pkce_verifier(monkeypatch):
 
     settings = Settings(
         runtime_mode="cluster",
+        secret_key="test-session-secret",
         dev_login_enabled=False,
         oidc=OIDCSettings(
             enabled=True,
@@ -165,6 +167,7 @@ def test_cluster_mode_requires_oidc_and_disables_dev_login():
 def test_cluster_mode_accepts_explicit_oidc_configuration():
     settings = Settings(
         runtime_mode="cluster",
+        secret_key="test-session-secret",
         dev_login_enabled=False,
         oidc=OIDCSettings(
             enabled=True,
@@ -211,6 +214,7 @@ def _oidc_client(monkeypatch, discovery, *, logout_redirect_url=""):
 
     settings = Settings(
         runtime_mode="cluster",
+        secret_key="test-session-secret",
         dev_login_enabled=False,
         oidc=OIDCSettings(
             enabled=True,
@@ -259,6 +263,7 @@ def test_logout_discovery_failure_log_line_sanitizes_hostile_exception_text(monk
     monkeypatch.setattr("dmf_cms.main.discovery_document", boom)
     settings = Settings(
         runtime_mode="cluster",
+        secret_key="test-session-secret",
         dev_login_enabled=False,
         oidc=OIDCSettings(
             enabled=True,

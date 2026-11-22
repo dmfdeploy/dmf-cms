@@ -482,6 +482,11 @@ def _parse_int_set(raw: str | None, default: frozenset[int]) -> frozenset[int]:
     return frozenset(items)
 
 
+# Values that ship in examples or defaults. Outside local mode the console
+# refuses them, because anyone who has read the repo knows them.
+PLACEHOLDER_SECRET_KEYS = frozenset({"change-me-in-production", "change-me", "changeme", "secret", "default"})
+
+
 @dataclass(frozen=True)
 class Settings:
     display_name: str = "DMF Console"
