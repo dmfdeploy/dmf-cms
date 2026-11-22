@@ -1,9 +1,10 @@
 name: issue-link
 # Split out of guard.yml deliberately. This gate reads the PR body and labels
-# from the EVENT PAYLOAD, and its failure message tells you to edit the body or
-# add the 'no-issue' label — neither of which fires a run under the default
-# pull_request types, while re-running the job replays the original payload. So
-# it needs `edited`/`labeled`/`unlabeled` for its own advertised remedies to work.
+# from the API at run time, not from the event payload, because a run that
+# survives the concurrency group can carry a payload older than a label added
+# at once. Its failure message tells you to edit the body or add the 'no-issue'
+# label, and neither fires a run under the default pull_request types. So it
+# needs `edited`/`labeled`/`unlabeled` for its own advertised remedies to work.
 #
 # It lives here rather than widening guard.yml's triggers because guard.yml also
 # runs gitleaks and trivy: adding those types there would re-run a full secret
