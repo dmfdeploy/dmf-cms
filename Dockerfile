@@ -2,7 +2,7 @@
 # The frontend build output (HTML, JS, CSS) does not depend on the CPU
 # architecture, so build it natively on the build host even when the image is
 # built for another platform under emulation.
-FROM --platform=$BUILDPLATFORM node:22-slim AS frontend-builder
+FROM --platform=$BUILDPLATFORM node:26-slim AS frontend-builder
 
 WORKDIR /build
 
