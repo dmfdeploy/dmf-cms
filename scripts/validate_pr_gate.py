@@ -143,11 +143,22 @@ def check_session_links(commits: list[dict[str, Any]]) -> list[str]:
     ]
 
 
-def check_dco(commits: list[dict[str, Any]]) -> list[str]:
+def check_dco(
+    commits: list[dict[str, Any]], dependabot_pr: bool = False
+) -> list[str]:
+    # dependabot[bot] cannot sign off. On a push the workflow actor is whoever
+    # merged, and a commit's author comes from an email anyone can set. So the
+    # exemption needs an authenticated fact: the merged PR was opened by
+    # dependabot[bot]. The commit author must match too, so a commit a person
+    # adds to that PR's branch still needs a sign-off.
+    def exempt(c: dict[str, Any]) -> bool:
+        author = c.get("author") or {}
+        return dependabot_pr and author.get("login") == "dependabot[bot]"
+
     return [
         f"commit {c['sha']} missing Signed-off-by trailer (run: git commit -s)"
         for c in commits
-        if not SIGNOFF_RE.search(c["commit"]["message"])
+        if not exempt(c) and not SIGNOFF_RE.search(c["commit"]["message"])
     ]
 
 
@@ -185,6 +196,7 @@ def run_gate(gate: str, env: dict[str, str], api: Api | None = None) -> list[str
     api = api or gh_api
     repo = env["GITHUB_REPOSITORY"]
     event = env["GITHUB_EVENT_NAME"]
+    dependabot_pr = False
     if event == "pull_request":
         number = int(env["PR_NUMBER"])
         body = env.get("PR_BODY", "")
@@ -194,6 +206,7 @@ def run_gate(gate: str, env: dict[str, str], api: Api | None = None) -> list[str
         number = pr["number"]
         body = pr.get("body") or ""
         labels = [label["name"] for label in pr.get("labels", [])]
+        dependabot_pr = (pr.get("user") or {}).get("login") == "dependabot[bot]"
         print(f"Validating merged pull request #{number} for {env['GITHUB_SHA']}")
     else:
         raise GateError(f"unsupported event: {event}")
@@ -203,8 +216,9 @@ def run_gate(gate: str, env: dict[str, str], api: Api | None = None) -> list[str
     if gate not in {"dco", "commitlint"}:
         raise GateError(f"unknown gate: {gate}")
     commits = pr_commits(api, repo, number)
-    check = check_dco if gate == "dco" else check_commitlint
-    return check_session_links(commits) + check(commits)
+    if gate == "dco":
+        return check_session_links(commits) + check_dco(commits, dependabot_pr)
+    return check_session_links(commits) + check_commitlint(commits)
 
 
 def main(argv: list[str]) -> int:

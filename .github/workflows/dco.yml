@@ -22,4 +22,14 @@ jobs:
         env:
           GH_TOKEN: ${{ github.token }}
           PR_NUMBER: ${{ github.event.pull_request.number }}
-        run: python3 scripts/validate_pr_gate.py dco
+          ACTOR: ${{ github.actor }}
+        run: |
+          set -eu
+          # dependabot[bot] cannot sign off commits, so its PRs are exempt. The
+          # job still ends in success: a skipped job is not a passed check, and
+          # a merge queue that requires every check to succeed would stall.
+          if [ "$ACTOR" = "dependabot[bot]" ]; then
+            echo "Dependabot commits are exempt from the sign-off check."
+            exit 0
+          fi
+          python3 scripts/validate_pr_gate.py dco
