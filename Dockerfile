@@ -20,7 +20,7 @@ COPY frontend/*.json ./
 RUN npm run build
 
 # Stage 2: Build Python application
-FROM python:3.14-slim
+FROM python:3.15-slim
 
 ARG VERSION=unknown
 ARG GIT_SHA=unknown
