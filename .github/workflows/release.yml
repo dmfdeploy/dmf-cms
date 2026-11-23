@@ -47,7 +47,7 @@ jobs:
       sha: ${{ steps.gate.outputs.sha }}
     steps:
       - name: Checkout the gate script from main
-        uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683  # v4.2.2
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262  # v4.4.0
         with:
           persist-credentials: false
 
@@ -87,20 +87,20 @@ jobs:
       # The gate script comes from the head of main. The source to build comes
       # from the verified commit. Separate paths keep the source tree clean.
       - name: Checkout the gate script from main
-        uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683  # v4.2.2
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262  # v4.4.0
         with:
           path: tools
           persist-credentials: false
 
       - name: Checkout the verified release commit
-        uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683  # v4.2.2
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262  # v4.4.0
         with:
           ref: ${{ needs.verify.outputs.sha }}
           path: src
           persist-credentials: false
 
       - name: Checkout the shared GHCR publisher
-        uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683  # v4.2.2
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262  # v4.4.0
         with:
           repository: dmfdeploy/dmfdeploy
           ref: 28dc456f1ff64899b73d1445f5d5d9759199062c
@@ -124,7 +124,7 @@ jobs:
       # never through `env` (ADR-0007).
       - name: Mint the release App token
         id: app_token
-        uses: actions/create-github-app-token@bcd2ba49218906704ab6c1aa796996da409d3eb1  # v3.2.0
+        uses: actions/create-github-app-token@f418cff399f7aef4c2f0ad47e25ca7a6abbdd6fc  # v3.4.0
         with:
           client-id: ${{ secrets.RELEASE_APP_CLIENT_ID }}
           private-key: ${{ secrets.RELEASE_APP_PRIVATE_KEY }}
