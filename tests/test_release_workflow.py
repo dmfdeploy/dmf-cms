@@ -130,10 +130,10 @@ def test_the_release_workflow_does_not_trigger_on_itself_or_on_automerge(release
     assert "automerge" not in listed
 
 
-def test_the_gate_workflow_map_covers_exactly_the_twelve_required_contexts():
+def test_the_gate_workflow_map_covers_exactly_the_thirteen_required_contexts():
     assert gate.REQUIRED_CONTEXTS == {
         "actionlint", "commitlint", "dco", "gitleaks", "issue-link", "test (3.12)",
-        "test (3.13)", "trivy", "working-model", "frontend", "frontend-e2e", "review-comments",
+        "test (3.13)", "test (3.15)", "trivy", "working-model", "frontend", "frontend-e2e", "review-comments",
     }
 
 

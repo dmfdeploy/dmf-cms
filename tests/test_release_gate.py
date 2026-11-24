@@ -335,10 +335,10 @@ def test_post_without_the_app_token_fails_instead_of_falling_back(monkeypatch):
 # --------------------------------------------------- checks 1 to 3: the gate
 
 
-def test_gate_passes_when_all_twelve_contexts_succeed(api):
+def test_gate_passes_when_all_thirteen_contexts_succeed(api):
     verdict = gate.evaluate(api, SHA)
     assert verdict.ready and verdict.version == VERSION
-    assert len(gate.REQUIRED_CONTEXTS) == 12
+    assert len(gate.REQUIRED_CONTEXTS) == 13
 
 
 @pytest.mark.parametrize("status", ["diverged", "behind"])
