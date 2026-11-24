@@ -594,7 +594,7 @@ cluster (`kubectl config current-context`).
 GitHub Actions is the CI for this repository. The workflows live in
 `.github/workflows/`: `ci.yml` runs the backend and frontend checks, and
 `guard.yml`, `commitlint.yml`, `dco.yml` and `issue-link.yml` run the pull
-request gates. The last three run on `pull_request_target`, so a pull request
+request gates. The last three run on `pull_request_target` only, so a pull request
 cannot change the workflow or the script that judges it. The
 commands behind these checks are in
 [`CONTRIBUTING.md`](../CONTRIBUTING.md#develop-and-test).

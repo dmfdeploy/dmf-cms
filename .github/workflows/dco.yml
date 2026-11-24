@@ -10,10 +10,6 @@ name: DCO
 on:
   pull_request_target:
     branches: [main]
-  # Transition: the pull_request listener stays only until the trusted
-  # pull_request_target run is proven on main, then a follow-up removes it.
-  pull_request:
-    branches: [main]
   push:
     branches: [main]
 permissions:

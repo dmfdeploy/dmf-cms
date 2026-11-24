@@ -194,11 +194,9 @@ def test_issue_link_variants() -> None:
     assert gate.run_gate("issue-link", push_env(), waived) == []
 
 
-@pytest.mark.parametrize("event", ["pull_request_target", "pull_request"])
-def test_pull_request_event_reads_live_pr_and_given_number(event: str) -> None:
-    # pull_request stays accepted while the old listeners are phased out.
+def test_pull_request_event_reads_live_pr_and_given_number() -> None:
     env = {
-        "GITHUB_EVENT_NAME": event,
+        "GITHUB_EVENT_NAME": "pull_request_target",
         "GITHUB_REPOSITORY": REPO,
         "PR_NUMBER": "42",
     }
@@ -210,6 +208,13 @@ def test_pull_request_event_reads_live_pr_and_given_number(event: str) -> None:
     assert len(gate.run_gate("issue-link", env, FakeApi([], [], live=live("", ("bug",))))) == 1
     api = FakeApi([], [], live=live("", ("bug", "no-issue")))
     assert gate.run_gate("issue-link", env, api) == []
+
+
+def test_plain_pull_request_event_is_unsupported() -> None:
+    # The gates run only from the base branch, so a pull_request run is refused.
+    env = dict(PR_EVENT, GITHUB_EVENT_NAME="pull_request")
+    with pytest.raises(gate.GateError, match="unsupported event"):
+        gate.run_gate("dco", env, FakeApi([], []))
 
 
 def test_lookup_retries_before_giving_up() -> None:
