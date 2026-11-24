@@ -37,6 +37,9 @@ class _SizedBody:
         self._remaining -= size
         return self._fill * size
 
+    def close(self) -> None:
+        pass
+
     def __enter__(self):
         return self
 
@@ -70,6 +73,7 @@ def test_error_body_read_is_a_bounded_prefix() -> None:
     with patch("urllib.request.urlopen", side_effect=err):
         with pytest.raises(awx.AWXAPIError) as info:
             awx._request("http://awx.test", "tok", "GET", "/api/v2/ping/")
+    err.close()
     assert not fp.unbounded
     assert len(info.value.body) <= awx._MAX_ERROR_BODY_BYTES
     assert info.value.status == 500
