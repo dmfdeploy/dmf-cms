@@ -51,7 +51,7 @@ def _concrete(path):
 
 
 def test_the_app_has_write_routes_to_check(app):
-    assert len(_write_routes(app)) >= 12
+    assert len(_write_routes(app)) >= 11
 
 
 def test_every_write_route_is_under_api(app):

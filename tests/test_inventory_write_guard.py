@@ -47,7 +47,6 @@ SERVICE = {
 ROUTES = [
     ("deploy", "/api/catalog/none/deploy", {}),
     ("teardown", "/api/catalog/none/teardown", {}),
-    ("clear", "/api/media-workloads/inst-1/clear", {}),
     ("purge", "/api/media-workloads/studio-a/purge", {"confirm": "studio-a"}),
     ("switch-source", "/api/media-workloads/inst-1/switch-source", {"source_instance": "src-1"}),
 ]
@@ -103,7 +102,7 @@ def _client() -> TestClient:
         dev_groups=OPERATOR,
         awx=AWXSettings(api_url="http://awx.test", api_token="t"),
         awx_autoscale=AWXAutoscaleSettings(enabled=False),
-        netbox=NetboxSettings(api_url=NETBOX, api_token="tok", writer_token="w"),
+        netbox=NetboxSettings(api_url=NETBOX, api_token="tok"),
         media_tenancy=MediaTenancySettings(mode="single"),
         prometheus=PrometheusSettings(url="http://prom.test"),
     )

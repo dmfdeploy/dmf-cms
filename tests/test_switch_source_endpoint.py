@@ -207,8 +207,7 @@ def test_real_media_engineers_group_grants_access_without_role(monkeypatch, capl
             resp = _post(client, body={"source_instance": "source-b", "reason": "go"})
     assert resp.status_code == 200
     body = resp.json()
-    # C5 records the member's true capability role (viewer), matching
-    # clear-for-deployment's own media-engineers precedent.
+    # C5 records the member's true capability role (viewer).
     assert body["role"] == "viewer"
 
 

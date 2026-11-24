@@ -41,10 +41,9 @@ def _request(
 ) -> dict:
     """Make an authenticated JSON request to the NetBox API.
 
-    Defaults to GET (all pre-existing callers). Write methods (PATCH) are
-    used ONLY by the media-workloads clear-for-deployment action, which
-    authenticates with the scoped writer token (ADR-0032), never the
-    read token.
+    Defaults to GET. Write methods (PATCH) are used by
+    media_workloads.clear_for_deployment, which authenticates with a scoped
+    writer token (ADR-0032), never the read token.
     """
     url = api_url.rstrip("/") + path
     headers = {

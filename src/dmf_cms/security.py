@@ -27,9 +27,9 @@ ROLE_GROUPS = {
 }
 
 # Media Workloads surface group (ADR-0037 §5): membership grants the Media
-# Workloads surface — read and the clear-for-deployment write — without
-# granting the engineer capability role. Tenancy scope within the surface
-# stays with MediaTenancySettings (dmfdeploy/dmfdeploy#174).
+# Workloads surface without granting the engineer capability role. Tenancy
+# scope within the surface stays with MediaTenancySettings
+# (dmfdeploy/dmfdeploy#174).
 MEDIA_ENGINEERS_GROUP = "media-engineers"
 
 # Roles a real admin may *view as* (dmfdeploy/dmfdeploy#185 WP-B). Strictly a
