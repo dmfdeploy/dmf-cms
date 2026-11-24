@@ -43,7 +43,7 @@ COPY config ./config
 # Copy built React app into both source tree and installed package location
 COPY --from=frontend-builder /src/dmf_cms/static/app ./src/dmf_cms/static/app
 RUN pip install --no-cache-dir . && \
-    cp -r /app/src/dmf_cms/static/app "$(python -c 'import dmf_cms, os; print(os.path.dirname(dmf_cms.__file__))')/static/app"
+    cp -r /app/src/dmf_cms/static/app/. "$(python -c 'import dmf_cms, os; print(os.path.dirname(dmf_cms.__file__))')/static/app"
 
 EXPOSE 8000
 
