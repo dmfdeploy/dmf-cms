@@ -690,12 +690,11 @@ const LAST_INNER_SHAPE = roundedShape(erodeVertices(LAST_VERTICES, RING_INSET))
  * and Safari, but an empirical support probe run against a real Firefox
  * found `curve` specifically unsupported there regardless of what that
  * table claims — this is a runtime `CSS.supports` call, not an
- * assumption. `CSS` is undefined in jsdom (this repo's test environment
- * has no such global), which resolves this to `false` there too — the
- * fallback rectangle below is exactly what the test suite exercises,
- * which is fine per lifecycleStrip.test.tsx's own "jsdom computes no
- * pixels" rule; the chevron geometry is a real-browser concern, same as
- * before.
+ * assumption. jsdom 31 defines a `CSS` global whose `supports` accepts
+ * `shape()`, so this resolves to `true` under the default test environment;
+ * lifecycleStrip.test.tsx stubs `CSS` and re-imports the module to exercise
+ * each branch. jsdom computes no pixels, so the chevron geometry is a
+ * real-browser concern.
  */
 const SUPPORTS_SHAPE_CURVE =
   typeof CSS !== 'undefined' &&
@@ -780,8 +779,7 @@ export const CONTENT_OFFSET_PX = NOTCH_DEPTH / 2
  * site below) rather than read off the module-level constant directly —
  * this is the one function in this file a test needs to exercise both
  * branches of, and SUPPORTS_SHAPE_CURVE itself is fixed for the whole
- * module's lifetime (jsdom has no `CSS` global, so it is always `false`
- * under the test suite — see SUPPORTS_SHAPE_CURVE's own comment). An
+ * module's lifetime (see SUPPORTS_SHAPE_CURVE's own comment). An
  * explicit parameter is what makes both branches reachable from a test
  * without mocking `CSS.supports`.
  *
