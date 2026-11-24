@@ -262,23 +262,23 @@ describe('the icon-only rail\'s tooltip is not structurally clipped (operator re
   // compute whether the tooltip is visually clipped, because there is no
   // rendering engine here to clip it with. This is a SMELL-PIN, not a
   // visual proof: it asserts that no element in the tooltip's own ancestor
-  // chain, up to and including the <aside> that owns the fixed w-16 rail,
+  // chain, up to and including the wrapper that owns the fixed w-16 rail,
   // carries the `overflow-hidden` Tailwind class. That is a necessary
   // condition for the tooltip (positioned `absolute left-full`, meant to
   // escape past the rail's right edge) to be visible on hover/focus — not
   // a sufficient one. It would have caught exactly the regression the
   // operator found (frontend/src/components/Sidebar.tsx:171, before the
-  // fix): the <aside> itself carried overflow-hidden while the tooltip
+  // fix): the wrapper itself carried overflow-hidden while the tooltip
   // tried to escape past it. The actual proof that labels render on
   // rendered pixels is the operator's own re-review, not this test.
-  it('carries no overflow-hidden anywhere between the tooltip and the <aside>', async () => {
+  it('carries no overflow-hidden anywhere between the tooltip and the sidebar wrapper', async () => {
     renderSidebar(identity({ role: 'viewer' }))
     const link = await screen.findByRole('link', { name: 'Workspace' })
     const tooltip = link.querySelector('[role="tooltip"]')
     if (!tooltip) throw new Error('no tooltip rendered for Workspace')
 
-    const aside = link.closest('aside')
-    if (!aside) throw new Error('Workspace link is not inside an <aside>')
+    const wrapper = link.closest('[data-testid="sidebar"]')
+    if (!wrapper) throw new Error('Workspace link is not inside the sidebar wrapper')
 
     let node: HTMLElement | null = tooltip.parentElement as HTMLElement | null
     while (node) {
@@ -286,7 +286,7 @@ describe('the icon-only rail\'s tooltip is not structurally clipped (operator re
         node.classList.contains('overflow-hidden'),
         `${node.tagName.toLowerCase()}.${Array.from(node.classList).join('.')} clips the tooltip`,
       ).toBe(false)
-      if (node === aside) break
+      if (node === wrapper) break
       node = node.parentElement
     }
   })
@@ -299,6 +299,15 @@ describe('the icon-only rail\'s tooltip is not structurally clipped (operator re
 // so a name-scoped query has something to discriminate FROM — a query
 // against Sidebar alone couldn't fail this way, since there'd be only one
 // <nav> in the tree either way.
+describe('sidebar exposes one navigation landmark and no complementary wrapper', () => {
+  it('has no complementary landmark, and the named nav is the only sidebar landmark', async () => {
+    renderSidebar(identity({ role: 'viewer' }))
+    const nav = await screen.findByRole('navigation', { name: 'Console navigation' })
+    expect(screen.queryAllByRole('complementary')).toHaveLength(0)
+    expect(nav.closest('aside')).toBeNull()
+  })
+})
+
 describe('sidebar nav landmark has an accessible name (umbrella #486)', () => {
   it('names the sidebar nav distinctly from the breadcrumb nav', async () => {
     renderAt('/')
