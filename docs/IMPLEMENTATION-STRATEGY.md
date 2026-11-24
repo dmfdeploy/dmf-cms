@@ -128,7 +128,7 @@ Why BFF (not letting React call OIDC)?
 **Docker Integration:**
 - `Dockerfile` — Two-stage build:
   - Stage 1 (node:26-slim): COPY frontend/, `npm ci && npm run build` → `/src/dmf_cms/static/app`
-  - Stage 2 (python:3.14-slim): COPY `--from=frontend-builder /src/dmf_cms/static/app` → `src/dmf_cms/static/app/`
+  - Stage 2 (python:3.15-slim): COPY `--from=frontend-builder /src/dmf_cms/static/app` → `src/dmf_cms/static/app/`
   - FastAPI serves the embedded React app
 
 ### Testing Status
@@ -308,7 +308,7 @@ scripts/release.sh patch    # or minor / X.Y.Z — bumps VERSION + builds
 
 **What happens:**
 - Stage 1 (node:26): npm ci + npm run build → /src/dmf_cms/static/app
-- Stage 2 (python:3.14): COPY --from=frontend-builder /src/dmf_cms/static/app → src/dmf_cms/static/app/
+- Stage 2 (python:3.15): COPY --from=frontend-builder /src/dmf_cms/static/app → src/dmf_cms/static/app/
 - Final image: ~200MB (Python + FastAPI + React bundle)
 
 **Build time:** +60–90s for npm steps (first-time cost per image, then cached).
