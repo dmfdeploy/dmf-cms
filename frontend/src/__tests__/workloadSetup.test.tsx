@@ -118,8 +118,8 @@ function viewerWorkload(overrides: Partial<MediaWorkload> = {}): MediaWorkload {
 }
 
 // umbrella dmfdeploy/dmfdeploy#378: the shape the precedent test at
-// "renders the desired-state clear control on Provision..." already
-// establishes as delete-permanently-eligible on member state alone — every
+// "offers no desired-state control on Provision..." establishes as
+// delete-permanently-eligible on member state alone — every
 // member bootstrapped (nothing cleared to run), none observed running. The
 // three gate tests below start from this and violate exactly one further
 // fact each.
@@ -178,16 +178,10 @@ interface FetchOpts {
   // a response body that is not JSON. 'http-500-capacity' is an HTTP error
   // whose body has the deploy preflight's shape.
   switchRequestFailure?: 'http-500' | 'http-500-capacity' | 'lost' | 'bad-json'
-  clearResult?: Record<string, unknown>
   facilitySites?: Array<{ name: string; slug: string | null; device_count: number }>
   // Holds the switch-source POST open until releaseSwitch() is called — the
   // one seam the cross-stage busy-suppression test needs to control timing.
   holdSwitch?: boolean
-  // Same idea for the clear POST: awaited before the response resolves, so
-  // "a clear is pending" is an observable state rather than a race.
-  clearDelay?: Promise<unknown>
-  /** Force the clear POST to fail, for the stage-level failure test. */
-  clearStatus?: number
   /** Gate grouped reads after the Nth call, to test the slow-refetch race. */
   groupedDelayAfter?: number
   groupedGate?: Promise<unknown>
@@ -223,7 +217,6 @@ function mkFetch(opts: FetchOpts = {}) {
     deploy: [] as Array<{ url: string; init?: RequestInit }>,
     teardown: [] as Array<{ url: string; init?: RequestInit }>,
     switch: [] as Array<{ url: string; init?: RequestInit }>,
-    clear: [] as Array<{ url: string; init?: RequestInit }>,
     grouped: 0,
     me: 0,
   }
@@ -307,23 +300,6 @@ function mkFetch(opts: FetchOpts = {}) {
         },
       )
     }
-    if (url.match(/\/api\/media-workloads\/[^/]+\/clear$/)) {
-      calls.clear.push({ url, init })
-      if (opts.clearDelay) await opts.clearDelay
-      if (opts.clearStatus) return json({ error: 'nope' }, opts.clearStatus)
-      return json(
-        opts.clearResult ?? {
-          instance: 'crosspoint-1',
-          requested_state: 'active',
-          previous_state: 'bootstrapped',
-          request_id: 'req-clear-1',
-          actor: 'ops',
-          role: 'engineer',
-          reason: 'go',
-          reconcile: { expectation: 'converging', watch: '' },
-        },
-      )
-    }
     if (url.match(/\/api\/catalog\/[^/]+\/deploy$/)) {
       calls.deploy.push({ url, init })
       return json(opts.deployResult ?? { job_id: 501, status: 'launched', request_id: 'req-deploy-1' })
@@ -379,15 +355,6 @@ function rail(): HTMLElement {
 function stageSection(label: string): HTMLElement {
   const heading = screen.getByRole('heading', { name: label, level: 2 })
   return heading.closest('[data-step-state]') as HTMLElement
-}
-
-/** dmfdeploy/dmfdeploy#556: the clear-for-deployment control sits behind the
- *  collapsed "Desired state (expert)" disclosure now, so a test that reaches
- *  it opens that first — the same act an operator has to perform. (jsdom
- *  would find the button through a closed <details> anyway; opening it keeps
- *  these tests honest about the real-browser path.) */
-async function openDesiredState(section: HTMLElement) {
-  fireEvent.click(await within(section).findByText('Desired state (expert)'))
 }
 
 /** Clicks the rail chip for `label` and returns the newly-mounted section.
@@ -770,12 +737,7 @@ describe('a locked step is reachable and explains itself, but a stage control ne
     expect(screen.queryByRole('button', { name: /Teardown|Delete permanently/ })).toBeNull()
   })
 
-  it('renders the desired-state clear control on Provision, under the rail, and never on Finalise', async () => {
-    // GATE-S1 P1: this control used to render on Finalise OUTSIDE the action
-    // model, so it survived the not-applicable rule and the busy suppression
-    // alike. It is a provision-time action — it moves a workload from "no
-    // active intent" to an active one — so it now flows through
-    // stageActions('provision') like every other write.
+  it('offers no desired-state control on Provision, and Delete permanently opens on Finalise', async () => {
     const wl = workload({
       lifecycle: 'provision',
       instances: [instance({ requested_state: 'bootstrapped', observed_state: 'unknown' })],
@@ -784,48 +746,17 @@ describe('a locked step is reachable and explains itself, but a stage control ne
     renderDetail()
     const strip = await findRail()
 
-    await openDesiredState(stageSection('Provision'))
-    expect(
-      await within(stageSection('Provision')).findByRole('button', { name: 'Clear for deployment' }),
-    ).toBeTruthy()
+    expect(await within(stageSection('Provision')).findByRole('button', { name: /Deploy/ })).toBeTruthy()
+    expect(within(stageSection('Provision')).queryByRole('button', { name: 'Clear for deployment' })).toBeNull()
+    expect(within(stageSection('Provision')).queryByText('Desired state (expert)')).toBeNull()
 
-    // umbrella #347: this exact shape — every member bootstrapped, none
-    // observed running — is now ALSO the delete-permanently condition, so
-    // Finalise is legitimately OPEN here (not locked), offering that action
-    // instead of tear-down. The regression this test actually guards
-    // (GATE-S1 P1) is narrower than "Finalise stays locked": clear-for-
-    // deployment must never appear there, which still holds.
+    // umbrella #347: every member bootstrapped, none observed running, is the
+    // delete-permanently condition, so Finalise is OPEN here (not locked),
+    // offering that action instead of tear-down.
     const strip2 = within(strip)
     expect(strip2.getByRole('button', { name: 'Finalise & Review' })).toBeTruthy()
     const finaliseSection = await selectStep('Finalise & Review')
-    expect(within(finaliseSection).queryByRole('button', { name: 'Clear for deployment' })).toBeNull()
     expect(await within(finaliseSection).findByRole('button', { name: 'Delete permanently' })).toBeTruthy()
-  })
-
-  it('suppresses the clear control while a job is in flight, like every other action', async () => {
-    // The point of bringing it under the model: busy suppression now reaches
-    // it. Before, a NetBox intent flip could fire mid-job.
-    const wl = workload({
-      lifecycle: 'provision',
-      instances: [instance({ requested_state: 'bootstrapped', observed_state: 'unknown' })],
-    })
-    mkFetch({ workload: wl })
-    renderDetail()
-    await findRail()
-
-    // Arm and fire a deploy so a launch job is in flight.
-    const provision = stageSection('Provision')
-    fireEvent.click(await within(provision).findByRole('button', { name: /Deploy/ }))
-    // Scope to the reason field: the deploy panel also carries the optional
-    // workload-slug input, so an unscoped textbox query is ambiguous.
-    fireEvent.change(within(provision).getAllByRole('textbox')[0], { target: { value: 'go' } })
-    fireEvent.click(within(provision).getByRole('button', { name: /Confirm deploy/ }))
-
-    await waitFor(() =>
-      expect(
-        within(stageSection('Provision')).queryByRole('button', { name: 'Clear for deployment' }),
-      ).toBeNull(),
-    )
   })
 })
 
@@ -1904,214 +1835,11 @@ describe('the Media Workloads list — single entry per workload', () => {
 })
 
 // ---------------------------------------------------------------------------
-// GATE-S1-RV: each defect class gets a test that FAILS if the fix is reverted.
-// ---------------------------------------------------------------------------
-
-describe('a clear in flight owns the rail like any other write', () => {
-  it('suppresses Deploy and sibling clears while a clear POST is pending', async () => {
-    // Before the fix, clear owned a private mutation the stage could not see,
-    // so Deploy and other instances' clears stayed live mid-write.
-    let releaseClear: (v: unknown) => void = () => {}
-    const wl = workload({
-      lifecycle: 'provision',
-      instances: [
-        instance({ instance: 'mxl-a', requested_state: 'bootstrapped', observed_state: 'unknown' }),
-        instance({ instance: 'mxl-b', requested_state: 'bootstrapped', observed_state: 'unknown' }),
-      ],
-    })
-    mkFetch({
-      workload: wl,
-      // Hold the clear POST open so "pending" is observable.
-      clearDelay: new Promise((r) => { releaseClear = r }),
-    })
-    renderDetail()
-    await findRail()
-
-    const provision = stageSection('Provision')
-    await openDesiredState(provision)
-    const clears = within(provision).getAllByRole('button', { name: 'Clear for deployment' })
-    expect(clears).toHaveLength(2)
-
-    fireEvent.click(clears[0])
-    fireEvent.change(within(provision).getByRole('textbox'), { target: { value: 'go' } })
-    fireEvent.click(within(provision).getByRole('button', { name: 'Confirm' }))
-
-    // While the POST is open the whole write surface is suppressed.
-    await waitFor(() =>
-      expect(within(stageSection('Provision')).queryAllByRole('button', { name: 'Clear for deployment' }))
-        .toHaveLength(0),
-    )
-    expect(within(stageSection('Provision')).queryByRole('button', { name: /Deploy/ })).toBeNull()
-
-    // ...and comes BACK when it completes. This half is the discriminator:
-    // suppression that never lifts is not suppression, it is a dead rail.
-    // The control used to OWN the mutation from inside this hidden subtree,
-    // so firing it unmounted its own owner and the pending flag could never
-    // fall (GATE-S1-RV2 P1).
-    releaseClear(null)
-    await waitFor(() =>
-      expect(within(stageSection('Provision')).queryByRole('button', { name: /Deploy/ }))
-        .not.toBeNull(),
-    )
-  })
-})
-
-describe('a successful clear closes its own loop', () => {
-  it('re-reads the grouped inventory instead of leaving a stale repeatable action', async () => {
-    // The control decides whether to render from the inventory. Without
-    // invalidation the already-taken action stayed clickable until the 15s
-    // poll — the operator could fire it twice at a state that had moved.
-    const wl = workload({
-      lifecycle: 'provision',
-      instances: [instance({ requested_state: 'bootstrapped', observed_state: 'unknown' })],
-    })
-    const h = mkFetch({ workload: wl })
-    renderDetail()
-    await findRail()
-
-    const before = h.calls.grouped
-    const provision = stageSection('Provision')
-    await openDesiredState(provision)
-    fireEvent.click(within(provision).getByRole('button', { name: 'Clear for deployment' }))
-    fireEvent.change(within(provision).getByRole('textbox'), { target: { value: 'go' } })
-    fireEvent.click(within(provision).getByRole('button', { name: 'Confirm' }))
-
-    // The fixture TRANSITIONS, as the real backend would: the instance is now
-    // cleared, so the next read no longer reports it as bootstrapped. With a
-    // SINGLE member now active and healthy the backend's derivation is
-    // `operate` (all_active + all_healthy), not `configure` — configure is
-    // what it returns while some member still lags.
-    h.setWorkload(
-      workload({
-        lifecycle: 'operate',
-        instances: [instance({ requested_state: 'active', observed_state: 'running' })],
-      }),
-    )
-
-    await waitFor(() => expect(h.calls.grouped).toBeGreaterThan(before))
-    // The DISAPPEARANCE is the claim: asserting only that a refetch happened
-    // would pass even if the control ignored the new inventory.
-    await waitFor(() =>
-      expect(
-        within(stageSection('Provision')).queryByRole('button', { name: 'Clear for deployment' }),
-      ).toBeNull(),
-    )
-  })
-})
-
-describe("clearing one sibling never strands the other (GATE-S1-RV3 P1)", () => {
-  it('keeps the second bootstrapped instance clearable after the first is cleared', async () => {
-    // Clearing one member flips the backend
-    // derivation to configure (any_active wins), which used to withdraw the
-    // clear affordance from the rail and strand the remaining sibling with
-    // no path forward at all.
-    const h = mkFetch({
-      workload: workload({
-        lifecycle: 'provision',
-        instances: [
-          instance({ instance: 'mxl-a', requested_state: 'bootstrapped', observed_state: 'unknown' }),
-          instance({ instance: 'mxl-b', requested_state: 'bootstrapped', observed_state: 'unknown' }),
-        ],
-      }),
-    })
-    renderDetail()
-    await findRail()
-    await openDesiredState(stageSection('Provision'))
-    expect(
-      within(stageSection('Provision')).getAllByRole('button', { name: 'Clear for deployment' }),
-    ).toHaveLength(2)
-
-    const provision = stageSection('Provision')
-    fireEvent.click(within(provision).getAllByRole('button', { name: 'Clear for deployment' })[0])
-    fireEvent.change(within(provision).getByRole('textbox'), { target: { value: 'go' } })
-    fireEvent.click(within(provision).getByRole('button', { name: 'Confirm' }))
-
-    // The backend now derives `configure`: one member active, one still not.
-    h.setWorkload(
-      workload({
-        lifecycle: 'configure',
-        instances: [
-          instance({ instance: 'mxl-a', requested_state: 'active', observed_state: 'running' }),
-          instance({ instance: 'mxl-b', requested_state: 'bootstrapped', observed_state: 'unknown' }),
-        ],
-      }),
-    )
-
-    // The surviving sibling keeps a reachable clear path, and the rail still
-    // reports the backend's position honestly.
-    await waitFor(() =>
-      expect(
-        within(stageSection('Provision')).queryAllByRole('button', { name: 'Clear for deployment' }),
-      ).toHaveLength(1),
-    )
-  })
-})
-
-describe('failure and loop-closure are visible and atomic', () => {
-  it('shows a clear failure at stage level, after the confirm panel closes', async () => {
-    const h = mkFetch({
-      workload: workload({
-        lifecycle: 'provision',
-        instances: [instance({ requested_state: 'bootstrapped', observed_state: 'unknown' })],
-      }),
-      clearStatus: 500,
-    })
-    renderDetail()
-    await findRail()
-
-    const provision = stageSection('Provision')
-    await openDesiredState(provision)
-    fireEvent.click(within(provision).getByRole('button', { name: 'Clear for deployment' }))
-    fireEvent.change(within(provision).getByRole('textbox'), { target: { value: 'go' } })
-    fireEvent.click(within(provision).getByRole('button', { name: 'Confirm' }))
-
-    // Panel closed, failure still stated — no re-arming required to see it.
-    await waitFor(() =>
-      expect(within(stageSection('Provision')).getByText(/could not confirm the result/)).toBeTruthy(),
-    )
-    expect(within(stageSection('Provision')).queryByRole('textbox')).toBeNull()
-    expect(h.calls.clear).toHaveLength(1)
-  })
-
-  it('holds the write pending until the refreshed inventory lands', async () => {
-    // The slow-refetch interval: with a fire-and-forget invalidation, `busy`
-    // fell first and a stale Clear/Deploy flashed back while NetBox was
-    // still being re-read.
-    let releaseGrouped: (v: unknown) => void = () => {}
-    const h = mkFetch({
-      workload: workload({
-        lifecycle: 'provision',
-        instances: [instance({ requested_state: 'bootstrapped', observed_state: 'unknown' })],
-      }),
-      groupedDelayAfter: 1,
-      groupedGate: new Promise((r) => { releaseGrouped = r }),
-    })
-    renderDetail()
-    await findRail()
-
-    const provision = stageSection('Provision')
-    await openDesiredState(provision)
-    fireEvent.click(within(provision).getByRole('button', { name: 'Clear for deployment' }))
-    fireEvent.change(within(provision).getByRole('textbox'), { target: { value: 'go' } })
-    fireEvent.click(within(provision).getByRole('button', { name: 'Confirm' }))
-
-    await waitFor(() => expect(h.calls.clear).toHaveLength(1))
-    // While the re-read is outstanding the write surface stays withdrawn.
-    expect(within(stageSection('Provision')).queryByRole('button', { name: /Deploy/ })).toBeNull()
-
-    releaseGrouped(null)
-    await waitFor(() =>
-      expect(within(stageSection('Provision')).queryByRole('button', { name: /Deploy/ })).not.toBeNull(),
-    )
-  })
-})
-
-// ---------------------------------------------------------------------------
 // GATE-378: three orthogonal gates on delete-permanently, none of which
 // stageActions('finalise')'s pre-existing member-state checks cover. All
 // three fixtures below are otherwise-eligible per purgeEligibleWorkload
 // (lifecycle=provision, every member bootstrapped, none observed running —
-// the exact shape the "renders the desired-state clear control on
+// the exact shape the "offers no desired-state control on
 // Provision..." test above proves is legitimately offered) and violate
 // exactly one further fact. Since delete-permanently is the ONLY action
 // stageActions() can offer at Finalise while lifecycle=provision, withdrawing

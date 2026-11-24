@@ -134,14 +134,13 @@ async function openStep(label: string): Promise<HTMLElement> {
 }
 
 describe('WorkloadSetup: stale withdraws every write, then restores them', () => {
-  it('Provision: deploy and clear-for-deployment', async () => {
+  it('Provision: deploy', async () => {
     const inv: Inventory = { workloads: [workload()], stale: false }
     mockApi(inv)
     const qc = mount('/media-workloads/studio-a/setup', '/media-workloads/:slug/setup', <WorkloadSetup />)
 
     const fresh = await openStep('Provision')
     expect(await within(fresh).findByRole('button', { name: '▶ Deploy' })).toBeTruthy()
-    expect(within(fresh).getByText('Clear for deployment')).toBeTruthy()
     expect(screen.queryByText(STALE_NOTICE)).toBeNull()
 
     inv.stale = true
@@ -150,7 +149,6 @@ describe('WorkloadSetup: stale withdraws every write, then restores them', () =>
     expect(screen.getByText(/Last confirmed 1 minute ago/)).toBeTruthy()
     const stale = await openStep('Provision')
     expect(within(stale).queryByRole('button', { name: '▶ Deploy' })).toBeNull()
-    expect(within(stale).queryByText('Clear for deployment')).toBeNull()
 
     inv.stale = false
     await refetch(qc)

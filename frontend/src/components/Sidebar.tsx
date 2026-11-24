@@ -28,7 +28,7 @@ interface NavItem {
 //
 // Their content did not vanish, it MOVED, which is the whole point of the cut:
 //   Catalog   -> workload detail: Design (template + composition),
-//               Provision (deploy + clear-for-deployment), and
+//               Provision (deploy), and
 //               Finalise & Review (teardown — Catalog owned that too)
 //   Activity  -> workload detail, Provision stage (job progress/outcome) and
 //               Finalise & Review (job log + outcome marker)

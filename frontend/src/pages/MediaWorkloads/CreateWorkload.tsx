@@ -1016,9 +1016,7 @@ function ProvisionSection({
         )}
 
         {/* Rendered by the SECTION, not the confirm panel, so it survives
-            the panel closing (see handleProvisionConfirm's catch branch) —
-            the same reason ProvisionStage's clear-for-deployment failure
-            lives on the stage rather than inside its own armed subtree. */}
+            the panel closing (see handleProvisionConfirm's catch branch). */}
         {!arming && outcome?.kind === 'refused' && (
           <p className="mt-2 text-xs text-red-300">
             Provisioning didn&apos;t go through — nothing was created for workload:{slug}.{' '}

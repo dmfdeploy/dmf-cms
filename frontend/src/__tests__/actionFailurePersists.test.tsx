@@ -17,11 +17,10 @@
  * ReasonConfirm call site that fires its own write and reports its own
  * error (catalog deploy/teardown, the Finalise & Review teardown relocated
  * from it, and Activity's workflow launch) — this file proves each one,
- * not just the named Provision case. clear-for-deployment and switch-source
- * are NOT here: they already render their failure at the STAGE level,
- * outside their own armed subtree (see ProvisionStage.tsx's clearMutation
- * .isError paragraph and ConfigureStage.tsx's close-only-on-success submit)
- * — the reference shape this fix now matches everywhere else.
+ * not just the named Provision case. switch-source is NOT here: it already
+ * renders its failure at the STAGE level, outside its own armed subtree (see
+ * ConfigureStage.tsx's close-only-on-success submit) — the reference shape
+ * this fix now matches everywhere else.
  *
  * GUARD LABEL (dmfdeploy#414): every test in this file is a
  * GUARD pinning the pre-#414 #386 fix described above, unchanged by this
@@ -494,30 +493,6 @@ describe('an unconfirmed response says the outcome is unknown, never "nothing wa
     expect(within(provision).queryByText(/nothing was changed/)).toBeNull()
   })
 
-  it('Provision clear for deployment', async () => {
-    stubRoutes(
-      [
-        [/\/api\/catalog$/, () => json({ entries: [] })],
-        [/\/api\/media-workloads\/grouped$/, () => json(groupedFor('provision', true))],
-      ],
-      /\/api\/media-workloads\/studio-a-1\/clear$/,
-    )
-    renderSetup()
-    const provision = await stage('Provision')
-
-    fireEvent.click(await within(provision).findByText('Desired state (expert)'))
-    fireEvent.click(within(provision).getByRole('button', { name: 'Clear for deployment' }))
-    fireEvent.change(within(provision).getByRole('textbox'), { target: { value: 'go' } })
-    fireEvent.click(within(provision).getByRole('button', { name: 'Confirm' }))
-
-    // The panel closes on submit; the stage owns the one failure line.
-    const message = await within(provision).findByText(UNKNOWN)
-    expect(within(provision).getAllByText(UNKNOWN)).toHaveLength(1)
-    expect(message.textContent).not.toMatch(/nothing/)
-    expect(within(provision).queryByText(/nothing changed/)).toBeNull()
-    expect(within(provision).queryByText(/nothing was changed/)).toBeNull()
-  })
-
   it('Finalise teardown', async () => {
     stubRoutes(
       [
@@ -674,50 +649,5 @@ describe('an unconfirmed response says the outcome is unknown, never "nothing wa
 
     expect(await screen.findByText(UNKNOWN)).toBeTruthy()
     expect(screen.queryByText(/nothing was changed/)).toBeNull()
-  })
-
-  it.each([
-    ['502 after the NetBox write', () => json({ error: 'netbox-unreachable' }, 502)],
-    ['4xx passed through from NetBox', () => json({ error: 'upstream-error', upstream: 'NetBox' }, 400)],
-  ] as [string, () => Response][])('Provision clear for deployment: %s', async (_name, answer) => {
-    stubRoutes(
-      [
-        [/\/api\/catalog$/, () => json({ entries: [] })],
-        [/\/api\/media-workloads\/grouped$/, () => json(groupedFor('provision', true))],
-      ],
-      /\/api\/media-workloads\/studio-a-1\/clear$/,
-      answer,
-    )
-    renderSetup()
-    const provision = await stage('Provision')
-
-    fireEvent.click(await within(provision).findByText('Desired state (expert)'))
-    fireEvent.click(within(provision).getByRole('button', { name: 'Clear for deployment' }))
-    fireEvent.change(within(provision).getByRole('textbox'), { target: { value: 'go' } })
-    fireEvent.click(within(provision).getByRole('button', { name: 'Confirm' }))
-
-    expect(await within(provision).findByText(UNKNOWN)).toBeTruthy()
-    expect(within(provision).queryByText(/nothing was changed/)).toBeNull()
-  })
-
-  it('Provision clear for deployment: a 409 already-active from the console still says nothing was changed', async () => {
-    stubRoutes(
-      [
-        [/\/api\/catalog$/, () => json({ entries: [] })],
-        [/\/api\/media-workloads\/grouped$/, () => json(groupedFor('provision', true))],
-      ],
-      /\/api\/media-workloads\/studio-a-1\/clear$/,
-      () => json({ error: 'already-active', request_id: 'r1' }, 409),
-    )
-    renderSetup()
-    const provision = await stage('Provision')
-
-    fireEvent.click(await within(provision).findByText('Desired state (expert)'))
-    fireEvent.click(within(provision).getByRole('button', { name: 'Clear for deployment' }))
-    fireEvent.change(within(provision).getByRole('textbox'), { target: { value: 'go' } })
-    fireEvent.click(within(provision).getByRole('button', { name: 'Confirm' }))
-
-    expect(await within(provision).findByText(/nothing was changed/)).toBeTruthy()
-    expect(within(provision).queryByText(UNKNOWN)).toBeNull()
   })
 })

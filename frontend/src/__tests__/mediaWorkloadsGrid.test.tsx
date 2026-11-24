@@ -5,8 +5,7 @@
  * display-name join; the Grid|Table toggle (persisted); the polling
  * bounds (no churn in table view / hidden tab / beyond the live-tile cap /
  * under reduced motion); the fixed 16:9 box that never resizes on a dropped
- * frame; the live modal open/close; and the C5 clear-for-deployment flow from a
- * tile (reason required + Activity record).
+ * frame; and the live modal open/close.
  *
  * GUARD LABEL (dmfdeploy#414): every test in this file is a
  * GUARD pinning the pre-#414 behaviours described above, unchanged by this
@@ -103,7 +102,6 @@ interface HarnessOpts {
   catalog?: CatalogEntry[]
   // per-instance status override; defaults to AVAILABLE_STATUS
   statusFor?: (instance: string) => Record<string, unknown>
-  clearResult?: Record<string, unknown>
   // umbrella #201 WP5 — undefined means "no topology" (the fetch catch-all's
   // `{}` response), matching every non-viewer instance today.
   topology?: Record<string, unknown>
@@ -136,7 +134,6 @@ function mkFetch(opts: HarnessOpts) {
     invalid_instances: [],
   }
   const statusCalls: Record<string, number> = {}
-  const clearCalls: Array<{ url: string; init?: RequestInit }> = []
   const switchCalls: Array<{ url: string; init?: RequestInit }> = []
   // The legacy aggregate endpoint (MxlDetailPanel). After the R1 P1 fix nothing
   // should hit it unless the modal fallback is explicitly opened.
@@ -161,21 +158,6 @@ function mkFetch(opts: HarnessOpts) {
       statusCalls[name] = (statusCalls[name] ?? 0) + 1
       const body = opts.statusFor ? opts.statusFor(name) : AVAILABLE_STATUS
       return json({ instance: name, ...body })
-    }
-    if (url.match(/\/api\/media-workloads\/[^/]+\/clear/)) {
-      clearCalls.push({ url, init })
-      return json(
-        opts.clearResult ?? {
-          instance: 'x',
-          requested_state: 'active',
-          previous_state: 'bootstrapped',
-          request_id: 'req-1',
-          actor: 'ops',
-          role: 'operator',
-          reason: 'go',
-          reconcile: { expectation: 'converging', watch: '' },
-        },
-      )
     }
     if (url.match(/\/api\/media-workloads\/[^/]+\/topology$/)) {
       return json(opts.topology ?? {})
@@ -203,11 +185,11 @@ function mkFetch(opts: HarnessOpts) {
     return json({})
   })
   vi.stubGlobal('fetch', fetchMock)
-  return { statusCalls, clearCalls, switchCalls, counters, fetchMock }
+  return { statusCalls, switchCalls, counters, fetchMock }
 }
 
 // S1 (umbrella #285): these behaviours did not change, their HOME did. The
-// per-instance tile grid, the live modal and the switch/clear controls moved
+// per-instance tile grid, the live modal and the switch control moved
 // off the Media Workloads list page and onto the workload detail page's
 // lifecycle rail, so the tests follow them there rather than being deleted —
 // the polling bounds and focus management below are exactly the kind of
@@ -222,7 +204,7 @@ function mkFetch(opts: HarnessOpts) {
 // Operate route is now WorkloadHome.tsx at the bare slug — the workload's
 // home — and the guided flow (what these tests call "setup") moved to its
 // own `/setup` route. renderHomePage() mounts the live-view blocks;
-// renderSetupPage() mounts the switch/clear blocks. Nothing was deleted in
+// renderSetupPage() mounts the switch block. Nothing was deleted in
 // either move: if a bound below stops being asserted, it is because someone
 // removed it deliberately, not because a page got renamed.
 function renderSetupPage() {
@@ -557,49 +539,6 @@ describe('live modal', () => {
 
     fireEvent.click(tile)
     expect(await screen.findByTestId('instance-live-modal')).toBeTruthy()
-  })
-})
-
-describe('clear-for-deployment on the Provision stage (C5)', () => {
-  it('arms a reason, does not POST until confirmed, then records to Activity', async () => {
-    const { clearCalls } = mkFetch({
-      // Bootstrapped members with no active intent IS the backend's
-      // 'provision' derivation — and the stage that now grants the clear.
-      lifecycle: 'provision',
-      instances: [inst({ instance: 'mxl-a', requested_state: 'bootstrapped', reconcile_pending: false })],
-      clearResult: {
-        instance: 'mxl-a',
-        requested_state: 'active',
-        previous_state: 'bootstrapped',
-        request_id: 'req-xyz',
-        actor: 'ops',
-        role: 'operator',
-        reason: 'scheduled run',
-        reconcile: { expectation: 'converging', watch: '' },
-      },
-    })
-    renderSetupPage()
-
-    // dmfdeploy/dmfdeploy#556: the control sits behind the collapsed
-    // "Desired state (expert)" disclosure — open it first, as an operator must.
-    fireEvent.click(await screen.findByText('Desired state (expert)'))
-    fireEvent.click(await screen.findByRole('button', { name: 'Clear for deployment' }))
-    // Armed; nothing sent yet.
-    const textbox = await screen.findByRole('textbox')
-    expect(clearCalls).toHaveLength(0)
-    const confirm = screen.getByRole('button', { name: 'Confirm' }) as HTMLButtonElement
-    expect(confirm.disabled).toBe(true)
-
-    fireEvent.change(textbox, { target: { value: 'scheduled run' } })
-    expect(confirm.disabled).toBe(false)
-    fireEvent.click(confirm)
-
-    await screen.findByText(/requested state is now active/)
-    expect(clearCalls).toHaveLength(1)
-    expect(JSON.parse(clearCalls[0].init?.body as string)).toEqual({ reason: 'scheduled run' })
-    // C5: the console-local Activity record landed, correlated by request_id.
-    const records = useActivityStore.getState().records
-    expect(records.some((r) => r.request_id === 'req-xyz')).toBe(true)
   })
 })
 

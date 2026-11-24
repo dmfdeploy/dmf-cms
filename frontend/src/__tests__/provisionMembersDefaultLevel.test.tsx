@@ -1,27 +1,12 @@
 /**
  * dmfdeploy/dmfdeploy#556: at the demo level, Provision's default surface
  * lists every member instance with its REQUESTED state (intent, ADR-0037 —
- * observed state deliberately absent so intent is never read as running),
- * and the clear-for-deployment control — a NetBox-intent write that 503s on
- * every deployed env today (#487) — sits behind a collapsed "Desired state
- * (expert)" <details>.
- *
- * What these two tests pin: (a) the default-render structure — one row per
- * member with its requested-state label, and every matching Clear button's
- * nearest <details> exists and is closed; (b) opening the "Desired state
- * (expert)" summary exposes the existing, unmodified Clear control and it
- * still arms correctly. (Mutation ownership living in the stage, not a
- * child, is a separate property pinned by workloadSetup.test.tsx's own
- * mount/pending/remount coverage — not by anything here.)
- *
- * Honest limit: jsdom applies no user-agent stylesheet to a closed
- * <details>, so role queries still find the button inside it — which is why
- * (a) pins the STRUCTURE (every matching button's nearest <details> exists
- * and is closed) rather than a vacuous "queryByRole is null". The real-
- * browser render is what verifies the closed state hides the control.
+ * observed state deliberately absent so intent is never read as running).
+ * Provision offers no desired-state control: no clear button and no
+ * "Desired state (expert)" disclosure.
  */
 import { afterEach, describe, expect, it, vi } from 'vitest'
-import { cleanup, fireEvent, render, screen, within } from '@testing-library/react'
+import { cleanup, render, screen, within } from '@testing-library/react'
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query'
 import { MemoryRouter } from 'react-router-dom'
 import ProvisionStage from '../pages/MediaWorkloads/stages/ProvisionStage'
@@ -82,7 +67,7 @@ function renderProvision() {
         <ProvisionStage
           workload={WORKLOAD}
           state="active"
-          actions={['deploy', 'clear-for-deployment']}
+          actions={['deploy']}
           onBusyChange={vi.fn()}
           onJobStart={vi.fn()}
         />
@@ -97,8 +82,8 @@ afterEach(() => {
   vi.restoreAllMocks()
 })
 
-describe('dmfdeploy/dmfdeploy#556: Provision default surface shows requested-state rows, not the clear control', () => {
-  it('(a) lists one row per member — "planned" / "cleared to run" — and keeps every Clear control inside a CLOSED <details>', () => {
+describe('dmfdeploy/dmfdeploy#556: Provision default surface shows requested-state rows', () => {
+  it('lists one row per member — "planned" / "cleared to run" — and offers no desired-state control', () => {
     renderProvision()
 
     const list = screen.getByRole('heading', {
@@ -113,31 +98,8 @@ describe('dmfdeploy/dmfdeploy#556: Provision default surface shows requested-sta
     expect(within(list).queryByText('running')).toBeNull()
     expect(within(list).queryByText('unknown')).toBeNull()
 
-    // The structural claim: the clear control exists (one bootstrapped
-    // member) but ONLY behind a closed disclosure — never on the default
-    // surface. `hidden: true` so this can't pass vacuously if jsdom ever
-    // starts honouring closed <details> in the accessibility tree.
-    const clears = screen.getAllByRole('button', { name: /clear for deployment/i, hidden: true })
-    expect(clears).toHaveLength(1)
-    for (const button of clears) {
-      const details = button.closest('details') as HTMLDetailsElement | null
-      expect(details).not.toBeNull()
-      expect(details!.open).toBe(false)
-      expect(within(details!).getByText('Desired state (expert)').tagName).toBe('SUMMARY')
-    }
-  })
-
-  it('(b) opening "Desired state (expert)" exposes the existing Clear control', () => {
-    renderProvision()
-    const summary = screen.getByText('Desired state (expert)')
-    fireEvent.click(summary)
-
-    const details = summary.closest('details') as HTMLDetailsElement
-    expect(details.open).toBe(true)
-    expect(within(details).getByRole('button', { name: 'Clear for deployment' })).toBeTruthy()
-    // Arming it still works from inside the disclosure — the unchanged
-    // control, not a copy.
-    fireEvent.click(within(details).getByRole('button', { name: 'Clear for deployment' }))
-    expect(within(details).getByText('Clear mxl-a for deployment?')).toBeTruthy()
+    // `hidden: true` so this can't pass vacuously on a closed <details>.
+    expect(screen.queryByRole('button', { name: /clear for deployment/i, hidden: true })).toBeNull()
+    expect(screen.queryByText('Desired state (expert)')).toBeNull()
   })
 })

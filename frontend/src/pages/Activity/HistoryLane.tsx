@@ -5,16 +5,15 @@ import { describeJob, jobOutcome } from '../../lib/labels'
 import { classifyChanges, changesEmptyCopy, classifyForgejo, forgejoEmptyCopy } from '../../lib/changesState'
 import ActivityPanel from '../../components/ActivityPanel'
 
-// Human title per console-originated action (#185 WP-E: AWX writes join the
-// clear record in this lane). deploy/teardown/switch-source are dead
-// branches for what THIS panel renders now (dmfdeploy/dmfdeploy#496
-// condition 4 — filtered out at render, see localOnlyActions below), kept
-// here only because ConsoleActionType still names them; left unchanged
-// since they're unreachable from this panel's own data.
+// Human title per console-originated action (#185 WP-E). deploy/teardown/
+// switch-source are dead branches for what THIS panel renders now
+// (dmfdeploy/dmfdeploy#496 condition 4 — filtered out at render, see
+// localOnlyActions below), kept here only because ConsoleActionType still
+// names them. The default covers an action a stored record carries that this
+// version doesn't know (the store is persisted in localStorage and not
+// validated on read).
 function actionTitle(action: ConsoleActionType, target: string): string {
   switch (action) {
-    case 'clear-for-deployment':
-      return `Cleared ${target} for deployment`
     case 'deploy':
       return `Deployed ${target}`
     case 'teardown':
@@ -30,6 +29,8 @@ function actionTitle(action: ConsoleActionType, target: string): string {
     case 'finalise-purge':
       // Same reasoning as 'launch' above.
       return `Requested permanent deletion of ${target}`
+    default:
+      return `Recorded action on ${target}`
   }
 }
 
@@ -48,16 +49,13 @@ export default function HistoryLane() {
   // are now the facility panel's job — server-side, every browser agrees.
   // Rendering them from this client-only store too would be exactly the
   // "two answers that can disagree" defect this round exists to remove, so
-  // this panel narrows to the three classes that have NO server answer
-  // this round: clear-for-deployment never emits this stream's line at
-  // all (a different record entirely — plan §4.3), and finalise-purge/
-  // launch are the facility panel's own disclosed exclusions. The write
-  // call sites (ProvisionStage/FinaliseStage/ConfigureStage/Catalog/
-  // JobsLane) are untouched — this is a display-only filter, so it also
-  // quietly drops any deploy/teardown/switch-source rows already sitting
-  // in a returning user's localStorage from before this change.
+  // this panel narrows to the two classes that have NO server answer: finalise-purge
+  // and launch are the facility panel's own disclosed exclusions. This is a
+  // display-only filter, so it also quietly drops any other row sitting in a
+  // returning user's localStorage (a deploy/teardown/switch-source row, or an
+  // action this version no longer records).
   const localOnlyActions = consoleActions.filter(
-    (rec) => rec.action === 'clear-for-deployment' || rec.action === 'finalise-purge' || rec.action === 'launch',
+    (rec) => rec.action === 'finalise-purge' || rec.action === 'launch',
   )
   // dmfdeploy/dmfdeploy#419/#554: this classifier used to also back the
   // Workspace RecentChanges widget (removed — Workspace now shows
@@ -96,11 +94,9 @@ export default function HistoryLane() {
       <ActivityPanel title="Facility activity" />
 
       {/* This browser's own actions — explicitly NOT a facility record
-          (umbrella#496 condition 4). Narrowed to exactly the three classes
-          the facility panel above does not carry: clear-for-deployment
-          never emits the "awx write:" line this lane reads at all (a
-          different record entirely — plan §4.3), and finalise-purge/
-          launch are the SAME two exclusions disclosed above, same
+          (umbrella#496 condition 4). Narrowed to exactly the two classes
+          the facility panel above does not carry: finalise-purge and
+          launch, the two exclusions disclosed above, for the same
           reasons. Nothing here is confirmed anywhere else — not to
           another operator, not even to this same browser after
           localStorage is cleared. */}
@@ -118,11 +114,10 @@ export default function HistoryLane() {
             <p className="text-xs text-muted pt-1">
               Not a facility record — recorded locally, in this browser only,
               and only for what the facility activity above doesn&apos;t
-              carry: clearing a workload for deployment (a separate record
-              entirely), permanently deleting a workload, and launching a
-              workflow directly (the same two exclusions disclosed above, for
-              the same reasons). No other operator, and no other browser of
-              your own, sees these.
+              carry: permanently deleting a workload and launching a workflow
+              directly (the two exclusions disclosed above, for the same
+              reasons). No other operator, and no other browser of your own,
+              sees these.
             </p>
           </details>
         </div>
@@ -140,17 +135,11 @@ export default function HistoryLane() {
                       {actionTitle(rec.action, rec.target)}
                     </h3>
                     <p className="text-xs text-muted mt-1">
-                      {rec.requested_state
-                        ? `${rec.previous_state} → ${rec.requested_state}`
-                        : rec.outcome}{' '}
-                      · “{rec.reason}”
+                      {rec.outcome} · “{rec.reason}”
                     </p>
                     <p className="text-xs text-muted mt-1">
                       {rec.actor} ({rec.role}) · request {rec.request_id.slice(0, 8)}
                     </p>
-                    {rec.reconcile_expectation && (
-                      <p className="text-xs text-muted mt-1">{rec.reconcile_expectation}</p>
-                    )}
                   </div>
                   <div className="text-right text-xs text-muted shrink-0">
                     {new Date(rec.at).toLocaleString()}

@@ -1,8 +1,8 @@
 /**
  * dmfdeploy/dmfdeploy#494: the backend now flags a stood-down service that
  * still answers probes (`reconcile_direction: 'stop'`). The console must say
- * why that member is not offered "clear for deployment", and the tile badge
- * must name which way intent and observation disagree.
+ * that member still answers probes, and the tile badge must name which way
+ * intent and observation disagree.
  */
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import { cleanup, render, screen, within } from '@testing-library/react'
@@ -65,7 +65,7 @@ function renderStage(instances: Member[]) {
         <ProvisionStage
           workload={workload}
           state="active"
-          actions={['deploy', 'clear-for-deployment']}
+          actions={['deploy']}
           onBusyChange={vi.fn()}
           onJobStart={vi.fn()}
         />
@@ -76,22 +76,18 @@ function renderStage(instances: Member[]) {
     level: 3,
     name: /^Media Function Instances — \d+ of \d+ provisioned$/,
   }).nextElementSibling as HTMLElement
-  const clearList = screen.getByText('Desired state (expert)').closest('details') as HTMLElement
-  return { members, clearList }
+  return { members }
 }
 
 const STOP_MARKER = /stood down but still answers probes/i
 
 describe('ProvisionStage members block says why a stood-down member is still running', () => {
-  it('shows the marker for a stop-direction member and withholds its clear control', () => {
-    const { members, clearList } = renderStage([
+  it('shows the marker for a stop-direction member', () => {
+    const { members } = renderStage([
       member({ instance: 'mxl-a', reconcile_pending: true, reconcile_direction: 'stop', observed_state: 'running' }),
       member({ instance: 'mxl-b' }),
     ])
     expect(within(members).getAllByText(STOP_MARKER)).toHaveLength(1)
-    expect(within(members).getByText(/clearing is withheld/i)).toBeTruthy()
-    expect(within(clearList).queryByText('mxl-a')).toBeNull()
-    expect(within(clearList).getByText('mxl-b')).toBeTruthy()
   })
 
   it('shows no marker for a start-direction member or one without the field', () => {

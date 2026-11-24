@@ -102,7 +102,6 @@ function fixtureInstances(running: number, total: number): { observed_state: str
 // independently-tuned ones.
 const OPERATE_HEALTHY: WorkloadLifecycleInput = {
   lifecycle: 'operate',
-  hasBootstrappedMembers: false,
   allMembersBootstrapped: false,
   anyMemberObservedRunning: true,
   membersDataTrustworthy: true,
@@ -116,10 +115,9 @@ const SPECIMENS: Specimen[] = [
     id: '1-provision',
     slug: 'harness-provision',
     title: '1 · lifecycle=provision — 2 locked, Design selected (position was Provision; the rail no longer marks it)',
-    note: 'hasBootstrappedMembers: false, so Provision carries only "deploy" — Configure and Finalise both lock (neither has a predecessor to act on yet). activeChip is pinned to Design. The classifier still derives a distinct backend position (Provision, visible in the "current" debug row below) but the rail itself carries no marker for that fact any more — Design (the selected face) is the only state any key shows here.',
+    note: 'Provision carries only "deploy" — Configure and Finalise both lock (neither has a predecessor to act on yet). activeChip is pinned to Design. The classifier still derives a distinct backend position (Provision, visible in the "current" debug row below) but the rail itself carries no marker for that fact any more — Design (the selected face) is the only state any key shows here.',
     input: {
       lifecycle: 'provision',
-      hasBootstrappedMembers: false,
       allMembersBootstrapped: false,
       anyMemberObservedRunning: false,
       membersDataTrustworthy: true,
@@ -138,7 +136,6 @@ const SPECIMENS: Specimen[] = [
     note: 'Position and selection happen to both sit on Configure here (no hash override), but that\'s incidental now — the rail has no position concept left to converge or diverge from selection. Configure and Finalise both carry live actions (switch-source, tear-down) and are unlocked, so both render as ordinary keys; only Configure additionally reads as selected (the selected face), because it is activeChip.',
     input: {
       lifecycle: 'configure',
-      hasBootstrappedMembers: false,
       allMembersBootstrapped: false,
       anyMemberObservedRunning: true,
       membersDataTrustworthy: true,
@@ -169,7 +166,6 @@ const SPECIMENS: Specimen[] = [
     input: {
       lifecycle: 'operate',
       tearingDown: true,
-      hasBootstrappedMembers: false,
       allMembersBootstrapped: false,
       anyMemberObservedRunning: true,
       membersDataTrustworthy: true,

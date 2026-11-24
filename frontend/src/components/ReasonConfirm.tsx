@@ -8,9 +8,8 @@ import { isConsoleRefusal, requestFailureText } from '../lib/requestFailureText'
 /**
  * Armed-confirm + mandatory-reason panel for a consequential write (the C5
  * quartet: nothing fires on the first click; a reason is required and lands in
- * the audit trail). Extracted from the clear-for-deployment surface so the
- * catalog deploy/teardown and the Activity Jobs launch share one graduated-
- * friction affordance (UX Constitution hard gate 3, #185 WP-E).
+ * the audit trail). The catalog deploy/teardown and the Activity Jobs launch
+ * share this one graduated-friction affordance (UX Constitution hard gate 3, #185 WP-E).
  *
  * ``variant="danger"`` (umbrella #347, Console UX Constitution Art. 7 —
  * "destructive" needs MORE friction than "disruptive"): a distinct red
@@ -29,11 +28,7 @@ import { isConsoleRefusal, requestFailureText } from '../lib/requestFailureText'
  * the SAME hierarchy (danger banner > title > description > field > helper):
  * nothing here changed relative WEIGHT, only absolute scale and breathing
  * room. `min-w-64` -> `min-w-80` so the wider type has room to sit
- * comfortably rather than wrapping tighter than before. `clear-for-deployment`
- * (ClearForDeployment.tsx) is a separate component that duplicates this same
- * shell rather than rendering THIS one, but reads as the identical
- * affordance to an operator — scaled identically there, in its own file,
- * for the same reason.
+ * comfortably rather than wrapping tighter than before.
  *
  * `min-w-80` is a MINIMUM — every call
  * site (FinaliseStage.tsx's Teardown/Delete permanently armed panels,

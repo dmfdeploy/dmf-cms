@@ -6,9 +6,8 @@
  * and presses Confirm. No request may reach the write endpoint, and the typed
  * reason survives so the operator can confirm after the next good read.
  * Deploy and teardown run through the real route and grouped query; the
- * other mutating confirms (switch source, delete permanently, clear for
- * deployment) run through their own components with the same provider the
- * route supplies.
+ * other mutating confirms (switch source, delete permanently) run through
+ * their own components with the same provider the route supplies.
  */
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import { act, cleanup, fireEvent, render, screen, waitFor, within } from '@testing-library/react'
@@ -17,7 +16,6 @@ import { MemoryRouter, Route, Routes } from 'react-router-dom'
 import WorkloadSetup from '../pages/MediaWorkloads/WorkloadSetup'
 import ConfigureStage from '../pages/MediaWorkloads/stages/ConfigureStage'
 import FinaliseStage from '../pages/MediaWorkloads/stages/FinaliseStage'
-import ClearForDeployment from '../pages/MediaWorkloads/ClearForDeployment'
 import {
   InventoryWritesBlockedError,
   InventoryWritesBlockedProvider,
@@ -297,25 +295,6 @@ describe('armed confirmations while the inventory turns stale (components)', () 
     fireEvent.click(confirm)
     await act(async () => {})
     expect(writes).toEqual([])
-  })
-
-  it('clear for deployment: Confirm sends nothing while blocked', () => {
-    const onConfirm = vi.fn()
-    const qc = new QueryClient()
-    const el = (blocked: boolean) =>
-      frame(blocked, <ClearForDeployment instance="viewer-1" onConfirm={onConfirm} />, qc)
-    const { rerender } = render(el(false))
-    fireEvent.click(screen.getByRole('button', { name: /Clear for deployment/ }))
-    fireEvent.change(screen.getByRole('textbox'), { target: { value: 'ready' } })
-    rerender(el(true))
-    const confirm = screen.getByRole('button', { name: 'Confirm' }) as HTMLButtonElement
-    expect(confirm.disabled).toBe(true)
-    fireEvent.click(confirm)
-    expect(onConfirm).not.toHaveBeenCalled()
-
-    rerender(el(false))
-    fireEvent.click(screen.getByRole('button', { name: 'Confirm' }))
-    expect(onConfirm).toHaveBeenCalledWith('viewer-1', 'ready')
   })
 })
 

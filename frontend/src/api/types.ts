@@ -804,20 +804,6 @@ export interface MediaWorkloadsGroupedResponse {
   invalid_instances: InvalidInstance[]
 }
 
-export interface ClearForDeploymentResult {
-  instance: string
-  requested_state: string
-  previous_state: string
-  request_id: string
-  actor: string
-  role: string
-  reason: string
-  reconcile: {
-    expectation: string
-    watch: string
-  }
-}
-
 // umbrella #201 WP5 — console switch surface (spec §6/§7).
 export interface TopologySource {
   id: string

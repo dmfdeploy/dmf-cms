@@ -871,7 +871,7 @@ describe('request configuration change', () => {
 
 // ---------------------------------------------------------------------------
 // (WP-3 spec B) This route used to build its rail
-// input with only lifecycle/hasBootstrappedMembers set, leaving
+// input with only `lifecycle` set, leaving
 // allMembersBootstrapped/anyMemberObservedRunning/membersDataTrustworthy/
 // purgeAuthorized/isPurgeableEntity all silently absent — read as
 // false/withheld regardless of the real workload, so a purge-eligible

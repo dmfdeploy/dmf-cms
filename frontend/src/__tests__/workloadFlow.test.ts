@@ -27,8 +27,7 @@ const ALL_INPUTS: WorkloadLifecycleInput[] = (() => {
     for (const launching of [false, true])
       for (const switching of [false, true])
         for (const tearingDown of [false, true])
-          for (const hasBootstrappedMembers of [false, true])
-            out.push({ lifecycle, launching, switching, tearingDown, hasBootstrappedMembers })
+          out.push({ lifecycle, launching, switching, tearingDown })
   return out
 })()
 
@@ -101,52 +100,30 @@ describe('the gate can never hide a control (property, all inputs)', () => {
   })
 })
 
-describe('the stranded-sibling case survives the restructure (GATE-S1-RV3 P1)', () => {
-  it('keeps Provision reachable when a sibling is still bootstrapped and the position has moved on', () => {
-    const input: WorkloadLifecycleInput = {
-      lifecycle: 'configure',
-      hasBootstrappedMembers: true,
-    }
-    const { steps } = classifyWorkloadFlow(input)
-    // Behind the position, so the naive ordering rule would call it
-    // `complete` and the UI would collapse it as settled business — while
-    // the sibling still needs clearing.
-    expect(stageActions('provision', input)).toContain('clear-for-deployment')
-    expect(steps.provision).toBe('open')
-    expect(isStepOpenable(steps.provision)).toBe(true)
-  })
-
-  it('reports Provision as merely complete once nothing is left to clear', () => {
-    const { steps } = classifyWorkloadFlow({
-      lifecycle: 'configure',
-      hasBootstrappedMembers: false,
-    })
+describe('a position past Provision', () => {
+  it('reports Provision as complete once the position has moved to configure', () => {
+    const { steps } = classifyWorkloadFlow({ lifecycle: 'configure' })
     expect(steps.provision).toBe('complete')
   })
 })
 
 describe('busy and unknown suppressions reach every step', () => {
-  it('a job in flight leaves no step bearing an action, clear included', () => {
+  it('a job in flight leaves no step bearing an action', () => {
+    // `operate` is the position where Configure and Finalise would otherwise
+    // each offer an action, so suppression is the only reason none is open.
     for (const job of ['launching', 'switching', 'tearingDown'] as const) {
-      const input: WorkloadLifecycleInput = {
-        lifecycle: 'configure',
-        hasBootstrappedMembers: true,
-        [job]: true,
-      }
+      const input: WorkloadLifecycleInput = { lifecycle: 'operate', [job]: true }
       const { steps } = classifyWorkloadFlow(input)
       for (const id of FLOW_STEPS) {
         expect(steps[id]).not.toBe('open')
+        expect(stageActions(id, input)).toEqual([])
       }
-      // Specifically the clear path, which is the one keyed to member state
-      // rather than position and so is easiest to leave un-suppressed.
-      expect(stageActions('provision', input)).toEqual([])
     }
   })
 
   it('an undetermined position offers nothing and claims no current step', () => {
     const { steps, current, undetermined, offFlow } = classifyWorkloadFlow({
       lifecycle: 'unknown',
-      hasBootstrappedMembers: true,
     })
     expect(current).toBeNull()
     expect(undetermined).toBe(true)
@@ -424,8 +401,7 @@ describe('classifyForwardExit: the forward exit out of Configure', () => {
   it('row: provision job pending (a job in flight) → none, even once the position has reached configure', () => {
     expect(classifyForwardExit({ ...TRUSTED, launching: true })).toBe('none')
     // Not only the provision write — ANY job in flight suppresses, because
-    // Configure can be selected while a different stage's job runs (see
-    // classifyForwardExit's own docstring on Provision's clear-for-deployment).
+    // Configure can be selected while a different stage's job runs.
     expect(classifyForwardExit({ ...TRUSTED, switching: true })).toBe('none')
     expect(classifyForwardExit({ ...TRUSTED, tearingDown: true })).toBe('none')
   })

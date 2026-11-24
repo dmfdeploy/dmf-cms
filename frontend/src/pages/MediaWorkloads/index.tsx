@@ -26,9 +26,8 @@ import {
  * Media Workloads (ADR-0037 + ADR-0046) — S1 IA cut (umbrella #285).
  *
  * One square control-surface TILE per workload, opening the workload detail
- * page. The per-instance grid, the live modal and the clear-for-deployment
- * control MOVED onto WorkloadSetup's lifecycle rail. The Grid|Table toggle
- * and its table view were REMOVED outright — not moved, and not reachable
+ * page. The per-instance grid and the live modal MOVED onto WorkloadSetup's
+ * lifecycle rail. The Grid|Table toggle and its table view were REMOVED outright — not moved, and not reachable
  * anywhere; say removed, because "moved" would send a reader looking.
  *
  * The tile keeps a LIVE PREVIEW. That is not decoration: the preview is what
@@ -720,10 +719,9 @@ function WorkloadEntryTile({
  * could call turned up none, and the absence is not an oversight to route
  * around:
  *
- *   - The console has no NetBox delete seam anywhere. Its one NetBox write is
- *     the lifecycle-tag flip in clear_for_deployment — by design, NetBox is
+ *   - The console has no NetBox delete seam anywhere — by design, NetBox is
  *     the facility source of truth and the console does not edit its
- *     inventory, only the intent recorded against a member of it.
+ *     inventory.
  *   - Teardown does not dispose the record either: the mxl role's finalise
  *     stage PATCHes the service back to lifecycle:bootstrapped and clears its
  *     monitoring stamps, deliberately PRESERVING the record and its
