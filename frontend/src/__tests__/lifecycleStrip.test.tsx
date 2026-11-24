@@ -4,6 +4,24 @@ import { MemoryRouter } from 'react-router-dom'
 import LifecycleStrip, { CONTENT_OFFSET_PX, contentOffsetStyle } from '../pages/MediaWorkloads/LifecycleStrip'
 import { FLOW_STEPS, type FlowStepId, type FlowStepState } from '../lib/workloadFlow'
 
+// jsdom 31 defines a `CSS` global whose `supports` accepts shape(), so the
+// module-level SUPPORTS_SHAPE_CURVE probe in LifecycleStrip resolves true by
+// default. Tests that need one branch stub `CSS`, re-import the module, and
+// restore jsdom's own `CSS` afterwards.
+const originalCss = Object.getOwnPropertyDescriptor(globalThis, 'CSS')
+
+function stubCssSupports(supported: boolean) {
+  Object.defineProperty(globalThis, 'CSS', {
+    configurable: true,
+    value: { supports: () => supported } as unknown as typeof CSS,
+  })
+}
+
+function restoreCss() {
+  if (originalCss) Object.defineProperty(globalThis, 'CSS', originalCss)
+  else Reflect.deleteProperty(globalThis, 'CSS')
+}
+
 /**
  * The rail's "never colour alone" contract (Constitution Art. 11, umbrella
  * #347 WO-D1 Acceptance Criterion 8).
@@ -738,12 +756,13 @@ describe('a job-in-flight chip that is also the SELECTED one still carries that 
 // label group left of the shape's own optical centre on every key except
 // Design (LifecycleStrip.tsx's own "CONTENT RE-CENTRING" comment has the
 // full measurement). jsdom computes no pixels and cannot render the
-// shape()'d chevron at all (SUPPORTS_SHAPE_CURVE is always false there —
-// see that constant's own comment), so the property this regressed can
+// shape()'d chevron at all, so the property this regressed can
 // only be pinned by calling `contentOffsetStyle` directly with an explicit
 // `shapeIsPainted` argument, exactly what exporting it as a parameter
 // (rather than a module-level flag) was for.
 describe('content re-centring on a notched key (fix round, contentOffsetStyle)', () => {
+  afterEach(restoreCss)
+
   it('is zero on a first key (no notch) regardless of whether the chevron is painted', () => {
     expect(contentOffsetStyle('first', true)).toEqual({})
     expect(contentOffsetStyle('first', false)).toEqual({})
@@ -770,12 +789,15 @@ describe('content re-centring on a notched key (fix round, contentOffsetStyle)',
 
   // Render-level safety net, independent of the above: every call site in
   // the component threads SUPPORTS_SHAPE_CURVE through as the second
-  // argument rather than hardcoding `true`. jsdom's SUPPORTS_SHAPE_CURVE
-  // is always false (no `CSS` global), so if a call site ever stopped
-  // passing it through, this is what would catch it — every key's content
-  // span would start carrying a transform under jsdom, which should never
-  // happen since jsdom never paints the chevron.
-  it('never renders an inline transform on the content span in jsdom, on any key', () => {
+  // argument rather than hardcoding `true`. With `CSS.supports` stubbed to
+  // report no shape() support, a call site that stopped passing it through
+  // would make every key's content span carry a transform.
+  it('never renders an inline transform on the content span when shape()/curve is NOT supported, on any key', async () => {
+    stubCssSupports(false)
+    vi.resetModules()
+    const fresh = await import('../pages/MediaWorkloads/LifecycleStrip')
+    const FreshLifecycleStrip = fresh.default
+
     const steps: Record<FlowStepId, FlowStepState> = {
       design: 'complete',
       plan: 'complete',
@@ -783,25 +805,29 @@ describe('content re-centring on a notched key (fix round, contentOffsetStyle)',
       configure: 'complete',
       finalise: 'complete',
     }
-    renderRail({ steps, activeChip: 'configure' })
+    render(
+      <MemoryRouter>
+        <FreshLifecycleStrip steps={steps} activeChip="configure" lockedReasons={LOCKED_REASONS} jobInFlight={false} onSelect={() => {}} />
+      </MemoryRouter>,
+    )
 
     for (const id of FLOW_STEPS) {
       const content = chip(LabelFor(id)).querySelector('[data-testid="key-content"]') as HTMLElement
-      expect(content.style.transform, `${id}'s content span should carry no transform under jsdom`).toBe('')
+      expect(content.style.transform, `${id}'s content span should carry no transform without shape() support`).toBe('')
     }
   })
 })
 
 // The tests above are genuinely discriminating
-// for `contentOffsetStyle` itself, and the "no transform in jsdom" test
-// above is a real safety net — but NEITHER observes the two `key-content`
+// for `contentOffsetStyle` itself, and the "no transform without shape()
+// support" test above is a real safety net — but NEITHER observes the two `key-content`
 // call sites in LifecycleStrip.tsx actually threading SUPPORTS_SHAPE_CURVE
 // through rather than a hardcoded literal (dmfdeploy/dmfdeploy#512: line numbers dropped from this citation — this
 // file has grown enough since then that a pinned line number goes stale
 // on its own, same lesson as the Sidebar.tsx citations in
 // LifecycleStrip.tsx itself). A call site that changed to
 // `contentOffsetStyle(position, false)` would keep every test above green
-// (jsdom's own SUPPORTS_SHAPE_CURVE is false anyway) while silently
+// (the unsupported branch tested above stays green) while silently
 // un-fixing the off-centre defect the instant a real browser supports
 // `shape()`. That gap can only be closed by making the "chevron IS
 // painted" branch reachable from a RENDER, which means forcing
@@ -810,21 +836,14 @@ describe('content re-centring on a notched key (fix round, contentOffsetStyle)',
 // (re-)imported, and `vi.resetModules()` plus a dynamic `import()` forces
 // a fresh evaluation of that module-level probe against the stub, rather
 // than reusing the file's already-evaluated top-of-file import (whose
-// SUPPORTS_SHAPE_CURVE was fixed at `false` the moment this file first
-// loaded and cannot be changed after the fact).
+// SUPPORTS_SHAPE_CURVE was fixed the moment this file first loaded and
+// cannot be changed after the fact).
 describe('the supported-browser call sites thread SUPPORTS_SHAPE_CURVE through to the render, not just to the helper (codex gate, round 3)', () => {
-  afterEach(() => {
-    // Never leak the stub into a later test — every other test in this
-    // file relies on jsdom's real, CSS-global-less environment resolving
-    // SUPPORTS_SHAPE_CURVE to false.
-    Reflect.deleteProperty(globalThis, 'CSS')
-  })
+  // Never leak the stub into a later test.
+  afterEach(restoreCss)
 
   it('renders translateX(CONTENT_OFFSET_PX) on middle and last keys, and no transform on first, when shape()/curve IS supported', async () => {
-    Object.defineProperty(globalThis, 'CSS', {
-      configurable: true,
-      value: { supports: () => true } as unknown as typeof CSS,
-    })
+    stubCssSupports(true)
     vi.resetModules()
     const fresh = await import('../pages/MediaWorkloads/LifecycleStrip')
     const FreshLifecycleStrip = fresh.default
