@@ -32,9 +32,15 @@ on:
 permissions:
   contents: read
   pull-requests: read
-# No concurrency group: under pull_request_target, github.ref is the base
-# branch for every pull request, so a shared group would cancel other pull
-# requests' runs. A cancelled run also leaves its required check unfinished.
+# One group per pull request (or per pushed commit), so a newer run for the same
+# pull request cancels an older one and only the current validation can satisfy
+# the required check. github.ref won't do: under pull_request_target it is the
+# base branch for every pull request, so it would cancel other pull requests' runs.
+# The event name keeps the transition's pull_request and pull_request_target runs
+# for one pull request from cancelling each other.
+concurrency:
+  group: issue-link-${{ github.event_name }}-${{ github.event.pull_request.number || github.sha }}
+  cancel-in-progress: true
 jobs:
   issue-link:
     # Working-model gate (umbrella issue dmfdeploy/dmfdeploy#32): every PR must
