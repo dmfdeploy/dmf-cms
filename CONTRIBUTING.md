@@ -23,7 +23,7 @@ This section is the one place for development and test commands. The README and
 
 ### Prerequisites
 
-- **Python 3.12 or later.** CI tests 3.12 and 3.13.
+- **Python 3.12 or later.** CI tests 3.12, 3.13 and 3.15. The image ships 3.15.
 - **Node.js 26.** CI uses Node 26, which includes npm 11.
 - **A checkout of the dmfdeploy umbrella repo**, for one backend test file. See
   [Run the backend tests](#run-the-backend-tests).
