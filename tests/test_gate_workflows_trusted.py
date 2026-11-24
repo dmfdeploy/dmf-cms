@@ -76,3 +76,11 @@ def test_only_commitlint_yml_runs_a_commitlint_job_on_push() -> None:
 def test_the_transition_workflow_runs_on_pull_requests_only() -> None:
     # A follow-up deletes commitlint-transition.yml once the trusted workflow is proven.
     assert set(load("commitlint-transition.yml")["on"]) == {"pull_request"}
+
+
+def test_issue_link_runs_one_validation_per_pull_request() -> None:
+    # Keyed by the pull request (push: the commit), never by github.ref, which is
+    # the base branch for every pull request under pull_request_target.
+    conc = load("issue-link.yml")["concurrency"]
+    assert conc["group"] == "issue-link-${{ github.event_name }}-${{ github.event.pull_request.number || github.sha }}"
+    assert conc["cancel-in-progress"] is True
