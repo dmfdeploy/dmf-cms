@@ -47,7 +47,7 @@ jobs:
       sha: ${{ steps.gate.outputs.sha }}
     steps:
       - name: Checkout the gate script from main
-        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262  # v4.4.0
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1  # v7.0.1
         with:
           persist-credentials: false
 
@@ -87,20 +87,20 @@ jobs:
       # The gate script comes from the head of main. The source to build comes
       # from the verified commit. Separate paths keep the source tree clean.
       - name: Checkout the gate script from main
-        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262  # v4.4.0
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1  # v7.0.1
         with:
           path: tools
           persist-credentials: false
 
       - name: Checkout the verified release commit
-        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262  # v4.4.0
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1  # v7.0.1
         with:
           ref: ${{ needs.verify.outputs.sha }}
           path: src
           persist-credentials: false
 
       - name: Checkout the shared GHCR publisher
-        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262  # v4.4.0
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1  # v7.0.1
         with:
           repository: dmfdeploy/dmfdeploy
           ref: 28dc456f1ff64899b73d1445f5d5d9759199062c
