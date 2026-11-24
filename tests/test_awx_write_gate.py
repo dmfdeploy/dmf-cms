@@ -3,7 +3,7 @@
 The three DMF-initiated AWX writes — catalog deploy, catalog teardown, and the
 generic workflow launch — were login-only, so a viewer could launch them by
 curl. WP-E moves them behind ``_require_min_role(operator)`` and gives them the
-same C5 quartet the clear-for-deployment write already carries: a mandatory
+C5 quartet: a mandatory
 ``reason`` validated *before* any AWX call, a ``request_id`` echoed on every
 path, and an audit line. Coverage:
 

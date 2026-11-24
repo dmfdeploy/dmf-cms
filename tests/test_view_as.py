@@ -145,7 +145,7 @@ def test_set_view_as_rejects_invalid_role():
 
 def test_view_as_set_and_cleared_audit_lines_sanitize_actor(caplog):
     # "view-as set"/"view-as cleared"
-    # mirror the clear-for-deployment C5 record (per their own comment)
+    # carry the C5 fields
     # and format actor=%s from real.subject (an OIDC claim — dev-login's
     # username stands in for it here) unescaped, same injection shape
     # already fixed in _audit_awx_write.
@@ -221,16 +221,19 @@ def test_view_as_reflected_in_api_me():
 
 def test_view_as_enforced_on_gated_surface():
     # A real admin (not in media-engineers) passes the media gate; downgraded
-    # to viewer, the SAME session is 403 on both read and the clear write —
+    # to viewer, the SAME session is 403 on both read and a write —
     # enforcement is server-side, not just nav.
     client = _client(groups=ADMIN, netbox=True)
     assert client.get("/api/media-workloads").status_code == 200
 
     client.post("/api/me/view-as", json={"role": "viewer"})
     assert client.get("/api/media-workloads").status_code == 403
-    # clear write: the gate returns 403 before any tenancy/netbox check
-    clear = client.post("/api/media-workloads/inst-1/clear", json={"reason": "x"})
-    assert clear.status_code == 403
+    # switch write: the gate returns 403 before any tenancy/netbox check
+    switch = client.post(
+        "/api/media-workloads/inst-1/switch-source",
+        json={"reason": "x", "source_instance": "src-1"},
+    )
+    assert switch.status_code == 403
 
 
 def test_reset_while_downgraded():

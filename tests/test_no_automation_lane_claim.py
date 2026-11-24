@@ -1,8 +1,7 @@
 """Guard: no source string claims a nonexistent automatic converger
 (dmfdeploy/dmfdeploy#411).
 
-"Clear for deployment"'s confirm panel and the
-``/api/media-workloads/{instance}/clear`` response used to tell the operator
+Operator-facing copy once told the operator
 that "the platform's automation lane" converges cleared desired state onto
 the cluster. It does not exist: zero AWX schedules are registered anywhere
 in dmf-infra, and the one playbook that could reconcile drift

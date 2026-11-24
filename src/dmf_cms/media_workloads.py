@@ -1571,13 +1571,16 @@ def clear_for_deployment(
 ) -> dict[str, Any]:
     """Flip an instance's lifecycle tag bootstrapped -> active (ADR-0037 WP2b).
 
+    No console route calls this for now; the lifecycle design work decides how
+    it is wired again.
+
     "Clear for deployment" IS the desired-state flip: ``lifecycle:active`` is
     the intent signal the binary tag taxonomy defines (ADR-0013) for a
     future converger. No such converger runs today — nothing is scheduled,
     and the catalog-drift check has no job template either, so it never
     flags the gap on its own (dmfdeploy#411). An operator-run Provision
-    deploy is what deploys it, today. NetBox is the ONLY thing the console
-    writes — never k3s from here.
+    deploy is what deploys it, today. This function writes only to NetBox,
+    never to k3s.
 
     Scope is enforced independently on this write path: the instance is
     looked up WITHIN the caller's tenant scope, so an out-of-scope name is

@@ -353,7 +353,7 @@ async def _require_reason(request: Request) -> tuple[str | None, JSONResponse | 
     Returns ``(reason, None)`` (reason stripped, guaranteed non-empty) when
     present, else ``(None, error_response)`` — a 400 that must short-circuit the
     handler *before* any actuator call (no AWX launch on a missing reason).
-    Mirrors the clear-for-deployment precondition (ADR-0028 C5).
+    This is the C5 precondition (ADR-0028).
 
     A non-object JSON body (a bare list/string/number) is treated the same as
     a missing body — ``.get`` only makes sense on a dict, and any other JSON
@@ -1123,16 +1123,16 @@ def _audit_awx_write(
     """Emit the C5 quartet audit line for a DMF-initiated AWX write.
 
     deploy / teardown / launch are consequential automated actions, so they
-    carry the same durable record as clear-for-deployment: actor + effective
-    role + request-id + reason + outcome. ``real_role`` is included only when a
+    carry a durable record: actor + effective role + request-id + reason +
+    outcome. ``real_role`` is included only when a
     view-as downgrade is active, so an admin acting-as-viewer stays attributable
     (B+E composition). The structured log line is the audit record until the
     console-local Activity lane subsumes it (#174).
 
     Scope (codex WP-E P2-4): the C5 quartet is recorded HERE (the dmf-cms log +
     the console-local Activity record), NOT injected into AWX job ``extra_vars``.
-    This matches clear-for-deployment: the console is the authoritative audit
-    surface (ADR-0028); threading C5 into AWX itself is deferred.
+    The console is the authoritative audit surface (ADR-0028); threading C5
+    into AWX itself is deferred.
 
     ``workload`` (#239) records what was requested, not just target=key — an
     optional trailing field, blank when omitted, so existing callers (launch,
@@ -4318,8 +4318,7 @@ def create_app(settings: Settings | None = None, contract: AppContract | None = 
             )
         request.session["view_as"] = role
         request_id = uuid.uuid4().hex
-        # C5 audit line (actor / real role / request-id / simulated role),
-        # mirroring the clear-for-deployment record.
+        # C5 audit line (actor / real role / request-id / simulated role).
         logger.info(
             "view-as set: actor=%s real_role=%s view_as=%s request_id=%s",
             _sanitize_audit_field(real.subject),
@@ -6490,107 +6489,6 @@ def create_app(settings: Settings | None = None, contract: AppContract | None = 
         payload["configured"] = True
         payload["scope"] = "all" if tenant_slugs is None else list(tenant_slugs)
         return JSONResponse(payload)
-
-    @app.post("/api/media-workloads/{instance}/clear")
-    async def api_media_workloads_clear(request: Request, instance: str):
-        """Clear for deployment — the ONE consequential media-workloads write.
-
-        Flips the instance's NetBox lifecycle tag to active (desired state).
-        Nothing here converges it automatically — see
-        ``reconcile.expectation`` on the response for what the operator is
-        actually told (dmfdeploy#411); Provision is what deploys it today.
-        Captures the ADR-0028 C5 quartet; scope + role are enforced
-        independently on this write path. NetBox is the only thing the
-        console writes — never k3s.
-        """
-        user, err = _require_media_workloads_access(request)
-        if err is not None:
-            return err
-        assert user is not None
-        # Writes refuse loudly when the surface is dark (contrast: reads are
-        # 200-configured:false so the page can explain itself).
-        if not settings.media_tenancy.configured:
-            return JSONResponse({"error": "media-tenancy-not-configured"}, status_code=503)
-        if not settings.netbox.write_configured:
-            return JSONResponse({"error": "netbox-writer-not-configured"}, status_code=503)
-        # fix-round P3 (codex GATE-239CMS-R2): this endpoint used to parse the
-        # body inline with its own (body or {}).get("reason", ...), which
-        # crashed with an unhandled AttributeError on a non-object JSON body
-        # (bare list/string/number) — the exact bug _require_reason's dict
-        # guard already fixes for every OTHER C5 write. Routed through the
-        # shared helper instead of re-adding the guard locally: one parser,
-        # one place to keep this safe.
-        reason, rerr = await _require_reason(request)
-        if rerr is not None:
-            return rerr
-        assert reason is not None
-        request_id = uuid.uuid4().hex
-        blocked = await _inventory_write_refusal(request, user, request_id)
-        if blocked is not None:
-            logger.info(
-                "media-workloads clear: actor=%s role=%s request_id=%s instance=%s reason=%r outcome=%s",
-                _sanitize_audit_field(user.subject),
-                user.role,
-                request_id,
-                _sanitize_audit_field(instance),
-                reason,
-                "inventory-unconfirmed",
-            )
-            return blocked
-        tenant_slugs = settings.media_tenancy.tenants_for(user.groups)
-        result = await run_in_threadpool(
-            media_workloads.clear_for_deployment,
-            settings.netbox.api_url,
-            settings.netbox.writer_token,
-            settings.netbox.ssl_verify,
-            tenant_slugs,
-            settings.netbox.api_token,
-            instance,
-        )
-        # C5 quartet (actor / role / request-id / reason): the structured log
-        # line is the durable audit record until the console-local activity
-        # lane lands with #174; request_id correlates response <-> log.
-        logger.info(
-            "media-workloads clear: actor=%s role=%s request_id=%s instance=%s reason=%r outcome=%s",
-            _sanitize_audit_field(user.subject),
-            user.role,
-            request_id,
-            _sanitize_audit_field(instance),
-            reason,
-            result.get("error", "ok"),
-        )
-        if result.get("error") == "not-found":
-            # Out-of-scope and nonexistent are indistinguishable: no leak.
-            return JSONResponse({"error": "not-found", "request_id": request_id}, status_code=404)
-        if result.get("error") == "already-active":
-            return JSONResponse(
-                {"error": "already-active", "request_id": request_id}, status_code=409
-            )
-        if result.get("error"):
-            return JSONResponse(
-                {"error": result["error"], "request_id": request_id}, status_code=502
-            )
-        # Close the loop at the point of action (hard gate 2): new state +
-        # what happens next and how to watch.
-        return JSONResponse(
-            {
-                "instance": result["instance"],
-                "requested_state": result["requested_state"],
-                "previous_state": result["previous_state"],
-                "request_id": request_id,
-                "actor": user.subject,
-                "role": user.role,
-                "reason": reason,
-                "reconcile": {
-                    "expectation": (
-                        "Desired state recorded in the facility source of truth. "
-                        "It shows as pending reconciliation until something deploys "
-                        "it — today, that's Provision."
-                    ),
-                    "watch": "/api/media-workloads",
-                },
-            }
-        )
 
     # umbrella #321 fix: the catalog's own viewer.source_selection is a
     # DECLARED intent, never live truth — a real switch re-points the

@@ -9,6 +9,7 @@ and degraded-payload (never raw 500) on NetBox failure.
 from fastapi.testclient import TestClient
 import pytest
 
+from dmf_cms import media_workloads
 from dmf_cms import netbox as netbox_module
 from dmf_cms.main import create_app
 from dmf_cms.settings import MediaTenancySettings, NetboxSettings, Settings
@@ -236,10 +237,11 @@ def test_scoped_mode_includes_vm_backed_services(monkeypatch):
     assert [i["instance"] for i in body["instances"]] == ["mxl-vm"]
     assert body["instances"][0]["placement"]["node"] == "vm-1"
 
-    # And the clear path finds it too (was not-found before the fix).
-    writer = _writer_client(tenancy=tenancy)
-    resp = writer.post("/api/media-workloads/mxl-vm/clear", json={"reason": "vm go"})
-    assert resp.status_code == 200
+    # And the tag flip finds it too (was not-found before the fix).
+    result = media_workloads.clear_for_deployment(
+        "http://netbox.test", "wtok", False, ("tenant-a",), "rtok", "mxl-vm"
+    )
+    assert result["requested_state"] == "active"
     patches = [c for c in calls if c[0] == "PATCH"]
     assert patches and patches[0][1] == "/api/ipam/services/2/"
 
@@ -328,23 +330,9 @@ def test_group_tenant_map_parser():
 
 
 # ---------------------------------------------------------------------------
-# WP2b: clear-for-deployment write path (GATE-7 write-path checklist).
+# media_workloads.clear_for_deployment: the lifecycle-tag flip. No console
+# route calls it for now, so these tests call the function directly.
 # ---------------------------------------------------------------------------
-
-def _writer_client(tenancy=None, groups=ENGINEER, writer_token="wtok"):
-    from dmf_cms.settings import Settings, NetboxSettings
-
-    settings = Settings(
-        runtime_mode="local",
-        dev_login_enabled=True,
-        dev_groups=groups,
-        netbox=NetboxSettings(api_url="http://netbox.test", api_token="rtok", writer_token=writer_token),
-        media_tenancy=tenancy or MediaTenancySettings(mode="single"),
-    )
-    client = TestClient(create_app(settings=settings))
-    client.get("/auth/login", follow_redirects=False)
-    return client
-
 
 def _patch_recorder(monkeypatch, services):
     """Monkeypatch netbox._request; record PATCH calls, serve reads."""
@@ -362,106 +350,20 @@ def _patch_recorder(monkeypatch, services):
     return calls
 
 
-def test_clear_requires_reason(monkeypatch):
-    calls = _patch_recorder(monkeypatch, [])
-    client = _writer_client()
-    resp = client.post("/api/media-workloads/x/clear", json={})
-    assert resp.status_code == 400
-    assert resp.json()["error"] == "reason-required"
-    assert calls["patches"] == []
+def _clear(tenant_slugs=None, instance="mxl-videotestsrc"):
+    return media_workloads.clear_for_deployment(
+        "http://netbox.test", "wtok", False, tenant_slugs, "rtok", instance
+    )
 
 
-def test_clear_non_object_body_is_clean_400_not_a_crash(monkeypatch):
-    # This endpoint used to parse the
-    # body inline with its own (body or {}).get("reason", ...), which raised
-    # an unhandled AttributeError on a non-object JSON body (dict.get doesn't
-    # exist on a list/str/int) — a live-probed 500, not a clean 400. Now
-    # routed through the shared _require_reason parser, which guards this.
-    calls = _patch_recorder(monkeypatch, [])
-    client = _writer_client()
-    for bad_body in [["x"], "str", 5]:
-        resp = client.post("/api/media-workloads/x/clear", json=bad_body)
-        assert resp.status_code == 400, bad_body
-        assert resp.json()["error"] == "reason-required"
-    assert calls["patches"] == []  # zero NetBox side effects on any bad body
-
-
-def test_clear_below_engineer_403_no_side_effect(monkeypatch):
-    calls = _patch_recorder(monkeypatch, [])
-    client = _writer_client(groups=OPERATOR)
-    resp = client.post("/api/media-workloads/x/clear", json={"reason": "go"})
-    assert resp.status_code == 403
-    assert calls["patches"] == []
-
-
-def test_clear_media_engineers_group_grants_write_without_role(monkeypatch):
-    # ADR-0037 §5 scopes the group over both read and the clear write; the C5
-    # record still reports the member's true capability role (viewer).
+def test_clear_for_deployment_flips_tag_with_writer_token(monkeypatch):
     calls = _patch_recorder(
         monkeypatch,
         [_service("mxl-videotestsrc", ["dmf-catalog", "app:mxl-videotestsrc", "lifecycle:bootstrapped"])],
     )
-    client = _writer_client(groups=MEDIA_ENGINEERS)
-    resp = client.post("/api/media-workloads/mxl-videotestsrc/clear", json={"reason": "go"})
-    assert resp.status_code == 200
-    assert resp.json()["role"] == "viewer"
-    assert len(calls["patches"]) == 1
-
-
-def test_clear_writer_token_unset_is_dark_503(monkeypatch):
-    calls = _patch_recorder(monkeypatch, [])
-    client = _writer_client(writer_token="")
-    resp = client.post("/api/media-workloads/x/clear", json={"reason": "go"})
-    assert resp.status_code == 503
-    assert resp.json()["error"] == "netbox-writer-not-configured"
-    assert calls["patches"] == []
-
-
-def test_clear_tenancy_undeclared_is_503(monkeypatch):
-    calls = _patch_recorder(monkeypatch, [])
-    client = _writer_client(tenancy=MediaTenancySettings(mode=""))
-    resp = client.post("/api/media-workloads/x/clear", json={"reason": "go"})
-    assert resp.status_code == 503
-    assert resp.json()["error"] == "media-tenancy-not-configured"
-    assert calls["patches"] == []
-
-
-def test_clear_out_of_scope_404_no_side_effect(monkeypatch):
-    # Scoped user with no mapped tenants: instance invisible -> 404, no PATCH,
-    # indistinguishable from nonexistent (no existence leak).
-    calls = _patch_recorder(monkeypatch, [_service("mxl-videotestsrc", ["dmf-catalog", "app:mxl-videotestsrc", "lifecycle:bootstrapped"])])
-    client = _writer_client(
-        tenancy=MediaTenancySettings(mode="scoped", group_tenant_map=(("other", ("t1",)),))
-    )
-    resp = client.post("/api/media-workloads/mxl-videotestsrc/clear", json={"reason": "go"})
-    assert resp.status_code == 404
-    assert calls["patches"] == []
-
-
-def test_clear_already_active_409_no_side_effect(monkeypatch):
-    calls = _patch_recorder(
-        monkeypatch, [_service("mxl-videotestsrc", ["dmf-catalog", "app:mxl-videotestsrc", "lifecycle:active"])]
-    )
-    client = _writer_client()
-    resp = client.post("/api/media-workloads/mxl-videotestsrc/clear", json={"reason": "go"})
-    assert resp.status_code == 409
-    assert calls["patches"] == []
-
-
-def test_clear_flips_tag_with_writer_token_and_c5(monkeypatch):
-    calls = _patch_recorder(
-        monkeypatch,
-        [_service("mxl-videotestsrc", ["dmf-catalog", "app:mxl-videotestsrc", "lifecycle:bootstrapped"])],
-    )
-    client = _writer_client()
-    resp = client.post("/api/media-workloads/mxl-videotestsrc/clear", json={"reason": "ready for demo"})
-    assert resp.status_code == 200
-    body = resp.json()
-    # C5 quartet echoed at the point of action.
-    assert body["actor"] == "operator" and body["role"] == "engineer"
-    assert body["reason"] == "ready for demo" and body["request_id"]
-    assert body["previous_state"] == "bootstrapped" and body["requested_state"] == "active"
-    assert "reconcile" in body
+    result = _clear()
+    assert result["instance"] == "mxl-videotestsrc"
+    assert result["previous_state"] == "bootstrapped" and result["requested_state"] == "active"
     # Exactly one PATCH, on the writer token, replacing only the lifecycle tag.
     assert len(calls["patches"]) == 1
     patch = calls["patches"][0]
@@ -473,71 +375,37 @@ def test_clear_flips_tag_with_writer_token_and_c5(monkeypatch):
     assert "dmf-catalog" in tag_names and "app:mxl-videotestsrc" in tag_names
 
 
-def test_clear_reconcile_expectation_names_no_nonexistent_actor(monkeypatch):
-    # dmfdeploy/dmfdeploy#411: this string used to promise "the platform's
-    # automation lane converges it" and that "the drift check will flag the
-    # gap until then" — neither exists (zero AWX schedules registered
-    # anywhere, and the drift playbook has no job template, so nothing runs
-    # it automatically either). Pinned verbatim: this exact string is also
-    # what the frontend persists into the Activity audit record, so a
-    # regression here silently corrupts that history too.
-    _patch_recorder(
+def test_clear_for_deployment_out_of_scope_is_not_found_no_side_effect(monkeypatch):
+    # A scope with no matching tenants: the instance is invisible, so the
+    # answer is the same as for a nonexistent one (no existence leak).
+    calls = _patch_recorder(
         monkeypatch,
         [_service("mxl-videotestsrc", ["dmf-catalog", "app:mxl-videotestsrc", "lifecycle:bootstrapped"])],
     )
-    client = _writer_client()
-    resp = client.post("/api/media-workloads/mxl-videotestsrc/clear", json={"reason": "ready for demo"})
-    assert resp.status_code == 200
-    body = resp.json()
-    assert body["reconcile"]["expectation"] == (
-        "Desired state recorded in the facility source of truth. "
-        "It shows as pending reconciliation until something deploys "
-        "it — today, that's Provision."
+    assert _clear(tenant_slugs=()) == {"error": "not-found"}
+    assert calls["patches"] == []
+
+
+def test_clear_for_deployment_nonexistent_is_not_found(monkeypatch):
+    calls = _patch_recorder(monkeypatch, [])
+    assert _clear() == {"error": "not-found"}
+    assert calls["patches"] == []
+
+
+def test_clear_for_deployment_already_active_no_side_effect(monkeypatch):
+    calls = _patch_recorder(
+        monkeypatch, [_service("mxl-videotestsrc", ["dmf-catalog", "app:mxl-videotestsrc", "lifecycle:active"])]
     )
-    assert "automation lane" not in body["reconcile"]["expectation"].lower()
+    assert _clear()["error"] == "already-active"
+    assert calls["patches"] == []
 
 
-def test_clear_audit_line_sanitizes_instance_and_actor(monkeypatch, caplog):
-    # This is the canonical ADR-0028 C5
-    # clear-for-deployment record — the one _audit_awx_write's own
-    # docstring says the AWX writes were modelled on — and it formats
-    # `instance` (a raw path parameter, unvalidated at this point: a
-    # nonexistent instance name still reaches this log line via the
-    # not-found outcome below) and `actor` (user.subject, an OIDC claim —
-    # dev-login's own username field stands in for it here) with plain
-    # %s, same injection shape already fixed in _audit_awx_write. A
-    # hostile instance name here never matches a real NetBox service, so
-    # this exercises the SAME not-found response path
-    # test_clear_out_of_scope_404_no_side_effect already covers — the
-    # audit call fires before the not-found branch, unconditionally.
-    import logging
+def test_clear_for_deployment_netbox_unreachable_on_lookup(monkeypatch):
+    def fake_request(*args, **kwargs):
+        raise netbox_module.NetboxAPIError(502, "boom")
 
-    from dmf_cms.settings import NetboxSettings, Settings
-
-    _patch_recorder(monkeypatch, [])
-    settings = Settings(
-        runtime_mode="local",
-        dev_login_enabled=True,
-        dev_groups=ENGINEER,
-        dev_username="ops\nFORGED actor=admin",
-        netbox=NetboxSettings(api_url="http://netbox.test", api_token="rtok", writer_token="wtok"),
-        media_tenancy=MediaTenancySettings(mode="single"),
-    )
-    client = TestClient(create_app(settings=settings))
-    client.get("/auth/login", follow_redirects=False)
-    with caplog.at_level(logging.INFO, logger="dmf_cms.main"):
-        resp = client.post(
-            "/api/media-workloads/hostile%0ainjected-instance/clear",
-            json={"reason": "go"},
-        )
-    assert resp.status_code == 404
-    lines = [r.getMessage() for r in caplog.records if r.getMessage().startswith("media-workloads clear:")]
-    assert len(lines) == 1
-    line = lines[0]
-    assert "\n" not in line
-    assert "\r" not in line
-    assert "hostile" in line and "injected-instance" in line
-    assert "FORGED" in line
+    monkeypatch.setattr(netbox_module, "_request", fake_request)
+    assert _clear() == {"error": "netbox-unreachable"}
 
 
 # ---------------------------------------------------------------------------
