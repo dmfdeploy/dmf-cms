@@ -67,9 +67,11 @@ for (const width of VIEWPORTS) {
       test(`[${width}] ${path}: sidebar covers nothing`, async ({ page }) => {
         expectKnownDefect('sidebar covers nothing', path, width)
         await gotoRoute(page, path)
+        // Without the sidebar the check below would silently stop excluding it.
+        await expect(page.getByTestId('sidebar')).toHaveCount(1)
         const offenders = await page.evaluate(() => {
           const sel = 'a[href], button, input, select, textarea, [tabindex]:not([tabindex="-1"])'
-          const aside = document.querySelector('aside')
+          const aside = document.querySelector('[data-testid="sidebar"]')
           const vw = window.innerWidth
           const vh = window.innerHeight
           const describe = (el: Element | null) => {

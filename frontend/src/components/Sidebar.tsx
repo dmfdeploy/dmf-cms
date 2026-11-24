@@ -268,7 +268,7 @@ export default function Sidebar() {
     // entirely — see the comment below); overflow was
     // never load-bearing for the width either.
     //
-    // (umbrella #515) `<aside>` is now the element
+    // (umbrella #515) This wrapper is now the element
     // positioned OUT of flow, not Topbar's header-slot row (Shell.tsx's own
     // comment has the full account of why that inversion was necessary —
     // the row's real height varies by width/wrap in a way a fixed offset
@@ -302,7 +302,13 @@ export default function Sidebar() {
     // z-index — it never compares against this element's siblings, so the
     // two `z-30`s don't collide. Verified live, not inferred from the
     // values alone — see the WO report's `elementFromPoint` proof.
-    <aside className="fixed left-0 top-14 bottom-0 z-30 flex w-16 flex-col border-r border-border bg-sidebar">
+    //
+    // A `<div>`, not an `<aside>`: an `<aside>` is a `complementary`
+    // landmark, and this wrapper holds only the `<nav>`. That would give a
+    // screen reader two landmarks for one thing, and `complementary` means
+    // content separable from the main content, which the console's own
+    // wayfinding is not. The `<nav>` below is the one landmark.
+    <div data-testid="sidebar" className="fixed left-0 top-14 bottom-0 z-30 flex w-16 flex-col border-r border-border bg-sidebar">
       {/* umbrella #486: this landmark had no accessible name — a screen
           reader user got "navigation" here AND for Topbar.tsx's own
           `<nav aria-label="Breadcrumb">`, with nothing to tell the two
@@ -321,7 +327,7 @@ export default function Sidebar() {
           the one term here that names the WHOLE APP's nav without
           contesting a name already claimed by a more specific surface.
           Checked there is no name coming from elsewhere first: neither
-          this `<nav>` nor the `<aside>` around it carried aria-label or
+          this `<nav>` nor the wrapper around it carried aria-label or
           aria-labelledby before this change, and there is no visually-
           hidden heading anywhere in this file. */}
       {/* The nav scrolls at short viewports instead of clipping, so a link
@@ -349,6 +355,6 @@ export default function Sidebar() {
           </div>
         )}
       </nav>
-    </aside>
+    </div>
   )
 }
