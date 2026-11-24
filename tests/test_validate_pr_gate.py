@@ -20,7 +20,7 @@ ULINK = "https://" + "CLAUDE" + ".AI/" + "code/session_" + "01Example"
 GOOD_BODY = "Summary.\n\nRefs dmfdeploy/dmfdeploy#568\n"
 SIGNOFF = "\n\nSigned-off-by: A Dev <dev@example.com>"
 PR_EVENT = {
-    "GITHUB_EVENT_NAME": "pull_request",
+    "GITHUB_EVENT_NAME": "pull_request_target",
     "GITHUB_REPOSITORY": REPO,
     "PR_NUMBER": "7",
 }
@@ -194,9 +194,11 @@ def test_issue_link_variants() -> None:
     assert gate.run_gate("issue-link", push_env(), waived) == []
 
 
-def test_pull_request_event_reads_live_pr_and_given_number() -> None:
+@pytest.mark.parametrize("event", ["pull_request_target", "pull_request"])
+def test_pull_request_event_reads_live_pr_and_given_number(event: str) -> None:
+    # pull_request stays accepted while the old listeners are phased out.
     env = {
-        "GITHUB_EVENT_NAME": "pull_request",
+        "GITHUB_EVENT_NAME": event,
         "GITHUB_REPOSITORY": REPO,
         "PR_NUMBER": "42",
     }

@@ -54,22 +54,6 @@ jobs:
         if: github.event_name == 'pull_request'
         run: /tmp/gitleaks detect --no-git --source /dev/null --config .gitleaks.toml >/dev/null 2>&1 || echo "::warning::PR .gitleaks.toml changed — review the allowlist diff (CODEOWNERS-gated)"
 
-  commitlint:
-    runs-on: ubuntu-24.04
-    timeout-minutes: 5
-    permissions:
-      contents: read
-      pull-requests: read
-    steps:
-      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262  # v4.4.0
-        with:
-          persist-credentials: false
-      - name: Conventional Commits check (PR commits API)
-        env:
-          GH_TOKEN: ${{ github.token }}
-          PR_NUMBER: ${{ github.event.pull_request.number }}
-        run: python3 scripts/validate_pr_gate.py commitlint
-
   trivy:
     runs-on: ubuntu-24.04
     timeout-minutes: 15

@@ -1,17 +1,27 @@
 name: issue-link
 # Split out of guard.yml deliberately. This gate reads the PR body and labels
-# from the API at run time, not from the event payload, because a run that
-# survives the concurrency group can carry a payload older than a label added
-# at once. Its failure message tells you to edit the body or add the 'no-issue'
-# label, and neither fires a run under the default pull_request types. So it
-# needs `edited`/`labeled`/`unlabeled` for its own advertised remedies to work.
+# from the API at run time, not from the event payload, because a payload can
+# predate a label added at once. Its failure message tells you to edit the body
+# or add the 'no-issue' label, and neither fires a run under the default
+# pull_request_target types. So it needs `edited`/`labeled`/`unlabeled` for its
+# own advertised remedies to work.
 #
 # It lives here rather than widening guard.yml's triggers because guard.yml also
 # runs gitleaks and trivy: adding those types there would re-run a full secret
 # scan and a vulnerability scan on every body edit and every label change. The
 # checkout is only for the validation script, so triggering it often costs
 # approximately nothing.
+#
+# Trust: pull_request_target runs this workflow file and the checkout from the
+# base branch, so a pull request cannot change the gate that judges it. The job
+# never checks out the PR head and runs no PR code. The job name is the
+# required status check `issue-link` in the main-protection ruleset. Keep it.
 on:
+  pull_request_target:
+    branches: [main]
+    types: [opened, synchronize, reopened, edited, labeled, unlabeled]
+  # Transition: the pull_request listener stays only until the trusted
+  # pull_request_target run is proven on main, then a follow-up removes it.
   pull_request:
     branches: [main]
     types: [opened, synchronize, reopened, edited, labeled, unlabeled]
@@ -22,9 +32,9 @@ on:
 permissions:
   contents: read
   pull-requests: read
-concurrency:
-  group: issue-link-${{ github.ref }}
-  cancel-in-progress: true
+# No concurrency group: under pull_request_target, github.ref is the base
+# branch for every pull request, so a shared group would cancel other pull
+# requests' runs. A cancelled run also leaves its required check unfinished.
 jobs:
   issue-link:
     # Working-model gate (umbrella issue dmfdeploy/dmfdeploy#32): every PR must

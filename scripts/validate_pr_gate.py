@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """Run the dco, issue-link and commitlint gates for a pull request or a push.
 
-On a pull_request event the gates read the pull request named by the event. On
+On a pull request event the gates read the pull request named by the event. On
 a push to main they find the merged pull request for the pushed commit and
 validate that pull request and its own commits. A rebase merge rewrites
 commit SHAs, so the pushed commit is never one of the pull request's commits.
@@ -12,7 +12,7 @@ several pull requests claim.
 Usage: validate_pr_gate.py {dco|issue-link|commitlint}
 
 Environment:
-  GITHUB_EVENT_NAME  pull_request or push
+  GITHUB_EVENT_NAME  pull_request_target, pull_request or push
   GITHUB_REPOSITORY  owner/name
   GITHUB_SHA         pushed commit (push only)
   GH_TOKEN           token for the gh CLI
@@ -199,7 +199,8 @@ def run_gate(gate: str, env: dict[str, str], api: Api | None = None) -> list[str
     repo = env["GITHUB_REPOSITORY"]
     event = env["GITHUB_EVENT_NAME"]
     dependabot_pr = False
-    if event == "pull_request":
+    # pull_request stays accepted while the old listeners are phased out.
+    if event in ("pull_request_target", "pull_request"):
         number = int(env["PR_NUMBER"])
         live = api(f"repos/{repo}/pulls/{number}")
         body = live.get("body") or ""

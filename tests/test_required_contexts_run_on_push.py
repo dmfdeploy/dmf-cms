@@ -27,7 +27,7 @@ REQUIRED_CONTEXTS: dict[str, tuple[str, str, str]] = {
     "gitleaks": ("guard.yml", "gitleaks", "guard"),
     "trivy": ("guard.yml", "trivy", "guard"),
     "actionlint": ("guard.yml", "actionlint", "guard"),
-    "commitlint": ("guard.yml", "commitlint", "guard"),
+    "commitlint": ("commitlint.yml", "commitlint", "commitlint"),
     "dco": ("dco.yml", "dco", "DCO"),
     "issue-link": ("issue-link.yml", "issue-link", "issue-link"),
 }
@@ -104,14 +104,13 @@ def test_workflow_display_names_are_exact() -> None:
         f.name: yaml.safe_load(f.read_text()).get("name")
         for f in WORKFLOWS.glob("*.yml")
     }
-    assert {names[f] for f in ("ci.yml", "guard.yml", "dco.yml", "issue-link.yml")} == {
-        "CI",
-        "guard",
-        "DCO",
-        "issue-link",
-    }
+    assert {
+        names[f]
+        for f in ("ci.yml", "guard.yml", "commitlint.yml", "dco.yml", "issue-link.yml")
+    } == {"CI", "guard", "commitlint", "DCO", "issue-link"}
     assert names["ci.yml"] == "CI"
     assert names["guard.yml"] == "guard"
+    assert names["commitlint.yml"] == "commitlint"
     assert names["dco.yml"] == "DCO"
     assert names["issue-link.yml"] == "issue-link"
 
