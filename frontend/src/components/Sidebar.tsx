@@ -1,3 +1,4 @@
+import { useEffect, useRef, useState } from 'react'
 import { Link, useLocation } from 'react-router-dom'
 import { useCurrentUser } from '../api/hooks'
 import { settleQuery } from '../lib/queryState'
@@ -114,6 +115,55 @@ const icons: Record<string, React.ReactNode> = {
   ),
 }
 
+/**
+ * The tooltip is `fixed` and placed from its link's rectangle. The nav is a
+ * scroll container, which clips an `absolute` tooltip at the rail's edge, and
+ * a tooltip left at its static position does not follow the link as the nav
+ * scrolls. A fixed box is not clipped by the scroller. The position is
+ * measured on hover and focus, again after the browser has scrolled a
+ * focused link into view, and whenever the nav scrolls. The element stays
+ * inside its link, so it is still part of the link's accessible name, and
+ * `opacity` still gates it on hover and keyboard focus.
+ */
+function RailTooltip({ children }: { children: React.ReactNode }) {
+  const ref = useRef<HTMLSpanElement>(null)
+  const [pos, setPos] = useState<{ top: number; left: number } | null>(null)
+  useEffect(() => {
+    const anchor = ref.current?.parentElement
+    if (!anchor) return
+    const nav = anchor.closest('nav')
+    let frame = 0
+    const place = () => {
+      const r = anchor.getBoundingClientRect()
+      setPos({ top: r.top + r.height / 2, left: r.right + 8 })
+    }
+    const show = () => {
+      place()
+      cancelAnimationFrame(frame)
+      frame = requestAnimationFrame(place)
+    }
+    anchor.addEventListener('mouseenter', show)
+    anchor.addEventListener('focus', show)
+    nav?.addEventListener('scroll', place)
+    return () => {
+      cancelAnimationFrame(frame)
+      anchor.removeEventListener('mouseenter', show)
+      anchor.removeEventListener('focus', show)
+      nav?.removeEventListener('scroll', place)
+    }
+  }, [])
+  return (
+    <span
+      ref={ref}
+      role="tooltip"
+      style={pos ? { top: pos.top, left: pos.left } : undefined}
+      className="pointer-events-none fixed z-30 -translate-y-1/2 whitespace-nowrap rounded bg-panel px-2 py-1 text-xs text-text opacity-0 shadow-lg transition-opacity duration-150 group-hover:opacity-100 group-focus-visible:opacity-100"
+    >
+      {children}
+    </span>
+  )
+}
+
 function renderItem(item: NavItem, pathname: string) {
   const isActive =
     item.path === '/'
@@ -156,7 +206,7 @@ function renderItem(item: NavItem, pathname: string) {
       // `hover:text-text` to spend — see index.css's own
       // `--color-resting-ink` comment for the measured figures and the
       // stated trade.
-      className={`group relative flex h-10 w-10 mx-auto items-center justify-center rounded-lg outline-offset-2 transition-colors focus-visible:outline focus-visible:outline-2 focus-visible:outline-accent ${
+      className={`group flex h-10 w-10 shrink-0 mx-auto items-center justify-center rounded-lg outline-offset-2 transition-colors focus-visible:outline focus-visible:outline-2 focus-visible:outline-accent ${
         isActive ? 'bg-selected-face text-bg' : 'text-resting-ink hover:text-text'
       }`}
     >
@@ -169,12 +219,7 @@ function renderItem(item: NavItem, pathname: string) {
           either"). Always in the DOM (not display:none) so it participates
           in the link's accessible name/text content like any label would;
           opacity is what gates visibility. */}
-      <span
-        role="tooltip"
-        className="pointer-events-none absolute left-full z-30 ml-2 whitespace-nowrap rounded bg-panel px-2 py-1 text-xs text-text opacity-0 shadow-lg transition-opacity duration-150 group-hover:opacity-100 group-focus-visible:opacity-100"
-      >
-        {item.label}
-      </span>
+      <RailTooltip>{item.label}</RailTooltip>
     </Link>
   )
 }
@@ -279,7 +324,11 @@ export default function Sidebar() {
           this `<nav>` nor the `<aside>` around it carried aria-label or
           aria-labelledby before this change, and there is no visually-
           hidden heading anywhere in this file. */}
-      <nav aria-label="Console navigation" className="flex flex-1 flex-col gap-1 py-4 px-2">
+      {/* The nav scrolls at short viewports instead of clipping, so a link
+          never sits focusable while hidden, and focusing one scrolls it into
+          view. Its tooltips are `fixed` (see RailTooltip) so the scroller
+          does not clip them. */}
+      <nav aria-label="Console navigation" className="flex flex-1 flex-col gap-1 overflow-y-auto py-4 px-2">
         {rails.map((item) => renderItem(item, location.pathname))}
         {secondaries.length > 0 && <div className="border-t border-border my-2 mx-2" />}
         {secondaries.map((item) => renderItem(item, location.pathname))}
@@ -289,17 +338,14 @@ export default function Sidebar() {
         {userFailed && !user && (
           <div
             role="status"
-            className="group relative mt-auto flex h-10 w-10 mx-auto items-center justify-center rounded-lg text-amber-400"
+            className="group mt-auto flex h-10 w-10 shrink-0 mx-auto items-center justify-center rounded-lg text-amber-400"
           >
             <svg className="w-5 h-5 shrink-0" viewBox="0 0 24 24" fill="none" aria-hidden="true">
               {icons.warning}
             </svg>
-            <span
-              role="tooltip"
-              className="pointer-events-none absolute left-full z-30 ml-2 whitespace-nowrap rounded bg-panel px-2 py-1 text-xs text-text opacity-0 shadow-lg transition-opacity duration-150 group-hover:opacity-100 group-focus-visible:opacity-100"
-            >
+            <RailTooltip>
               Could not confirm your role — Admin/Media Workloads may be hidden. Reload the page to try again.
-            </span>
+            </RailTooltip>
           </div>
         )}
       </nav>

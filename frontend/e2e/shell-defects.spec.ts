@@ -107,6 +107,38 @@ test.describe('seeded shell defects', () => {
     expect(inMain, 'activating the skip link moves focus into main').toBe(true)
   })
 
+  test('S6 [390x200] /: the sidebar nav scrolls so every link can be reached and seen', async ({ page }) => {
+    await page.setViewportSize({ width: 390, height: 200 })
+    await gotoRoute(page, '/')
+    const nav = page.getByRole('navigation', { name: 'Console navigation' })
+    const links = nav.getByRole('link')
+    await expect(links).toHaveCount(4)
+    const overflowY = await nav.evaluate((el) => getComputedStyle(el).overflowY)
+    expect(['auto', 'scroll'], 'the nav must be a scroll container').toContain(overflowY)
+    expect(
+      await nav.evaluate((el) => el.scrollHeight > el.clientHeight),
+      'the nav overflows at this height',
+    ).toBe(true)
+    // Keyboard: focusing a link scrolls it into view and its tooltip sits
+    // beside it, wherever the nav is scrolled.
+    for (const index of [0, 1, 3]) {
+      const link = links.nth(index)
+      await link.focus()
+      await expect(link).toBeInViewport({ ratio: 1 })
+      const tip = link.getByRole('tooltip')
+      await expect(tip).toHaveCSS('opacity', '1')
+      await expect(tip).toBeInViewport({ ratio: 1 })
+      await expect
+        .poll(async () => {
+          const l = (await link.boundingBox())!
+          const t = (await tip.boundingBox())!
+          const mid = t.y + t.height / 2
+          return mid >= l.y && mid <= l.y + l.height && t.x >= l.x + l.width
+        }, { message: `tooltip of link ${index} sits beside it` })
+        .toBe(true)
+    }
+  })
+
   test('M1 [390x400] /media-workloads/studio-a: the live modal fits a short viewport', async ({ page, api }) => {
     await page.setViewportSize({ width: 390, height: 400 })
     withMxlTiles(api)
