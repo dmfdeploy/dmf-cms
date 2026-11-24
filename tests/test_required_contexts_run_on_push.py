@@ -1,6 +1,6 @@
 """Every required `main-protection` context must complete on a push to main.
 
-The ruleset requires twelve contexts. A job that is skipped on a push, or a
+The ruleset requires thirteen contexts. A job that is skipped on a push, or a
 workflow with no push trigger for main, leaves its context without a result on
 the merged commit (dmfdeploy/dmfdeploy#568). The ruleset lives in GitHub
 settings, so the context list is pinned here; the test reads the real workflow
@@ -20,6 +20,7 @@ WORKFLOWS = Path(__file__).resolve().parents[1] / ".github" / "workflows"
 REQUIRED_CONTEXTS: dict[str, tuple[str, str, str]] = {
     "test (3.12)": ("ci.yml", "test", "CI"),
     "test (3.13)": ("ci.yml", "test", "CI"),
+    "test (3.15)": ("ci.yml", "test", "CI"),
     "frontend": ("ci.yml", "frontend", "CI"),
     "frontend-e2e": ("ci.yml", "frontend-e2e", "CI"),
     "review-comments": ("ci.yml", "review-comments", "CI"),

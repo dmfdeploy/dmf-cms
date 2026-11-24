@@ -109,6 +109,7 @@ WORKFLOWS: dict[str, tuple[str, frozenset[str]]] = {
                 "review-comments",
                 "test (3.12)",
                 "test (3.13)",
+                "test (3.15)",
                 "working-model",
             }
         ),
