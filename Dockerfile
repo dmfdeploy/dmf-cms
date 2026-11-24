@@ -2,12 +2,12 @@
 # The frontend build output (HTML, JS, CSS) does not depend on the CPU
 # architecture, so build it natively on the build host even when the image is
 # built for another platform under emulation.
-FROM --platform=$BUILDPLATFORM node:22-slim AS frontend-builder
+FROM --platform=$BUILDPLATFORM node:26-slim AS frontend-builder
 
 WORKDIR /build
 
 # .npmrc carries legacy-peer-deps, which the lockfile needs; without it
-# npm 10 stops at an ERESOLVE peer conflict.
+# npm stops at an ERESOLVE peer conflict.
 COPY frontend/package*.json frontend/.npmrc ./
 RUN npm ci
 

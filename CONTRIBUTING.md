@@ -24,7 +24,7 @@ This section is the one place for development and test commands. The README and
 ### Prerequisites
 
 - **Python 3.12 or later.** CI tests 3.12 and 3.13.
-- **Node.js 22.** CI uses Node 22, which includes npm 10.
+- **Node.js 26.** CI uses Node 26, which includes npm 11.
 - **A checkout of the dmfdeploy umbrella repo**, for one backend test file. See
   [Run the backend tests](#run-the-backend-tests).
 - **Optional tools.** [Helm](https://helm.sh/) renders the chart the way CI does.
