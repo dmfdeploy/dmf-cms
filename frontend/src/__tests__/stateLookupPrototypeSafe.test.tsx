@@ -84,7 +84,7 @@ describe('review finding PR #144: state-map lookups must be own-property, never 
           <ProvisionStage
             workload={workload}
             state="active"
-            actions={['deploy', 'clear-for-deployment']}
+            actions={['deploy']}
             onBusyChange={vi.fn()}
             onJobStart={vi.fn()}
           />

@@ -29,7 +29,6 @@ import type {
   MxlInstanceStatus,
   MediaWorkloadsResponse,
   MediaWorkloadsGroupedResponse,
-  ClearForDeploymentResult,
   InstanceTopology,
   SwitchSourceResult,
   Operation,
@@ -113,7 +112,7 @@ export function useWorkflows() {
 
 // AWX writes are operator-gated and carry the C5 quartet: a mandatory reason
 // is sent in the body (backend 400s without it), and the response echoes a
-// request_id (#185 WP-E), mirroring clear-for-deployment.
+// request_id (#185 WP-E).
 export function useLaunchWorkflow() {
   return useMutation({
     mutationFn: ({ workflowName, reason }: { workflowName: string; reason: string }) =>
@@ -620,39 +619,6 @@ export function useSwitchSource() {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({ source_instance: sourceInstance, reason }),
-        },
-      ),
-  })
-}
-
-// The ONE consequential media-workloads write (ADR-0037): flips desired
-// state in NetBox; nothing converges it automatically (dmfdeploy#411) —
-// Provision does, when run. reason is mandatory (C5 quartet).
-export function useClearForDeployment() {
-  const queryClient = useQueryClient()
-  return useMutation({
-    // Close the loop at the point of action (Art. 2): a successful clear
-    // changes the inventory that decides whether the control should still
-    // be offered. Without this the stale, already-taken action stays
-    // clickable until the next 15s poll.
-    // RETURNED, not fired-and-forgotten: react-query keeps the mutation
-    // pending until this settles, so `busy` cannot fall before the fresh
-    // inventory has landed. With `void` the refetch raced the re-render and
-    // a stale Clear/Deploy could flash back during a slow NetBox read
-    // (GATE-S1-RV3 P2). The loop closes atomically or not at all.
-    onSuccess: async () => {
-      await Promise.all([
-        queryClient.invalidateQueries({ queryKey: ['media-workloads-grouped'] }),
-        queryClient.invalidateQueries({ queryKey: ['media-workloads'] }),
-      ])
-    },
-    mutationFn: ({ instance, reason }: { instance: string; reason: string }) =>
-      apiCall<ClearForDeploymentResult>(
-        `/api/media-workloads/${encodeURIComponent(instance)}/clear`,
-        {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ reason }),
         },
       ),
   })

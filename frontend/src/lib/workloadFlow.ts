@@ -119,10 +119,9 @@ export type FlowStepState =
  * than folded into it. FlowStepState answers "may the operator open this, and
  * what does opening it mean" — an AFFORDANCE question, which is why its
  * `open` outranks everything else in the ladder below. Completeness answers
- * "how much of this stage is settled" — a PROGRESS question. The two
- * genuinely disagree in a case that already ships: at position `configure`
- * with a sibling still bootstrapped, Provision is `open` (it still bears
- * clear-for-deployment) AND fully behind the position. Reading the dot off
+ * "how much of this stage is settled" — a PROGRESS question. The two can
+ * disagree: any step that bears an action is `open` whatever the position, so
+ * an `open` step can also sit fully behind the position. Reading the dot off
  * FlowStepState would have to call that either "not complete" (false — the
  * workload is past it) or drop the action (false the other way).
  *
@@ -184,11 +183,10 @@ export interface FlowState {
  *   4. is a record step and the position is unknown  → `record`
  *   5. otherwise                                     → `locked`
  *
- * Rule 1 outranks the rest for a reason that is not cosmetic. At position
- * `configure` with a sibling still bootstrapped, Provision sits BEHIND the
- * position (so rule 3 would call it merely complete) yet still bears
- * clear-for-deployment — the exact case that stranded workloads in S1
- * (GATE-S1-RV3 P1). Ordering `open` first means a step that can be acted on
+ * Rule 1 outranks the rest for a reason that is not cosmetic. A step that sits
+ * BEHIND the active stage (so rule 3 would call it merely complete) can still
+ * bear an action, because stageActions() reads member state as well as
+ * position. Ordering `open` first means a step that can be acted on
  * is never presented as finished business, and — the machine-checkable
  * half — no action-bearing step is ever `locked`. Both directions are
  * pinned by tests, because this is the property the whole "only then"
@@ -501,9 +499,8 @@ export function lifecycleBadge(input: WorkloadLifecycleInput): LifecycleBadge {
  *                     been OBSERVED running yet. Worth a look; not yet
  *                     claiming the workload operates. Says nothing about HOW
  *                     it reached configure: active intent can mean a deploy
- *                     that hasn't converged yet, one that failed, or —
- *                     dmfdeploy#411 — a clear-for-deployment with no
- *                     converger ever picking it up. classifyForwardExit has
+ *                     that hasn't converged yet, or one that failed.
+ *                     classifyForwardExit has
  *                     no job-outcome input — workloadLifecycle.ts's
  *                     WorkloadLifecycleInput carries membersDataTrustworthy,
  *                     the three job flags, `lifecycle`, and
@@ -552,9 +549,7 @@ export function lifecycleBadge(input: WorkloadLifecycleInput): LifecycleBadge {
  * not only a provision write: the operator's task while any job runs is to
  * watch it close (workloadLifecycle.ts's stageActions applies the identical
  * suppression, for the identical reason), and Configure can legitimately be
- * the SELECTED step while a DIFFERENT stage's job is in flight — Provision's
- * clear-for-deployment keeps running after the position has moved past it
- * (see stageActions' own note on that member-state-keyed action).
+ * the SELECTED step while a DIFFERENT stage's job is in flight.
  */
 export type ForwardExit = 'none' | 'view-status' | 'live'
 

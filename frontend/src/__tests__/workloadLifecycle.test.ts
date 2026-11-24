@@ -21,27 +21,16 @@ import {
 
 const LIFECYCLES: WorkloadLifecycle[] = ['provision', 'configure', 'operate', 'unknown']
 
-/**
- * Every reachable observation: 4 lifecycles x 3 job flags x the member-state
- * fact, exhaustively — 64 combinations.
- *
- * hasBootstrappedMembers belongs in here because it is part of the input
- * type: leaving it out meant the invariant loop below never exercised the
- * clear affordance at all, while the comment claimed exhaustiveness. The
- * claim is fixed by making it TRUE rather than by narrowing the wording.
- */
+/** Every reachable observation: 4 lifecycles x 3 job flags, exhaustively — 32 combinations. */
 const ALL_INPUTS: WorkloadLifecycleInput[] = LIFECYCLES.flatMap((lifecycle) =>
   [false, true].flatMap((launching) =>
     [false, true].flatMap((switching) =>
-      [false, true].flatMap((tearingDown) =>
-        [false, true].map((hasBootstrappedMembers) => ({
-          lifecycle,
-          launching,
-          switching,
-          tearingDown,
-          hasBootstrappedMembers,
-        })),
-      ),
+      [false, true].map((tearingDown) => ({
+        lifecycle,
+        launching,
+        switching,
+        tearingDown,
+      })),
     ),
   ),
 )
@@ -205,49 +194,15 @@ describe('AVAILABLE IFF ACTION-BEARING', () => {
   })
 
   it('names the console write seams the rail actually exposes', () => {
-    // Clear is keyed to MEMBER STATE, deploy to POSITION.
+    // Deploy is keyed to POSITION.
     expect(stageActions('provision', { lifecycle: 'provision' })).toEqual(['deploy'])
-    expect(stageActions('provision', { lifecycle: 'provision', hasBootstrappedMembers: true }))
-      .toEqual(['deploy', 'clear-for-deployment'])
     expect(stageActions('configure', { lifecycle: 'operate' })).toEqual(['switch-source'])
     expect(stageActions('finalise', { lifecycle: 'operate' })).toEqual(['tear-down'])
     // Deploy is gone the moment there is something to operate — you cannot
     // deploy what is already running.
     expect(stageActions('provision', { lifecycle: 'operate' })).toEqual([])
-  })
-})
-
-describe('a bootstrapped member always has a reachable clear path', () => {
-  it('keeps Provision offering clear after the position moves to configure', () => {
-    // Scenario: clearing the first of two
-    // siblings flips the backend derivation to configure (any_active wins).
-    // Reading the affordance off position alone stranded the second sibling
-    // PERMANENTLY — the reachability principle turned on my own placement.
-    const afterFirstClear = { lifecycle: 'configure' as const, hasBootstrappedMembers: true }
-    expect(stageActions('provision', afterFirstClear)).toEqual(['clear-for-deployment'])
-
-    const { active, states } = classifyWorkloadLifecycle(afterFirstClear)
-    // Position is still the backend's truth...
-    expect(active).toBe('configure')
-    // ...and Provision is available-not-active, which is exactly what
-    // available means: it bears an action without being where we are.
-    expect(states.provision).toBe('available')
-  })
-
-  it('withdraws it once no member is bootstrapped', () => {
-    // The discriminator: an affordance that never withdraws is not gated.
+    // Once the position has moved past Provision, Provision offers nothing.
     expect(stageActions('provision', { lifecycle: 'configure' })).toEqual([])
-    expect(classifyWorkloadLifecycle({ lifecycle: 'configure' }).states.provision)
-      .toBe('informational')
-  })
-
-  it('still suppresses it while a job is in flight and on unknown', () => {
-    expect(stageActions('provision', {
-      lifecycle: 'configure', hasBootstrappedMembers: true, switching: true,
-    })).toEqual([])
-    expect(stageActions('provision', {
-      lifecycle: 'unknown', hasBootstrappedMembers: true,
-    })).toEqual([])
   })
 })
 
@@ -276,9 +231,9 @@ describe('delete-permanently (umbrella #347): member-state gated, mutually exclu
   })
 
   it('withdraws it the moment NOT every member is bootstrapped', () => {
-    // Discriminates: flips ONLY allMembersBootstrapped; a mutant that reads
-    // hasBootstrappedMembers (the "at least one" field) instead would pass
-    // this workload through incorrectly.
+    // Discriminates: flips ONLY allMembersBootstrapped; a mutant that treats
+    // "at least one member bootstrapped" as enough would pass this workload
+    // through incorrectly.
     expect(stageActions('finalise', { ...eligible, allMembersBootstrapped: false })).toEqual([])
   })
 
@@ -367,7 +322,6 @@ describe('delete-permanently authorization + entity identity (umbrella dmfdeploy
 describe('inventoryStale withdraws every action (dmfdeploy#319)', () => {
   const base: WorkloadLifecycleInput = {
     lifecycle: 'provision',
-    hasBootstrappedMembers: true,
     allMembersBootstrapped: true,
     anyMemberObservedRunning: false,
     membersDataTrustworthy: true,
@@ -377,7 +331,6 @@ describe('inventoryStale withdraws every action (dmfdeploy#319)', () => {
   const running: WorkloadLifecycleInput = { ...base, lifecycle: 'operate', allMembersBootstrapped: false }
   const cases: Array<[string, StageId, WorkloadLifecycleInput, string]> = [
     ['deploy', 'provision', base, 'deploy'],
-    ['clear-for-deployment', 'provision', base, 'clear-for-deployment'],
     ['switch-source', 'configure', running, 'switch-source'],
     ['tear-down', 'finalise', running, 'tear-down'],
     ['delete-permanently', 'finalise', base, 'delete-permanently'],

@@ -26,9 +26,9 @@ import {
  * and a real >=1px border.
  *
  * WHY A DENSITY PROP, NOT A SEPARATE COMPONENT PER SIZE. ReasonConfirm's
- * and ClearForDeployment's fields sit inside a `min-w-64` floating confirm
- * panel and were always visually tighter than a full-page field — a real,
- * deliberate density difference between two contexts, not drift to undo.
+ * fields sit inside a `min-w-64` floating confirm panel and are visually
+ * tighter than a full-page field — a real, deliberate density difference
+ * between two contexts.
  * `density="xs"` reproduces it from the one shared base instead of
  * forking the component.
  *

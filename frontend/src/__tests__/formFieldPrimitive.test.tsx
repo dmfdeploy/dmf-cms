@@ -16,9 +16,9 @@
  *     the component actually renders, closing the loop between "what the
  *     DOM node gets" and "what that class's CSS says".
  *
- * Each of the six migrated call sites' own render-through-the-primitive
+ * Each migrated call site's own render-through-the-primitive
  * assertion (createWorkload.test.tsx, reasonConfirm.test.tsx,
- * clearForDeploymentCopy.test.tsx, adminInvite.test.tsx) and the
+ * adminInvite.test.tsx) and the
  * focus-on-entry pin (createWorkload.test.tsx) live next to the behaviour
  * they're already testing, not duplicated here a second time.
  */

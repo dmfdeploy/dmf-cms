@@ -87,15 +87,6 @@ export type StageActionId =
   /** Launch the workload via its catalog template (Provision, while the
    *  workload has not been cleared to run yet). */
   | 'deploy'
-  /**
-   * Flip an instance's desired state bootstrapped -> active in NetBox.
-   * Nothing converges it automatically (dmfdeploy#411: no such lane
-   * exists) — Provision deploys it, when run. Offered at PROVISION
-   * whenever any member is still bootstrapped — keyed to member state, NOT
-   * to position, because clearing the first of several siblings moves the
-   * position to configure while the rest still need clearing.
-   */
-  | 'clear-for-deployment'
   /** Re-point a flow at a different source (Configure, once running). */
   | 'switch-source'
   /** Tear the workload down (Finalise & Review, once running). */
@@ -103,9 +94,9 @@ export type StageActionId =
   /**
    * Delete permanently — SoT removal of a fully finalised workload's
    * residual catalog records (umbrella #347, operator ruling 2026-08-02).
-   * Offered at Finalise & Review, but keyed to MEMBER STATE, not position,
-   * same discipline as `clear-for-deployment`: every member bootstrapped
-   * (nothing cleared to run), zero observed running, and the backing read
+   * Offered at Finalise & Review, but keyed to MEMBER STATE, not position:
+   * every member bootstrapped (nothing cleared to run), zero observed
+   * running, and the backing read
    * itself trustworthy. Mutually exclusive with `tear-down` — while
    * anything is running, tear-down is the only Finalise action.
    */
@@ -126,10 +117,8 @@ export interface WorkloadLifecycleInput {
   /** Backend-derived position. Never re-derived here. */
   lifecycle: WorkloadLifecycle
   /**
-   * A PROVISION-stage write is in flight: a catalog deploy, or a
-   * clear-for-deployment. Both are Provision's writes, and the rail
-   * suppresses on stage busy-ness rather than per-mutation, so they share
-   * one flag.
+   * A PROVISION-stage write is in flight: a catalog deploy. The rail
+   * suppresses on stage busy-ness rather than per-mutation.
    */
   launching?: boolean
   /** A source re-point (switch) job is running. */
@@ -137,23 +126,9 @@ export interface WorkloadLifecycleInput {
   /** A teardown job is running. */
   tearingDown?: boolean
   /**
-   * At least one member is still bootstrapped — i.e. recorded but not yet
-   * cleared to run. A MEMBER-STATE fact, deliberately separate from
-   * `lifecycle`, which is a POSITION fact.
-   *
-   * They are not the same question and conflating them stranded workloads:
-   * clearing one of two siblings flips the backend's derivation to
-   * `configure` (any_active wins), and reading the clear affordance off
-   * position alone then withdrew it from the sibling still waiting —
-   * permanently (GATE-S1-RV3 P1). Position says where the workload IS;
-   * this says what it still NEEDS.
-   */
-  hasBootstrappedMembers?: boolean
-  /**
-   * Every current member is bootstrapped (none cleared to run) — the
-   * mirror image of `hasBootstrappedMembers`'s "at least one": purging
-   * requires ALL of them to be, not just one, since it removes the whole
-   * workload's residue. False (not just absent) when the workload has no
+   * Every current member is bootstrapped (none cleared to run): purging
+   * requires ALL of them to be, since it removes the whole workload's
+   * residue. False (not just absent) when the workload has no
    * members at all — nothing to derive "every" over honestly.
    */
   allMembersBootstrapped?: boolean
@@ -292,11 +267,6 @@ export function stageActions(
       // Deploying belongs to the position: it is the next step only while
       // nothing has been cleared to run yet.
       if (input.lifecycle === 'provision') actions.push('deploy')
-      // Clearing belongs to the MEMBERS, not the position. A bootstrapped
-      // member must always have a reachable clear path, so Provision keeps
-      // offering it even once the workload's position has moved on — it
-      // simply renders available-rather-than-active in that case.
-      if (input.hasBootstrappedMembers) actions.push('clear-for-deployment')
       return actions
     }
     case 'configure':
@@ -400,8 +370,8 @@ export function classifyWorkloadLifecycle(
  * turn a MediaWorkload into a WorkloadLifecycleInput (umbrella #347 WP-3). Before this existed, WorkloadDetail.tsx
  * (renamed WorkloadSetup.tsx by dmfdeploy#414) and Operate.tsx (renamed
  * WorkloadHome.tsx) each hand-built this object, and they had drifted: the
- * Operate.tsx copy set only `lifecycle` and `hasBootstrappedMembers`,
- * leaving `allMembersBootstrapped`/`anyMemberObservedRunning`/
+ * Operate.tsx copy set only `lifecycle`, leaving
+ * `allMembersBootstrapped`/`anyMemberObservedRunning`/
  * `membersDataTrustworthy`/`purgeAuthorized`/`isPurgeableEntity` all absent
  * — which stageActions() reads as false/withheld for every one of them,
  * regardless of what the workload actually is. A workload the flow page
@@ -438,7 +408,7 @@ export function buildWorkloadLifecycleInput(
   workload: {
     slug: string
     lifecycle: WorkloadLifecycle
-    instances: { reconcile_pending: boolean; requested_state: string; observed_state: string }[]
+    instances: { requested_state: string; observed_state: string }[]
   },
   facts: {
     launching?: boolean
@@ -459,9 +429,6 @@ export function buildWorkloadLifecycleInput(
     launching: facts.launching,
     switching: facts.switching,
     tearingDown: facts.tearingDown,
-    hasBootstrappedMembers: workload.instances.some(
-      (i) => !i.reconcile_pending && i.requested_state === 'bootstrapped',
-    ),
     allMembersBootstrapped:
       workload.instances.length > 0 && workload.instances.every((i) => i.requested_state === 'bootstrapped'),
     anyMemberObservedRunning: workload.instances.some((i) => i.observed_state === 'running'),

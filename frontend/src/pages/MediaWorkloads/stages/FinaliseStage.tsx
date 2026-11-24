@@ -31,13 +31,6 @@ import { useGuardWrite } from '../../../lib/inventoryFreshness'
  * already, by the backend, as SwitchSourceResult.outcome/outcome_message —
  * dmf-runbooks 0.4.4 contract). No generated stats report — that's S4.
  *
- * Clear-for-deployment used to render here, outside the rail's action model
- * entirely — which meant it could fire during another stage's in-flight job,
- * and even while Finalise itself was not-applicable (GATE-S1 P1). It is a
- * PROVISION-time action: it moves a workload from "members exist, no active
- * intent" to an active intent. It now lives on Provision and flows through
- * stageActions() like every other write.
- *
  * Delete permanently (umbrella #347, operator ruling 2026-08-02) is a
  * SECOND, workload-level write alongside per-entry teardown — not another
  * FinaliseEntry, since it purges the whole workload's residue in one shot,

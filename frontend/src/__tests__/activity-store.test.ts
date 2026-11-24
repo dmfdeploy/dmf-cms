@@ -1,28 +1,24 @@
 /**
- * Console-local activity record (#174 WP3): the C5 quartet from a
- * clear-for-deployment response lands in the History lane's store,
- * newest first, bounded, persisted under a stable localStorage key.
+ * Console-local activity record (#174 WP3): the C5 quartet from a console
+ * write lands in the History lane's store, newest first, bounded, persisted
+ * under a stable localStorage key.
  */
 import { beforeEach, describe, expect, it } from 'vitest'
 import {
   MAX_CONSOLE_ACTION_RECORDS,
   useActivityStore,
+  type AwxWriteRecord,
 } from '../store/activity'
-import type { ClearForDeploymentResult } from '../api/types'
 
-function clearResult(overrides: Partial<ClearForDeploymentResult> = {}): ClearForDeploymentResult {
+function awxWrite(overrides: Partial<AwxWriteRecord> = {}): AwxWriteRecord {
   return {
-    instance: 'mxl-videotest',
-    requested_state: 'active',
-    previous_state: 'bootstrapped',
     request_id: `req-${Math.random().toString(36).slice(2)}`,
-    actor: 'operator',
-    role: 'engineer',
-    reason: 'ready for demo',
-    reconcile: {
-      expectation: 'The catalog drift loop converges this within minutes.',
-      watch: 'Activity → Jobs',
-    },
+    action: 'deploy',
+    target: 'mxl-videotest-view',
+    reason: 'scheduled provision',
+    actor: 'ops',
+    role: 'operator',
+    outcome: 'launched',
     ...overrides,
   }
 }
@@ -33,61 +29,33 @@ beforeEach(() => {
 })
 
 describe('activity store', () => {
-  it('records the C5 quartet from a clear response, newest first', () => {
-    useActivityStore.getState().recordClear(clearResult({ request_id: 'first' }))
-    useActivityStore.getState().recordClear(clearResult({ request_id: 'second' }))
+  it('records the C5 quartet from an AWX write, newest first (#185 WP-E)', () => {
+    useActivityStore.getState().recordAwxWrite(awxWrite({ request_id: 'first' }))
+    useActivityStore.getState().recordAwxWrite(awxWrite({ request_id: 'second', action: 'launch' }))
     const records = useActivityStore.getState().records
     expect(records.map((r) => r.request_id)).toEqual(['second', 'first'])
     expect(records[0]).toMatchObject({
-      action: 'clear-for-deployment',
-      target: 'mxl-videotest',
-      actor: 'operator',
-      role: 'engineer',
-      reason: 'ready for demo',
-      previous_state: 'bootstrapped',
-      requested_state: 'active',
+      action: 'launch',
+      target: 'mxl-videotest-view',
+      reason: 'scheduled provision',
+      actor: 'ops',
+      role: 'operator',
+      outcome: 'launched',
     })
     expect(records[0].at).toBeTruthy()
   })
 
   it('caps the record list', () => {
     for (let i = 0; i < MAX_CONSOLE_ACTION_RECORDS + 5; i++) {
-      useActivityStore.getState().recordClear(clearResult({ request_id: `r${i}` }))
+      useActivityStore.getState().recordAwxWrite(awxWrite({ request_id: `r${i}` }))
     }
     expect(useActivityStore.getState().records).toHaveLength(MAX_CONSOLE_ACTION_RECORDS)
   })
 
   it('persists under the dmf-console-activity key', () => {
-    useActivityStore.getState().recordClear(clearResult({ request_id: 'persisted' }))
+    useActivityStore.getState().recordAwxWrite(awxWrite({ request_id: 'persisted' }))
     const raw = window.localStorage.getItem('dmf-console-activity')
     expect(raw).toBeTruthy()
     expect(JSON.parse(raw as string).state.records[0].request_id).toBe('persisted')
-  })
-
-  it('records an AWX write (deploy/teardown/launch) alongside clears (#185 WP-E)', () => {
-    useActivityStore.getState().recordClear(clearResult({ request_id: 'clear-1' }))
-    useActivityStore.getState().recordAwxWrite({
-      request_id: 'deploy-1',
-      action: 'deploy',
-      target: 'mxl-videotest-view',
-      reason: 'scheduled provision',
-      actor: 'ops',
-      role: 'operator',
-      outcome: 'launched',
-    })
-    const records = useActivityStore.getState().records
-    // Newest first — the AWX write is on top of the earlier clear.
-    expect(records.map((r) => r.request_id)).toEqual(['deploy-1', 'clear-1'])
-    expect(records[0]).toMatchObject({
-      action: 'deploy',
-      target: 'mxl-videotest-view',
-      reason: 'scheduled provision',
-      actor: 'ops',
-      role: 'operator',
-      outcome: 'launched',
-    })
-    // AWX writes carry no NetBox state transition.
-    expect(records[0].requested_state).toBeUndefined()
-    expect(records[0].at).toBeTruthy()
   })
 })

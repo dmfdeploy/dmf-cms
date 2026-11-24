@@ -744,7 +744,7 @@
     outline-offset: 1px;
   }
 
-  /* ReasonConfirm's and ClearForDeployment's own floating confirm panel is
+  /* ReasonConfirm's own floating confirm panel is
      min-w-64 — a base-density field would crowd it. Reproduces that
      panel's original tightness from the one shared base instead of
      forking the component for it. */
