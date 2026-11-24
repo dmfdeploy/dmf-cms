@@ -115,8 +115,9 @@ WORKFLOWS: dict[str, tuple[str, frozenset[str]]] = {
     ),
     ".github/workflows/guard.yml": (
         "guard",
-        frozenset({"actionlint", "commitlint", "gitleaks", "trivy"}),
+        frozenset({"actionlint", "gitleaks", "trivy"}),
     ),
+    ".github/workflows/commitlint.yml": ("commitlint", frozenset({"commitlint"})),
     ".github/workflows/dco.yml": ("DCO", frozenset({"dco"})),
     ".github/workflows/issue-link.yml": ("issue-link", frozenset({"issue-link"})),
 }

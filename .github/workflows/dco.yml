@@ -2,7 +2,16 @@ name: DCO
 # On a pull request this checks the PR's commits. On a push to main it finds
 # the merged PR for the pushed commit and checks that PR's own commits, because
 # a rebase merge rewrites SHAs. Logic: scripts/validate_pr_gate.py.
+#
+# Trust: pull_request_target runs this workflow file and the checkout from the
+# base branch, so a pull request cannot change the gate that judges it. The job
+# never checks out the PR head and runs no PR code. The job name is the
+# required status check `dco` in the main-protection ruleset. Keep it.
 on:
+  pull_request_target:
+    branches: [main]
+  # Transition: the pull_request listener stays only until the trusted
+  # pull_request_target run is proven on main, then a follow-up removes it.
   pull_request:
     branches: [main]
   push:

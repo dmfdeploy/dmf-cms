@@ -279,7 +279,7 @@ run and you do not pass it a pull request number.
 ### Unattended release
 
 The `release` workflow (`.github/workflows/release.yml`) starts when `CI`,
-`guard`, `DCO` or `issue-link` completes on a push to `main`. It has no manual
+`guard`, `commitlint`, `DCO` or `issue-link` completes on a push to `main`. It has no manual
 trigger, no inputs and no user-selected ref. It reads the commit from the
 completed run (`workflow_run.head_sha`), never from the head of `main`.
 
@@ -593,7 +593,9 @@ cluster (`kubectl config current-context`).
 
 GitHub Actions is the CI for this repository. The workflows live in
 `.github/workflows/`: `ci.yml` runs the backend and frontend checks, and
-`guard.yml`, `dco.yml` and `issue-link.yml` run the pull request gates. The
+`guard.yml`, `commitlint.yml`, `dco.yml` and `issue-link.yml` run the pull
+request gates. The last three run on `pull_request_target`, so a pull request
+cannot change the workflow or the script that judges it. The
 commands behind these checks are in
 [`CONTRIBUTING.md`](../CONTRIBUTING.md#develop-and-test).
 

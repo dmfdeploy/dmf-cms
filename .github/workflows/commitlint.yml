@@ -1,0 +1,31 @@
+name: commitlint
+# Split out of guard.yml so it can run on pull_request_target. guard.yml scans
+# the PR's own code and so must stay on pull_request.
+#
+# Trust: pull_request_target runs this workflow file and the checkout from the
+# base branch, so a pull request cannot change the gate that judges it. The job
+# never checks out the PR head and runs no PR code. A push to main finds the
+# merged PR for the pushed commit and checks that PR's own commits. The job
+# name is the required status check `commitlint` in the main-protection
+# ruleset. Keep it.
+on:
+  pull_request_target:
+    branches: [main]
+  push:
+    branches: [main]
+permissions:
+  contents: read
+  pull-requests: read
+jobs:
+  commitlint:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262  # v4.4.0
+        with:
+          persist-credentials: false
+      - name: Conventional Commits check (PR commits API)
+        env:
+          GH_TOKEN: ${{ github.token }}
+          PR_NUMBER: ${{ github.event.pull_request.number }}
+        run: python3 scripts/validate_pr_gate.py commitlint

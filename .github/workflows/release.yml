@@ -18,7 +18,7 @@ on:
   workflow_run:
     # These are the exact `name:` values of the workflow files. A different
     # spelling starts no run; tests/test_release_workflow.py checks them.
-    workflows: [CI, guard, DCO, issue-link]
+    workflows: [CI, guard, commitlint, DCO, issue-link]
     types: [completed]
     branches: [main]
 
