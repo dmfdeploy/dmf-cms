@@ -108,7 +108,7 @@ jobs:
       - name: Set up Node
         uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020  # v4.4.0
         with:
-          node-version: "22"
+          node-version: "26"
           cache: npm
           cache-dependency-path: frontend/package-lock.json
 
@@ -116,17 +116,17 @@ jobs:
         working-directory: frontend
         run: npm ci
 
-      # The release image runs `npm ci` with the npm 10 that ships in
-      # node:22-slim, from only the files its COPY line names. Repeat that
-      # install here so a lockfile or .npmrc change that npm 10 rejects
+      # The release image runs `npm ci` with the npm 11 that ships in
+      # node:26-slim, from only the files its COPY line names. Repeat that
+      # install here so a lockfile or .npmrc change that npm 11 rejects
       # fails on the pull request, not at release time.
-      - name: Check the image install (npm 10, Dockerfile files only)
+      - name: Check the image install (npm 11, Dockerfile files only)
         run: |
           grep -qE '^COPY frontend/package\*\.json frontend/\.npmrc \./$' Dockerfile
           scratch="$(mktemp -d)"
           cp frontend/package.json frontend/package-lock.json frontend/.npmrc "$scratch/"
           cd "$scratch"
-          npx --yes npm@10 ci --dry-run --ignore-scripts
+          npx --yes npm@11 ci --dry-run --ignore-scripts
 
       - name: Lint (jsx-a11y)
         working-directory: frontend
@@ -166,7 +166,7 @@ jobs:
       - name: Set up Node
         uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020  # v4.4.0
         with:
-          node-version: "22"
+          node-version: "26"
           cache: npm
           cache-dependency-path: frontend/package-lock.json
 
