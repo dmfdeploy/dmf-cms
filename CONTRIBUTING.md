@@ -168,8 +168,9 @@ CI checks each of these.
   [Develop and test](#develop-and-test). The `guard` workflow adds secret and
   vulnerability scans.
 
-Also leave agent session links out of commit messages and the PR body. No check
-enforces this, so reviewers look for it.
+Also leave agent session links out of commit messages and the PR body. The DCO,
+commitlint and issue-link checks reject one known session-link format. They
+can't recognize every tool's links, so reviewers look for them too.
 
 ## Developer Certificate of Origin (DCO)
 
