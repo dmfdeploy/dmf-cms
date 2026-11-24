@@ -20,11 +20,6 @@ on:
   pull_request_target:
     branches: [main]
     types: [opened, synchronize, reopened, edited, labeled, unlabeled]
-  # Transition: the pull_request listener stays only until the trusted
-  # pull_request_target run is proven on main, then a follow-up removes it.
-  pull_request:
-    branches: [main]
-    types: [opened, synchronize, reopened, edited, labeled, unlabeled]
   # A push to main finds the merged PR for the pushed commit and checks its
   # body and labels, so the context completes on the shipped SHA too.
   push:
@@ -36,10 +31,8 @@ permissions:
 # pull request cancels an older one and only the current validation can satisfy
 # the required check. github.ref won't do: under pull_request_target it is the
 # base branch for every pull request, so it would cancel other pull requests' runs.
-# The event name keeps the transition's pull_request and pull_request_target runs
-# for one pull request from cancelling each other.
 concurrency:
-  group: issue-link-${{ github.event_name }}-${{ github.event.pull_request.number || github.sha }}
+  group: issue-link-${{ github.event.pull_request.number || github.sha }}
   cancel-in-progress: true
 jobs:
   issue-link:

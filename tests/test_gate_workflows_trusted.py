@@ -24,17 +24,10 @@ def load(name: str) -> dict:
     return data
 
 
-# commitlint.yml is new and trusted only. dco.yml and issue-link.yml keep their
-# pull_request listener for one transition step; a follow-up removes it and
-# tightens this set to {"pull_request_target", "push"} for every gate.
-TRANSITION = {"dco.yml", "issue-link.yml"}
-
-
 @pytest.mark.parametrize("name", GATES)
-def test_runs_on_pull_request_target_and_push(name: str) -> None:
-    allowed = {"pull_request_target", "push"} | ({"pull_request"} if name in TRANSITION else set())
-    events = set(load(name)["on"])
-    assert {"pull_request_target", "push"} <= events <= allowed
+def test_runs_on_pull_request_target_and_push_only(name: str) -> None:
+    # A `pull_request` listener would run the PR's own copy of the gate.
+    assert set(load(name)["on"]) == {"pull_request_target", "push"}
 
 
 @pytest.mark.parametrize("name", GATES)
@@ -44,6 +37,18 @@ def test_checks_out_only_the_base_without_credentials(name: str) -> None:
         assert len(checkouts) == 1
         # No `ref:` means the base branch (or the pushed commit on a push).
         assert checkouts[0]["with"] == {"persist-credentials": False}
+
+
+@pytest.mark.parametrize("name", GATES)
+def test_nothing_from_the_pull_request_head_is_checked_out_or_run(name: str) -> None:
+    # Under pull_request_target the head ref and sha name the PR author's code.
+    text = (WORKFLOWS / name).read_text()
+    for needle in ("github.head_ref", "pull_request.head", "refs/pull/", "github.event.pull_request.merge_commit_sha"):
+        assert needle not in text
+    for job in load(name)["jobs"].values():
+        for step in job["steps"]:
+            assert "ref" not in step.get("with", {})
+            assert "repository" not in step.get("with", {})
 
 
 @pytest.mark.parametrize("name", GATES)
@@ -73,14 +78,13 @@ def test_only_commitlint_yml_runs_a_commitlint_job_on_push() -> None:
     assert owners == ["commitlint.yml"]
 
 
-def test_the_transition_workflow_runs_on_pull_requests_only() -> None:
-    # A follow-up deletes commitlint-transition.yml once the trusted workflow is proven.
-    assert set(load("commitlint-transition.yml")["on"]) == {"pull_request"}
+def test_the_transition_workflow_is_gone() -> None:
+    assert not (WORKFLOWS / "commitlint-transition.yml").exists()
 
 
 def test_issue_link_runs_one_validation_per_pull_request() -> None:
     # Keyed by the pull request (push: the commit), never by github.ref, which is
     # the base branch for every pull request under pull_request_target.
     conc = load("issue-link.yml")["concurrency"]
-    assert conc["group"] == "issue-link-${{ github.event_name }}-${{ github.event.pull_request.number || github.sha }}"
+    assert conc["group"] == "issue-link-${{ github.event.pull_request.number || github.sha }}"
     assert conc["cancel-in-progress"] is True
