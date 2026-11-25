@@ -18,26 +18,6 @@ export interface PlatformTrust {
   sandbox: boolean
 }
 
-export interface AppLink {
-  name: string
-  url: string
-}
-
-export interface App {
-  key: string
-  display_name: string
-  lane: 'public' | 'private'
-  summary: string
-  links: AppLink[]
-}
-
-export interface AppContract {
-  product_name: string
-  facility_name: string
-  catalog_source: string
-  apps: App[]
-}
-
 export interface WorkflowTemplate {
   id: number
   name: string

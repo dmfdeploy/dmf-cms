@@ -27,13 +27,7 @@ import { usePageTitle } from '../../hooks/usePageTitle'
 // service URLs) moves to facility detail, where it is read from the cluster
 // ingress objects instead of an example-domain placeholder.
 //
-// AdminPanels.tsx is deliberately left in the tree and is now unreferenced.
-// Reversing it is small but NOT one line: it needs the import back, plus the
-// useCurrentUser hook, the role derivation, and the gated JSX — four edits,
-// all in this file. (The Admin page
-// has its OWN Integration Status block — it does not render AdminPanels, so
-// nothing over there changes.) Its unit test still passes against the
-// component directly.
+// (The Admin page has its own Integration Status block.)
 //
 // The page is now exactly its two pinned answers, for every role — there is
 // no per-role fork left at all. S2 adds an Operate widget here, gated on a

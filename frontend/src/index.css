@@ -634,23 +634,6 @@
     @apply bg-gray-900/40 text-gray-300;
   }
 
-  /* ---- Status dots (inline indicators) ---- */
-  .status-dot {
-    @apply inline-block w-2 h-2 rounded-full mr-2;
-  }
-
-  .status-dot-ok {
-    @apply bg-ok;
-  }
-
-  .status-dot-warn {
-    @apply bg-warn;
-  }
-
-  .status-dot-fault {
-    @apply bg-fault;
-  }
-
   /* ---- Tables ---- */
   .data-table {
     @apply w-full text-sm;
