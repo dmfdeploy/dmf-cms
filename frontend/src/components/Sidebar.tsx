@@ -322,8 +322,7 @@ export default function Sidebar() {
           would collide with vocabulary the product has already spoken for
           elsewhere, not reuse it correctly. "Console" instead — genuine
           product self-reference, not invented: shown to the operator
-          verbatim on the loading/redirect screens (App.tsx) and in
-          AdminPanels.tsx's own copy ("...underpin DMF Console"), and it's
+          verbatim on the loading/redirect screens (App.tsx), and it's
           the one term here that names the WHOLE APP's nav without
           contesting a name already claimed by a more specific surface.
           Checked there is no name coming from elsewhere first: neither

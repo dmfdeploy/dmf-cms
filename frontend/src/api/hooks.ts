@@ -2,7 +2,6 @@ import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
 import { apiCall, APIError } from './client'
 import type {
   UserIdentity,
-  AppContract,
   WorkflowsListResponse,
   WorkflowLaunchResult,
   WorkflowJobStatus,
@@ -87,14 +86,6 @@ export function useClearViewAs() {
   return useMutation({
     mutationFn: () => apiCall('/api/me/view-as', { method: 'DELETE' }),
     onSuccess: () => queryClient.invalidateQueries(),
-  })
-}
-
-export function useAppContract() {
-  return useQuery({
-    queryKey: ['contract'],
-    queryFn: () => apiCall<AppContract>('/api/contract'),
-    retry: false,
   })
 }
 

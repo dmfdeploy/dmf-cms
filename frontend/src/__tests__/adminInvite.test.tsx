@@ -1,7 +1,7 @@
 /**
  * Admin People panel invite flow (PR-D, dmfdeploy/dmfdeploy#243): the
  * "+ Invite new user" button + QR/enrollment-URL result, ported from the
- * retired Workspace AdminPanels Users panel onto pages/Admin.tsx's People
+ * retired Workspace Users panel onto pages/Admin.tsx's People
  * section — People is the human roster, so invitations (which mint human
  * enrollment links) belong there.
  */
