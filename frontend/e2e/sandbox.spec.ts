@@ -73,3 +73,31 @@ test.describe('[390] the banner keeps the shell contract', () => {
     })
   }
 })
+
+// The banner sits above the page and must not cover the rail. The Workspace
+// item is the first one in the rail, so a banner that makes the header taller
+// than the rail's anchor covers it. A real pointer click fails when anything
+// else receives the event, so each variant clicks the item from another page.
+const LAN_SANDBOX = { ...PUBLIC_SANDBOX, network_mode: 'lan' }
+
+for (const [variant, trust] of [['public', PUBLIC_SANDBOX], ['lan', LAN_SANDBOX]] as const) {
+  for (const width of [1280, 390]) {
+    test.describe(`[${width}] ${variant} sandbox banner`, () => {
+      test.use({ viewport: { width, height: 800 } })
+
+      test(`the Workspace rail item can be clicked`, async ({ page, api }) => {
+        api.override('GET', '/api/platform-trust', { json: trust })
+        await gotoRoute(page, '/settings')
+        await expect(page.getByTestId('sandbox-banner')).toBeVisible()
+
+        const item = page.getByRole('link', { name: 'Workspace', exact: true })
+
+        // A real pointer click (no force) goes to the topmost element at the item's
+        // centre, so playwright fails fast when the banner or header intercepts it.
+        await item.click({ timeout: 2000 })
+        await expect(page).toHaveURL(/\/$/)
+        await expect(page.getByRole('heading', { name: 'Workspace' })).toBeAttached()
+      })
+    })
+  }
+}

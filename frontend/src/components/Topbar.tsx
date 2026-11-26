@@ -377,9 +377,14 @@ export default function Topbar() {
           </div>
         </div>
       </div>
-
-      <SandboxBanner />
     </header>
+
+      {/* The sandbox banner is a sibling of <header>, not a child. The sidebar
+          is fixed at top-14, the height of the header's own row. A banner inside
+          <header> made the header taller and, at z-40, covered the first rail
+          item. As a sibling in normal flow it pushes the page down and leaves
+          the rail where it is; SandboxBanner clears the rail's column itself. */}
+      <SandboxBanner />
 
       {/* Header slot (Arc 4 WP-2), workload-detail routes only, a single
           non-wrapping row that scrolls horizontally at narrow widths rather
