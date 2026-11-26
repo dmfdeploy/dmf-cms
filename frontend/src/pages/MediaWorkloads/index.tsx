@@ -1,5 +1,5 @@
 import { useContext, useMemo, type ReactNode } from 'react'
-import { Link } from 'react-router-dom'
+import { Link } from 'react-router'
 import { AlertCircle, AlertTriangle, CheckCircle2, HelpCircle, Info, RefreshCw, type LucideIcon } from 'lucide-react'
 import { useMediaWorkloadsGrouped } from '../../api/hooks'
 import type { MediaWorkload, MediaWorkloadInstance } from '../../api/types'

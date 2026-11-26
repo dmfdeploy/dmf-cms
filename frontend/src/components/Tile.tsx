@@ -1,4 +1,4 @@
-import { Link } from 'react-router-dom'
+import { Link } from 'react-router'
 
 /**
  * Shared square control-surface tile (umbrella dmfdeploy/dmfdeploy#347 Arc 4

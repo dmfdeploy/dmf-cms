@@ -16,7 +16,7 @@
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import { act, cleanup, render, screen, waitFor } from '@testing-library/react'
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query'
-import { MemoryRouter } from 'react-router-dom'
+import { MemoryRouter } from 'react-router'
 import PlanStage from '../pages/MediaWorkloads/stages/PlanStage'
 import type { CatalogEntry, FacilityDetailResponse, MediaWorkload } from '../api/types'
 

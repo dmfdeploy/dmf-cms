@@ -18,7 +18,7 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { act, cleanup, render, screen, fireEvent, within } from '@testing-library/react'
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query'
-import { MemoryRouter, Route, Routes } from 'react-router-dom'
+import { MemoryRouter, Route, Routes } from 'react-router'
 import MediaWorkloads, { ageCopy, degradedReasonCopy, freshnessCopy } from '../pages/MediaWorkloads'
 import WorkloadSetup from '../pages/MediaWorkloads/WorkloadSetup'
 import WorkloadHome from '../pages/MediaWorkloads/WorkloadHome'

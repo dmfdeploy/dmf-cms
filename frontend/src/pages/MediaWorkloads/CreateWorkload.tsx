@@ -1,5 +1,5 @@
 import { useEffect, useState } from 'react'
-import { useNavigate } from 'react-router-dom'
+import { useNavigate } from 'react-router'
 import { isOperation, useCatalog, useDeployCatalog, useFacilitySummary } from '../../api/hooks'
 import type { CatalogEntry, FacilitySummary } from '../../api/types'
 import { classifyDraftFlow, FLOW_STEPS, type DraftProgress, type FlowStepId } from '../../lib/workloadFlow'

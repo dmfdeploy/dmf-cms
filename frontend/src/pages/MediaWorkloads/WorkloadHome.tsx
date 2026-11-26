@@ -1,5 +1,5 @@
 import { useCallback, useMemo, useState, useEffect } from 'react'
-import { Link, Navigate, useNavigate, useParams, useLocation } from 'react-router-dom'
+import { Link, Navigate, useNavigate, useParams, useLocation } from 'react-router'
 import { useCatalog, useCurrentUser, useMediaWorkloadsGrouped, useInstanceTopology } from '../../api/hooks'
 import type { CatalogEntry, MediaWorkloadInstance } from '../../api/types'
 import { classifyWorkloadForHeaderSlot, buildHeaderSlotRail, useRegisterHeaderSlot } from '../../store/headerSlot'

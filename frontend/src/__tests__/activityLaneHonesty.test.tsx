@@ -17,7 +17,7 @@
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import { act, cleanup, render, screen } from '@testing-library/react'
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query'
-import { MemoryRouter } from 'react-router-dom'
+import { MemoryRouter } from 'react-router'
 import JobsLane from '../pages/Activity/JobsLane'
 import HistoryLane from '../pages/Activity/HistoryLane'
 import type { UserIdentity } from '../api/types'

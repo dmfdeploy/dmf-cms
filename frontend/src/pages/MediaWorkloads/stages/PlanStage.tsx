@@ -1,4 +1,4 @@
-import { Link } from 'react-router-dom'
+import { Link } from 'react-router'
 import { useCatalog, useFacilityDetail, useFacilitySummary } from '../../../api/hooks'
 import type {
   CatalogListResponse,

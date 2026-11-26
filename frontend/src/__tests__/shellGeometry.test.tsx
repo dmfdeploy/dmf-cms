@@ -8,7 +8,7 @@
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import { act, cleanup, fireEvent, render, screen } from '@testing-library/react'
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query'
-import { Link, MemoryRouter, Route, Routes } from 'react-router-dom'
+import { Link, MemoryRouter, Route, Routes } from 'react-router'
 import Shell from '../components/Shell'
 import InstanceLiveModal from '../pages/MediaWorkloads/InstanceLiveModal'
 import { useAuthStore } from '../store/auth'

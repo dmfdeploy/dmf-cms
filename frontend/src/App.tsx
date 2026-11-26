@@ -1,5 +1,5 @@
 import { useEffect } from 'react'
-import { Routes, Route, Navigate, useLocation, useParams } from 'react-router-dom'
+import { Routes, Route, Navigate, useLocation, useParams } from 'react-router'
 import { useCurrentUser } from './api/hooks'
 import { useAuthStore } from './store/auth'
 import Shell from './components/Shell'
