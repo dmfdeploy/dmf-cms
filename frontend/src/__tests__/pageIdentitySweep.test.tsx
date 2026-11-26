@@ -54,7 +54,7 @@
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import { cleanup, render, screen, waitFor } from '@testing-library/react'
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query'
-import { MemoryRouter, Route, Routes } from 'react-router-dom'
+import { MemoryRouter, Route, Routes } from 'react-router'
 import Workspace from '../pages/Workspace'
 import Facility from '../pages/Facility'
 import FacilityDetail from '../pages/Facility/Detail'

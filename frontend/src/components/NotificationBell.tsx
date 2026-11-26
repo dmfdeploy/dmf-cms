@@ -1,5 +1,5 @@
 import { useState, useEffect, useRef, type KeyboardEvent } from 'react'
-import { Link } from 'react-router-dom'
+import { Link } from 'react-router'
 import { Bell, CheckCircle, AlertTriangle, AlertCircle } from 'lucide-react'
 import { useWorkspaceHealth } from '@/api/hooks'
 import type { WorkspaceAlert } from '@/api/types'

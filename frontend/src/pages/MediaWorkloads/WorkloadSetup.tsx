@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState, type ReactNode } from 'react'
-import { Link, useLocation, useParams } from 'react-router-dom'
+import { Link, useLocation, useParams } from 'react-router'
 import { useCatalog, useCurrentUser, useMediaWorkloadsGrouped } from '../../api/hooks'
 import {
   stageActions,

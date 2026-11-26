@@ -1,4 +1,4 @@
-import { useParams, Link } from 'react-router-dom'
+import { useParams, Link } from 'react-router'
 import { useFacilityDetail, useMediaWorkloadsGrouped } from '@/api/hooks'
 import type { FacilityDetailResponse } from '@/api/types'
 import { degradedReasonCopy, freshnessCopy } from '@/pages/MediaWorkloads'

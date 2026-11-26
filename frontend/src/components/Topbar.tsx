@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState, type FocusEvent } from 'react'
-import { Link, useLocation } from 'react-router-dom'
+import { Link, useLocation } from 'react-router'
 import { useAuthStore } from '../store/auth'
 import { useTopbarMessageStore } from '../store/topbarMessage'
 import { useHeaderSlotContent, useShowHeaderSlotRow, deriveWorkloadSlugFromPath } from '../store/headerSlot'

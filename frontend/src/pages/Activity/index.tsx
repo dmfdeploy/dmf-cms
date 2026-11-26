@@ -1,4 +1,4 @@
-import { Navigate, NavLink, useParams } from 'react-router-dom'
+import { Navigate, NavLink, useParams } from 'react-router'
 import { useCurrentUser } from '../../api/hooks'
 import { settleQuery } from '../../lib/queryState'
 import JobsLane from './JobsLane'
