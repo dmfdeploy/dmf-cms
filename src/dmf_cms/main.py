@@ -5188,7 +5188,18 @@ def create_app(settings: Settings | None = None, contract: AppContract | None = 
             # `forgejo-partial` — the wrong claim, since Forgejo WAS
             # reachable for at least one of the two.
             successful_repos = 0
-            for repo in repos[:5]:
+            # A repo with pull requests turned off (mirror repos ship this
+            # way) answers 404 on its pulls endpoint, which would read as a
+            # failure. Forgejo reports the setting in the repo object, so
+            # those repos are left out before the five-repo cap and are never
+            # asked. They did answer, so they count as read: Forgejo is
+            # reachable, there are just no pull requests to show. A repo
+            # object without the field is queried as before.
+            pull_repos = [
+                r for r in repos if r.get("has_pull_requests") is not False
+            ]
+            successful_repos += len(repos) - len(pull_repos)
+            for repo in pull_repos[:5]:
                 full_name = repo.get("full_name", "")
                 parts = full_name.split("/")
                 owner = parts[0] if parts else ""
