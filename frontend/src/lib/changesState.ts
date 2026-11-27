@@ -116,6 +116,7 @@ export type ForgejoPhase =
   | 'unreachable'
   | 'partial' // some repos read, some failed — rows shown are real but incomplete
   | 'unconfigured'
+  | 'disabled' // every listed repo has pull requests turned off; none were read
   | 'error' // the console's own API call failed, OR the payload's reason
             // token could not be trusted as authorizing "ok"
 
@@ -138,6 +139,8 @@ export function classifyForgejo(q: ForgejoQueryLike): ForgejoPhase {
       return 'partial'
     case 'forgejo-unconfigured':
       return 'unconfigured'
+    case 'forgejo-pulls-disabled':
+      return 'disabled'
     case '':
       return 'ok'
     default:
@@ -164,6 +167,10 @@ export function forgejoEmptyCopy(phase: ForgejoPhase, kind: string): string {
       // Art. 8 next-step: naming the fact alone left the
       // operator with nothing to do about it.
       return 'Source control is not configured in this environment — an administrator can connect it to show recent commits and pull requests here.'
+    case 'disabled':
+      // Not "No recent pull requests": turning the unit off does not prove
+      // that none exist, so the copy states only what was observed.
+      return `${kind.charAt(0).toUpperCase()}${kind.slice(1)} are turned off for these repositories`
     case 'error':
       return `Recent ${kind} could not be loaded. Retrying automatically.`
     default:

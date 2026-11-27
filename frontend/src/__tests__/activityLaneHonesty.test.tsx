@@ -273,6 +273,18 @@ describe('History lane: Forgejo commits/pulls degraded-read honesty', () => {
     ).toBeTruthy()
   })
 
+  it('pull requests turned off shows plain text, not "No recent pull requests" or an error', async () => {
+    mkFetch({
+      commits: { repos: [], reason: '' },
+      pulls: { pulls: [], reason: 'forgejo-pulls-disabled' },
+    })
+    renderWithQuery(<HistoryLane />)
+
+    expect(await screen.findByText('Pull requests are turned off for these repositories')).toBeTruthy()
+    expect(screen.queryByText('No recent pull requests')).toBeNull()
+    expect(screen.queryByText(/could not be loaded/)).toBeNull()
+  })
+
   it('a partial pulls read shows retained rows AND a visible incompleteness notice', async () => {
     mkFetch({
       commits: { repos: [], reason: '' },
