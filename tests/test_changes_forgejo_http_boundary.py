@@ -224,7 +224,7 @@ def test_pulls_route_skips_repos_with_pull_requests_off(monkeypatch):
     ]
     requested = _serve(monkeypatch, repos)
     body = _client().get("/api/changes/pulls").json()
-    assert body == {"pulls": [], "reason": ""}
+    assert body == {"pulls": [], "reason": "forgejo-pulls-disabled"}
     assert _pulls_requested(requested) == []
 
 

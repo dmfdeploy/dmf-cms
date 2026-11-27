@@ -70,6 +70,11 @@ describe('classifyForgejo', () => {
     expect(classifyForgejo(q)).toBe('partial')
   })
 
+  it('forgejo-pulls-disabled', () => {
+    const q: ForgejoQueryLike = { isLoading: false, isError: false, data: { reason: 'forgejo-pulls-disabled' } }
+    expect(classifyForgejo(q)).toBe('disabled')
+  })
+
   it('forgejo-unconfigured', () => {
     const q: ForgejoQueryLike = { isLoading: false, isError: false, data: { reason: 'forgejo-unconfigured' } }
     expect(classifyForgejo(q)).toBe('unconfigured')

@@ -5237,7 +5237,11 @@ def create_app(settings: Settings | None = None, contract: AppContract | None = 
                     )
 
             if failed_repos == 0:
-                reason = ""
+                # Every listed repo has pull requests turned off, so nothing
+                # was asked. Turning the unit off does not prove that no
+                # pull requests exist, so this is not reported as an
+                # empty-but-read list.
+                reason = "" if pull_repos or not repos else "forgejo-pulls-disabled"
             elif successful_repos > 0:
                 reason = "forgejo-partial"
             else:

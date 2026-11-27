@@ -414,8 +414,14 @@ export interface PullEntry {
 export interface ChangesPullsResponse {
   pulls: PullEntry[]
   // Same fail-soft contract as ChangesCommitsResponse.reason — REQUIRED,
-  // see that field's comment for why.
-  reason: '' | 'forgejo-unconfigured' | 'forgejo-unreachable' | 'forgejo-partial'
+  // see that field's comment for why. `forgejo-pulls-disabled`: every listed
+  // repository has pull requests turned off, so none were read.
+  reason:
+    | ''
+    | 'forgejo-unconfigured'
+    | 'forgejo-unreachable'
+    | 'forgejo-partial'
+    | 'forgejo-pulls-disabled'
 }
 
 // ------------------------------------------------------------------
