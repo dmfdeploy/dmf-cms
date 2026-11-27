@@ -422,6 +422,11 @@ export interface ChangesPullsResponse {
     | 'forgejo-unreachable'
     | 'forgejo-partial'
     | 'forgejo-pulls-disabled'
+  // How many repositories were left out because pull requests are turned
+  // off there. Independent of `reason`: a failed read of another repository
+  // sets `reason`, and this count still says some were turned off. Absent
+  // from older payloads, so readers treat a missing value as 0.
+  disabled_repos?: number
 }
 
 // ------------------------------------------------------------------

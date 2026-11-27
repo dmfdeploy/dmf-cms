@@ -285,6 +285,69 @@ describe('History lane: Forgejo commits/pulls degraded-read honesty', () => {
     expect(screen.queryByText(/could not be loaded/)).toBeNull()
   })
 
+  const SOME_OFF = 'Pull requests are turned off for some repositories, so this list leaves them out.'
+  const PARTIAL_PULLS =
+    'Some repositories could not be read — recent pull requests may be incomplete. Retrying automatically.'
+  const ROW = { repo: 'dmfdeploy/dmf-cms', number: 1, title: 't', state: 'open', author: 'a', created: '', url: '' }
+
+  it('some repositories off, nothing else wrong, no rows: notice shows and "No recent pull requests" does not', async () => {
+    mkFetch({
+      commits: { repos: [], reason: '' },
+      pulls: { pulls: [], reason: '', disabled_repos: 1 },
+    })
+    renderWithQuery(<HistoryLane />)
+
+    expect(await screen.findByText(SOME_OFF)).toBeTruthy()
+    expect(screen.queryByText('No recent pull requests')).toBeNull()
+    expect(screen.queryByText(/could not be loaded/)).toBeNull()
+  })
+
+  it('some repositories off with a row: the row and the notice both show', async () => {
+    mkFetch({
+      commits: { repos: [], reason: '' },
+      pulls: { pulls: [ROW], reason: '', disabled_repos: 1 },
+    })
+    renderWithQuery(<HistoryLane />)
+
+    expect(await screen.findByText('t')).toBeTruthy()
+    expect(await screen.findByText(SOME_OFF)).toBeTruthy()
+  })
+
+  it('a failed read plus some repositories off, no rows: both notices show', async () => {
+    mkFetch({
+      commits: { repos: [], reason: '' },
+      pulls: { pulls: [], reason: 'forgejo-partial', disabled_repos: 1 },
+    })
+    renderWithQuery(<HistoryLane />)
+
+    expect(await screen.findByText(PARTIAL_PULLS)).toBeTruthy()
+    expect(await screen.findByText(SOME_OFF)).toBeTruthy()
+    expect(screen.queryByText('No recent pull requests')).toBeNull()
+  })
+
+  it('a failed read plus some repositories off, with a row: row and both notices show', async () => {
+    mkFetch({
+      commits: { repos: [], reason: '' },
+      pulls: { pulls: [ROW], reason: 'forgejo-partial', disabled_repos: 1 },
+    })
+    renderWithQuery(<HistoryLane />)
+
+    expect(await screen.findByText('t')).toBeTruthy()
+    expect(await screen.findByText(PARTIAL_PULLS)).toBeTruthy()
+    expect(await screen.findByText(SOME_OFF)).toBeTruthy()
+  })
+
+  it('no repository off and no rows still shows "No recent pull requests" and no off notice', async () => {
+    mkFetch({
+      commits: { repos: [], reason: '' },
+      pulls: { pulls: [], reason: '', disabled_repos: 0 },
+    })
+    renderWithQuery(<HistoryLane />)
+
+    expect(await screen.findByText('No recent pull requests')).toBeTruthy()
+    expect(screen.queryByText(SOME_OFF)).toBeNull()
+  })
+
   it('a partial pulls read shows retained rows AND a visible incompleteness notice', async () => {
     mkFetch({
       commits: { repos: [], reason: '' },

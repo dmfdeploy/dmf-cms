@@ -5166,7 +5166,7 @@ def create_app(settings: Settings | None = None, contract: AppContract | None = 
         if not _require_user(request):
             return JSONResponse({"error": "unauthorized"}, status_code=401)
         if not settings.forgejo.configured:
-            return JSONResponse({"pulls": [], "reason": "forgejo-unconfigured"})
+            return JSONResponse({"pulls": [], "reason": "forgejo-unconfigured", "disabled_repos": 0})
         try:
             repos = await run_in_threadpool(
                 forgejo.list_repos,
@@ -5188,17 +5188,20 @@ def create_app(settings: Settings | None = None, contract: AppContract | None = 
             # `forgejo-partial` — the wrong claim, since Forgejo WAS
             # reachable for at least one of the two.
             successful_repos = 0
-            # A repo with pull requests turned off (mirror repos ship this
-            # way) answers 404 on its pulls endpoint, which would read as a
+            # Repos with pull requests turned off (mirror repos ship this
+            # way) answer 404 on their pulls endpoint, which would read as a
             # failure. Forgejo reports the setting in the repo object, so
             # those repos are left out before the five-repo cap and are never
-            # asked. They did answer, so they count as read: Forgejo is
-            # reachable, there are just no pull requests to show. A repo
-            # object without the field is queried as before.
+            # asked. They count as read because the search reply shows
+            # Forgejo answered. That count is not evidence that those repos
+            # have no pull requests, so the response reports it separately
+            # as `disabled_repos`, independent of `reason`. A repo object
+            # without the field is queried as before.
             pull_repos = [
                 r for r in repos if r.get("has_pull_requests") is not False
             ]
-            successful_repos += len(repos) - len(pull_repos)
+            disabled_repos = len(repos) - len(pull_repos)
+            successful_repos += disabled_repos
             for repo in pull_repos[:5]:
                 full_name = repo.get("full_name", "")
                 parts = full_name.split("/")
@@ -5237,19 +5240,26 @@ def create_app(settings: Settings | None = None, contract: AppContract | None = 
                     )
 
             if failed_repos == 0:
-                # Every listed repo has pull requests turned off, so nothing
-                # was asked. Turning the unit off does not prove that no
-                # pull requests exist, so this is not reported as an
-                # empty-but-read list.
+                # When every listed repo is turned off, nothing was asked,
+                # and that is not reported as an empty-but-read list. When
+                # only some are off, `disabled_repos` carries that fact. A
+                # failed read keeps its own reason below, so the two facts
+                # never replace each other. `forgejo-unreachable` stays
+                # true: disabled repos count as read, so it cannot be set
+                # while any repo is turned off.
                 reason = "" if pull_repos or not repos else "forgejo-pulls-disabled"
             elif successful_repos > 0:
                 reason = "forgejo-partial"
             else:
                 reason = "forgejo-unreachable"
-            return JSONResponse({"pulls": all_pulls, "reason": reason})
+            return JSONResponse({
+                "pulls": all_pulls,
+                "reason": reason,
+                "disabled_repos": disabled_repos,
+            })
         except Exception as exc:
             logger.warning("recent changes: Forgejo pulls fetch failed: %s", _sanitize_audit_field(str(exc)))
-            return JSONResponse({"pulls": [], "reason": "forgejo-unreachable"})
+            return JSONResponse({"pulls": [], "reason": "forgejo-unreachable", "disabled_repos": 0})
 
     @app.get("/api/audit/events")
     async def api_audit_events(request: Request):

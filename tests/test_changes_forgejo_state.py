@@ -86,7 +86,7 @@ def test_pulls_every_failure_is_unreachable_never_a_500(monkeypatch, exc):
     monkeypatch.setattr(main_module.forgejo, "list_repos", _raise(exc))
     resp = _client().get("/api/changes/pulls")
     assert resp.status_code == 200
-    assert resp.json() == {"pulls": [], "reason": "forgejo-unreachable"}
+    assert resp.json() == {"pulls": [], "reason": "forgejo-unreachable", "disabled_repos": 0}
 
 
 def test_no_raw_exception_string_survives_in_the_body(monkeypatch):
@@ -153,7 +153,7 @@ def test_reachable_forgejo_with_no_repos_is_a_genuine_empty(monkeypatch):
     # Forgejo answered and there was nothing to show.
     monkeypatch.setattr(main_module.forgejo, "list_repos", lambda **kwargs: [])
     assert _client().get("/api/changes/commits").json() == {"repos": [], "reason": ""}
-    assert _client().get("/api/changes/pulls").json() == {"pulls": [], "reason": ""}
+    assert _client().get("/api/changes/pulls").json() == {"pulls": [], "reason": "", "disabled_repos": 0}
 
 
 # ---------------------------------------------------------------------------
@@ -188,7 +188,7 @@ def test_pulls_all_repos_fail_is_unreachable_never_a_silent_empty(monkeypatch, c
     monkeypatch.setattr(main_module.forgejo, "list_pulls", _raise(RuntimeError("boom")))
     with caplog.at_level("WARNING"):
         body = _client().get("/api/changes/pulls").json()
-    assert body == {"pulls": [], "reason": "forgejo-unreachable"}
+    assert body == {"pulls": [], "reason": "forgejo-unreachable", "disabled_repos": 0}
     assert sum("dmf-cms" in r.message for r in caplog.records) >= 1
 
 
