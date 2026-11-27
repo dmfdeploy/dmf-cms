@@ -154,6 +154,19 @@ export function classifyForgejo(q: ForgejoQueryLike): ForgejoPhase {
   }
 }
 
+// Pull requests turned off for some repositories, reported next to the read
+// state rather than inside it. Mirror repositories ship this way, and a
+// failed read of another repository must not hide it.
+export function pullsDisabledCount(
+  data: { disabled_repos?: number } | undefined,
+): number {
+  const n = data?.disabled_repos
+  return typeof n === 'number' && n > 0 ? n : 0
+}
+
+export const PULLS_SOME_DISABLED_COPY =
+  'Pull requests are turned off for some repositories, so this list leaves them out.'
+
 // `kind` names what's missing/failed in plain language ("commits",
 // "pull requests") so one function serves both panels without either
 // claiming the other's noun.

@@ -26,6 +26,8 @@ import {
   changesEmptyCopy,
   classifyForgejo,
   forgejoEmptyCopy,
+  pullsDisabledCount,
+  PULLS_SOME_DISABLED_COPY,
   type ForgejoQueryLike,
 } from '../lib/changesState'
 
@@ -104,6 +106,37 @@ describe('classifyForgejo', () => {
     }
     expect(classifyForgejo(q)).not.toBe('ok')
     expect(classifyForgejo(q)).toBe('error')
+  })
+})
+
+describe('pullsDisabledCount', () => {
+  it('reads a positive count and treats anything else as zero', () => {
+    expect(pullsDisabledCount({ disabled_repos: 2 })).toBe(2)
+    expect(pullsDisabledCount({ disabled_repos: 0 })).toBe(0)
+    expect(pullsDisabledCount({})).toBe(0)
+    expect(pullsDisabledCount(undefined)).toBe(0)
+  })
+
+  it('the copy claims only that some repositories are left out', () => {
+    expect(PULLS_SOME_DISABLED_COPY).toBe(
+      'Pull requests are turned off for some repositories, so this list leaves them out.',
+    )
+    expect(PULLS_SOME_DISABLED_COPY).not.toContain('No recent')
+  })
+
+  it('does not change the read-failure phases', () => {
+    const q: ForgejoQueryLike = {
+      isLoading: false,
+      isError: false,
+      data: { reason: 'forgejo-partial', disabled_repos: 1 } as never,
+    }
+    expect(classifyForgejo(q)).toBe('partial')
+    const u: ForgejoQueryLike = {
+      isLoading: false,
+      isError: false,
+      data: { reason: 'forgejo-unreachable', disabled_repos: 0 } as never,
+    }
+    expect(classifyForgejo(u)).toBe('unreachable')
   })
 })
 

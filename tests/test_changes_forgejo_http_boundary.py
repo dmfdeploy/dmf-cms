@@ -224,7 +224,7 @@ def test_pulls_route_skips_repos_with_pull_requests_off(monkeypatch):
     ]
     requested = _serve(monkeypatch, repos)
     body = _client().get("/api/changes/pulls").json()
-    assert body == {"pulls": [], "reason": "forgejo-pulls-disabled"}
+    assert body == {"pulls": [], "reason": "forgejo-pulls-disabled", "disabled_repos": 3}
     assert _pulls_requested(requested) == []
 
 
@@ -264,7 +264,7 @@ def test_pulls_404_on_every_repo_with_pull_requests_on_is_unreachable(monkeypatc
     repos = [_repo("dmf-cms", has_pull_requests=True)]
     _serve(monkeypatch, repos, {"dmf-cms": "404"})
     body = _client().get("/api/changes/pulls").json()
-    assert body == {"pulls": [], "reason": "forgejo-unreachable"}
+    assert body == {"pulls": [], "reason": "forgejo-unreachable", "disabled_repos": 0}
 
 
 def test_pulls_connection_error_on_a_repo_with_pull_requests_on_is_a_failure(monkeypatch):
@@ -275,7 +275,7 @@ def test_pulls_connection_error_on_a_repo_with_pull_requests_on_is_a_failure(mon
     _serve(monkeypatch, repos, {"dmf-cms": "conn"})
     body = _client().get("/api/changes/pulls").json()
     # The off repo answered, so Forgejo is reachable: partial, not unreachable.
-    assert body == {"pulls": [], "reason": "forgejo-partial"}
+    assert body == {"pulls": [], "reason": "forgejo-partial", "disabled_repos": 1}
 
 
 def test_pulls_route_queries_a_repo_object_without_the_field(monkeypatch):
@@ -285,3 +285,68 @@ def test_pulls_route_queries_a_repo_object_without_the_field(monkeypatch):
     assert body["reason"] == ""
     assert len(body["pulls"]) == 1
     assert _pulls_requested(requested) == ["/api/v1/repos/dmf/dmf-cms/pulls"]
+
+
+# `reason` says whether reads failed. `disabled_repos` says how many repos were
+# left out because pull requests are turned off. The two facts are independent,
+# so each case below asserts both.
+
+
+def test_pulls_one_off_one_on_with_no_pull_requests_reports_the_off_repo(monkeypatch):
+    repos = [
+        _repo("dmf-infra", mirror=True, has_pull_requests=False),
+        _repo("dmf-cms", has_pull_requests=True),
+    ]
+    requested = _serve(monkeypatch, repos, {"dmf-cms": []})
+    body = _client().get("/api/changes/pulls").json()
+    assert body == {"pulls": [], "reason": "", "disabled_repos": 1}
+    assert _pulls_requested(requested) == ["/api/v1/repos/dmf/dmf-cms/pulls"]
+
+
+def test_pulls_one_off_one_on_with_a_row_reports_the_row_and_the_off_repo(monkeypatch):
+    repos = [
+        _repo("dmf-infra", mirror=True, has_pull_requests=False),
+        _repo("dmf-cms", has_pull_requests=True),
+    ]
+    _serve(monkeypatch, repos, {"dmf-cms": _PULLS})
+    body = _client().get("/api/changes/pulls").json()
+    assert body["reason"] == ""
+    assert body["disabled_repos"] == 1
+    assert [p["repo"] for p in body["pulls"]] == ["dmf/dmf-cms"]
+
+
+def test_pulls_no_repo_off_and_no_pull_requests_reports_nothing_off(monkeypatch):
+    repos = [_repo("dmf-cms", has_pull_requests=True)]
+    _serve(monkeypatch, repos, {"dmf-cms": []})
+    body = _client().get("/api/changes/pulls").json()
+    assert body == {"pulls": [], "reason": "", "disabled_repos": 0}
+
+
+def test_pulls_one_off_one_failed_with_no_rows_keeps_both_facts(monkeypatch):
+    repos = [
+        _repo("dmf-infra", has_pull_requests=False),
+        _repo("dmf-cms", has_pull_requests=True),
+    ]
+    _serve(monkeypatch, repos, {"dmf-cms": "404"})
+    body = _client().get("/api/changes/pulls").json()
+    assert body == {"pulls": [], "reason": "forgejo-partial", "disabled_repos": 1}
+
+
+def test_pulls_one_off_one_failed_one_read_keeps_the_row_and_both_facts(monkeypatch):
+    repos = [
+        _repo("dmf-infra", has_pull_requests=False),
+        _repo("dmf-cms", has_pull_requests=True),
+        _repo("dmf-media", has_pull_requests=True),
+    ]
+    _serve(monkeypatch, repos, {"dmf-cms": _PULLS, "dmf-media": "conn"})
+    body = _client().get("/api/changes/pulls").json()
+    assert body["reason"] == "forgejo-partial"
+    assert body["disabled_repos"] == 1
+    assert [p["repo"] for p in body["pulls"]] == ["dmf/dmf-cms"]
+
+
+def test_pulls_failed_reads_with_no_repo_off_stay_unreachable(monkeypatch):
+    repos = [_repo("dmf-cms", has_pull_requests=True)]
+    _serve(monkeypatch, repos, {"dmf-cms": "conn"})
+    body = _client().get("/api/changes/pulls").json()
+    assert body == {"pulls": [], "reason": "forgejo-unreachable", "disabled_repos": 0}

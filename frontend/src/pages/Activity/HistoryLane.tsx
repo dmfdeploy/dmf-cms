@@ -2,7 +2,7 @@ import { useChangesJobs, useChangesCommits, useChangesPulls } from '@/api/hooks'
 import { GitCommit, GitPullRequest, MousePointerClick, Zap, ExternalLink, Info } from 'lucide-react'
 import { useActivityStore, type ConsoleActionType } from '../../store/activity'
 import { describeJob, jobOutcome } from '../../lib/labels'
-import { classifyChanges, changesEmptyCopy, classifyForgejo, forgejoEmptyCopy } from '../../lib/changesState'
+import { classifyChanges, changesEmptyCopy, classifyForgejo, forgejoEmptyCopy, pullsDisabledCount, PULLS_SOME_DISABLED_COPY } from '../../lib/changesState'
 import ActivityPanel from '../../components/ActivityPanel'
 
 // Human title per console-originated action (#185 WP-E). deploy/teardown/
@@ -80,6 +80,12 @@ export default function HistoryLane() {
   // MediaWorkloads/WorkloadCountPanel/classifyChanges' own isError fixes).
   const commitsNeedsNotice = commitsPhase === 'partial' || commitsPhase === 'error'
   const pullsNeedsNotice = pullsPhase === 'partial' || pullsPhase === 'error'
+  // Independent of the read state above: some repositories were never asked
+  // because pull requests are turned off there. The all-off phase has its own
+  // copy, so this notice covers the rest. It also replaces the "No recent
+  // pull requests" line, which would claim more than the route observed.
+  const pullsSomeDisabled =
+    pullsPhase !== 'disabled' && pullsDisabledCount(pulls.data) > 0
 
   const isLoading = jobs.isLoading || commits.isLoading || pulls.isLoading
 
@@ -312,8 +318,13 @@ export default function HistoryLane() {
                   {forgejoEmptyCopy(pullsPhase, 'pull requests')}
                 </div>
               )}
+              {pullsSomeDisabled && (
+                <div className="px-6 py-2 text-xs text-amber-300 bg-amber-500/10">
+                  {PULLS_SOME_DISABLED_COPY}
+                </div>
+              )}
               {(pulls.data?.pulls?.length ?? 0) === 0 ? (
-                !pullsNeedsNotice && (
+                !pullsNeedsNotice && !pullsSomeDisabled && (
                   <div className="px-6 py-8 text-center text-muted text-sm">
                     {forgejoEmptyCopy(pullsPhase, 'pull requests')}
                   </div>
