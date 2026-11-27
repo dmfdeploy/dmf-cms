@@ -45,8 +45,18 @@ def list_repos(
     api_url: str,
     api_token: str,
 ) -> list[dict]:
-    """List all repositories visible to the service account."""
-    return _request(api_url, api_token, "GET", "/api/v1/repos/search?limit=50")
+    """List all repositories visible to the service account.
+
+    Forgejo's search endpoint wraps the list: ``{"ok": true, "data": [...]}``.
+    This returns the inner list, like the other readers in this module.
+    """
+    reply = _request(api_url, api_token, "GET", "/api/v1/repos/search?limit=50")
+    if not isinstance(reply, dict) or reply.get("ok") is not True:
+        raise ForgejoAPIError(200, "repository search reply indicates failure")
+    data = reply.get("data")
+    if not isinstance(data, list):
+        raise ForgejoAPIError(200, "repository search reply has no data list")
+    return data
 
 
 def list_commits(
