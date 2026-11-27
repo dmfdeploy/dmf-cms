@@ -9,6 +9,7 @@ so the real ``forgejo`` client code runs end to end.
 
 import io
 import json
+import urllib.error
 import urllib.parse
 
 import pytest
@@ -170,3 +171,117 @@ def test_routes_report_unreachable_for_a_failed_search_reply(
     body = resp.json()
     assert body["reason"] == "forgejo-unreachable"
     assert body[empty_key] == []
+
+
+# --- Repos with pull requests turned off (dmfdeploy/dmfdeploy#1025) ---------
+
+_PULLS_404 = {"message": "The target couldn't be found.", "url": "http://forgejo.test/api/swagger"}
+
+
+def _repo(name: str, **fields) -> dict:
+    return {"id": 1, "name": name, "full_name": f"dmf/{name}", "archived": False, **fields}
+
+
+def _serve(monkeypatch, repos, pulls_by_repo=None):
+    """Serve ``repos`` through the search wrapper.
+
+    ``pulls_by_repo`` maps a repo name to a bare pull list, ``"404"`` (Forgejo's
+    reply for a repo with pull requests turned off) or ``"conn"`` (a connection
+    error). Every path requested is recorded.
+    """
+    requested: list[str] = []
+    pulls_by_repo = pulls_by_repo or {}
+
+    def fake_urlopen(req, timeout=None):
+        parsed = urllib.parse.urlparse(req.full_url)
+        requested.append(parsed.path)
+        if parsed.path == "/api/v1/repos/search":
+            return _Reply(json.dumps({"ok": True, "data": repos}).encode())
+        assert parsed.path.endswith("/pulls"), parsed.path
+        name = parsed.path.split("/")[-2]
+        outcome = pulls_by_repo.get(name, [])
+        if outcome == "404":
+            raise urllib.error.HTTPError(
+                req.full_url, 404, "Not Found", {}, io.BytesIO(json.dumps(_PULLS_404).encode())
+            )
+        if outcome == "conn":
+            raise urllib.error.URLError("connection refused")
+        return _Reply(json.dumps(outcome).encode())
+
+    monkeypatch.setattr(forgejo.urllib.request, "urlopen", fake_urlopen)
+    return requested
+
+
+def _pulls_requested(requested):
+    return [p for p in requested if p.endswith("/pulls")]
+
+
+def test_pulls_route_skips_repos_with_pull_requests_off(monkeypatch):
+    repos = [
+        _repo("dmf-infra", mirror=True, has_pull_requests=False),
+        _repo("dmf-media", mirror=True, has_pull_requests=False),
+        _repo("dmf-runbooks", mirror=True, has_pull_requests=False),
+    ]
+    requested = _serve(monkeypatch, repos)
+    body = _client().get("/api/changes/pulls").json()
+    assert body == {"pulls": [], "reason": ""}
+    assert _pulls_requested(requested) == []
+
+
+def test_pulls_route_mixes_repos_with_pull_requests_off_and_on(monkeypatch):
+    repos = [
+        _repo("dmf-infra", mirror=True, has_pull_requests=False),
+        _repo("dmf-cms", mirror=False, has_pull_requests=True),
+    ]
+    requested = _serve(monkeypatch, repos, {"dmf-cms": _PULLS})
+    body = _client().get("/api/changes/pulls").json()
+    assert body["reason"] == ""
+    assert [p["repo"] for p in body["pulls"]] == ["dmf/dmf-cms"]
+    assert _pulls_requested(requested) == ["/api/v1/repos/dmf/dmf-cms/pulls"]
+
+
+def test_pulls_off_repos_do_not_use_up_the_five_repo_cap(monkeypatch):
+    repos = [_repo(f"mirror-{i}", has_pull_requests=False) for i in range(5)]
+    repos.append(_repo("dmf-cms", has_pull_requests=True))
+    _serve(monkeypatch, repos, {"dmf-cms": _PULLS})
+    body = _client().get("/api/changes/pulls").json()
+    assert body["reason"] == ""
+    assert [p["repo"] for p in body["pulls"]] == ["dmf/dmf-cms"]
+
+
+def test_pulls_404_on_a_repo_with_pull_requests_on_is_still_a_failure(monkeypatch):
+    repos = [
+        _repo("dmf-cms", has_pull_requests=True),
+        _repo("dmf-infra", has_pull_requests=True),
+    ]
+    _serve(monkeypatch, repos, {"dmf-cms": _PULLS, "dmf-infra": "404"})
+    body = _client().get("/api/changes/pulls").json()
+    assert body["reason"] == "forgejo-partial"
+    assert [p["repo"] for p in body["pulls"]] == ["dmf/dmf-cms"]
+
+
+def test_pulls_404_on_every_repo_with_pull_requests_on_is_unreachable(monkeypatch):
+    repos = [_repo("dmf-cms", has_pull_requests=True)]
+    _serve(monkeypatch, repos, {"dmf-cms": "404"})
+    body = _client().get("/api/changes/pulls").json()
+    assert body == {"pulls": [], "reason": "forgejo-unreachable"}
+
+
+def test_pulls_connection_error_on_a_repo_with_pull_requests_on_is_a_failure(monkeypatch):
+    repos = [
+        _repo("dmf-infra", has_pull_requests=False),
+        _repo("dmf-cms", has_pull_requests=True),
+    ]
+    _serve(monkeypatch, repos, {"dmf-cms": "conn"})
+    body = _client().get("/api/changes/pulls").json()
+    # The off repo answered, so Forgejo is reachable: partial, not unreachable.
+    assert body == {"pulls": [], "reason": "forgejo-partial"}
+
+
+def test_pulls_route_queries_a_repo_object_without_the_field(monkeypatch):
+    repos = [_repo("dmf-cms")]
+    requested = _serve(monkeypatch, repos, {"dmf-cms": _PULLS})
+    body = _client().get("/api/changes/pulls").json()
+    assert body["reason"] == ""
+    assert len(body["pulls"]) == 1
+    assert _pulls_requested(requested) == ["/api/v1/repos/dmf/dmf-cms/pulls"]
