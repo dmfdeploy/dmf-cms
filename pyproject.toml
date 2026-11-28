@@ -22,6 +22,10 @@ dev = [
   "ruff==0.17.6",
 ]
 
+[tool.ruff]
+# CI checks the umbrella repo out into .umbrella; its scripts aren't this repo's code.
+extend-exclude = [".umbrella"]
+
 [tool.ruff.lint]
 select = [
   # Blanket noqa comments, and noqa codes that no longer apply.
