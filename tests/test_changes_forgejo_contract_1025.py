@@ -5,7 +5,7 @@ See docs/changes-forgejo-cases.md for the case list; row ids in test names refer
 Each test stubs only ``urllib.request.urlopen``, so the Forgejo client, the
 header read and the route run for real. Every parametrized test id is a row id
 of the case list (``S3``, ``H8``, ``M8``, ``F-W5.sha-number`` and so on). The
-expected JSON comes from ``tests/fixtures/changes-contract-1025.json``, the
+expected JSON comes from ``frontend/src/__tests__/fixtures/changes-contract-1025.json``, the
 same file the console tests render, so a drift in either layer fails.
 """
 
