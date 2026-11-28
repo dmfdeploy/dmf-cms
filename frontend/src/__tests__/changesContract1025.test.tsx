@@ -4,7 +4,7 @@
  * Component layer (C) for dmfdeploy/dmfdeploy#1025.
  *
  * Renders the History lane from the same JSON fixture the backend tests assert
- * against (tests/fixtures/changes-contract-1025.json), then checks that each
+ * against (frontend/src/__tests__/fixtures/changes-contract-1025.json), then checks that each
  * panel shows exactly the lane of the row: notices first, in the
  * the case list's order, then the rows. Each test id is a row id of the case list.
  *
@@ -13,7 +13,7 @@
  */
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import { cleanup } from '@testing-library/react'
-import contract from '../../../tests/fixtures/changes-contract-1025.json'
+import contract from './fixtures/changes-contract-1025.json'
 import {
   expectedLane,
   laneOf,

@@ -36,7 +36,7 @@ EMPTY shows only when the reason is empty, there are no rows, and `disabled_repo
 ## Test layers
 
 - **B**: the route, with only `urllib.request.urlopen` stubbed. The Forgejo client, the header read and the route run for real.
-- **C**: the console lane, rendered from the same JSON as B, in `tests/fixtures/changes-contract-1025.json`.
+- **C**: the console lane, rendered from the same JSON as B, in `frontend/src/__tests__/fixtures/changes-contract-1025.json`.
 - **U**: `forgejo.py` alone.
 
 The fixture holds the setup, the route response and the lane for each B and C row. A drift in either layer fails its own test.
