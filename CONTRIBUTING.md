@@ -63,6 +63,11 @@ build output, and `npm run build` creates it again.
 
 The suite has about 2,500 tests and takes one to two minutes.
 
+Run `ruff check .` to check the function rules. For the policy, see
+[CODE-PRINCIPLES](https://github.com/dmfdeploy/dmfdeploy/blob/main/docs/CODE-PRINCIPLES.md).
+A required check fails a PR that raises the number of `# noqa` marks for those
+rules.
+
 ### Run the frontend checks
 
 Run these commands from `frontend/`:

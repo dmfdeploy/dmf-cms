@@ -93,7 +93,7 @@ _MAX_JSON_BYTES = 8 * 1024 * 1024
 _MAX_ERROR_BODY_BYTES = 8 * 1024
 
 
-def _request(
+def _request(  # noqa: PLR0913
     api_url: str,
     api_token: str,
     method: str,
@@ -310,7 +310,7 @@ def is_connection_refused(exc: BaseException) -> bool:
 _RETRYABLE = (AWXAPIError, AWXTransportError, urllib.error.URLError)
 
 
-def call_with_readiness_retry(
+def call_with_readiness_retry(  # noqa: PLR0913
     fn,
     *,
     deadline_seconds: float | None = None,
@@ -657,7 +657,7 @@ def get_job_events_for_task(
     return events
 
 
-def wait_for_job(
+def wait_for_job(  # noqa: PLR0913
     *,
     api_url: str,
     api_token: str,

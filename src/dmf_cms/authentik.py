@@ -51,7 +51,7 @@ def _resolve_flow_uuid(api_url: str, api_token: str, slug: str) -> str:
     return str(results[0]["pk"])
 
 
-def create_invitation(
+def create_invitation(  # noqa: PLR0913
     *,
     api_url: str,
     api_token: str,

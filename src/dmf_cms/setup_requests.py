@@ -89,7 +89,7 @@ def _safe_c5_value(value: str, *, field: str, max_length: int, trim: bool = True
     return cleaned
 
 
-def make_receipt(
+def make_receipt(  # noqa: PLR0913
     *,
     env_id: str,
     cluster_uid: str,
@@ -135,7 +135,7 @@ def make_receipt(
     }
 
 
-def validate_receipt(
+def validate_receipt(  # noqa: C901
     receipt: dict[str, object], bindings: SetupRequestBindings, *, now: int | None = None
 ) -> bool:
     """Validate a stored receipt shape and its server-derived bindings."""

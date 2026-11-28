@@ -55,7 +55,7 @@ def _client(groups, *, loki_configured=True) -> TestClient:
     return client
 
 
-def _line(
+def _line(  # noqa: PLR0913
     *, action, actor, role, request_id, target, reason, outcome,
     workload="", capacity="", linked_request_id=None,
 ) -> str:
@@ -340,7 +340,7 @@ limits_config:
 """
 
 
-def _fake_query_range(*, url, selector, start_ns, end_ns, limit, timeout=10):
+def _fake_query_range(*, url, selector, start_ns, end_ns, limit, timeout=10):  # noqa: PLR0913
     # Plan §4.1: content match, never a logger-field filter — the
     # auto-rollback line is on the module logger, not the audit child
     # logger, so a logger= filter would silently drop a covered class.
@@ -600,7 +600,7 @@ def test_gate_round_2_codex_f5_producer_to_reader_invariant_end_to_end(monkeypat
     ]
     assert len(real_lines) == 3  # sanity: all three calls above actually emitted
 
-    def _real_query_range(*, url, selector, start_ns, end_ns, limit, timeout=10):
+    def _real_query_range(*, url, selector, start_ns, end_ns, limit, timeout=10):  # noqa: PLR0913
         return [{"stream": {}, "values": [[str(i), line] for i, line in enumerate(real_lines)]}]
 
     monkeypatch.setattr(audit_events.loki, "query_range", _real_query_range)
@@ -1013,7 +1013,7 @@ def test_capped_when_the_result_count_hits_the_technical_limit(monkeypatch):
     # real rows before this function ever saw them.
     padded = FIXTURE_LINES + [DEPLOY] * (audit_events._MAX_RESULT_LINES - len(FIXTURE_LINES))
 
-    def _saturated(*, url, selector, start_ns, end_ns, limit, timeout=10):
+    def _saturated(*, url, selector, start_ns, end_ns, limit, timeout=10):  # noqa: PLR0913
         return [{"stream": {}, "values": [[str(i), line] for i, line in enumerate(padded)]}]
 
     monkeypatch.setattr(audit_events.loki, "query_range", _saturated)
@@ -1261,7 +1261,7 @@ def test_a_legacy_unquoted_line_from_before_the_writer_fix_is_not_rendered_end_t
         "target=wl-legacy reason='pre-fix deploy' outcome=dispatched workload=wl-legacy capacity="
     )
 
-    def _fake(*, url, selector, start_ns, end_ns, limit, timeout=10):
+    def _fake(*, url, selector, start_ns, end_ns, limit, timeout=10):  # noqa: PLR0913
         return [{"stream": {}, "values": [["1", legacy_line]]}]
 
     monkeypatch.setattr(audit_events.loki, "query_range", _fake)
@@ -1299,7 +1299,7 @@ def test_a_reflected_body_on_a_non_audit_logger_does_not_produce_a_row_end_to_en
         target="wl-a", reason="ordinary deploy", outcome="dispatched", workload="wl-a",
     )
 
-    def _fake(*, url, selector, start_ns, end_ns, limit, timeout=10):
+    def _fake(*, url, selector, start_ns, end_ns, limit, timeout=10):  # noqa: PLR0913
         return [{"stream": {}, "values": [["1", reflected_line], ["2", genuine_line]]}]
 
     monkeypatch.setattr(audit_events.loki, "query_range", _fake)

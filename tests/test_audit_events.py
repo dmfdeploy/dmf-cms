@@ -21,7 +21,7 @@ import dmf_cms.audit_events as audit_events
 _LOG_LINE_PREFIX = "2026-09-04 09:15:23,456 INFO dmf_cms.audit: "
 
 
-def _new_line(
+def _new_line(  # noqa: PLR0913
     *, action="deploy", actor="alice", role="operator", real_role="", request_id="rid-1",
     target="wl-a", reason="demo", outcome="dispatched", workload="", capacity="",
     linked_request_id=None, marker_prefix="awx write: fmt=2 ", log_prefix=_LOG_LINE_PREFIX,

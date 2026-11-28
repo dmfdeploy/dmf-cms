@@ -266,7 +266,7 @@ def _is_held_and_armed(pr: dict[str, Any]) -> bool:
     )
 
 
-def handle_pr(
+def handle_pr(  # noqa: PLR0913
     api: Api,
     graphql: Graphql,
     repo: str,

@@ -289,7 +289,7 @@ def inventory_has_topology(
     return False if complete else None
 
 
-def load_topology_instance(
+def load_topology_instance(  # noqa: C901, PLR0912
     catalog_dir: str, topology_ref: str
 ) -> tuple[Optional[dict[str, Any]], Optional[str]]:
     """Load + validate a topology_params instance referenced by ``topology_ref``.

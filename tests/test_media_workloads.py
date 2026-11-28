@@ -217,7 +217,7 @@ def test_scoped_mode_includes_vm_backed_services(monkeypatch):
         "protocol": {"value": "tcp"},
     }
 
-    def fake_request(api_url, api_token, path, ssl_context=None, method="GET", payload=None):
+    def fake_request(api_url, api_token, path, ssl_context=None, method="GET", payload=None):  # noqa: PLR0913
         calls.append((method, path))
         if path.startswith("/api/dcim/devices/"):
             return {"results": []}
@@ -338,7 +338,7 @@ def _patch_recorder(monkeypatch, services):
     """Monkeypatch netbox._request; record PATCH calls, serve reads."""
     calls = {"patches": []}
 
-    def fake_request(api_url, api_token, path, ssl_context=None, method="GET", payload=None):
+    def fake_request(api_url, api_token, path, ssl_context=None, method="GET", payload=None):  # noqa: PLR0913
         if method == "PATCH":
             calls["patches"].append({"path": path, "payload": payload, "token": api_token})
             return {}

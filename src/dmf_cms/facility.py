@@ -560,7 +560,7 @@ def _capacity_payload(prom_url: str) -> dict:
     }
 
 
-def build_detail_payload(
+def build_detail_payload(  # noqa: PLR0913
     *,
     prometheus_configured: bool,
     prometheus_url: str,

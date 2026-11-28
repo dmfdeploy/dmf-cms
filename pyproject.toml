@@ -19,7 +19,18 @@ dependencies = [
 dev = [
   "httpx>=0.27,<1",
   "pytest>=8,<10",
+  "ruff==0.17.6",
 ]
+
+[tool.ruff.lint]
+select = [
+  # Blanket noqa comments, and noqa codes that no longer apply.
+  "PGH004", "RUF100",
+  # Complexity, branches, arguments, and statements, at ruff's default limits.
+  "C901", "PLR0912", "PLR0913", "PLR0915",
+]
+# Codes that existing noqa comments name, for rules that this repo doesn't run.
+external = ["BLE001", "E402"]
 
 [tool.setuptools]
 package-dir = {"" = "src"}

@@ -492,7 +492,7 @@ def _capacity_audit_summary(
     return ""
 
 
-async def _l3_preflight(
+async def _l3_preflight(  # noqa: C901, PLR0912, PLR0913
     request: Request,
     user: UserIdentity,
     *,
@@ -744,7 +744,7 @@ def _build_launch_extra_vars(
     return extra_vars or None
 
 
-async def _resolve_topology_seam(
+async def _resolve_topology_seam(  # noqa: PLR0913
     request: Request,
     user: UserIdentity,
     *,
@@ -1107,7 +1107,7 @@ async def _inventory_write_refusal(
     )
 
 
-def _audit_awx_write(
+def _audit_awx_write(  # noqa: PLR0913
     request: Request,
     user: UserIdentity,
     *,
@@ -1746,7 +1746,7 @@ _L3_MILESTONE_ORDER: dict[str, tuple[str, ...]] = {
 }
 
 
-async def _fetch_l3_milestone_from_events(app: FastAPI, job_id: int) -> str | None:
+async def _fetch_l3_milestone_from_events(app: FastAPI, job_id: int) -> str | None:  # noqa: C901
     """Fetch a job's ``dmf-l3-milestone`` task events and return the latest
     (highest-``counter``) milestone token, or ``None``.
 
@@ -1965,7 +1965,7 @@ def _extract_run_id_from_job(job: dict, *, action: str) -> str | None:
     return value
 
 
-async def _track_sync_reattach(
+async def _track_sync_reattach(  # noqa: PLR0913
     app: FastAPI, ops_store: OperationStore, request_id: str, initiator: str, *,
     action: str, target: str, job_id: int,
 ) -> str:
@@ -2018,7 +2018,7 @@ async def _track_sync_reattach(
     return op.operation_id
 
 
-async def _track_sync_rollback_reattach(
+async def _track_sync_rollback_reattach(  # noqa: PLR0913
     app: FastAPI, ops_store: OperationStore, request_id: str, initiator: str, *,
     run_id: str, job_id: int,
 ) -> tuple[str | None, bool]:
@@ -2343,7 +2343,7 @@ def _watch_lost_terminal_state(action: str, seen_started: bool) -> OperationStat
 _JOB_WATCH_ACTOR = "system:job-watch"
 
 
-def _audit_watch_terminal(
+def _audit_watch_terminal(  # noqa: PLR0913
     action: str, key: str, request_id: str | None, state: OperationState, l3_outcome: str | None,
     *, is_auto_rollback: bool = False,
 ) -> None:
@@ -2496,7 +2496,7 @@ def _resolve_in_flight_age_bound(request: Request) -> int | None:
         return None
 
 
-async def _watch_job_operation(app: FastAPI, operation_id: str, job_id: int, action: str, key: str) -> None:
+async def _watch_job_operation(app: FastAPI, operation_id: str, job_id: int, action: str, key: str) -> None:  # noqa: C901, PLR0912, PLR0915
     """Poll an AWX job to its terminal state and resolve the operation (umbrella #202 WP2).
 
     The pre-WP2 ops store terminated at LAUNCHED — the console never
@@ -3059,7 +3059,7 @@ def _spawn_rollback_task(app: FastAPI, operation_id: str, run_id: str, reason: s
     task.add_done_callback(app.state.operation_tasks.discard)
 
 
-async def _run_deploy_operation(
+async def _run_deploy_operation(  # noqa: C901, PLR0913
     app: FastAPI, operation_id: str, key: str, jt_name: str, workload: str | None = None,
     opposite_jt_name: str | None = None, l3_envelope: dict | None = None,
     topology_params: dict | None = None,
@@ -3235,7 +3235,7 @@ async def _run_deploy_operation(
         )
 
 
-async def _run_teardown_operation(
+async def _run_teardown_operation(  # noqa: C901
     app: FastAPI, operation_id: str, key: str, jt_name: str,
     opposite_jt_name: str | None = None,
 ) -> None:
@@ -3476,7 +3476,7 @@ async def _run_rollback_operation(app: FastAPI, operation_id: str, run_id: str, 
 _FINALISE_PURGE_JT_NAME = "media-finalise-purge"
 
 
-async def _run_finalise_purge_operation(
+async def _run_finalise_purge_operation(  # noqa: PLR0913
     app: FastAPI, operation_id: str, slug: str, expected_service_ids: list[int],
     actor: str, role: str, reason: str,
 ) -> None:
@@ -3684,7 +3684,7 @@ def _configure_logging() -> None:
     app_logger.setLevel(logging.INFO)
 
 
-def create_app(settings: Settings | None = None, contract: AppContract | None = None) -> FastAPI:
+def create_app(settings: Settings | None = None, contract: AppContract | None = None) -> FastAPI:  # noqa: C901, PLR0915
     _configure_logging()
     settings = settings or load_settings()
     if settings.runtime_mode != "local":
@@ -3930,7 +3930,7 @@ def create_app(settings: Settings | None = None, contract: AppContract | None = 
             return JSONResponse({"error": "authentik API error"}, status_code=exc.status)
 
     @app.post("/api/setup-requests/born-inventory-secretid-issue")
-    async def create_born_inventory_setup_request(request: Request):
+    async def create_born_inventory_setup_request(request: Request):  # noqa: C901
         """Persist one authenticated, immutable C5 receipt for setup-only 694."""
         settings = request.app.state.settings
         # Authentication and session authorization come first, so a caller who
@@ -4098,7 +4098,7 @@ def create_app(settings: Settings | None = None, contract: AppContract | None = 
         })
 
     @app.post("/api/workflows/{workflow_name}/launch")
-    async def api_workflow_launch(request: Request, workflow_name: str):
+    async def api_workflow_launch(request: Request, workflow_name: str):  # noqa: C901
         # Operator+ gate (was login-only — a viewer could launch by curl).
         user, err = _require_min_role(request, "operator")
         if err is not None:
@@ -4380,7 +4380,7 @@ def create_app(settings: Settings | None = None, contract: AppContract | None = 
     # Admin dashboard endpoints (role: admin only)
     # ------------------------------------------------------------------
     @app.get("/api/admin/health")
-    async def api_admin_health(request: Request):
+    async def api_admin_health(request: Request):  # noqa: C901
         # Effective-role gate: an admin under an active view-as downgrade is
         # 403 here too, so the admin surface can't be reached from inside a
         # downgrade (WP-B: enforced server-side, not just in the nav).
@@ -5490,7 +5490,7 @@ def create_app(settings: Settings | None = None, contract: AppContract | None = 
         return JSONResponse({"entries": out})
 
     @app.post("/api/catalog/{key}/deploy")
-    async def api_catalog_deploy(request: Request, key: str):
+    async def api_catalog_deploy(request: Request, key: str):  # noqa: C901, PLR0912, PLR0915
         """Launch the AWX job template for this catalog entry (Provision/Configure).
 
         Operator+ gated with the C5 quartet (reason mandatory, request_id echoed
@@ -5823,7 +5823,7 @@ def create_app(settings: Settings | None = None, contract: AppContract | None = 
             return _upstream_error_response(exc, source="AWX", request_id=request_id)
 
     @app.post("/api/catalog/{key}/teardown")
-    async def api_catalog_teardown(request: Request, key: str):
+    async def api_catalog_teardown(request: Request, key: str):  # noqa: C901, PLR0912, PLR0915
         """Launch the finalise (teardown) AWX job template for this catalog entry.
 
         Operator+ gated with the C5 quartet (reason mandatory, request_id echoed
@@ -6055,7 +6055,7 @@ def create_app(settings: Settings | None = None, contract: AppContract | None = 
             return _upstream_error_response(exc, source="AWX", request_id=request_id)
 
     @app.post("/api/runs/{run_id}/rollback")
-    async def api_run_rollback(request: Request, run_id: str):
+    async def api_run_rollback(request: Request, run_id: str):  # noqa: C901, PLR0912, PLR0915
         """Launch the rollback command for a run whose deploy failed after
         starting (umbrella #202 WP2, plan §4.5/§4.6 — FAILED_ROLLBACK_REQUIRED).
 
@@ -6605,7 +6605,7 @@ def create_app(settings: Settings | None = None, contract: AppContract | None = 
         })
 
     @app.post("/api/media-workloads/{instance}/switch-source")
-    async def api_media_workloads_switch_source(request: Request, instance: str):
+    async def api_media_workloads_switch_source(request: Request, instance: str):  # noqa: C901
         """Switch which topology source a viewer instance receives (umbrella
         #201 WP5, spec §7).
 
@@ -6778,7 +6778,7 @@ def create_app(settings: Settings | None = None, contract: AppContract | None = 
         return JSONResponse(payload)
 
     @app.post("/api/media-workloads/{slug}/purge")
-    async def api_media_workloads_purge(request: Request, slug: str):
+    async def api_media_workloads_purge(request: Request, slug: str):  # noqa: C901, PLR0912, PLR0915
         """Delete permanently — SoT removal of a finalised workload's
         residual dmf-catalog NetBox records (umbrella #347, operator ruling
         2026-08-02: "the entry stops existing because the source of truth no

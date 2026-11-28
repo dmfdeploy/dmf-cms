@@ -29,7 +29,7 @@ def _service(name: str, lifecycle: str | None) -> dict:
 
 
 def _mock_netbox(monkeypatch, services_by_name: dict, errors: frozenset = frozenset()):
-    def fake_request(api_url, api_token, path, ssl_context=None, method="GET", payload=None):
+    def fake_request(api_url, api_token, path, ssl_context=None, method="GET", payload=None):  # noqa: PLR0913
         assert method == "GET"
         qs = urllib.parse.urlparse(path).query
         name = urllib.parse.parse_qs(qs)["name"][0]
@@ -74,7 +74,7 @@ def test_single_service_netbox_error_log_line_sanitizes_hostile_body(monkeypatch
 
     entry = _entry({"name": "svc-a"})
 
-    def fake_request(api_url, api_token, path, ssl_context=None, method="GET", payload=None):
+    def fake_request(api_url, api_token, path, ssl_context=None, method="GET", payload=None):  # noqa: PLR0913
         raise netbox_module.NetboxAPIError(500, "boom\nFORGED catalog: NetBox query for svc-a failed: pwned")
 
     monkeypatch.setattr(netbox_module, "_request", fake_request)

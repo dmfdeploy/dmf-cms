@@ -337,7 +337,7 @@ def _workflow_key(path: Any) -> str:
     return str(path).split("@", 1)[0]
 
 
-def check_contexts(api: GitHub, sha: str) -> list[str]:
+def check_contexts(api: GitHub, sha: str) -> list[str]:  # noqa: C901
     """Check 3. Return the contexts still pending; raise when any one failed.
 
     Pending means the owning push run has not completed, or its check run has
@@ -902,7 +902,7 @@ def run_verify(api: GitHub, sha: str, event_path: str | None) -> dict[str, str]:
     return {"ready": "true", "sha": sha}
 
 
-def main(argv: list[str] | None = None) -> int:
+def main(argv: list[str] | None = None) -> int:  # noqa: C901, PLR0912, PLR0915
     parser = argparse.ArgumentParser(description=__doc__.splitlines()[0])
     sub = parser.add_subparsers(dest="command", required=True)
     verify = sub.add_parser("verify")

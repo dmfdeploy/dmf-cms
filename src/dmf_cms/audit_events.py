@@ -343,7 +343,7 @@ def parse_awx_write_line(line: str) -> dict[str, str] | None:
     return _parse_new_format_line(tail[fmt_match.end():])
 
 
-def _parse_new_format_line(tail: str) -> dict[str, str] | None:
+def _parse_new_format_line(tail: str) -> dict[str, str] | None:  # noqa: C901, PLR0912
     """Parse the fmt=2 grammar (dmfdeploy/dmf-cms#140, the writer fix):
     target, actor, reason, workload and capacity are ALL required to be
     repr-quoted — every one of their boundaries is PROVEN by quote-
@@ -580,7 +580,7 @@ def _selector_matches(selector: str, labels: dict[str, str]) -> bool:
     return True
 
 
-def resolve_retention_window(config_yaml: str, labels: dict[str, str]) -> RetentionWindow:
+def resolve_retention_window(config_yaml: str, labels: dict[str, str]) -> RetentionWindow:  # noqa: C901, PLR0912
     """Derive the retention window applicable to ``labels`` from Loki's own
     runtime config text (plan condition 1: evaluate the match for real,
     never just read the global)."""
@@ -1152,7 +1152,7 @@ def _iso(ts_ns_str: str) -> str:
         return ""
 
 
-def list_audit_events(
+def list_audit_events(  # noqa: C901, PLR0912, PLR0913, PLR0915
     *,
     loki_url: str,
     loki_configured: bool,

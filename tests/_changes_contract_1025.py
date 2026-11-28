@@ -186,7 +186,7 @@ def _http_error(url: str, code: int, body: bytes | None) -> urllib.error.HTTPErr
     return urllib.error.HTTPError(url, code, "status", email.message.Message(), fp)
 
 
-def _resolve(kind: str, name: str, spec):
+def _resolve(kind: str, name: str, spec):  # noqa: C901
     """One call's outcome. Returns a Reply or raises what ``urlopen`` would."""
 
     def good(n):
