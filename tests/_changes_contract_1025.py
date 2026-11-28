@@ -1,7 +1,9 @@
 """Shared helpers for the Forgejo changes contract tests (dmfdeploy/dmfdeploy#1025).
 
+See docs/changes-forgejo-cases.md for the case list; row ids in test names refer to it.
+
 ``tests/fixtures/changes-contract-1025.json`` holds one entry per row of the
-agreed case table. Each entry carries the setup (what Forgejo replies), the
+case list in docs/changes-forgejo-cases.md. Each entry carries the setup (what Forgejo replies), the
 route response both panels must produce, and the lane the console must render
 from that response. The backend tests build a transport from the setup and
 assert the response. The frontend tests render the same response and assert

@@ -1,9 +1,11 @@
-"""Client layer (U) of the case table for dmfdeploy/dmfdeploy#1025.
+"""Client layer (U) for dmfdeploy/dmfdeploy#1025.
+
+See docs/changes-forgejo-cases.md for the case list; row ids in test names refer to it.
 
 ``forgejo.py`` alone, with ``urlopen`` stubbed. It decides the class of every
 call (no answer, failed read, HTTP status) and validates the header total and
 the reply shapes, so the route can trust what it receives. Each parametrized id
-is a row id of the table.
+is a row id of the case list.
 """
 
 import json

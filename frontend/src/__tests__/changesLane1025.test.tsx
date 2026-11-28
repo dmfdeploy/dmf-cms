@@ -1,5 +1,7 @@
 /**
- * Component layer (C) for the constructed-payload rows of the case table for
+ * Case list: docs/changes-forgejo-cases.md. Row ids in test names refer to it.
+ *
+ * Component layer (C) for the constructed-payload rows of the case list for
  * dmfdeploy/dmfdeploy#1025: the console API, the classifier, retained rows after
  * a failed refetch, and replies from an older server (rows X, O and E7).
  *
@@ -91,7 +93,7 @@ const STATIC_ROWS: Row[] = [
   { id: 'O2', spec: { rows: 1, omit: ['d'] }, lane: ['ROWS'], pullsOnly: true },
   { id: 'O3', spec: { reason: 'forgejo-partial', omit: ['d', 's', 'i'] }, lane: ['PARTIAL'], pullsOnly: true },
   { id: 'O6', spec: { reason: 'forgejo-unreachable', omit: ['d', 's', 'i'] }, lane: ['UNREACH'] },
-  // E7: every notice at once, in the table's order, above the rows.
+  // E7: every notice at once, in the the case list's order, above the rows.
   {
     id: 'E7.partial',
     spec: { reason: 'forgejo-partial', rows: 1, d: 2, s: 3, i: true },

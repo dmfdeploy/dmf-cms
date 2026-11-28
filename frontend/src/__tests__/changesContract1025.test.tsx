@@ -1,10 +1,12 @@
 /**
- * Component layer (C) of the case table for dmfdeploy/dmfdeploy#1025.
+ * Case list: docs/changes-forgejo-cases.md. Row ids in test names refer to it.
+ *
+ * Component layer (C) for dmfdeploy/dmfdeploy#1025.
  *
  * Renders the History lane from the same JSON fixture the backend tests assert
  * against (tests/fixtures/changes-contract-1025.json), then checks that each
- * panel shows exactly the "Lane shows" cell of the row: notices first, in the
- * table's order, then the rows. Each test id is a row id of the table.
+ * panel shows exactly the lane of the row: notices first, in the
+ * the case list's order, then the rows. Each test id is a row id of the case list.
  *
  * The fixture is the only link between the two layers. A drift in either one
  * fails its own side.
@@ -44,7 +46,7 @@ afterEach(() => {
 
 for (const kind of ['pulls', 'commits'] as Kind[]) {
   const ids = Object.keys(rows).filter((id) => rows[id].layers.includes('C') && rows[id][kind])
-  describe(`${kind} panel renders the lane of each table row`, () => {
+  describe(`${kind} panel renders the lane of each case`, () => {
     it.each(ids)('%s', async (id) => {
       const row = rows[id][kind] as PanelRow
       const other: Kind = kind === 'pulls' ? 'commits' : 'pulls'
@@ -55,7 +57,7 @@ for (const kind of ['pulls', 'commits'] as Kind[]) {
   })
 }
 
-describe('the fixture covers the layers the table names', () => {
+describe('the fixture covers the layers the case list names', () => {
   it('every row that names C has a lane for at least one panel', () => {
     const missing = Object.entries(rows)
       .filter(([, r]) => r.layers.includes('C') && !r.pulls && !r.commits)

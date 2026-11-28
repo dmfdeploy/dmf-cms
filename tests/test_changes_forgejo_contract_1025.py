@@ -1,8 +1,10 @@
-"""Backend layer (B) of the case table for dmfdeploy/dmfdeploy#1025.
+"""Backend layer (B) for dmfdeploy/dmfdeploy#1025.
+
+See docs/changes-forgejo-cases.md for the case list; row ids in test names refer to it.
 
 Each test stubs only ``urllib.request.urlopen``, so the Forgejo client, the
 header read and the route run for real. Every parametrized test id is a row id
-of the table (``S3``, ``H8``, ``M8``, ``F-W5.sha-number`` and so on). The
+of the case list (``S3``, ``H8``, ``M8``, ``F-W5.sha-number`` and so on). The
 expected JSON comes from ``tests/fixtures/changes-contract-1025.json``, the
 same file the console tests render, so a drift in either layer fails.
 """
