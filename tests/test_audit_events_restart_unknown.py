@@ -19,7 +19,7 @@ PROCESS_STARTED = 1100 * S
 NOW = 1200 * S
 
 
-def _line(*, action, actor, role, request_id, target, outcome, reason="r", extra=""):
+def _line(*, action, actor, role, request_id, target, outcome, reason="r", extra=""):  # noqa: PLR0913
     return (
         "2026-11-06 16:00:00,000 INFO dmf_cms.audit: "
         f"awx write: fmt=2 action={action} actor={actor!r} role={role} real_role= "
@@ -47,7 +47,7 @@ def terminal(rid, outcome="run_complete", action="teardown", target="wl"):
 
 
 def read(monkeypatch, timed_lines, *, process_started_ns=PROCESS_STARTED):
-    def query_range(*, url, selector, start_ns, end_ns, limit, timeout=10):
+    def query_range(*, url, selector, start_ns, end_ns, limit, timeout=10):  # noqa: PLR0913
         return [{"stream": {}, "values": [[str(ts * S), line] for ts, line in timed_lines]}]
 
     monkeypatch.setattr(audit_events.loki, "query_range", query_range)
@@ -226,7 +226,7 @@ def test_a_preflight_row_is_never_called_a_restart_loss(monkeypatch, token):
 
 
 def audit_events_by_row(monkeypatch, timed_lines):
-    def query_range(*, url, selector, start_ns, end_ns, limit, timeout=10):
+    def query_range(*, url, selector, start_ns, end_ns, limit, timeout=10):  # noqa: PLR0913
         return [{"stream": {}, "values": [[str(ts * S), line] for ts, line in timed_lines]}]
 
     monkeypatch.setattr(audit_events.loki, "query_range", query_range)

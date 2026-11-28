@@ -212,7 +212,7 @@ def discovery_document(settings: OIDCSettings) -> dict[str, object]:
     return data
 
 
-def build_authorize_url(
+def build_authorize_url(  # noqa: PLR0913
     discovery: dict[str, object],
     settings: OIDCSettings,
     redirect_uri: str,

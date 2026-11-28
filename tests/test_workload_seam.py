@@ -46,7 +46,7 @@ OPERATOR = ("dmf-console-operator",)
 def test_launch_job_body_empty_when_no_extra_vars(monkeypatch):
     calls = []
 
-    def fake_request(api_url, api_token, method, path, body=None, ssl_context=None):
+    def fake_request(api_url, api_token, method, path, body=None, ssl_context=None):  # noqa: PLR0913
         calls.append(body)
         return {"job": 1}
 
@@ -58,7 +58,7 @@ def test_launch_job_body_empty_when_no_extra_vars(monkeypatch):
 def test_launch_job_body_carries_extra_vars_when_given(monkeypatch):
     calls = []
 
-    def fake_request(api_url, api_token, method, path, body=None, ssl_context=None):
+    def fake_request(api_url, api_token, method, path, body=None, ssl_context=None):  # noqa: PLR0913
         calls.append(body)
         return {"job": 1}
 

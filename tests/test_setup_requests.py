@@ -51,7 +51,7 @@ def _audit_lines(caplog):
     return [r.getMessage() for r in caplog.records if r.getMessage().startswith("awx write:")]
 
 
-def _client(
+def _client(  # noqa: PLR0913
     monkeypatch,
     *,
     groups=None,

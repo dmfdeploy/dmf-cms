@@ -632,7 +632,7 @@ def _group_demand_items(demand_items):
     return grouped
 
 
-def _render_text(
+def _render_text(  # noqa: PLR0913
     *,
     facility: str,
     supply: NodeSupply,

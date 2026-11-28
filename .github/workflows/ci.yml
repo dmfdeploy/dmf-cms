@@ -28,6 +28,7 @@ jobs:
       - name: Checkout
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1  # v7.0.1
         with:
+          fetch-depth: 2
           persist-credentials: false
 
       - name: Checkout the shared GHCR publisher for the handoff test
@@ -57,6 +58,26 @@ jobs:
 
       - name: Compile sources
         run: python -m compileall src tests
+
+      - name: Lint
+        run: ruff check .
+
+      - name: No new function-rule marks
+        if: github.event_name == 'pull_request'
+        shell: bash
+        run: |
+          # The PR that adds this step also adds the first marks; later PRs can't add any.
+          rc=0; git grep -q 'No new function-rule marks' HEAD^1 -- .github/workflows/ || rc=$?
+          if [ "$rc" -eq 1 ]; then exit 0; elif [ "$rc" -ne 0 ]; then echo "::error::Can't read the base commit."; exit 1; fi
+          marks() { git grep -hoiE '#[[:space:]]*((ruff|flake8)[[:space:]]*:[[:space:]]*)?noqa[[:space:]]*:[^#]*' "$1" -- '*.py' | grep -oiE 'C901|PLR091[235]' | wc -l; }
+          if [ "$(marks HEAD)" -gt "$(marks HEAD^1)" ]; then
+            echo "::error::This PR adds a # noqa mark for a function rule. Split or simplify the function instead, or say in the PR why the rule does not fit (docs/CODE-PRINCIPLES.md)."
+            exit 1
+          fi
+          if git grep -niE '#[[:space:]]*(ruff|flake8)[[:space:]]*:[[:space:]]*noqa[[:space:]]*([^:[:space:]]|$)' HEAD -- '*.py'; then
+            echo "::error::A file-wide noqa without rule codes hides every function in the file. Name the codes it needs."
+            exit 1
+          fi
 
       - name: Check installed dependencies
         run: python -m pip check
@@ -251,3 +272,28 @@ jobs:
           image="registry.dmf.example.com/dmf-cms:$(tr -d '[:space:]' < VERSION)-${{ matrix.arch }}"
           [ "$(docker image inspect "$image" --format '{{.Os}}/{{.Architecture}}')" = "linux/${{ matrix.arch }}" ]
           docker run --rm "$image" python -c 'import dmf_cms'
+
+  long-files:
+    # Warns on each changed file over 400 lines. Not a required check.
+    # The guideline: docs/CODE-PRINCIPLES.md in dmfdeploy/dmfdeploy.
+    if: github.event_name == 'pull_request'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1  # v7.0.1
+        with:
+          fetch-depth: 2
+          persist-credentials: false
+      - name: Warn on changed files over 400 lines
+        shell: bash
+        run: |
+          git diff -z --name-only --diff-filter=AMRT HEAD^1 HEAD |
+            while IFS= read -r -d '' file; do
+              if [ ! -f "$file" ] || [ -L "$file" ]; then continue; fi
+              LC_ALL=C grep -qI '' "$file" || continue
+              lines=$(awk 'END { print NR }' "$file")
+              [ "$lines" -gt 400 ] || continue
+              msg=${file//%/%25}; msg=${msg//$'\r'/%0D}; msg=${msg//$'\n'/%0A}
+              prop=${msg//:/%3A}; prop=${prop//,/%2C}
+              echo "::warning file=$prop::$msg has $lines lines. The guideline is 400 or fewer."
+            done

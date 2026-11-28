@@ -202,7 +202,7 @@ def test_the_step_pipes_the_token_with_a_terminating_newline(arch):
     assert "printf '%s\\n' \"$publisher_token\" | scripts/publish-to-ghcr.sh" in publish_step(arch)["run"]
 
 
-def run_wrapper(
+def run_wrapper(  # noqa: PLR0913
     tmp_path: Path,
     suffix: str | None,
     actions_env: dict[str, str] | None = None,

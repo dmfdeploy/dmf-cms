@@ -47,7 +47,7 @@ def _get(url: str, path: str, params: dict | None = None, *, timeout: float) -> 
         raise LokiAPIError(0, str(exc.reason)) from exc
 
 
-def query_range(
+def query_range(  # noqa: PLR0913
     *,
     url: str,
     selector: str,

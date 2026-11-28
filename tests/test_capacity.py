@@ -60,7 +60,7 @@ def _supply_exprs(node="n1"):
     }
 
 
-def _supply_routes(
+def _supply_routes(  # noqa: PLR0913
     *,
     node="n1",
     alloc_cpu="3",

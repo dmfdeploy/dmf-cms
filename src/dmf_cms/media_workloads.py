@@ -481,7 +481,7 @@ def _current_response(
     return out
 
 
-def _remember_success(
+def _remember_success(  # noqa: PLR0913
     key: tuple,
     payload: dict[str, Any],
     ticket: int,
@@ -658,7 +658,7 @@ def ensure_inventory_read(
         pending.set_result(None)
 
 
-def list_instances(
+def list_instances(  # noqa: PLR0913
     netbox_url: str,
     netbox_token: str,
     ssl_verify: bool,
@@ -941,7 +941,7 @@ def _derive_workload_lifecycle(instances: list[dict[str, Any]]) -> str:
     return "unknown"
 
 
-def list_workloads_grouped(
+def list_workloads_grouped(  # noqa: C901, PLR0912, PLR0913
     netbox_url: str,
     netbox_token: str,
     ssl_verify: bool,
@@ -1238,7 +1238,7 @@ def _fetch_services_complete(
     return list(by_id.values())
 
 
-def resolve_purge_target(
+def resolve_purge_target(  # noqa: C901, PLR0912, PLR0913, PLR0915
     netbox_url: str,
     read_token: str,
     ssl_verify: bool,
@@ -1561,7 +1561,7 @@ def purge_residue_present(
     return _netbox.tag_exists(api_url=netbox_url, api_token=read_token, ssl_verify=ssl_verify, name=tag_name)
 
 
-def clear_for_deployment(
+def clear_for_deployment(  # noqa: PLR0913
     netbox_url: str,
     writer_token: str,
     ssl_verify: bool,
@@ -1673,7 +1673,7 @@ class ScopedServiceCache:
         return services
 
 
-def resolve_sidecar_target(
+def resolve_sidecar_target(  # noqa: PLR0913
     netbox_url: str,
     read_token: str,
     ssl_verify: bool,

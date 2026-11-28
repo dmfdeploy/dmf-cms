@@ -31,7 +31,7 @@ class NetboxAPIError(Exception):
         super().__init__(f"NetBox API {status}: {body}")
 
 
-def _request(
+def _request(  # noqa: PLR0913
     api_url: str,
     api_token: str,
     path: str,

@@ -187,7 +187,7 @@ class SwitchCommandStore:
         for cid in expired:
             del self._commands[cid]
 
-    def create(
+    def create(  # noqa: PLR0913
         self,
         *,
         receiver_instance: str,
@@ -644,7 +644,7 @@ class ReconnectViaAwxActuator:
                           job later sees WHY it ran.
     """
 
-    def __init__(
+    def __init__(  # noqa: PLR0913
         self,
         *,
         awx_api_url: str,
@@ -902,7 +902,7 @@ def resolve_topology_for_receiver(
     return topology_params
 
 
-async def dispatch_switch_source(
+async def dispatch_switch_source(  # noqa: PLR0913
     *,
     receiver_instance: str,
     source_instance: str,

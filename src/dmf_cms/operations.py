@@ -286,7 +286,7 @@ class OperationStore:
         ``_watch_job_operation``."""
         return self._ttl_seconds
 
-    def create(
+    def create(  # noqa: PLR0913
         self,
         action: str,
         target: str,
@@ -363,7 +363,7 @@ class OperationStore:
                     return op
             return None
 
-    def get_or_create(
+    def get_or_create(  # noqa: PLR0913
         self,
         action: str,
         target: str,
@@ -421,7 +421,7 @@ class OperationStore:
             self._operations[operation_id] = op
             return (op, True)
 
-    def get_or_create_exclusive(
+    def get_or_create_exclusive(  # noqa: PLR0913
         self,
         action: str,
         target: str,
@@ -494,7 +494,7 @@ class OperationStore:
             self._operations[operation_id] = op
             return (op, True, None)
 
-    def update(
+    def update(  # noqa: PLR0913
         self,
         operation_id: str,
         state: OperationState | None = None,

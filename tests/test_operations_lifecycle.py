@@ -883,7 +883,7 @@ def test_get_job_events_for_task_queries_by_task_name(monkeypatch):
     # itself must filter by the exact task name, not fetch every event.
     captured = {}
 
-    def fake_request(api_url, api_token, method, path, body=None, ssl_context=None):
+    def fake_request(api_url, api_token, method, path, body=None, ssl_context=None):  # noqa: PLR0913
         captured.update(method=method, path=path)
         return {"results": [{"counter": 1, "task": "dmf-l3-outcome"}], "next": None}
 
@@ -899,7 +899,7 @@ def test_get_job_events_for_task_queries_by_task_name(monkeypatch):
 def test_get_job_events_for_task_urlencodes_the_task_name(monkeypatch):
     captured = {}
 
-    def fake_request(api_url, api_token, method, path, body=None, ssl_context=None):
+    def fake_request(api_url, api_token, method, path, body=None, ssl_context=None):  # noqa: PLR0913
         captured.update(path=path)
         return {"results": [], "next": None}
 
@@ -920,7 +920,7 @@ def test_get_job_events_for_task_follows_pagination(monkeypatch):
     ]
     calls = []
 
-    def fake_request(api_url, api_token, method, path, body=None, ssl_context=None):
+    def fake_request(api_url, api_token, method, path, body=None, ssl_context=None):  # noqa: PLR0913
         calls.append(path)
         return pages[len(calls) - 1]
 
@@ -941,7 +941,7 @@ def test_get_job_events_for_task_normalizes_absolute_url_next(monkeypatch):
     ]
     calls = []
 
-    def fake_request(api_url, api_token, method, path, body=None, ssl_context=None):
+    def fake_request(api_url, api_token, method, path, body=None, ssl_context=None):  # noqa: PLR0913
         calls.append(path)
         return pages[len(calls) - 1]
 
@@ -957,7 +957,7 @@ def test_get_job_events_for_task_pagination_hard_capped(monkeypatch):
     # Defensive backstop against a misbehaving/looping 'next' chain.
     call_count = {"n": 0}
 
-    def fake_request(api_url, api_token, method, path, body=None, ssl_context=None):
+    def fake_request(api_url, api_token, method, path, body=None, ssl_context=None):  # noqa: PLR0913
         call_count["n"] += 1
         return {"results": [{"counter": call_count["n"]}], "next": "/api/v2/jobs/42/job_events/?page=next"}
 
@@ -972,7 +972,7 @@ def test_get_job_events_for_task_pagination_hard_capped(monkeypatch):
 def test_get_job_returns_raw_dict(monkeypatch):
     captured = {}
 
-    def fake_request(api_url, api_token, method, path, body=None, ssl_context=None):
+    def fake_request(api_url, api_token, method, path, body=None, ssl_context=None):  # noqa: PLR0913
         captured.update(api_url=api_url, api_token=api_token, method=method, path=path)
         return {"id": 42, "status": "successful", "started": "t0", "finished": "t1"}
 

@@ -191,7 +191,7 @@ def _resolve_dynamic_action_domain(tree: ast.AST, action_node: ast.AST | None, l
     return domain
 
 
-def _sweep_outcome_tokens_from_source(source: str) -> tuple[dict[str, set[str]], dict[str, bool]]:
+def _sweep_outcome_tokens_from_source(source: str) -> tuple[dict[str, set[str]], dict[str, bool]]:  # noqa: C901, PLR0912
     """The actual AST walk, over arbitrary SOURCE TEXT rather than always
     reading main.py from disk — split out so the mutation-verification
     test below can feed it a deliberately altered copy of main.py's
