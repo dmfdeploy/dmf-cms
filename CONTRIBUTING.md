@@ -61,7 +61,7 @@ The `rm -rf` step matches CI, which runs the tests with no built frontend so
 the result doesn't depend on an earlier `npm run build`. The step deletes only
 build output, and `npm run build` creates it again.
 
-The suite has about 2,000 tests and takes about a minute.
+The suite has about 2,500 tests and takes one to two minutes.
 
 ### Run the frontend checks
 
@@ -126,6 +126,17 @@ backend on port 8000. To check the backend alone, open
 
 The backend serves the built single-page app from `src/dmf_cms/static/app/`
 after `npm run build`. For frontend work, use the Vite dev server instead.
+
+### Representative tasks
+
+Each task says whether you can do and test it offline or whether it needs a
+live environment.
+
+| Task | Offline or live | Where to start |
+| --- | --- | --- |
+| Change how the console reads or shows a catalog entry | Offline | Edit `src/dmf_cms/catalog.py`, then extend `tests/test_catalog_schema.py` or `tests/test_catalog_lifecycle_status.py`. Run `pytest -q tests/test_catalog_schema.py tests/test_catalog_lifecycle_status.py`. |
+| Fix or change a console page, such as Monitoring | Offline | Edit the page in `frontend/src/pages/` and its test. From `frontend/`, run `npm run lint`, `npm test` and `npm run build`. For layout, run `npm run test:e2e`, which uses the stored replies in `frontend/e2e/fixtures/`. |
+| Change how the console launches a job or reads workloads | Offline for the logic, live for the effect | Edit `src/dmf_cms/awx.py` or `src/dmf_cms/media_workloads.py` and extend `tests/test_awx_write_gate.py` or `tests/test_media_workloads.py`. Run `pytest -q` on those files. A maintainer proves the change against AWX and NetBox on a running environment. |
 
 ### Install the hooks
 
