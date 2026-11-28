@@ -2,7 +2,7 @@ import { useChangesJobs, useChangesCommits, useChangesPulls } from '@/api/hooks'
 import { GitCommit, GitPullRequest, MousePointerClick, Zap, ExternalLink, Info } from 'lucide-react'
 import { useActivityStore, type ConsoleActionType } from '../../store/activity'
 import { describeJob, jobOutcome } from '../../lib/labels'
-import { classifyChanges, changesEmptyCopy, classifyForgejo, forgejoEmptyCopy, pullsDisabledCount, PULLS_SOME_DISABLED_COPY } from '../../lib/changesState'
+import { classifyChanges, changesEmptyCopy, classifyForgejo, forgejoLane, type ForgejoLane } from '../../lib/changesState'
 import ActivityPanel from '../../components/ActivityPanel'
 
 // Human title per console-originated action (#185 WP-E). deploy/teardown/
@@ -32,6 +32,23 @@ function actionTitle(action: ConsoleActionType, target: string): string {
     default:
       return `Recorded action on ${target}`
   }
+}
+
+// The notices of one Forgejo panel, top to bottom.
+function ForgejoNotices({ lane }: { lane: ForgejoLane }) {
+  return (
+    <>
+      {lane.notices.map((notice) => (
+        <div
+          key={notice.key}
+          data-testid="forgejo-notice"
+          className="px-6 py-2 text-xs text-amber-300 bg-amber-500/10"
+        >
+          {notice.text}
+        </div>
+      ))}
+    </>
+  )
 }
 
 // History lane — "what just changed" (IA §5): the audit/history lens the
@@ -68,24 +85,15 @@ export default function HistoryLane() {
   // sibling reads (hard gate 1: an empty/failed read is not "zero commits").
   const commitsPhase = classifyForgejo(commits)
   const pullsPhase = classifyForgejo(pulls)
-  // The two phases that can co-exist with NON-EMPTY
-  // retained rows and therefore need a notice regardless of emptiness.
-  // 'partial' : some repos read, some failed, real rows kept.
-  // 'error' : a SETTLED failed refetch — TanStack Query
-  // retains the last-good `data` across it, so `isLoading` is false and
-  // the panel below still has real rows to render, but the CURRENT read
-  // failed. Without this, those retained rows rendered with no notice at
-  // all — presenting last-good data as current after the read that would
-  // have confirmed it had already failed (same defect class as
-  // MediaWorkloads/WorkloadCountPanel/classifyChanges' own isError fixes).
-  const commitsNeedsNotice = commitsPhase === 'partial' || commitsPhase === 'error'
-  const pullsNeedsNotice = pullsPhase === 'partial' || pullsPhase === 'error'
-  // Independent of the read state above: some repositories were never asked
-  // because pull requests are turned off there. The all-off phase has its own
-  // copy, so this notice covers the rest. It also replaces the "No recent
-  // pull requests" line, which would claim more than the route observed.
-  const pullsSomeDisabled =
-    pullsPhase !== 'disabled' && pullsDisabledCount(pulls.data) > 0
+  // One function decides the notices above each panel's rows, their order,
+  // and whether the panel may say "No recent ...". The read-state notice shows
+  // whenever the read did not fully succeed, with or without rows: a settled
+  // failed refetch keeps TanStack Query's last-good rows, and a partial read
+  // keeps real but incomplete ones, so rows never stand in for a clean read.
+  const commitsRows = commits.data?.repos ?? []
+  const pullsRows = pulls.data?.pulls ?? []
+  const commitsLane = forgejoLane(commitsPhase, 'commits', commits.data, commitsRows.length)
+  const pullsLane = forgejoLane(pullsPhase, 'pull requests', pulls.data, pullsRows.length)
 
   const isLoading = jobs.isLoading || commits.isLoading || pulls.isLoading
 
@@ -253,31 +261,18 @@ export default function HistoryLane() {
             <div className="px-6 py-8 text-center text-muted text-sm">Loading commits...</div>
           ) : (
             <>
-              {/* Rendered whenever the phase is 'partial' OR 'error', INDEPENDENT of
-                  emptiness. 'partial' means some repos read and some failed; a
-                  SETTLED failed refetch ('error') retains the prior successful `data`,
-                  so those retained rows below would otherwise render with no notice at
-                  all, presenting last-good data as current after the read that would
-                  have confirmed it had already failed. */}
-              {commitsNeedsNotice && (
-                <div className="px-6 py-2 text-xs text-amber-300 bg-amber-500/10">
-                  {forgejoEmptyCopy(commitsPhase, 'commits')}
-                </div>
-              )}
-              {(commits.data?.repos?.length ?? 0) === 0 ? (
-                // The notice above already named the cause — a second,
-                // generic "no recent commits" would contradict it (this
-                // repo list isn't confirmed empty, it's unconfirmed).
-                !commitsNeedsNotice && (
-                  <div className="px-6 py-8 text-center text-muted text-sm">
-                    {forgejoEmptyCopy(commitsPhase, 'commits')}
+              <ForgejoNotices lane={commitsLane} />
+              {commitsRows.length === 0 ? (
+                commitsLane.showEmpty && (
+                  <div data-testid="forgejo-empty" className="px-6 py-8 text-center text-muted text-sm">
+                    {commitsLane.emptyText}
                   </div>
                 )
               ) : (
-                commits.data?.repos?.map((repo: typeof commits.data.repos[0]) => (
-                  <div key={repo.name}>
+                commitsRows.map((repo) => (
+                  <div key={repo.name} data-testid="forgejo-row">
                     <div className="px-6 py-3 bg-panel/30 font-semibold text-sm">{repo.name}</div>
-                    {repo.commits.slice(0, 5).map((commit: typeof repo.commits[0]) => (
+                    {repo.commits.slice(0, 5).map((commit) => (
                       <div key={commit.sha_short} className="px-6 py-3 hover:bg-panel/30 transition text-xs border-b border-panel/50 last:border-b-0">
                         <div className="flex items-start justify-between gap-4">
                           <div className="flex-1 min-w-0">
@@ -312,26 +307,16 @@ export default function HistoryLane() {
             <div className="px-6 py-8 text-center text-muted text-sm">Loading PRs...</div>
           ) : (
             <>
-              {/* Same fix as Recent Commits above — see its comment. */}
-              {pullsNeedsNotice && (
-                <div className="px-6 py-2 text-xs text-amber-300 bg-amber-500/10">
-                  {forgejoEmptyCopy(pullsPhase, 'pull requests')}
-                </div>
-              )}
-              {pullsSomeDisabled && (
-                <div className="px-6 py-2 text-xs text-amber-300 bg-amber-500/10">
-                  {PULLS_SOME_DISABLED_COPY}
-                </div>
-              )}
-              {(pulls.data?.pulls?.length ?? 0) === 0 ? (
-                !pullsNeedsNotice && !pullsSomeDisabled && (
-                  <div className="px-6 py-8 text-center text-muted text-sm">
-                    {forgejoEmptyCopy(pullsPhase, 'pull requests')}
+              <ForgejoNotices lane={pullsLane} />
+              {pullsRows.length === 0 ? (
+                pullsLane.showEmpty && (
+                  <div data-testid="forgejo-empty" className="px-6 py-8 text-center text-muted text-sm">
+                    {pullsLane.emptyText}
                   </div>
                 )
               ) : (
-                pulls.data?.pulls?.map((pr: typeof pulls.data.pulls[0]) => (
-                  <div key={`${pr.repo}#${pr.number}`} className="px-6 py-4 hover:bg-panel/30 transition">
+                pullsRows.map((pr) => (
+                  <div key={`${pr.repo}#${pr.number}`} data-testid="forgejo-row" className="px-6 py-4 hover:bg-panel/30 transition">
                     <div className="flex items-start justify-between gap-4">
                       <div className="flex-1 min-w-0">
                         <div className="flex items-center gap-2 mb-2">

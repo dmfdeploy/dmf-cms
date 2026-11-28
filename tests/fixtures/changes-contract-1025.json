@@ -1,0 +1,7646 @@
+{
+ "S1": {
+  "layers": "BC",
+  "setup": {
+   "search": {
+    "repos": [
+     "a"
+    ],
+    "header": null
+   },
+   "repos": {
+    "a": "rows:2"
+   }
+  },
+  "asked": "derive",
+  "client_call": "search",
+  "client": null,
+  "pulls": {
+   "response": {
+    "pulls": [
+     {
+      "repo": "dmf/a",
+      "number": 1,
+      "title": "PR 1 of a",
+      "state": "open",
+      "author": "ada",
+      "created": "2026-11-27T09:00:00Z",
+      "url": "http://forgejo.test/dmf/a/pulls/1"
+     },
+     {
+      "repo": "dmf/a",
+      "number": 2,
+      "title": "PR 2 of a",
+      "state": "open",
+      "author": "ada",
+      "created": "2026-11-27T09:00:00Z",
+      "url": "http://forgejo.test/dmf/a/pulls/2"
+     }
+    ],
+    "reason": "",
+    "disabled_repos": 0,
+    "skipped_repos": 0,
+    "repos_maybe_incomplete": false
+   },
+   "lane": [
+    "ROWS"
+   ]
+  },
+  "commits": {
+   "response": {
+    "repos": [
+     {
+      "name": "dmf/a",
+      "commits": [
+       {
+        "sha_short": "6100000",
+        "message": "commit 0 of a",
+        "author": "Ada",
+        "date": "2026-11-27T10:00:00Z",
+        "url": "http://forgejo.test/dmf/a/commit/0"
+       },
+       {
+        "sha_short": "6100001",
+        "message": "commit 1 of a",
+        "author": "Ada",
+        "date": "2026-11-27T10:00:00Z",
+        "url": "http://forgejo.test/dmf/a/commit/1"
+       }
+      ]
+     }
+    ],
+    "reason": "",
+    "skipped_repos": 0,
+    "repos_maybe_incomplete": false
+   },
+   "lane": [
+    "ROWS"
+   ]
+  }
+ },
+ "S2": {
+  "layers": "BC",
+  "setup": {
+   "search": {
+    "repos": [],
+    "header": null
+   },
+   "repos": {}
+  },
+  "asked": "derive",
+  "client_call": "search",
+  "client": null,
+  "pulls": {
+   "response": {
+    "pulls": [],
+    "reason": "",
+    "disabled_repos": 0,
+    "skipped_repos": 0,
+    "repos_maybe_incomplete": false
+   },
+   "lane": [
+    "EMPTY"
+   ]
+  },
+  "commits": {
+   "response": {
+    "repos": [],
+    "reason": "",
+    "skipped_repos": 0,
+    "repos_maybe_incomplete": false
+   },
+   "lane": [
+    "EMPTY"
+   ]
+  }
+ },
+ "S3": {
+  "layers": "BCU",
+  "setup": {
+   "search": {
+    "repos": [],
+    "outcome": "http:404"
+   }
+  },
+  "asked": "none",
+  "client_call": "search",
+  "client": "ForgejoAPIError",
+  "pulls": {
+   "response": {
+    "pulls": [],
+    "reason": "forgejo-read-failed",
+    "disabled_repos": 0,
+    "skipped_repos": 0,
+    "repos_maybe_incomplete": false
+   },
+   "lane": [
+    "READFAIL"
+   ]
+  },
+  "commits": {
+   "response": {
+    "repos": [],
+    "reason": "forgejo-read-failed",
+    "skipped_repos": 0,
+    "repos_maybe_incomplete": false
+   },
+   "lane": [
+    "READFAIL"
+   ]
+  }
+ },
+ "S4a": {
+  "layers": "BCU",
+  "setup": {
+   "search": {
+    "repos": [],
+    "outcome": "http:500"
+   }
+  },
+  "asked": "none",
+  "client_call": "search",
+  "client": "ForgejoAPIError",
+  "pulls": {
+   "response": {
+    "pulls": [],
+    "reason": "forgejo-read-failed",
+    "disabled_repos": 0,
+    "skipped_repos": 0,
+    "repos_maybe_incomplete": false
+   },
+   "lane": [
+    "READFAIL"
+   ]
+  },
+  "commits": {
+   "response": {
+    "repos": [],
+    "reason": "forgejo-read-failed",
+    "skipped_repos": 0,
+    "repos_maybe_incomplete": false
+   },
+   "lane": [
+    "READFAIL"
+   ]
+  }
+ },
+ "S4b.401": {
+  "layers": "BCU",
+  "setup": {
+   "search": {
+    "repos": [],
+    "outcome": "http:401"
+   }
+  },
+  "asked": "none",
+  "client_call": "search",
+  "client": "ForgejoAPIError",
+  "pulls": {
+   "response": {
+    "pulls": [],
+    "reason": "forgejo-read-failed",
+    "disabled_repos": 0,
+    "skipped_repos": 0,
+    "repos_maybe_incomplete": false
+   },
+   "lane": [
+    "READFAIL"
+   ]
+  },
+  "commits": {
+   "response": {
+    "repos": [],
+    "reason": "forgejo-read-failed",
+    "skipped_repos": 0,
+    "repos_maybe_incomplete": false
+   },
+   "lane": [
+    "READFAIL"
+   ]
+  }
+ },
+ "S4b.403": {
+  "layers": "BCU",
+  "setup": {
+   "search": {
+    "repos": [],
+    "outcome": "http:403"
+   }
+  },
+  "asked": "none",
+  "client_call": "search",
+  "client": "ForgejoAPIError",
+  "pulls": {
+   "response": {
+    "pulls": [],
+    "reason": "forgejo-read-failed",
+    "disabled_repos": 0,
+    "skipped_repos": 0,
+    "repos_maybe_incomplete": false
+   },
+   "lane": [
+    "READFAIL"
+   ]
+  },
+  "commits": {
+   "response": {
+    "repos": [],
+    "reason": "forgejo-read-failed",
+    "skipped_repos": 0,
+    "repos_maybe_incomplete": false
+   },
+   "lane": [
+    "READFAIL"
+   ]
+  }
+ },
+ "S5a": {
+  "layers": "BCU",
+  "setup": {
+   "search": {
+    "repos": [],
+    "outcome": "noanswer:refused"
+   }
+  },
+  "asked": "none",
+  "client_call": "search",
+  "client": "ForgejoNoAnswer",
+  "pulls": {
+   "response": {
+    "pulls": [],
+    "reason": "forgejo-unreachable",
+    "disabled_repos": 0,
+    "skipped_repos": 0,
+    "repos_maybe_incomplete": false
+   },
+   "lane": [
+    "UNREACH"
+   ]
+  },
+  "commits": {
+   "response": {
+    "repos": [],
+    "reason": "forgejo-unreachable",
+    "skipped_repos": 0,
+    "repos_maybe_incomplete": false
+   },
+   "lane": [
+    "UNREACH"
+   ]
+  }
+ },
+ "S5b": {
+  "layers": "BCU",
+  "setup": {
+   "search": {
+    "repos": [],
+    "outcome": "noanswer:timeout"
+   }
+  },
+  "asked": "none",
+  "client_call": "search",
+  "client": "ForgejoNoAnswer",
+  "pulls": {
+   "response": {
+    "pulls": [],
+    "reason": "forgejo-unreachable",
+    "disabled_repos": 0,
+    "skipped_repos": 0,
+    "repos_maybe_incomplete": false
+   },
+   "lane": [
+    "UNREACH"
+   ]
+  },
+  "commits": {
+   "response": {
+    "repos": [],
+    "reason": "forgejo-unreachable",
+    "skipped_repos": 0,
+    "repos_maybe_incomplete": false
+   },
+   "lane": [
+    "UNREACH"
+   ]
+  }
+ },
+ "S5c": {
+  "layers": "BCU",
+  "setup": {
+   "search": {
+    "repos": [],
+    "outcome": "noanswer:dns"
+   }
+  },
+  "asked": "none",
+  "client_call": "search",
+  "client": "ForgejoNoAnswer",
+  "pulls": {
+   "response": {
+    "pulls": [],
+    "reason": "forgejo-unreachable",
+    "disabled_repos": 0,
+    "skipped_repos": 0,
+    "repos_maybe_incomplete": false
+   },
+   "lane": [
+    "UNREACH"
+   ]
+  },
+  "commits": {
+   "response": {
+    "repos": [],
+    "reason": "forgejo-unreachable",
+    "skipped_repos": 0,
+    "repos_maybe_incomplete": false
+   },
+   "lane": [
+    "UNREACH"
+   ]
+  }
+ },
+ "S5d": {
+  "layers": "BU",
+  "setup": {
+   "search": {
+    "repos": [],
+    "outcome": "noanswer:tls"
+   }
+  },
+  "asked": "none",
+  "client_call": "search",
+  "client": "ForgejoNoAnswer",
+  "pulls": {
+   "response": {
+    "pulls": [],
+    "reason": "forgejo-unreachable",
+    "disabled_repos": 0,
+    "skipped_repos": 0,
+    "repos_maybe_incomplete": false
+   },
+   "lane": [
+    "UNREACH"
+   ]
+  },
+  "commits": {
+   "response": {
+    "repos": [],
+    "reason": "forgejo-unreachable",
+    "skipped_repos": 0,
+    "repos_maybe_incomplete": false
+   },
+   "lane": [
+    "UNREACH"
+   ]
+  }
+ },
+ "S6a": {
+  "layers": "BCU",
+  "setup": {
+   "search": {
+    "repos": [],
+    "outcome": "raw:{not json"
+   }
+  },
+  "asked": "none",
+  "client_call": "search",
+  "client": "ForgejoReadFailed",
+  "pulls": {
+   "response": {
+    "pulls": [],
+    "reason": "forgejo-read-failed",
+    "disabled_repos": 0,
+    "skipped_repos": 0,
+    "repos_maybe_incomplete": false
+   },
+   "lane": [
+    "READFAIL"
+   ]
+  },
+  "commits": {
+   "response": {
+    "repos": [],
+    "reason": "forgejo-read-failed",
+    "skipped_repos": 0,
+    "repos_maybe_incomplete": false
+   },
+   "lane": [
+    "READFAIL"
+   ]
+  }
+ },
+ "S6b": {
+  "layers": "BCU",
+  "setup": {
+   "search": {
+    "repos": [],
+    "outcome": "raw:"
+   }
+  },
+  "asked": "none",
+  "client_call": "search",
+  "client": "ForgejoReadFailed",
+  "pulls": {
+   "response": {
+    "pulls": [],
+    "reason": "forgejo-read-failed",
+    "disabled_repos": 0,
+    "skipped_repos": 0,
+    "repos_maybe_incomplete": false
+   },
+   "lane": [
+    "READFAIL"
+   ]
+  },
+  "commits": {
+   "response": {
+    "repos": [],
+    "reason": "forgejo-read-failed",
+    "skipped_repos": 0,
+    "repos_maybe_incomplete": false
+   },
+   "lane": [
+    "READFAIL"
+   ]
+  }
+ },
+ "S6c.ok-false": {
+  "layers": "BCU",
+  "setup": {
+   "search": {
+    "repos": [],
+    "data": {
+     "ok": false,
+     "data": []
+    }
+   }
+  },
+  "asked": "none",
+  "client_call": "search",
+  "client": "ForgejoReadFailed",
+  "pulls": {
+   "response": {
+    "pulls": [],
+    "reason": "forgejo-read-failed",
+    "disabled_repos": 0,
+    "skipped_repos": 0,
+    "repos_maybe_incomplete": false
+   },
+   "lane": [
+    "READFAIL"
+   ]
+  },
+  "commits": {
+   "response": {
+    "repos": [],
+    "reason": "forgejo-read-failed",
+    "skipped_repos": 0,
+    "repos_maybe_incomplete": false
+   },
+   "lane": [
+    "READFAIL"
+   ]
+  }
+ },
+ "S6c.data-missing": {
+  "layers": "BCU",
+  "setup": {
+   "search": {
+    "repos": [],
+    "data": {
+     "ok": true
+    }
+   }
+  },
+  "asked": "none",
+  "client_call": "search",
+  "client": "ForgejoReadFailed",
+  "pulls": {
+   "response": {
+    "pulls": [],
+    "reason": "forgejo-read-failed",
+    "disabled_repos": 0,
+    "skipped_repos": 0,
+    "repos_maybe_incomplete": false
+   },
+   "lane": [
+    "READFAIL"
+   ]
+  },
+  "commits": {
+   "response": {
+    "repos": [],
+    "reason": "forgejo-read-failed",
+    "skipped_repos": 0,
+    "repos_maybe_incomplete": false
+   },
+   "lane": [
+    "READFAIL"
+   ]
+  }
+ },
+ "S6c.data-null": {
+  "layers": "BCU",
+  "setup": {
+   "search": {
+    "repos": [],
+    "data": {
+     "ok": true,
+     "data": null
+    }
+   }
+  },
+  "asked": "none",
+  "client_call": "search",
+  "client": "ForgejoReadFailed",
+  "pulls": {
+   "response": {
+    "pulls": [],
+    "reason": "forgejo-read-failed",
+    "disabled_repos": 0,
+    "skipped_repos": 0,
+    "repos_maybe_incomplete": false
+   },
+   "lane": [
+    "READFAIL"
+   ]
+  },
+  "commits": {
+   "response": {
+    "repos": [],
+    "reason": "forgejo-read-failed",
+    "skipped_repos": 0,
+    "repos_maybe_incomplete": false
+   },
+   "lane": [
+    "READFAIL"
+   ]
+  }
+ },
+ "S6c.data-object": {
+  "layers": "BCU",
+  "setup": {
+   "search": {
+    "repos": [],
+    "data": {
+     "ok": true,
+     "data": {}
+    }
+   }
+  },
+  "asked": "none",
+  "client_call": "search",
+  "client": "ForgejoReadFailed",
+  "pulls": {
+   "response": {
+    "pulls": [],
+    "reason": "forgejo-read-failed",
+    "disabled_repos": 0,
+    "skipped_repos": 0,
+    "repos_maybe_incomplete": false
+   },
+   "lane": [
+    "READFAIL"
+   ]
+  },
+  "commits": {
+   "response": {
+    "repos": [],
+    "reason": "forgejo-read-failed",
+    "skipped_repos": 0,
+    "repos_maybe_incomplete": false
+   },
+   "lane": [
+    "READFAIL"
+   ]
+  }
+ },
+ "S6c.top-level-list": {
+  "layers": "BCU",
+  "setup": {
+   "search": {
+    "repos": [],
+    "data": []
+   }
+  },
+  "asked": "none",
+  "client_call": "search",
+  "client": "ForgejoReadFailed",
+  "pulls": {
+   "response": {
+    "pulls": [],
+    "reason": "forgejo-read-failed",
+    "disabled_repos": 0,
+    "skipped_repos": 0,
+    "repos_maybe_incomplete": false
+   },
+   "lane": [
+    "READFAIL"
+   ]
+  },
+  "commits": {
+   "response": {
+    "repos": [],
+    "reason": "forgejo-read-failed",
+    "skipped_repos": 0,
+    "repos_maybe_incomplete": false
+   },
+   "lane": [
+    "READFAIL"
+   ]
+  }
+ },
+ "S6d.null": {
+  "layers": "BCU",
+  "setup": {
+   "search": {
+    "repos": [
+     "a",
+     {
+      "raw": null
+     }
+    ],
+    "header": null
+   },
+   "repos": {
+    "a": "rows"
+   }
+  },
+  "asked": "none",
+  "client_call": "search",
+  "client": "ForgejoReadFailed",
+  "pulls": {
+   "response": {
+    "pulls": [],
+    "reason": "forgejo-read-failed",
+    "disabled_repos": 0,
+    "skipped_repos": 0,
+    "repos_maybe_incomplete": false
+   },
+   "lane": [
+    "READFAIL"
+   ]
+  },
+  "commits": {
+   "response": {
+    "repos": [],
+    "reason": "forgejo-read-failed",
+    "skipped_repos": 0,
+    "repos_maybe_incomplete": false
+   },
+   "lane": [
+    "READFAIL"
+   ]
+  }
+ },
+ "S6d.string": {
+  "layers": "BCU",
+  "setup": {
+   "search": {
+    "repos": [
+     "a",
+     {
+      "raw": "dmf/b"
+     }
+    ],
+    "header": null
+   },
+   "repos": {
+    "a": "rows"
+   }
+  },
+  "asked": "none",
+  "client_call": "search",
+  "client": "ForgejoReadFailed",
+  "pulls": {
+   "response": {
+    "pulls": [],
+    "reason": "forgejo-read-failed",
+    "disabled_repos": 0,
+    "skipped_repos": 0,
+    "repos_maybe_incomplete": false
+   },
+   "lane": [
+    "READFAIL"
+   ]
+  },
+  "commits": {
+   "response": {
+    "repos": [],
+    "reason": "forgejo-read-failed",
+    "skipped_repos": 0,
+    "repos_maybe_incomplete": false
+   },
+   "lane": [
+    "READFAIL"
+   ]
+  }
+ },
+ "S6d.number": {
+  "layers": "BCU",
+  "setup": {
+   "search": {
+    "repos": [
+     "a",
+     {
+      "raw": 3
+     }
+    ],
+    "header": null
+   },
+   "repos": {
+    "a": "rows"
+   }
+  },
+  "asked": "none",
+  "client_call": "search",
+  "client": "ForgejoReadFailed",
+  "pulls": {
+   "response": {
+    "pulls": [],
+    "reason": "forgejo-read-failed",
+    "disabled_repos": 0,
+    "skipped_repos": 0,
+    "repos_maybe_incomplete": false
+   },
+   "lane": [
+    "READFAIL"
+   ]
+  },
+  "commits": {
+   "response": {
+    "repos": [],
+    "reason": "forgejo-read-failed",
+    "skipped_repos": 0,
+    "repos_maybe_incomplete": false
+   },
+   "lane": [
+    "READFAIL"
+   ]
+  }
+ },
+ "S6d.nested-list": {
+  "layers": "BCU",
+  "setup": {
+   "search": {
+    "repos": [
+     "a",
+     {
+      "raw": [
+       [
+        1
+       ]
+      ]
+     }
+    ],
+    "header": null
+   },
+   "repos": {
+    "a": "rows"
+   }
+  },
+  "asked": "none",
+  "client_call": "search",
+  "client": "ForgejoReadFailed",
+  "pulls": {
+   "response": {
+    "pulls": [],
+    "reason": "forgejo-read-failed",
+    "disabled_repos": 0,
+    "skipped_repos": 0,
+    "repos_maybe_incomplete": false
+   },
+   "lane": [
+    "READFAIL"
+   ]
+  },
+  "commits": {
+   "response": {
+    "repos": [],
+    "reason": "forgejo-read-failed",
+    "skipped_repos": 0,
+    "repos_maybe_incomplete": false
+   },
+   "lane": [
+    "READFAIL"
+   ]
+  }
+ },
+ "S6d.no-full-name": {
+  "layers": "BCU",
+  "setup": {
+   "search": {
+    "repos": [
+     "a",
+     {
+      "raw": {
+       "id": 1,
+       "name": "b"
+      }
+     }
+    ],
+    "header": null
+   },
+   "repos": {
+    "a": "rows"
+   }
+  },
+  "asked": "none",
+  "client_call": "search",
+  "client": "ForgejoReadFailed",
+  "pulls": {
+   "response": {
+    "pulls": [],
+    "reason": "forgejo-read-failed",
+    "disabled_repos": 0,
+    "skipped_repos": 0,
+    "repos_maybe_incomplete": false
+   },
+   "lane": [
+    "READFAIL"
+   ]
+  },
+  "commits": {
+   "response": {
+    "repos": [],
+    "reason": "forgejo-read-failed",
+    "skipped_repos": 0,
+    "repos_maybe_incomplete": false
+   },
+   "lane": [
+    "READFAIL"
+   ]
+  }
+ },
+ "S6d.full-name-number": {
+  "layers": "BCU",
+  "setup": {
+   "search": {
+    "repos": [
+     "a",
+     {
+      "raw": {
+       "id": 1,
+       "name": "b",
+       "full_name": 5
+      }
+     }
+    ],
+    "header": null
+   },
+   "repos": {
+    "a": "rows"
+   }
+  },
+  "asked": "none",
+  "client_call": "search",
+  "client": "ForgejoReadFailed",
+  "pulls": {
+   "response": {
+    "pulls": [],
+    "reason": "forgejo-read-failed",
+    "disabled_repos": 0,
+    "skipped_repos": 0,
+    "repos_maybe_incomplete": false
+   },
+   "lane": [
+    "READFAIL"
+   ]
+  },
+  "commits": {
+   "response": {
+    "repos": [],
+    "reason": "forgejo-read-failed",
+    "skipped_repos": 0,
+    "repos_maybe_incomplete": false
+   },
+   "lane": [
+    "READFAIL"
+   ]
+  }
+ },
+ "S6d.full-name-empty": {
+  "layers": "BCU",
+  "setup": {
+   "search": {
+    "repos": [
+     "a",
+     {
+      "raw": {
+       "id": 1,
+       "name": "b",
+       "full_name": ""
+      }
+     }
+    ],
+    "header": null
+   },
+   "repos": {
+    "a": "rows"
+   }
+  },
+  "asked": "none",
+  "client_call": "search",
+  "client": "ForgejoReadFailed",
+  "pulls": {
+   "response": {
+    "pulls": [],
+    "reason": "forgejo-read-failed",
+    "disabled_repos": 0,
+    "skipped_repos": 0,
+    "repos_maybe_incomplete": false
+   },
+   "lane": [
+    "READFAIL"
+   ]
+  },
+  "commits": {
+   "response": {
+    "repos": [],
+    "reason": "forgejo-read-failed",
+    "skipped_repos": 0,
+    "repos_maybe_incomplete": false
+   },
+   "lane": [
+    "READFAIL"
+   ]
+  }
+ },
+ "S6d.name-missing": {
+  "layers": "BCU",
+  "setup": {
+   "search": {
+    "repos": [
+     "a",
+     {
+      "raw": {
+       "id": 1,
+       "full_name": "dmf/b"
+      }
+     }
+    ],
+    "header": null
+   },
+   "repos": {
+    "a": "rows"
+   }
+  },
+  "asked": "none",
+  "client_call": "search",
+  "client": "ForgejoReadFailed",
+  "pulls": {
+   "response": {
+    "pulls": [],
+    "reason": "forgejo-read-failed",
+    "disabled_repos": 0,
+    "skipped_repos": 0,
+    "repos_maybe_incomplete": false
+   },
+   "lane": [
+    "READFAIL"
+   ]
+  },
+  "commits": {
+   "response": {
+    "repos": [],
+    "reason": "forgejo-read-failed",
+    "skipped_repos": 0,
+    "repos_maybe_incomplete": false
+   },
+   "lane": [
+    "READFAIL"
+   ]
+  }
+ },
+ "S6d.name-number": {
+  "layers": "BCU",
+  "setup": {
+   "search": {
+    "repos": [
+     "a",
+     {
+      "raw": {
+       "id": 1,
+       "name": 5,
+       "full_name": "dmf/b"
+      }
+     }
+    ],
+    "header": null
+   },
+   "repos": {
+    "a": "rows"
+   }
+  },
+  "asked": "none",
+  "client_call": "search",
+  "client": "ForgejoReadFailed",
+  "pulls": {
+   "response": {
+    "pulls": [],
+    "reason": "forgejo-read-failed",
+    "disabled_repos": 0,
+    "skipped_repos": 0,
+    "repos_maybe_incomplete": false
+   },
+   "lane": [
+    "READFAIL"
+   ]
+  },
+  "commits": {
+   "response": {
+    "repos": [],
+    "reason": "forgejo-read-failed",
+    "skipped_repos": 0,
+    "repos_maybe_incomplete": false
+   },
+   "lane": [
+    "READFAIL"
+   ]
+  }
+ },
+ "S6d.name-empty": {
+  "layers": "BCU",
+  "setup": {
+   "search": {
+    "repos": [
+     "a",
+     {
+      "raw": {
+       "id": 1,
+       "name": "",
+       "full_name": "dmf/b"
+      }
+     }
+    ],
+    "header": null
+   },
+   "repos": {
+    "a": "rows"
+   }
+  },
+  "asked": "none",
+  "client_call": "search",
+  "client": "ForgejoReadFailed",
+  "pulls": {
+   "response": {
+    "pulls": [],
+    "reason": "forgejo-read-failed",
+    "disabled_repos": 0,
+    "skipped_repos": 0,
+    "repos_maybe_incomplete": false
+   },
+   "lane": [
+    "READFAIL"
+   ]
+  },
+  "commits": {
+   "response": {
+    "repos": [],
+    "reason": "forgejo-read-failed",
+    "skipped_repos": 0,
+    "repos_maybe_incomplete": false
+   },
+   "lane": [
+    "READFAIL"
+   ]
+  }
+ },
+ "S6d.has-pr-string": {
+  "layers": "BCU",
+  "setup": {
+   "search": {
+    "repos": [
+     "a",
+     {
+      "raw": {
+       "id": 1,
+       "name": "b",
+       "full_name": "dmf/b",
+       "has_pull_requests": "false"
+      }
+     }
+    ],
+    "header": null
+   },
+   "repos": {
+    "a": "rows"
+   }
+  },
+  "asked": "none",
+  "client_call": "search",
+  "client": "ForgejoReadFailed",
+  "pulls": {
+   "response": {
+    "pulls": [],
+    "reason": "forgejo-read-failed",
+    "disabled_repos": 0,
+    "skipped_repos": 0,
+    "repos_maybe_incomplete": false
+   },
+   "lane": [
+    "READFAIL"
+   ]
+  },
+  "commits": {
+   "response": {
+    "repos": [],
+    "reason": "forgejo-read-failed",
+    "skipped_repos": 0,
+    "repos_maybe_incomplete": false
+   },
+   "lane": [
+    "READFAIL"
+   ]
+  }
+ },
+ "S6e": {
+  "layers": "BCU",
+  "setup": {
+   "search": {
+    "repos": [
+     {
+      "repeat": 39,
+      "name": "x"
+     },
+     {
+      "raw": null
+     },
+     {
+      "repeat": 10,
+      "name": "y"
+     }
+    ],
+    "header": null
+   },
+   "repos": {}
+  },
+  "asked": "none",
+  "client_call": "search",
+  "client": "ForgejoReadFailed",
+  "pulls": {
+   "response": {
+    "pulls": [],
+    "reason": "forgejo-read-failed",
+    "disabled_repos": 0,
+    "skipped_repos": 0,
+    "repos_maybe_incomplete": false
+   },
+   "lane": [
+    "READFAIL"
+   ]
+  },
+  "commits": {
+   "response": {
+    "repos": [],
+    "reason": "forgejo-read-failed",
+    "skipped_repos": 0,
+    "repos_maybe_incomplete": false
+   },
+   "lane": [
+    "READFAIL"
+   ]
+  }
+ },
+ "S7a.timeout": {
+  "layers": "BU",
+  "setup": {
+   "search": {
+    "repos": [],
+    "outcome": "bodyfail:timeout"
+   }
+  },
+  "asked": "none",
+  "client_call": "search",
+  "client": "ForgejoReadFailed",
+  "pulls": {
+   "response": {
+    "pulls": [],
+    "reason": "forgejo-read-failed",
+    "disabled_repos": 0,
+    "skipped_repos": 0,
+    "repos_maybe_incomplete": false
+   },
+   "lane": [
+    "READFAIL"
+   ]
+  },
+  "commits": {
+   "response": {
+    "repos": [],
+    "reason": "forgejo-read-failed",
+    "skipped_repos": 0,
+    "repos_maybe_incomplete": false
+   },
+   "lane": [
+    "READFAIL"
+   ]
+  }
+ },
+ "S7a.reset": {
+  "layers": "BU",
+  "setup": {
+   "search": {
+    "repos": [],
+    "outcome": "bodyfail:reset"
+   }
+  },
+  "asked": "none",
+  "client_call": "search",
+  "client": "ForgejoReadFailed",
+  "pulls": {
+   "response": {
+    "pulls": [],
+    "reason": "forgejo-read-failed",
+    "disabled_repos": 0,
+    "skipped_repos": 0,
+    "repos_maybe_incomplete": false
+   },
+   "lane": [
+    "READFAIL"
+   ]
+  },
+  "commits": {
+   "response": {
+    "repos": [],
+    "reason": "forgejo-read-failed",
+    "skipped_repos": 0,
+    "repos_maybe_incomplete": false
+   },
+   "lane": [
+    "READFAIL"
+   ]
+  }
+ },
+ "S7a.short": {
+  "layers": "BU",
+  "setup": {
+   "search": {
+    "repos": [],
+    "outcome": "bodyfail:short"
+   }
+  },
+  "asked": "none",
+  "client_call": "search",
+  "client": "ForgejoReadFailed",
+  "pulls": {
+   "response": {
+    "pulls": [],
+    "reason": "forgejo-read-failed",
+    "disabled_repos": 0,
+    "skipped_repos": 0,
+    "repos_maybe_incomplete": false
+   },
+   "lane": [
+    "READFAIL"
+   ]
+  },
+  "commits": {
+   "response": {
+    "repos": [],
+    "reason": "forgejo-read-failed",
+    "skipped_repos": 0,
+    "repos_maybe_incomplete": false
+   },
+   "lane": [
+    "READFAIL"
+   ]
+  }
+ },
+ "S7b": {
+  "layers": "BU",
+  "setup": {
+   "search": {
+    "repos": [],
+    "outcome": "bodyfail:tls"
+   }
+  },
+  "asked": "none",
+  "client_call": "search",
+  "client": "ForgejoReadFailed",
+  "pulls": {
+   "response": {
+    "pulls": [],
+    "reason": "forgejo-read-failed",
+    "disabled_repos": 0,
+    "skipped_repos": 0,
+    "repos_maybe_incomplete": false
+   },
+   "lane": [
+    "READFAIL"
+   ]
+  },
+  "commits": {
+   "response": {
+    "repos": [],
+    "reason": "forgejo-read-failed",
+    "skipped_repos": 0,
+    "repos_maybe_incomplete": false
+   },
+   "lane": [
+    "READFAIL"
+   ]
+  }
+ },
+ "S7c": {
+  "layers": "BU",
+  "setup": {
+   "search": {
+    "repos": [],
+    "outcome": "http-unreadable:500"
+   }
+  },
+  "asked": "none",
+  "client_call": "search",
+  "client": "ForgejoAPIError",
+  "pulls": {
+   "response": {
+    "pulls": [],
+    "reason": "forgejo-read-failed",
+    "disabled_repos": 0,
+    "skipped_repos": 0,
+    "repos_maybe_incomplete": false
+   },
+   "lane": [
+    "READFAIL"
+   ]
+  },
+  "commits": {
+   "response": {
+    "repos": [],
+    "reason": "forgejo-read-failed",
+    "skipped_repos": 0,
+    "repos_maybe_incomplete": false
+   },
+   "lane": [
+    "READFAIL"
+   ]
+  }
+ },
+ "S7d": {
+  "layers": "BU",
+  "setup": {
+   "search": {
+    "repos": [],
+    "outcome": "http-nonutf8:500"
+   }
+  },
+  "asked": "none",
+  "client_call": "search",
+  "client": "ForgejoAPIError",
+  "pulls": {
+   "response": {
+    "pulls": [],
+    "reason": "forgejo-read-failed",
+    "disabled_repos": 0,
+    "skipped_repos": 0,
+    "repos_maybe_incomplete": false
+   },
+   "lane": [
+    "READFAIL"
+   ]
+  },
+  "commits": {
+   "response": {
+    "repos": [],
+    "reason": "forgejo-read-failed",
+    "skipped_repos": 0,
+    "repos_maybe_incomplete": false
+   },
+   "lane": [
+    "READFAIL"
+   ]
+  }
+ },
+ "H1": {
+  "layers": "BCU",
+  "setup": {
+   "search": {
+    "repos": [
+     {
+      "repeat": 50,
+      "name": "x"
+     }
+    ],
+    "header": [
+     "80"
+    ]
+   },
+   "repos": {}
+  },
+  "asked": "derive",
+  "client_call": "search",
+  "client": {
+   "total": 80
+  },
+  "pulls": {
+   "response": {
+    "pulls": [],
+    "reason": "",
+    "disabled_repos": 0,
+    "skipped_repos": 45,
+    "repos_maybe_incomplete": true
+   },
+   "lane": [
+    "SKIPPED:45",
+    "INCOMPLETE"
+   ]
+  },
+  "commits": {
+   "response": {
+    "repos": [
+     {
+      "name": "dmf/x0",
+      "commits": []
+     },
+     {
+      "name": "dmf/x1",
+      "commits": []
+     },
+     {
+      "name": "dmf/x2",
+      "commits": []
+     },
+     {
+      "name": "dmf/x3",
+      "commits": []
+     },
+     {
+      "name": "dmf/x4",
+      "commits": []
+     }
+    ],
+    "reason": "",
+    "skipped_repos": 45,
+    "repos_maybe_incomplete": true
+   },
+   "lane": [
+    "SKIPPED:45",
+    "INCOMPLETE",
+    "ROWS"
+   ]
+  }
+ },
+ "H2": {
+  "layers": "BCU",
+  "setup": {
+   "search": {
+    "repos": [
+     {
+      "repeat": 50,
+      "name": "x"
+     }
+    ],
+    "header": [
+     "50"
+    ]
+   },
+   "repos": {}
+  },
+  "asked": "derive",
+  "client_call": "search",
+  "client": {
+   "total": 50
+  },
+  "pulls": {
+   "response": {
+    "pulls": [],
+    "reason": "",
+    "disabled_repos": 0,
+    "skipped_repos": 45,
+    "repos_maybe_incomplete": false
+   },
+   "lane": [
+    "SKIPPED:45"
+   ]
+  },
+  "commits": {
+   "response": {
+    "repos": [
+     {
+      "name": "dmf/x0",
+      "commits": []
+     },
+     {
+      "name": "dmf/x1",
+      "commits": []
+     },
+     {
+      "name": "dmf/x2",
+      "commits": []
+     },
+     {
+      "name": "dmf/x3",
+      "commits": []
+     },
+     {
+      "name": "dmf/x4",
+      "commits": []
+     }
+    ],
+    "reason": "",
+    "skipped_repos": 45,
+    "repos_maybe_incomplete": false
+   },
+   "lane": [
+    "SKIPPED:45",
+    "ROWS"
+   ]
+  }
+ },
+ "H3": {
+  "layers": "BCU",
+  "setup": {
+   "search": {
+    "repos": [
+     {
+      "repeat": 50,
+      "name": "x"
+     }
+    ],
+    "header": null
+   },
+   "repos": {}
+  },
+  "asked": "derive",
+  "client_call": "search",
+  "client": {
+   "total": null
+  },
+  "pulls": {
+   "response": {
+    "pulls": [],
+    "reason": "",
+    "disabled_repos": 0,
+    "skipped_repos": 45,
+    "repos_maybe_incomplete": true
+   },
+   "lane": [
+    "SKIPPED:45",
+    "INCOMPLETE"
+   ]
+  },
+  "commits": {
+   "response": {
+    "repos": [
+     {
+      "name": "dmf/x0",
+      "commits": []
+     },
+     {
+      "name": "dmf/x1",
+      "commits": []
+     },
+     {
+      "name": "dmf/x2",
+      "commits": []
+     },
+     {
+      "name": "dmf/x3",
+      "commits": []
+     },
+     {
+      "name": "dmf/x4",
+      "commits": []
+     }
+    ],
+    "reason": "",
+    "skipped_repos": 45,
+    "repos_maybe_incomplete": true
+   },
+   "lane": [
+    "SKIPPED:45",
+    "INCOMPLETE",
+    "ROWS"
+   ]
+  }
+ },
+ "H4": {
+  "layers": "BCU",
+  "setup": {
+   "search": {
+    "repos": [
+     {
+      "repeat": 20,
+      "name": "x"
+     }
+    ],
+    "header": null
+   },
+   "repos": {}
+  },
+  "asked": "derive",
+  "client_call": "search",
+  "client": {
+   "total": null
+  },
+  "pulls": {
+   "response": {
+    "pulls": [],
+    "reason": "",
+    "disabled_repos": 0,
+    "skipped_repos": 15,
+    "repos_maybe_incomplete": false
+   },
+   "lane": [
+    "SKIPPED:15"
+   ]
+  },
+  "commits": {
+   "response": {
+    "repos": [
+     {
+      "name": "dmf/x0",
+      "commits": []
+     },
+     {
+      "name": "dmf/x1",
+      "commits": []
+     },
+     {
+      "name": "dmf/x2",
+      "commits": []
+     },
+     {
+      "name": "dmf/x3",
+      "commits": []
+     },
+     {
+      "name": "dmf/x4",
+      "commits": []
+     }
+    ],
+    "reason": "",
+    "skipped_repos": 15,
+    "repos_maybe_incomplete": false
+   },
+   "lane": [
+    "SKIPPED:15",
+    "ROWS"
+   ]
+  }
+ },
+ "H5a": {
+  "layers": "BCU",
+  "setup": {
+   "search": {
+    "repos": [
+     {
+      "repeat": 50,
+      "name": "x"
+     }
+    ],
+    "header": [
+     "abc"
+    ]
+   },
+   "repos": {}
+  },
+  "asked": "derive",
+  "client_call": "search",
+  "client": {
+   "total": null
+  },
+  "pulls": {
+   "response": {
+    "pulls": [],
+    "reason": "",
+    "disabled_repos": 0,
+    "skipped_repos": 45,
+    "repos_maybe_incomplete": true
+   },
+   "lane": [
+    "SKIPPED:45",
+    "INCOMPLETE"
+   ]
+  },
+  "commits": {
+   "response": {
+    "repos": [
+     {
+      "name": "dmf/x0",
+      "commits": []
+     },
+     {
+      "name": "dmf/x1",
+      "commits": []
+     },
+     {
+      "name": "dmf/x2",
+      "commits": []
+     },
+     {
+      "name": "dmf/x3",
+      "commits": []
+     },
+     {
+      "name": "dmf/x4",
+      "commits": []
+     }
+    ],
+    "reason": "",
+    "skipped_repos": 45,
+    "repos_maybe_incomplete": true
+   },
+   "lane": [
+    "SKIPPED:45",
+    "INCOMPLETE",
+    "ROWS"
+   ]
+  }
+ },
+ "H5b": {
+  "layers": "BCU",
+  "setup": {
+   "search": {
+    "repos": [
+     {
+      "repeat": 50,
+      "name": "x"
+     }
+    ],
+    "header": [
+     "-3"
+    ]
+   },
+   "repos": {}
+  },
+  "asked": "derive",
+  "client_call": "search",
+  "client": {
+   "total": null
+  },
+  "pulls": {
+   "response": {
+    "pulls": [],
+    "reason": "",
+    "disabled_repos": 0,
+    "skipped_repos": 45,
+    "repos_maybe_incomplete": true
+   },
+   "lane": [
+    "SKIPPED:45",
+    "INCOMPLETE"
+   ]
+  },
+  "commits": {
+   "response": {
+    "repos": [
+     {
+      "name": "dmf/x0",
+      "commits": []
+     },
+     {
+      "name": "dmf/x1",
+      "commits": []
+     },
+     {
+      "name": "dmf/x2",
+      "commits": []
+     },
+     {
+      "name": "dmf/x3",
+      "commits": []
+     },
+     {
+      "name": "dmf/x4",
+      "commits": []
+     }
+    ],
+    "reason": "",
+    "skipped_repos": 45,
+    "repos_maybe_incomplete": true
+   },
+   "lane": [
+    "SKIPPED:45",
+    "INCOMPLETE",
+    "ROWS"
+   ]
+  }
+ },
+ "H5c.fraction": {
+  "layers": "BCU",
+  "setup": {
+   "search": {
+    "repos": [
+     {
+      "repeat": 50,
+      "name": "x"
+     }
+    ],
+    "header": [
+     "10.5"
+    ]
+   },
+   "repos": {}
+  },
+  "asked": "derive",
+  "client_call": "search",
+  "client": {
+   "total": null
+  },
+  "pulls": {
+   "response": {
+    "pulls": [],
+    "reason": "",
+    "disabled_repos": 0,
+    "skipped_repos": 45,
+    "repos_maybe_incomplete": true
+   },
+   "lane": [
+    "SKIPPED:45",
+    "INCOMPLETE"
+   ]
+  },
+  "commits": {
+   "response": {
+    "repos": [
+     {
+      "name": "dmf/x0",
+      "commits": []
+     },
+     {
+      "name": "dmf/x1",
+      "commits": []
+     },
+     {
+      "name": "dmf/x2",
+      "commits": []
+     },
+     {
+      "name": "dmf/x3",
+      "commits": []
+     },
+     {
+      "name": "dmf/x4",
+      "commits": []
+     }
+    ],
+    "reason": "",
+    "skipped_repos": 45,
+    "repos_maybe_incomplete": true
+   },
+   "lane": [
+    "SKIPPED:45",
+    "INCOMPLETE",
+    "ROWS"
+   ]
+  }
+ },
+ "H5c.exponent": {
+  "layers": "BCU",
+  "setup": {
+   "search": {
+    "repos": [
+     {
+      "repeat": 50,
+      "name": "x"
+     }
+    ],
+    "header": [
+     "1e2"
+    ]
+   },
+   "repos": {}
+  },
+  "asked": "derive",
+  "client_call": "search",
+  "client": {
+   "total": null
+  },
+  "pulls": {
+   "response": {
+    "pulls": [],
+    "reason": "",
+    "disabled_repos": 0,
+    "skipped_repos": 45,
+    "repos_maybe_incomplete": true
+   },
+   "lane": [
+    "SKIPPED:45",
+    "INCOMPLETE"
+   ]
+  },
+  "commits": {
+   "response": {
+    "repos": [
+     {
+      "name": "dmf/x0",
+      "commits": []
+     },
+     {
+      "name": "dmf/x1",
+      "commits": []
+     },
+     {
+      "name": "dmf/x2",
+      "commits": []
+     },
+     {
+      "name": "dmf/x3",
+      "commits": []
+     },
+     {
+      "name": "dmf/x4",
+      "commits": []
+     }
+    ],
+    "reason": "",
+    "skipped_repos": 45,
+    "repos_maybe_incomplete": true
+   },
+   "lane": [
+    "SKIPPED:45",
+    "INCOMPLETE",
+    "ROWS"
+   ]
+  }
+ },
+ "H5c.empty": {
+  "layers": "BCU",
+  "setup": {
+   "search": {
+    "repos": [
+     {
+      "repeat": 50,
+      "name": "x"
+     }
+    ],
+    "header": [
+     ""
+    ]
+   },
+   "repos": {}
+  },
+  "asked": "derive",
+  "client_call": "search",
+  "client": {
+   "total": null
+  },
+  "pulls": {
+   "response": {
+    "pulls": [],
+    "reason": "",
+    "disabled_repos": 0,
+    "skipped_repos": 45,
+    "repos_maybe_incomplete": true
+   },
+   "lane": [
+    "SKIPPED:45",
+    "INCOMPLETE"
+   ]
+  },
+  "commits": {
+   "response": {
+    "repos": [
+     {
+      "name": "dmf/x0",
+      "commits": []
+     },
+     {
+      "name": "dmf/x1",
+      "commits": []
+     },
+     {
+      "name": "dmf/x2",
+      "commits": []
+     },
+     {
+      "name": "dmf/x3",
+      "commits": []
+     },
+     {
+      "name": "dmf/x4",
+      "commits": []
+     }
+    ],
+    "reason": "",
+    "skipped_repos": 45,
+    "repos_maybe_incomplete": true
+   },
+   "lane": [
+    "SKIPPED:45",
+    "INCOMPLETE",
+    "ROWS"
+   ]
+  }
+ },
+ "H5d": {
+  "layers": "BCU",
+  "setup": {
+   "search": {
+    "repos": [
+     {
+      "repeat": 50,
+      "name": "x"
+     }
+    ],
+    "header": [
+     "80",
+     "90"
+    ]
+   },
+   "repos": {}
+  },
+  "asked": "derive",
+  "client_call": "search",
+  "client": {
+   "total": null
+  },
+  "pulls": {
+   "response": {
+    "pulls": [],
+    "reason": "",
+    "disabled_repos": 0,
+    "skipped_repos": 45,
+    "repos_maybe_incomplete": true
+   },
+   "lane": [
+    "SKIPPED:45",
+    "INCOMPLETE"
+   ]
+  },
+  "commits": {
+   "response": {
+    "repos": [
+     {
+      "name": "dmf/x0",
+      "commits": []
+     },
+     {
+      "name": "dmf/x1",
+      "commits": []
+     },
+     {
+      "name": "dmf/x2",
+      "commits": []
+     },
+     {
+      "name": "dmf/x3",
+      "commits": []
+     },
+     {
+      "name": "dmf/x4",
+      "commits": []
+     }
+    ],
+    "reason": "",
+    "skipped_repos": 45,
+    "repos_maybe_incomplete": true
+   },
+   "lane": [
+    "SKIPPED:45",
+    "INCOMPLETE",
+    "ROWS"
+   ]
+  }
+ },
+ "H6.abc": {
+  "layers": "BCU",
+  "setup": {
+   "search": {
+    "repos": [
+     {
+      "repeat": 20,
+      "name": "x"
+     }
+    ],
+    "header": [
+     "abc"
+    ]
+   },
+   "repos": {}
+  },
+  "asked": "derive",
+  "client_call": "search",
+  "client": {
+   "total": null
+  },
+  "pulls": {
+   "response": {
+    "pulls": [],
+    "reason": "",
+    "disabled_repos": 0,
+    "skipped_repos": 15,
+    "repos_maybe_incomplete": false
+   },
+   "lane": [
+    "SKIPPED:15"
+   ]
+  },
+  "commits": {
+   "response": {
+    "repos": [
+     {
+      "name": "dmf/x0",
+      "commits": []
+     },
+     {
+      "name": "dmf/x1",
+      "commits": []
+     },
+     {
+      "name": "dmf/x2",
+      "commits": []
+     },
+     {
+      "name": "dmf/x3",
+      "commits": []
+     },
+     {
+      "name": "dmf/x4",
+      "commits": []
+     }
+    ],
+    "reason": "",
+    "skipped_repos": 15,
+    "repos_maybe_incomplete": false
+   },
+   "lane": [
+    "SKIPPED:15",
+    "ROWS"
+   ]
+  }
+ },
+ "H6.negative": {
+  "layers": "BCU",
+  "setup": {
+   "search": {
+    "repos": [
+     {
+      "repeat": 20,
+      "name": "x"
+     }
+    ],
+    "header": [
+     "-3"
+    ]
+   },
+   "repos": {}
+  },
+  "asked": "derive",
+  "client_call": "search",
+  "client": {
+   "total": null
+  },
+  "pulls": {
+   "response": {
+    "pulls": [],
+    "reason": "",
+    "disabled_repos": 0,
+    "skipped_repos": 15,
+    "repos_maybe_incomplete": false
+   },
+   "lane": [
+    "SKIPPED:15"
+   ]
+  },
+  "commits": {
+   "response": {
+    "repos": [
+     {
+      "name": "dmf/x0",
+      "commits": []
+     },
+     {
+      "name": "dmf/x1",
+      "commits": []
+     },
+     {
+      "name": "dmf/x2",
+      "commits": []
+     },
+     {
+      "name": "dmf/x3",
+      "commits": []
+     },
+     {
+      "name": "dmf/x4",
+      "commits": []
+     }
+    ],
+    "reason": "",
+    "skipped_repos": 15,
+    "repos_maybe_incomplete": false
+   },
+   "lane": [
+    "SKIPPED:15",
+    "ROWS"
+   ]
+  }
+ },
+ "H7a": {
+  "layers": "BCU",
+  "setup": {
+   "search": {
+    "repos": [
+     {
+      "repeat": 20,
+      "name": "x"
+     }
+    ],
+    "header": [
+     "10"
+    ]
+   },
+   "repos": {}
+  },
+  "asked": "derive",
+  "client_call": "search",
+  "client": {
+   "total": null
+  },
+  "pulls": {
+   "response": {
+    "pulls": [],
+    "reason": "",
+    "disabled_repos": 0,
+    "skipped_repos": 15,
+    "repos_maybe_incomplete": false
+   },
+   "lane": [
+    "SKIPPED:15"
+   ]
+  },
+  "commits": {
+   "response": {
+    "repos": [
+     {
+      "name": "dmf/x0",
+      "commits": []
+     },
+     {
+      "name": "dmf/x1",
+      "commits": []
+     },
+     {
+      "name": "dmf/x2",
+      "commits": []
+     },
+     {
+      "name": "dmf/x3",
+      "commits": []
+     },
+     {
+      "name": "dmf/x4",
+      "commits": []
+     }
+    ],
+    "reason": "",
+    "skipped_repos": 15,
+    "repos_maybe_incomplete": false
+   },
+   "lane": [
+    "SKIPPED:15",
+    "ROWS"
+   ]
+  }
+ },
+ "H7b": {
+  "layers": "BCU",
+  "setup": {
+   "search": {
+    "repos": [
+     {
+      "repeat": 50,
+      "name": "x"
+     }
+    ],
+    "header": [
+     "10"
+    ]
+   },
+   "repos": {}
+  },
+  "asked": "derive",
+  "client_call": "search",
+  "client": {
+   "total": null
+  },
+  "pulls": {
+   "response": {
+    "pulls": [],
+    "reason": "",
+    "disabled_repos": 0,
+    "skipped_repos": 45,
+    "repos_maybe_incomplete": true
+   },
+   "lane": [
+    "SKIPPED:45",
+    "INCOMPLETE"
+   ]
+  },
+  "commits": {
+   "response": {
+    "repos": [
+     {
+      "name": "dmf/x0",
+      "commits": []
+     },
+     {
+      "name": "dmf/x1",
+      "commits": []
+     },
+     {
+      "name": "dmf/x2",
+      "commits": []
+     },
+     {
+      "name": "dmf/x3",
+      "commits": []
+     },
+     {
+      "name": "dmf/x4",
+      "commits": []
+     }
+    ],
+    "reason": "",
+    "skipped_repos": 45,
+    "repos_maybe_incomplete": true
+   },
+   "lane": [
+    "SKIPPED:45",
+    "INCOMPLETE",
+    "ROWS"
+   ]
+  }
+ },
+ "H8": {
+  "layers": "BCU",
+  "setup": {
+   "search": {
+    "repos": [],
+    "header": [
+     "10"
+    ]
+   },
+   "repos": {}
+  },
+  "asked": "derive",
+  "client_call": "search",
+  "client": {
+   "total": 10
+  },
+  "pulls": {
+   "response": {
+    "pulls": [],
+    "reason": "",
+    "disabled_repos": 0,
+    "skipped_repos": 0,
+    "repos_maybe_incomplete": true
+   },
+   "lane": [
+    "INCOMPLETE"
+   ]
+  },
+  "commits": {
+   "response": {
+    "repos": [],
+    "reason": "",
+    "skipped_repos": 0,
+    "repos_maybe_incomplete": true
+   },
+   "lane": [
+    "INCOMPLETE"
+   ]
+  }
+ },
+ "H9a": {
+  "layers": "BCU",
+  "setup": {
+   "search": {
+    "repos": [],
+    "header": [
+     "0"
+    ]
+   },
+   "repos": {}
+  },
+  "asked": "derive",
+  "client_call": "search",
+  "client": {
+   "total": 0
+  },
+  "pulls": {
+   "response": {
+    "pulls": [],
+    "reason": "",
+    "disabled_repos": 0,
+    "skipped_repos": 0,
+    "repos_maybe_incomplete": false
+   },
+   "lane": [
+    "EMPTY"
+   ]
+  },
+  "commits": {
+   "response": {
+    "repos": [],
+    "reason": "",
+    "skipped_repos": 0,
+    "repos_maybe_incomplete": false
+   },
+   "lane": [
+    "EMPTY"
+   ]
+  }
+ },
+ "H9b": {
+  "layers": "BCU",
+  "setup": {
+   "search": {
+    "repos": [],
+    "header": null
+   },
+   "repos": {}
+  },
+  "asked": "derive",
+  "client_call": "search",
+  "client": {
+   "total": null
+  },
+  "pulls": {
+   "response": {
+    "pulls": [],
+    "reason": "",
+    "disabled_repos": 0,
+    "skipped_repos": 0,
+    "repos_maybe_incomplete": false
+   },
+   "lane": [
+    "EMPTY"
+   ]
+  },
+  "commits": {
+   "response": {
+    "repos": [],
+    "reason": "",
+    "skipped_repos": 0,
+    "repos_maybe_incomplete": false
+   },
+   "lane": [
+    "EMPTY"
+   ]
+  }
+ },
+ "H10": {
+  "layers": "BCU",
+  "setup": {
+   "search": {
+    "repos": [
+     "a",
+     "b",
+     "c"
+    ],
+    "header": [
+     "40"
+    ]
+   },
+   "repos": {}
+  },
+  "asked": "derive",
+  "client_call": "search",
+  "client": {
+   "total": 40
+  },
+  "pulls": {
+   "response": {
+    "pulls": [],
+    "reason": "",
+    "disabled_repos": 0,
+    "skipped_repos": 0,
+    "repos_maybe_incomplete": true
+   },
+   "lane": [
+    "INCOMPLETE"
+   ]
+  },
+  "commits": {
+   "response": {
+    "repos": [
+     {
+      "name": "dmf/a",
+      "commits": []
+     },
+     {
+      "name": "dmf/b",
+      "commits": []
+     },
+     {
+      "name": "dmf/c",
+      "commits": []
+     }
+    ],
+    "reason": "",
+    "skipped_repos": 0,
+    "repos_maybe_incomplete": true
+   },
+   "lane": [
+    "INCOMPLETE",
+    "ROWS"
+   ]
+  }
+ },
+ "H11": {
+  "layers": "BCU",
+  "setup": {
+   "search": {
+    "repos": [
+     "a",
+     "b",
+     "c"
+    ],
+    "header": [
+     "3"
+    ]
+   },
+   "repos": {}
+  },
+  "asked": "derive",
+  "client_call": "search",
+  "client": {
+   "total": 3
+  },
+  "pulls": {
+   "response": {
+    "pulls": [],
+    "reason": "",
+    "disabled_repos": 0,
+    "skipped_repos": 0,
+    "repos_maybe_incomplete": false
+   },
+   "lane": [
+    "EMPTY"
+   ]
+  },
+  "commits": {
+   "response": {
+    "repos": [
+     {
+      "name": "dmf/a",
+      "commits": []
+     },
+     {
+      "name": "dmf/b",
+      "commits": []
+     },
+     {
+      "name": "dmf/c",
+      "commits": []
+     }
+    ],
+    "reason": "",
+    "skipped_repos": 0,
+    "repos_maybe_incomplete": false
+   },
+   "lane": [
+    "ROWS"
+   ]
+  }
+ },
+ "R1": {
+  "layers": "BC",
+  "setup": {
+   "search": {
+    "repos": [
+     "a"
+    ],
+    "header": null
+   },
+   "repos": {
+    "a": "rows"
+   }
+  },
+  "asked": "derive",
+  "client_call": "search",
+  "client": null,
+  "pulls": {
+   "response": {
+    "pulls": [
+     {
+      "repo": "dmf/a",
+      "number": 1,
+      "title": "PR 1 of a",
+      "state": "open",
+      "author": "ada",
+      "created": "2026-11-27T09:00:00Z",
+      "url": "http://forgejo.test/dmf/a/pulls/1"
+     }
+    ],
+    "reason": "",
+    "disabled_repos": 0,
+    "skipped_repos": 0,
+    "repos_maybe_incomplete": false
+   },
+   "lane": [
+    "ROWS"
+   ]
+  }
+ },
+ "R2": {
+  "layers": "BC",
+  "setup": {
+   "search": {
+    "repos": [
+     "a"
+    ],
+    "header": null
+   },
+   "repos": {
+    "a": "empty"
+   }
+  },
+  "asked": "derive",
+  "client_call": "search",
+  "client": null,
+  "pulls": {
+   "response": {
+    "pulls": [],
+    "reason": "",
+    "disabled_repos": 0,
+    "skipped_repos": 0,
+    "repos_maybe_incomplete": false
+   },
+   "lane": [
+    "EMPTY"
+   ]
+  }
+ },
+ "R3": {
+  "layers": "BC",
+  "setup": {
+   "search": {
+    "repos": [
+     "a:off"
+    ],
+    "header": null
+   },
+   "repos": {}
+  },
+  "asked": "derive",
+  "client_call": "search",
+  "client": null,
+  "pulls": {
+   "response": {
+    "pulls": [],
+    "reason": "forgejo-pulls-disabled",
+    "disabled_repos": 1,
+    "skipped_repos": 0,
+    "repos_maybe_incomplete": false
+   },
+   "lane": [
+    "ALLOFF"
+   ]
+  }
+ },
+ "R4a": {
+  "layers": "BC",
+  "setup": {
+   "search": {
+    "repos": [
+     "a"
+    ],
+    "header": null
+   },
+   "repos": {
+    "a": "http:404"
+   }
+  },
+  "asked": "derive",
+  "client_call": "search",
+  "client": null,
+  "pulls": {
+   "response": {
+    "pulls": [],
+    "reason": "forgejo-read-failed",
+    "disabled_repos": 0,
+    "skipped_repos": 0,
+    "repos_maybe_incomplete": false
+   },
+   "lane": [
+    "READFAIL"
+   ]
+  }
+ },
+ "R4b": {
+  "layers": "BC",
+  "setup": {
+   "search": {
+    "repos": [
+     "a"
+    ],
+    "header": null
+   },
+   "repos": {
+    "a": "http:500"
+   }
+  },
+  "asked": "derive",
+  "client_call": "search",
+  "client": null,
+  "pulls": {
+   "response": {
+    "pulls": [],
+    "reason": "forgejo-read-failed",
+    "disabled_repos": 0,
+    "skipped_repos": 0,
+    "repos_maybe_incomplete": false
+   },
+   "lane": [
+    "READFAIL"
+   ]
+  }
+ },
+ "R4c.401": {
+  "layers": "BC",
+  "setup": {
+   "search": {
+    "repos": [
+     "a"
+    ],
+    "header": null
+   },
+   "repos": {
+    "a": "http:401"
+   }
+  },
+  "asked": "derive",
+  "client_call": "search",
+  "client": null,
+  "pulls": {
+   "response": {
+    "pulls": [],
+    "reason": "forgejo-read-failed",
+    "disabled_repos": 0,
+    "skipped_repos": 0,
+    "repos_maybe_incomplete": false
+   },
+   "lane": [
+    "READFAIL"
+   ]
+  }
+ },
+ "R4c.403": {
+  "layers": "BC",
+  "setup": {
+   "search": {
+    "repos": [
+     "a"
+    ],
+    "header": null
+   },
+   "repos": {
+    "a": "http:403"
+   }
+  },
+  "asked": "derive",
+  "client_call": "search",
+  "client": null,
+  "pulls": {
+   "response": {
+    "pulls": [],
+    "reason": "forgejo-read-failed",
+    "disabled_repos": 0,
+    "skipped_repos": 0,
+    "repos_maybe_incomplete": false
+   },
+   "lane": [
+    "READFAIL"
+   ]
+  }
+ },
+ "R5a": {
+  "layers": "BC",
+  "setup": {
+   "search": {
+    "repos": [
+     "a"
+    ],
+    "header": null
+   },
+   "repos": {
+    "a": "noanswer:refused"
+   }
+  },
+  "asked": "derive",
+  "client_call": "search",
+  "client": null,
+  "pulls": {
+   "response": {
+    "pulls": [],
+    "reason": "forgejo-read-failed",
+    "disabled_repos": 0,
+    "skipped_repos": 0,
+    "repos_maybe_incomplete": false
+   },
+   "lane": [
+    "READFAIL"
+   ]
+  }
+ },
+ "R5b": {
+  "layers": "BC",
+  "setup": {
+   "search": {
+    "repos": [
+     "a"
+    ],
+    "header": null
+   },
+   "repos": {
+    "a": "noanswer:timeout"
+   }
+  },
+  "asked": "derive",
+  "client_call": "search",
+  "client": null,
+  "pulls": {
+   "response": {
+    "pulls": [],
+    "reason": "forgejo-read-failed",
+    "disabled_repos": 0,
+    "skipped_repos": 0,
+    "repos_maybe_incomplete": false
+   },
+   "lane": [
+    "READFAIL"
+   ]
+  }
+ },
+ "R7.missing": {
+  "layers": "BC",
+  "setup": {
+   "search": {
+    "repos": [
+     "a:missing"
+    ],
+    "header": null
+   },
+   "repos": {
+    "a": "rows"
+   }
+  },
+  "asked": "derive",
+  "client_call": "search",
+  "client": null,
+  "pulls": {
+   "response": {
+    "pulls": [
+     {
+      "repo": "dmf/a",
+      "number": 1,
+      "title": "PR 1 of a",
+      "state": "open",
+      "author": "ada",
+      "created": "2026-11-27T09:00:00Z",
+      "url": "http://forgejo.test/dmf/a/pulls/1"
+     }
+    ],
+    "reason": "",
+    "disabled_repos": 0,
+    "skipped_repos": 0,
+    "repos_maybe_incomplete": false
+   },
+   "lane": [
+    "ROWS"
+   ]
+  }
+ },
+ "R7.null": {
+  "layers": "BC",
+  "setup": {
+   "search": {
+    "repos": [
+     "a:null"
+    ],
+    "header": null
+   },
+   "repos": {
+    "a": "empty"
+   }
+  },
+  "asked": "derive",
+  "client_call": "search",
+  "client": null,
+  "pulls": {
+   "response": {
+    "pulls": [],
+    "reason": "",
+    "disabled_repos": 0,
+    "skipped_repos": 0,
+    "repos_maybe_incomplete": false
+   },
+   "lane": [
+    "EMPTY"
+   ]
+  }
+ },
+ "M1": {
+  "layers": "BC",
+  "setup": {
+   "search": {
+    "repos": [
+     "a:off",
+     "b"
+    ],
+    "header": null
+   },
+   "repos": {
+    "b": "empty"
+   }
+  },
+  "asked": "derive",
+  "client_call": "search",
+  "client": null,
+  "pulls": {
+   "response": {
+    "pulls": [],
+    "reason": "",
+    "disabled_repos": 1,
+    "skipped_repos": 0,
+    "repos_maybe_incomplete": false
+   },
+   "lane": [
+    "SOMEOFF"
+   ]
+  }
+ },
+ "M2": {
+  "layers": "BC",
+  "setup": {
+   "search": {
+    "repos": [
+     "a:off",
+     "b"
+    ],
+    "header": null
+   },
+   "repos": {
+    "b": "rows"
+   }
+  },
+  "asked": "derive",
+  "client_call": "search",
+  "client": null,
+  "pulls": {
+   "response": {
+    "pulls": [
+     {
+      "repo": "dmf/b",
+      "number": 1,
+      "title": "PR 1 of b",
+      "state": "open",
+      "author": "ada",
+      "created": "2026-11-27T09:00:00Z",
+      "url": "http://forgejo.test/dmf/b/pulls/1"
+     }
+    ],
+    "reason": "",
+    "disabled_repos": 1,
+    "skipped_repos": 0,
+    "repos_maybe_incomplete": false
+   },
+   "lane": [
+    "SOMEOFF",
+    "ROWS"
+   ]
+  }
+ },
+ "M3": {
+  "layers": "BC",
+  "setup": {
+   "search": {
+    "repos": [
+     "a:off",
+     "b"
+    ],
+    "header": null
+   },
+   "repos": {
+    "b": "http:404"
+   }
+  },
+  "asked": "derive",
+  "client_call": "search",
+  "client": null,
+  "pulls": {
+   "response": {
+    "pulls": [],
+    "reason": "forgejo-partial",
+    "disabled_repos": 1,
+    "skipped_repos": 0,
+    "repos_maybe_incomplete": false
+   },
+   "lane": [
+    "PARTIAL",
+    "SOMEOFF"
+   ]
+  }
+ },
+ "M3b": {
+  "layers": "BC",
+  "setup": {
+   "search": {
+    "repos": [
+     "a:off",
+     "b"
+    ],
+    "header": null
+   },
+   "repos": {
+    "b": "noanswer:refused"
+   }
+  },
+  "asked": "derive",
+  "client_call": "search",
+  "client": null,
+  "pulls": {
+   "response": {
+    "pulls": [],
+    "reason": "forgejo-partial",
+    "disabled_repos": 1,
+    "skipped_repos": 0,
+    "repos_maybe_incomplete": false
+   },
+   "lane": [
+    "PARTIAL",
+    "SOMEOFF"
+   ]
+  }
+ },
+ "M4": {
+  "layers": "BC",
+  "setup": {
+   "search": {
+    "repos": [
+     "a",
+     "b"
+    ],
+    "header": null
+   },
+   "repos": {
+    "a": "rows",
+    "b": "http:404"
+   }
+  },
+  "asked": "derive",
+  "client_call": "search",
+  "client": null,
+  "pulls": {
+   "response": {
+    "pulls": [
+     {
+      "repo": "dmf/a",
+      "number": 1,
+      "title": "PR 1 of a",
+      "state": "open",
+      "author": "ada",
+      "created": "2026-11-27T09:00:00Z",
+      "url": "http://forgejo.test/dmf/a/pulls/1"
+     }
+    ],
+    "reason": "forgejo-partial",
+    "disabled_repos": 0,
+    "skipped_repos": 0,
+    "repos_maybe_incomplete": false
+   },
+   "lane": [
+    "PARTIAL",
+    "ROWS"
+   ]
+  }
+ },
+ "M5": {
+  "layers": "BC",
+  "setup": {
+   "search": {
+    "repos": [
+     "a",
+     "b"
+    ],
+    "header": null
+   },
+   "repos": {
+    "a": "empty",
+    "b": "http:404"
+   }
+  },
+  "asked": "derive",
+  "client_call": "search",
+  "client": null,
+  "pulls": {
+   "response": {
+    "pulls": [],
+    "reason": "forgejo-partial",
+    "disabled_repos": 0,
+    "skipped_repos": 0,
+    "repos_maybe_incomplete": false
+   },
+   "lane": [
+    "PARTIAL"
+   ]
+  }
+ },
+ "M5b": {
+  "layers": "BC",
+  "setup": {
+   "search": {
+    "repos": [
+     "a",
+     "b"
+    ],
+    "header": null
+   },
+   "repos": {
+    "a": "empty",
+    "b": "noanswer:refused"
+   }
+  },
+  "asked": "derive",
+  "client_call": "search",
+  "client": null,
+  "pulls": {
+   "response": {
+    "pulls": [],
+    "reason": "forgejo-partial",
+    "disabled_repos": 0,
+    "skipped_repos": 0,
+    "repos_maybe_incomplete": false
+   },
+   "lane": [
+    "PARTIAL"
+   ]
+  }
+ },
+ "M6": {
+  "layers": "BC",
+  "setup": {
+   "search": {
+    "repos": [
+     "a",
+     "b"
+    ],
+    "header": null
+   },
+   "repos": {
+    "a": "http:404",
+    "b": "noanswer:refused"
+   }
+  },
+  "asked": "derive",
+  "client_call": "search",
+  "client": null,
+  "pulls": {
+   "response": {
+    "pulls": [],
+    "reason": "forgejo-read-failed",
+    "disabled_repos": 0,
+    "skipped_repos": 0,
+    "repos_maybe_incomplete": false
+   },
+   "lane": [
+    "READFAIL"
+   ]
+  }
+ },
+ "M7": {
+  "layers": "BC",
+  "setup": {
+   "search": {
+    "repos": [
+     "a:off",
+     "b:off"
+    ],
+    "header": null
+   },
+   "repos": {}
+  },
+  "asked": "derive",
+  "client_call": "search",
+  "client": null,
+  "pulls": {
+   "response": {
+    "pulls": [],
+    "reason": "forgejo-pulls-disabled",
+    "disabled_repos": 2,
+    "skipped_repos": 0,
+    "repos_maybe_incomplete": false
+   },
+   "lane": [
+    "ALLOFF"
+   ]
+  }
+ },
+ "M8": {
+  "layers": "BC",
+  "setup": {
+   "search": {
+    "repos": [
+     "a",
+     "b"
+    ],
+    "header": null
+   },
+   "repos": {
+    "a": "http:404",
+    "b": "http:404"
+   }
+  },
+  "asked": "derive",
+  "client_call": "search",
+  "client": null,
+  "pulls": {
+   "response": {
+    "pulls": [],
+    "reason": "forgejo-read-failed",
+    "disabled_repos": 0,
+    "skipped_repos": 0,
+    "repos_maybe_incomplete": false
+   },
+   "lane": [
+    "READFAIL"
+   ]
+  }
+ },
+ "M9": {
+  "layers": "BC",
+  "setup": {
+   "search": {
+    "repos": [
+     "a",
+     "b"
+    ],
+    "header": null
+   },
+   "repos": {
+    "a": "noanswer:refused",
+    "b": "noanswer:refused"
+   }
+  },
+  "asked": "derive",
+  "client_call": "search",
+  "client": null,
+  "pulls": {
+   "response": {
+    "pulls": [],
+    "reason": "forgejo-read-failed",
+    "disabled_repos": 0,
+    "skipped_repos": 0,
+    "repos_maybe_incomplete": false
+   },
+   "lane": [
+    "READFAIL"
+   ]
+  }
+ },
+ "M10": {
+  "layers": "BC",
+  "setup": {
+   "search": {
+    "repos": [
+     "a",
+     "b"
+    ],
+    "header": null
+   },
+   "repos": {
+    "a": "rows",
+    "b": "noanswer:refused"
+   }
+  },
+  "asked": "derive",
+  "client_call": "search",
+  "client": null,
+  "pulls": {
+   "response": {
+    "pulls": [
+     {
+      "repo": "dmf/a",
+      "number": 1,
+      "title": "PR 1 of a",
+      "state": "open",
+      "author": "ada",
+      "created": "2026-11-27T09:00:00Z",
+      "url": "http://forgejo.test/dmf/a/pulls/1"
+     }
+    ],
+    "reason": "forgejo-partial",
+    "disabled_repos": 0,
+    "skipped_repos": 0,
+    "repos_maybe_incomplete": false
+   },
+   "lane": [
+    "PARTIAL",
+    "ROWS"
+   ]
+  }
+ },
+ "M11": {
+  "layers": "BC",
+  "setup": {
+   "search": {
+    "repos": [
+     "a",
+     "b"
+    ],
+    "header": null
+   },
+   "repos": {
+    "a": "http:500",
+    "b": "http:404"
+   }
+  },
+  "asked": "derive",
+  "client_call": "search",
+  "client": null,
+  "pulls": {
+   "response": {
+    "pulls": [],
+    "reason": "forgejo-read-failed",
+    "disabled_repos": 0,
+    "skipped_repos": 0,
+    "repos_maybe_incomplete": false
+   },
+   "lane": [
+    "READFAIL"
+   ]
+  }
+ },
+ "M12": {
+  "layers": "BC",
+  "setup": {
+   "search": {
+    "repos": [
+     "a:off",
+     "b:off",
+     "c"
+    ],
+    "header": null
+   },
+   "repos": {
+    "c": "http:404"
+   }
+  },
+  "asked": "derive",
+  "client_call": "search",
+  "client": null,
+  "pulls": {
+   "response": {
+    "pulls": [],
+    "reason": "forgejo-partial",
+    "disabled_repos": 2,
+    "skipped_repos": 0,
+    "repos_maybe_incomplete": false
+   },
+   "lane": [
+    "PARTIAL",
+    "SOMEOFF"
+   ]
+  }
+ },
+ "M13": {
+  "layers": "BC",
+  "setup": {
+   "search": {
+    "repos": [
+     "a",
+     "b"
+    ],
+    "header": null
+   },
+   "repos": {
+    "a": "rows",
+    "b": "empty"
+   }
+  },
+  "asked": "derive",
+  "client_call": "search",
+  "client": null,
+  "pulls": {
+   "response": {
+    "pulls": [
+     {
+      "repo": "dmf/a",
+      "number": 1,
+      "title": "PR 1 of a",
+      "state": "open",
+      "author": "ada",
+      "created": "2026-11-27T09:00:00Z",
+      "url": "http://forgejo.test/dmf/a/pulls/1"
+     }
+    ],
+    "reason": "",
+    "disabled_repos": 0,
+    "skipped_repos": 0,
+    "repos_maybe_incomplete": false
+   },
+   "lane": [
+    "ROWS"
+   ]
+  }
+ },
+ "M14": {
+  "layers": "BC",
+  "setup": {
+   "search": {
+    "repos": [
+     "a:off",
+     "b",
+     "c"
+    ],
+    "header": null
+   },
+   "repos": {
+    "b": "noanswer:refused",
+    "c": "http:404"
+   }
+  },
+  "asked": "derive",
+  "client_call": "search",
+  "client": null,
+  "pulls": {
+   "response": {
+    "pulls": [],
+    "reason": "forgejo-partial",
+    "disabled_repos": 1,
+    "skipped_repos": 0,
+    "repos_maybe_incomplete": false
+   },
+   "lane": [
+    "PARTIAL",
+    "SOMEOFF"
+   ]
+  }
+ },
+ "K1": {
+  "layers": "BC",
+  "setup": {
+   "search": {
+    "repos": [
+     "a",
+     "b",
+     "c",
+     "d",
+     "e",
+     "f",
+     "g"
+    ],
+    "header": null
+   },
+   "repos": {}
+  },
+  "asked": "derive",
+  "client_call": "search",
+  "client": null,
+  "pulls": {
+   "response": {
+    "pulls": [],
+    "reason": "",
+    "disabled_repos": 0,
+    "skipped_repos": 2,
+    "repos_maybe_incomplete": false
+   },
+   "lane": [
+    "SKIPPED:2"
+   ]
+  }
+ },
+ "K2": {
+  "layers": "BC",
+  "setup": {
+   "search": {
+    "repos": [
+     "a:off",
+     "b",
+     "c",
+     "d",
+     "e",
+     "f",
+     "g"
+    ],
+    "header": null
+   },
+   "repos": {}
+  },
+  "asked": "derive",
+  "client_call": "search",
+  "client": null,
+  "pulls": {
+   "response": {
+    "pulls": [],
+    "reason": "",
+    "disabled_repos": 1,
+    "skipped_repos": 1,
+    "repos_maybe_incomplete": false
+   },
+   "lane": [
+    "SOMEOFF",
+    "SKIPPED:1"
+   ]
+  }
+ },
+ "K3": {
+  "layers": "BC",
+  "setup": {
+   "search": {
+    "repos": [
+     "a:off",
+     "b",
+     "c",
+     "d",
+     "e",
+     "f"
+    ],
+    "header": null
+   },
+   "repos": {}
+  },
+  "asked": "derive",
+  "client_call": "search",
+  "client": null,
+  "pulls": {
+   "response": {
+    "pulls": [],
+    "reason": "",
+    "disabled_repos": 1,
+    "skipped_repos": 0,
+    "repos_maybe_incomplete": false
+   },
+   "lane": [
+    "SOMEOFF"
+   ]
+  }
+ },
+ "K4": {
+  "layers": "BC",
+  "setup": {
+   "search": {
+    "repos": [
+     "a",
+     "b",
+     "c",
+     "d",
+     "e",
+     "f",
+     "g"
+    ],
+    "header": null
+   },
+   "repos": {
+    "a": "rows",
+    "b": "rows",
+    "c": "rows",
+    "d": "rows",
+    "e": "rows"
+   }
+  },
+  "asked": "derive",
+  "client_call": "search",
+  "client": null,
+  "pulls": {
+   "response": {
+    "pulls": [
+     {
+      "repo": "dmf/a",
+      "number": 1,
+      "title": "PR 1 of a",
+      "state": "open",
+      "author": "ada",
+      "created": "2026-11-27T09:00:00Z",
+      "url": "http://forgejo.test/dmf/a/pulls/1"
+     },
+     {
+      "repo": "dmf/b",
+      "number": 1,
+      "title": "PR 1 of b",
+      "state": "open",
+      "author": "ada",
+      "created": "2026-11-27T09:00:00Z",
+      "url": "http://forgejo.test/dmf/b/pulls/1"
+     },
+     {
+      "repo": "dmf/c",
+      "number": 1,
+      "title": "PR 1 of c",
+      "state": "open",
+      "author": "ada",
+      "created": "2026-11-27T09:00:00Z",
+      "url": "http://forgejo.test/dmf/c/pulls/1"
+     },
+     {
+      "repo": "dmf/d",
+      "number": 1,
+      "title": "PR 1 of d",
+      "state": "open",
+      "author": "ada",
+      "created": "2026-11-27T09:00:00Z",
+      "url": "http://forgejo.test/dmf/d/pulls/1"
+     },
+     {
+      "repo": "dmf/e",
+      "number": 1,
+      "title": "PR 1 of e",
+      "state": "open",
+      "author": "ada",
+      "created": "2026-11-27T09:00:00Z",
+      "url": "http://forgejo.test/dmf/e/pulls/1"
+     }
+    ],
+    "reason": "",
+    "disabled_repos": 0,
+    "skipped_repos": 2,
+    "repos_maybe_incomplete": false
+   },
+   "lane": [
+    "SKIPPED:2",
+    "ROWS"
+   ]
+  }
+ },
+ "K5": {
+  "layers": "BC",
+  "setup": {
+   "search": {
+    "repos": [
+     "a",
+     "b",
+     "c",
+     "d",
+     "e",
+     "f",
+     "g"
+    ],
+    "header": null
+   },
+   "repos": {
+    "a": "http:404"
+   }
+  },
+  "asked": "derive",
+  "client_call": "search",
+  "client": null,
+  "pulls": {
+   "response": {
+    "pulls": [],
+    "reason": "forgejo-partial",
+    "disabled_repos": 0,
+    "skipped_repos": 2,
+    "repos_maybe_incomplete": false
+   },
+   "lane": [
+    "PARTIAL",
+    "SKIPPED:2"
+   ]
+  }
+ },
+ "K6": {
+  "layers": "BC",
+  "setup": {
+   "search": {
+    "repos": [
+     "a",
+     "b",
+     "c",
+     "d",
+     "e",
+     "f",
+     "g"
+    ],
+    "header": null
+   },
+   "repos": {
+    "a": "http:404",
+    "b": "http:404",
+    "c": "http:404",
+    "d": "http:404",
+    "e": "http:404"
+   }
+  },
+  "asked": "derive",
+  "client_call": "search",
+  "client": null,
+  "pulls": {
+   "response": {
+    "pulls": [],
+    "reason": "forgejo-read-failed",
+    "disabled_repos": 0,
+    "skipped_repos": 2,
+    "repos_maybe_incomplete": false
+   },
+   "lane": [
+    "READFAIL",
+    "SKIPPED:2"
+   ]
+  }
+ },
+ "K7": {
+  "layers": "BC",
+  "setup": {
+   "search": {
+    "repos": [
+     "a",
+     "b",
+     "c",
+     "d",
+     "e"
+    ],
+    "header": null
+   },
+   "repos": {}
+  },
+  "asked": "derive",
+  "client_call": "search",
+  "client": null,
+  "pulls": {
+   "response": {
+    "pulls": [],
+    "reason": "",
+    "disabled_repos": 0,
+    "skipped_repos": 0,
+    "repos_maybe_incomplete": false
+   },
+   "lane": [
+    "EMPTY"
+   ]
+  }
+ },
+ "M16": {
+  "layers": "BC",
+  "setup": {
+   "search": {
+    "repos": [
+     "a:off",
+     "b:off",
+     "c:off",
+     "d",
+     "e",
+     "f",
+     "g"
+    ],
+    "header": null
+   },
+   "repos": {
+    "d": "rows",
+    "e": "rows",
+    "f": "rows",
+    "g": "rows"
+   }
+  },
+  "asked": "derive",
+  "client_call": "search",
+  "client": null,
+  "pulls": {
+   "response": {
+    "pulls": [
+     {
+      "repo": "dmf/d",
+      "number": 1,
+      "title": "PR 1 of d",
+      "state": "open",
+      "author": "ada",
+      "created": "2026-11-27T09:00:00Z",
+      "url": "http://forgejo.test/dmf/d/pulls/1"
+     },
+     {
+      "repo": "dmf/e",
+      "number": 1,
+      "title": "PR 1 of e",
+      "state": "open",
+      "author": "ada",
+      "created": "2026-11-27T09:00:00Z",
+      "url": "http://forgejo.test/dmf/e/pulls/1"
+     },
+     {
+      "repo": "dmf/f",
+      "number": 1,
+      "title": "PR 1 of f",
+      "state": "open",
+      "author": "ada",
+      "created": "2026-11-27T09:00:00Z",
+      "url": "http://forgejo.test/dmf/f/pulls/1"
+     },
+     {
+      "repo": "dmf/g",
+      "number": 1,
+      "title": "PR 1 of g",
+      "state": "open",
+      "author": "ada",
+      "created": "2026-11-27T09:00:00Z",
+      "url": "http://forgejo.test/dmf/g/pulls/1"
+     }
+    ],
+    "reason": "",
+    "disabled_repos": 3,
+    "skipped_repos": 0,
+    "repos_maybe_incomplete": false
+   },
+   "lane": [
+    "SOMEOFF",
+    "ROWS"
+   ]
+  }
+ },
+ "M17": {
+  "layers": "BC",
+  "setup": {
+   "search": {
+    "repos": [
+     "a:off",
+     "b:off",
+     "c",
+     "d",
+     "e",
+     "f",
+     "g",
+     "h"
+    ],
+    "header": null
+   },
+   "repos": {
+    "c": "rows",
+    "d": "rows",
+    "e": "rows",
+    "f": "rows",
+    "g": "rows"
+   }
+  },
+  "asked": "derive",
+  "client_call": "search",
+  "client": null,
+  "pulls": {
+   "response": {
+    "pulls": [
+     {
+      "repo": "dmf/c",
+      "number": 1,
+      "title": "PR 1 of c",
+      "state": "open",
+      "author": "ada",
+      "created": "2026-11-27T09:00:00Z",
+      "url": "http://forgejo.test/dmf/c/pulls/1"
+     },
+     {
+      "repo": "dmf/d",
+      "number": 1,
+      "title": "PR 1 of d",
+      "state": "open",
+      "author": "ada",
+      "created": "2026-11-27T09:00:00Z",
+      "url": "http://forgejo.test/dmf/d/pulls/1"
+     },
+     {
+      "repo": "dmf/e",
+      "number": 1,
+      "title": "PR 1 of e",
+      "state": "open",
+      "author": "ada",
+      "created": "2026-11-27T09:00:00Z",
+      "url": "http://forgejo.test/dmf/e/pulls/1"
+     },
+     {
+      "repo": "dmf/f",
+      "number": 1,
+      "title": "PR 1 of f",
+      "state": "open",
+      "author": "ada",
+      "created": "2026-11-27T09:00:00Z",
+      "url": "http://forgejo.test/dmf/f/pulls/1"
+     },
+     {
+      "repo": "dmf/g",
+      "number": 1,
+      "title": "PR 1 of g",
+      "state": "open",
+      "author": "ada",
+      "created": "2026-11-27T09:00:00Z",
+      "url": "http://forgejo.test/dmf/g/pulls/1"
+     }
+    ],
+    "reason": "",
+    "disabled_repos": 2,
+    "skipped_repos": 1,
+    "repos_maybe_incomplete": false
+   },
+   "lane": [
+    "SOMEOFF",
+    "SKIPPED:1",
+    "ROWS"
+   ]
+  }
+ },
+ "T1a": {
+  "layers": "BC",
+  "setup": {
+   "search": {
+    "repos": [
+     {
+      "repeat": 5,
+      "name": "e"
+     },
+     {
+      "repeat": 44,
+      "name": "o",
+      "off": "off"
+     }
+    ],
+    "header": null
+   },
+   "repos": {}
+  },
+  "asked": "derive",
+  "client_call": "search",
+  "client": null,
+  "pulls": {
+   "response": {
+    "pulls": [],
+    "reason": "",
+    "disabled_repos": 44,
+    "skipped_repos": 0,
+    "repos_maybe_incomplete": false
+   },
+   "lane": [
+    "SOMEOFF"
+   ]
+  }
+ },
+ "T1b": {
+  "layers": "BC",
+  "setup": {
+   "search": {
+    "repos": [
+     {
+      "repeat": 5,
+      "name": "e"
+     },
+     {
+      "repeat": 44,
+      "name": "o",
+      "off": "off"
+     }
+    ],
+    "header": [
+     "49"
+    ]
+   },
+   "repos": {}
+  },
+  "asked": "derive",
+  "client_call": "search",
+  "client": null,
+  "pulls": {
+   "response": {
+    "pulls": [],
+    "reason": "",
+    "disabled_repos": 44,
+    "skipped_repos": 0,
+    "repos_maybe_incomplete": false
+   },
+   "lane": [
+    "SOMEOFF"
+   ]
+  }
+ },
+ "T1c": {
+  "layers": "BC",
+  "setup": {
+   "search": {
+    "repos": [
+     {
+      "repeat": 5,
+      "name": "e"
+     },
+     {
+      "repeat": 44,
+      "name": "o",
+      "off": "off"
+     }
+    ],
+    "header": [
+     "60"
+    ]
+   },
+   "repos": {}
+  },
+  "asked": "derive",
+  "client_call": "search",
+  "client": null,
+  "pulls": {
+   "response": {
+    "pulls": [],
+    "reason": "",
+    "disabled_repos": 44,
+    "skipped_repos": 0,
+    "repos_maybe_incomplete": true
+   },
+   "lane": [
+    "SOMEOFF",
+    "INCOMPLETE"
+   ]
+  }
+ },
+ "T2a": {
+  "layers": "BC",
+  "setup": {
+   "search": {
+    "repos": [
+     {
+      "repeat": 5,
+      "name": "e"
+     },
+     {
+      "repeat": 45,
+      "name": "o",
+      "off": "off"
+     }
+    ],
+    "header": null
+   },
+   "repos": {}
+  },
+  "asked": "derive",
+  "client_call": "search",
+  "client": null,
+  "pulls": {
+   "response": {
+    "pulls": [],
+    "reason": "",
+    "disabled_repos": 45,
+    "skipped_repos": 0,
+    "repos_maybe_incomplete": true
+   },
+   "lane": [
+    "SOMEOFF",
+    "INCOMPLETE"
+   ]
+  }
+ },
+ "T2b": {
+  "layers": "BC",
+  "setup": {
+   "search": {
+    "repos": [
+     {
+      "repeat": 5,
+      "name": "e"
+     },
+     {
+      "repeat": 45,
+      "name": "o",
+      "off": "off"
+     }
+    ],
+    "header": [
+     "50"
+    ]
+   },
+   "repos": {}
+  },
+  "asked": "derive",
+  "client_call": "search",
+  "client": null,
+  "pulls": {
+   "response": {
+    "pulls": [],
+    "reason": "",
+    "disabled_repos": 45,
+    "skipped_repos": 0,
+    "repos_maybe_incomplete": false
+   },
+   "lane": [
+    "SOMEOFF"
+   ]
+  }
+ },
+ "T3a": {
+  "layers": "BC",
+  "setup": {
+   "search": {
+    "repos": [
+     {
+      "repeat": 50,
+      "name": "o",
+      "off": "off"
+     }
+    ],
+    "header": null
+   },
+   "repos": {}
+  },
+  "asked": "derive",
+  "client_call": "search",
+  "client": null,
+  "pulls": {
+   "response": {
+    "pulls": [],
+    "reason": "forgejo-pulls-disabled",
+    "disabled_repos": 50,
+    "skipped_repos": 0,
+    "repos_maybe_incomplete": true
+   },
+   "lane": [
+    "ALLOFF",
+    "INCOMPLETE"
+   ]
+  }
+ },
+ "T3b": {
+  "layers": "BC",
+  "setup": {
+   "search": {
+    "repos": [
+     {
+      "repeat": 50,
+      "name": "o",
+      "off": "off"
+     }
+    ],
+    "header": [
+     "50"
+    ]
+   },
+   "repos": {}
+  },
+  "asked": "derive",
+  "client_call": "search",
+  "client": null,
+  "pulls": {
+   "response": {
+    "pulls": [],
+    "reason": "forgejo-pulls-disabled",
+    "disabled_repos": 50,
+    "skipped_repos": 0,
+    "repos_maybe_incomplete": false
+   },
+   "lane": [
+    "ALLOFF"
+   ]
+  }
+ },
+ "T4a": {
+  "layers": "BC",
+  "setup": {
+   "search": {
+    "repos": [
+     {
+      "repeat": 5,
+      "name": "e"
+     },
+     {
+      "repeat": 45,
+      "name": "o",
+      "off": "off"
+     }
+    ],
+    "header": null
+   },
+   "repos": {
+    "e0": "rows",
+    "e1": "rows",
+    "e2": "rows",
+    "e3": "rows",
+    "e4": "rows"
+   }
+  },
+  "asked": "derive",
+  "client_call": "search",
+  "client": null,
+  "pulls": {
+   "response": {
+    "pulls": [
+     {
+      "repo": "dmf/e0",
+      "number": 1,
+      "title": "PR 1 of e0",
+      "state": "open",
+      "author": "ada",
+      "created": "2026-11-27T09:00:00Z",
+      "url": "http://forgejo.test/dmf/e0/pulls/1"
+     },
+     {
+      "repo": "dmf/e1",
+      "number": 1,
+      "title": "PR 1 of e1",
+      "state": "open",
+      "author": "ada",
+      "created": "2026-11-27T09:00:00Z",
+      "url": "http://forgejo.test/dmf/e1/pulls/1"
+     },
+     {
+      "repo": "dmf/e2",
+      "number": 1,
+      "title": "PR 1 of e2",
+      "state": "open",
+      "author": "ada",
+      "created": "2026-11-27T09:00:00Z",
+      "url": "http://forgejo.test/dmf/e2/pulls/1"
+     },
+     {
+      "repo": "dmf/e3",
+      "number": 1,
+      "title": "PR 1 of e3",
+      "state": "open",
+      "author": "ada",
+      "created": "2026-11-27T09:00:00Z",
+      "url": "http://forgejo.test/dmf/e3/pulls/1"
+     },
+     {
+      "repo": "dmf/e4",
+      "number": 1,
+      "title": "PR 1 of e4",
+      "state": "open",
+      "author": "ada",
+      "created": "2026-11-27T09:00:00Z",
+      "url": "http://forgejo.test/dmf/e4/pulls/1"
+     }
+    ],
+    "reason": "",
+    "disabled_repos": 45,
+    "skipped_repos": 0,
+    "repos_maybe_incomplete": true
+   },
+   "lane": [
+    "SOMEOFF",
+    "INCOMPLETE",
+    "ROWS"
+   ]
+  }
+ },
+ "T4b": {
+  "layers": "BC",
+  "setup": {
+   "search": {
+    "repos": [
+     {
+      "repeat": 5,
+      "name": "e"
+     },
+     {
+      "repeat": 45,
+      "name": "o",
+      "off": "off"
+     }
+    ],
+    "header": [
+     "80"
+    ]
+   },
+   "repos": {
+    "e0": "rows",
+    "e1": "rows",
+    "e2": "rows",
+    "e3": "rows",
+    "e4": "rows"
+   }
+  },
+  "asked": "derive",
+  "client_call": "search",
+  "client": null,
+  "pulls": {
+   "response": {
+    "pulls": [
+     {
+      "repo": "dmf/e0",
+      "number": 1,
+      "title": "PR 1 of e0",
+      "state": "open",
+      "author": "ada",
+      "created": "2026-11-27T09:00:00Z",
+      "url": "http://forgejo.test/dmf/e0/pulls/1"
+     },
+     {
+      "repo": "dmf/e1",
+      "number": 1,
+      "title": "PR 1 of e1",
+      "state": "open",
+      "author": "ada",
+      "created": "2026-11-27T09:00:00Z",
+      "url": "http://forgejo.test/dmf/e1/pulls/1"
+     },
+     {
+      "repo": "dmf/e2",
+      "number": 1,
+      "title": "PR 1 of e2",
+      "state": "open",
+      "author": "ada",
+      "created": "2026-11-27T09:00:00Z",
+      "url": "http://forgejo.test/dmf/e2/pulls/1"
+     },
+     {
+      "repo": "dmf/e3",
+      "number": 1,
+      "title": "PR 1 of e3",
+      "state": "open",
+      "author": "ada",
+      "created": "2026-11-27T09:00:00Z",
+      "url": "http://forgejo.test/dmf/e3/pulls/1"
+     },
+     {
+      "repo": "dmf/e4",
+      "number": 1,
+      "title": "PR 1 of e4",
+      "state": "open",
+      "author": "ada",
+      "created": "2026-11-27T09:00:00Z",
+      "url": "http://forgejo.test/dmf/e4/pulls/1"
+     }
+    ],
+    "reason": "",
+    "disabled_repos": 45,
+    "skipped_repos": 0,
+    "repos_maybe_incomplete": true
+   },
+   "lane": [
+    "SOMEOFF",
+    "INCOMPLETE",
+    "ROWS"
+   ]
+  }
+ },
+ "T5": {
+  "layers": "BC",
+  "setup": {
+   "search": {
+    "repos": [
+     {
+      "repeat": 5,
+      "name": "o",
+      "off": "off"
+     },
+     {
+      "repeat": 45,
+      "name": "e"
+     }
+    ],
+    "header": null
+   },
+   "repos": {}
+  },
+  "asked": "derive",
+  "client_call": "search",
+  "client": null,
+  "pulls": {
+   "response": {
+    "pulls": [],
+    "reason": "",
+    "disabled_repos": 5,
+    "skipped_repos": 40,
+    "repos_maybe_incomplete": true
+   },
+   "lane": [
+    "SOMEOFF",
+    "SKIPPED:40",
+    "INCOMPLETE"
+   ]
+  }
+ },
+ "W1": {
+  "layers": "BU",
+  "setup": {
+   "search": {
+    "repos": [
+     "a"
+    ],
+    "header": null
+   },
+   "repos": {
+    "a": "raw:{"
+   }
+  },
+  "asked": "derive",
+  "client_call": "list_pulls",
+  "client": "ForgejoReadFailed",
+  "pulls": {
+   "response": {
+    "pulls": [],
+    "reason": "forgejo-read-failed",
+    "disabled_repos": 0,
+    "skipped_repos": 0,
+    "repos_maybe_incomplete": false
+   },
+   "lane": [
+    "READFAIL"
+   ]
+  }
+ },
+ "W2": {
+  "layers": "BU",
+  "setup": {
+   "search": {
+    "repos": [
+     "a"
+    ],
+    "header": null
+   },
+   "repos": {
+    "a": {
+     "json": {
+      "a": 1
+     }
+    }
+   }
+  },
+  "asked": "derive",
+  "client_call": "list_pulls",
+  "client": "ForgejoReadFailed",
+  "pulls": {
+   "response": {
+    "pulls": [],
+    "reason": "forgejo-read-failed",
+    "disabled_repos": 0,
+    "skipped_repos": 0,
+    "repos_maybe_incomplete": false
+   },
+   "lane": [
+    "READFAIL"
+   ]
+  }
+ },
+ "W3": {
+  "layers": "BU",
+  "setup": {
+   "search": {
+    "repos": [
+     "a"
+    ],
+    "header": null
+   },
+   "repos": {
+    "a": {
+     "json": "x"
+    }
+   }
+  },
+  "asked": "derive",
+  "client_call": "list_pulls",
+  "client": "ForgejoReadFailed",
+  "pulls": {
+   "response": {
+    "pulls": [],
+    "reason": "forgejo-read-failed",
+    "disabled_repos": 0,
+    "skipped_repos": 0,
+    "repos_maybe_incomplete": false
+   },
+   "lane": [
+    "READFAIL"
+   ]
+  }
+ },
+ "W4": {
+  "layers": "BU",
+  "setup": {
+   "search": {
+    "repos": [
+     "a"
+    ],
+    "header": null
+   },
+   "repos": {
+    "a": {
+     "json": 3
+    }
+   }
+  },
+  "asked": "derive",
+  "client_call": "list_pulls",
+  "client": "ForgejoReadFailed",
+  "pulls": {
+   "response": {
+    "pulls": [],
+    "reason": "forgejo-read-failed",
+    "disabled_repos": 0,
+    "skipped_repos": 0,
+    "repos_maybe_incomplete": false
+   },
+   "lane": [
+    "READFAIL"
+   ]
+  }
+ },
+ "W5": {
+  "layers": "BU",
+  "setup": {
+   "search": {
+    "repos": [
+     "a"
+    ],
+    "header": null
+   },
+   "repos": {
+    "a": {
+     "json": null
+    }
+   }
+  },
+  "asked": "derive",
+  "client_call": "list_pulls",
+  "client": "ForgejoReadFailed",
+  "pulls": {
+   "response": {
+    "pulls": [],
+    "reason": "forgejo-read-failed",
+    "disabled_repos": 0,
+    "skipped_repos": 0,
+    "repos_maybe_incomplete": false
+   },
+   "lane": [
+    "READFAIL"
+   ]
+  }
+ },
+ "W6": {
+  "layers": "BU",
+  "setup": {
+   "search": {
+    "repos": [
+     "a"
+    ],
+    "header": null
+   },
+   "repos": {
+    "a": {
+     "json": {}
+    }
+   }
+  },
+  "asked": "derive",
+  "client_call": "list_pulls",
+  "client": "ForgejoReadFailed",
+  "pulls": {
+   "response": {
+    "pulls": [],
+    "reason": "forgejo-read-failed",
+    "disabled_repos": 0,
+    "skipped_repos": 0,
+    "repos_maybe_incomplete": false
+   },
+   "lane": [
+    "READFAIL"
+   ]
+  }
+ },
+ "W7": {
+  "layers": "BU",
+  "setup": {
+   "search": {
+    "repos": [
+     "a"
+    ],
+    "header": null
+   },
+   "repos": {
+    "a": {
+     "json": ""
+    }
+   }
+  },
+  "asked": "derive",
+  "client_call": "list_pulls",
+  "client": "ForgejoReadFailed",
+  "pulls": {
+   "response": {
+    "pulls": [],
+    "reason": "forgejo-read-failed",
+    "disabled_repos": 0,
+    "skipped_repos": 0,
+    "repos_maybe_incomplete": false
+   },
+   "lane": [
+    "READFAIL"
+   ]
+  }
+ },
+ "W8": {
+  "layers": "BU",
+  "setup": {
+   "search": {
+    "repos": [
+     "a"
+    ],
+    "header": null
+   },
+   "repos": {
+    "a": "raw:"
+   }
+  },
+  "asked": "derive",
+  "client_call": "list_pulls",
+  "client": "ForgejoReadFailed",
+  "pulls": {
+   "response": {
+    "pulls": [],
+    "reason": "forgejo-read-failed",
+    "disabled_repos": 0,
+    "skipped_repos": 0,
+    "repos_maybe_incomplete": false
+   },
+   "lane": [
+    "READFAIL"
+   ]
+  }
+ },
+ "W9.null": {
+  "layers": "BU",
+  "setup": {
+   "search": {
+    "repos": [
+     "a"
+    ],
+    "header": null
+   },
+   "repos": {
+    "a": {
+     "json": [
+      "$GOOD",
+      null
+     ]
+    }
+   }
+  },
+  "asked": "derive",
+  "client_call": "list_pulls",
+  "client": "ForgejoReadFailed",
+  "pulls": {
+   "response": {
+    "pulls": [],
+    "reason": "forgejo-read-failed",
+    "disabled_repos": 0,
+    "skipped_repos": 0,
+    "repos_maybe_incomplete": false
+   },
+   "lane": [
+    "READFAIL"
+   ]
+  }
+ },
+ "W9.string": {
+  "layers": "BU",
+  "setup": {
+   "search": {
+    "repos": [
+     "a"
+    ],
+    "header": null
+   },
+   "repos": {
+    "a": {
+     "json": [
+      "$GOOD",
+      "s"
+     ]
+    }
+   }
+  },
+  "asked": "derive",
+  "client_call": "list_pulls",
+  "client": "ForgejoReadFailed",
+  "pulls": {
+   "response": {
+    "pulls": [],
+    "reason": "forgejo-read-failed",
+    "disabled_repos": 0,
+    "skipped_repos": 0,
+    "repos_maybe_incomplete": false
+   },
+   "lane": [
+    "READFAIL"
+   ]
+  }
+ },
+ "W9.number": {
+  "layers": "BU",
+  "setup": {
+   "search": {
+    "repos": [
+     "a"
+    ],
+    "header": null
+   },
+   "repos": {
+    "a": {
+     "json": [
+      "$GOOD",
+      3
+     ]
+    }
+   }
+  },
+  "asked": "derive",
+  "client_call": "list_pulls",
+  "client": "ForgejoReadFailed",
+  "pulls": {
+   "response": {
+    "pulls": [],
+    "reason": "forgejo-read-failed",
+    "disabled_repos": 0,
+    "skipped_repos": 0,
+    "repos_maybe_incomplete": false
+   },
+   "lane": [
+    "READFAIL"
+   ]
+  }
+ },
+ "W9.list": {
+  "layers": "BU",
+  "setup": {
+   "search": {
+    "repos": [
+     "a"
+    ],
+    "header": null
+   },
+   "repos": {
+    "a": {
+     "json": [
+      "$GOOD",
+      []
+     ]
+    }
+   }
+  },
+  "asked": "derive",
+  "client_call": "list_pulls",
+  "client": "ForgejoReadFailed",
+  "pulls": {
+   "response": {
+    "pulls": [],
+    "reason": "forgejo-read-failed",
+    "disabled_repos": 0,
+    "skipped_repos": 0,
+    "repos_maybe_incomplete": false
+   },
+   "lane": [
+    "READFAIL"
+   ]
+  }
+ },
+ "W10": {
+  "layers": "BU",
+  "setup": {
+   "search": {
+    "repos": [
+     "a"
+    ],
+    "header": null
+   },
+   "repos": {
+    "a": {
+     "json": [
+      {
+       "number": 1,
+       "title": "t",
+       "state": "open",
+       "user": null,
+       "created_at": "c",
+       "html_url": "u"
+      }
+     ]
+    }
+   }
+  },
+  "asked": "derive",
+  "client_call": "list_pulls",
+  "client": "ForgejoReadFailed",
+  "pulls": {
+   "response": {
+    "pulls": [],
+    "reason": "forgejo-read-failed",
+    "disabled_repos": 0,
+    "skipped_repos": 0,
+    "repos_maybe_incomplete": false
+   },
+   "lane": [
+    "READFAIL"
+   ]
+  }
+ },
+ "W11.string": {
+  "layers": "BU",
+  "setup": {
+   "search": {
+    "repos": [
+     "a"
+    ],
+    "header": null
+   },
+   "repos": {
+    "a": {
+     "json": [
+      {
+       "number": 1,
+       "title": "t",
+       "state": "open",
+       "user": "ada",
+       "created_at": "c",
+       "html_url": "u"
+      }
+     ]
+    }
+   }
+  },
+  "asked": "derive",
+  "client_call": "list_pulls",
+  "client": "ForgejoReadFailed",
+  "pulls": {
+   "response": {
+    "pulls": [],
+    "reason": "forgejo-read-failed",
+    "disabled_repos": 0,
+    "skipped_repos": 0,
+    "repos_maybe_incomplete": false
+   },
+   "lane": [
+    "READFAIL"
+   ]
+  }
+ },
+ "W11.list": {
+  "layers": "BU",
+  "setup": {
+   "search": {
+    "repos": [
+     "a"
+    ],
+    "header": null
+   },
+   "repos": {
+    "a": {
+     "json": [
+      {
+       "number": 1,
+       "title": "t",
+       "state": "open",
+       "user": [],
+       "created_at": "c",
+       "html_url": "u"
+      }
+     ]
+    }
+   }
+  },
+  "asked": "derive",
+  "client_call": "list_pulls",
+  "client": "ForgejoReadFailed",
+  "pulls": {
+   "response": {
+    "pulls": [],
+    "reason": "forgejo-read-failed",
+    "disabled_repos": 0,
+    "skipped_repos": 0,
+    "repos_maybe_incomplete": false
+   },
+   "lane": [
+    "READFAIL"
+   ]
+  }
+ },
+ "W12.number-string": {
+  "layers": "BU",
+  "setup": {
+   "search": {
+    "repos": [
+     "a"
+    ],
+    "header": null
+   },
+   "repos": {
+    "a": {
+     "json": [
+      {
+       "number": "7",
+       "title": "t",
+       "state": "open",
+       "user": {
+        "login": "a"
+       },
+       "created_at": "c",
+       "html_url": "u"
+      }
+     ]
+    }
+   }
+  },
+  "asked": "derive",
+  "client_call": "list_pulls",
+  "client": "ForgejoReadFailed",
+  "pulls": {
+   "response": {
+    "pulls": [],
+    "reason": "forgejo-read-failed",
+    "disabled_repos": 0,
+    "skipped_repos": 0,
+    "repos_maybe_incomplete": false
+   },
+   "lane": [
+    "READFAIL"
+   ]
+  }
+ },
+ "W12.number-float": {
+  "layers": "BU",
+  "setup": {
+   "search": {
+    "repos": [
+     "a"
+    ],
+    "header": null
+   },
+   "repos": {
+    "a": {
+     "json": [
+      {
+       "number": 7.5,
+       "title": "t",
+       "state": "open",
+       "user": {
+        "login": "a"
+       },
+       "created_at": "c",
+       "html_url": "u"
+      }
+     ]
+    }
+   }
+  },
+  "asked": "derive",
+  "client_call": "list_pulls",
+  "client": "ForgejoReadFailed",
+  "pulls": {
+   "response": {
+    "pulls": [],
+    "reason": "forgejo-read-failed",
+    "disabled_repos": 0,
+    "skipped_repos": 0,
+    "repos_maybe_incomplete": false
+   },
+   "lane": [
+    "READFAIL"
+   ]
+  }
+ },
+ "W12.number-bool": {
+  "layers": "BU",
+  "setup": {
+   "search": {
+    "repos": [
+     "a"
+    ],
+    "header": null
+   },
+   "repos": {
+    "a": {
+     "json": [
+      {
+       "number": true,
+       "title": "t",
+       "state": "open",
+       "user": {
+        "login": "a"
+       },
+       "created_at": "c",
+       "html_url": "u"
+      }
+     ]
+    }
+   }
+  },
+  "asked": "derive",
+  "client_call": "list_pulls",
+  "client": "ForgejoReadFailed",
+  "pulls": {
+   "response": {
+    "pulls": [],
+    "reason": "forgejo-read-failed",
+    "disabled_repos": 0,
+    "skipped_repos": 0,
+    "repos_maybe_incomplete": false
+   },
+   "lane": [
+    "READFAIL"
+   ]
+  }
+ },
+ "W12.number-null": {
+  "layers": "BU",
+  "setup": {
+   "search": {
+    "repos": [
+     "a"
+    ],
+    "header": null
+   },
+   "repos": {
+    "a": {
+     "json": [
+      {
+       "number": null,
+       "title": "t",
+       "state": "open",
+       "user": {
+        "login": "a"
+       },
+       "created_at": "c",
+       "html_url": "u"
+      }
+     ]
+    }
+   }
+  },
+  "asked": "derive",
+  "client_call": "list_pulls",
+  "client": "ForgejoReadFailed",
+  "pulls": {
+   "response": {
+    "pulls": [],
+    "reason": "forgejo-read-failed",
+    "disabled_repos": 0,
+    "skipped_repos": 0,
+    "repos_maybe_incomplete": false
+   },
+   "lane": [
+    "READFAIL"
+   ]
+  }
+ },
+ "W12.title-number": {
+  "layers": "BU",
+  "setup": {
+   "search": {
+    "repos": [
+     "a"
+    ],
+    "header": null
+   },
+   "repos": {
+    "a": {
+     "json": [
+      {
+       "number": 1,
+       "title": 5,
+       "state": "open",
+       "user": {
+        "login": "a"
+       },
+       "created_at": "c",
+       "html_url": "u"
+      }
+     ]
+    }
+   }
+  },
+  "asked": "derive",
+  "client_call": "list_pulls",
+  "client": "ForgejoReadFailed",
+  "pulls": {
+   "response": {
+    "pulls": [],
+    "reason": "forgejo-read-failed",
+    "disabled_repos": 0,
+    "skipped_repos": 0,
+    "repos_maybe_incomplete": false
+   },
+   "lane": [
+    "READFAIL"
+   ]
+  }
+ },
+ "W12.title-null": {
+  "layers": "BU",
+  "setup": {
+   "search": {
+    "repos": [
+     "a"
+    ],
+    "header": null
+   },
+   "repos": {
+    "a": {
+     "json": [
+      {
+       "number": 1,
+       "title": null,
+       "state": "open",
+       "user": {
+        "login": "a"
+       },
+       "created_at": "c",
+       "html_url": "u"
+      }
+     ]
+    }
+   }
+  },
+  "asked": "derive",
+  "client_call": "list_pulls",
+  "client": "ForgejoReadFailed",
+  "pulls": {
+   "response": {
+    "pulls": [],
+    "reason": "forgejo-read-failed",
+    "disabled_repos": 0,
+    "skipped_repos": 0,
+    "repos_maybe_incomplete": false
+   },
+   "lane": [
+    "READFAIL"
+   ]
+  }
+ },
+ "W12.state-number": {
+  "layers": "BU",
+  "setup": {
+   "search": {
+    "repos": [
+     "a"
+    ],
+    "header": null
+   },
+   "repos": {
+    "a": {
+     "json": [
+      {
+       "number": 1,
+       "title": "t",
+       "state": 5,
+       "user": {
+        "login": "a"
+       },
+       "created_at": "c",
+       "html_url": "u"
+      }
+     ]
+    }
+   }
+  },
+  "asked": "derive",
+  "client_call": "list_pulls",
+  "client": "ForgejoReadFailed",
+  "pulls": {
+   "response": {
+    "pulls": [],
+    "reason": "forgejo-read-failed",
+    "disabled_repos": 0,
+    "skipped_repos": 0,
+    "repos_maybe_incomplete": false
+   },
+   "lane": [
+    "READFAIL"
+   ]
+  }
+ },
+ "W12.created-number": {
+  "layers": "BU",
+  "setup": {
+   "search": {
+    "repos": [
+     "a"
+    ],
+    "header": null
+   },
+   "repos": {
+    "a": {
+     "json": [
+      {
+       "number": 1,
+       "title": "t",
+       "state": "open",
+       "user": {
+        "login": "a"
+       },
+       "created_at": 5,
+       "html_url": "u"
+      }
+     ]
+    }
+   }
+  },
+  "asked": "derive",
+  "client_call": "list_pulls",
+  "client": "ForgejoReadFailed",
+  "pulls": {
+   "response": {
+    "pulls": [],
+    "reason": "forgejo-read-failed",
+    "disabled_repos": 0,
+    "skipped_repos": 0,
+    "repos_maybe_incomplete": false
+   },
+   "lane": [
+    "READFAIL"
+   ]
+  }
+ },
+ "W12.url-number": {
+  "layers": "BU",
+  "setup": {
+   "search": {
+    "repos": [
+     "a"
+    ],
+    "header": null
+   },
+   "repos": {
+    "a": {
+     "json": [
+      {
+       "number": 1,
+       "title": "t",
+       "state": "open",
+       "user": {
+        "login": "a"
+       },
+       "created_at": "c",
+       "html_url": 5
+      }
+     ]
+    }
+   }
+  },
+  "asked": "derive",
+  "client_call": "list_pulls",
+  "client": "ForgejoReadFailed",
+  "pulls": {
+   "response": {
+    "pulls": [],
+    "reason": "forgejo-read-failed",
+    "disabled_repos": 0,
+    "skipped_repos": 0,
+    "repos_maybe_incomplete": false
+   },
+   "lane": [
+    "READFAIL"
+   ]
+  }
+ },
+ "W12.login-number": {
+  "layers": "BU",
+  "setup": {
+   "search": {
+    "repos": [
+     "a"
+    ],
+    "header": null
+   },
+   "repos": {
+    "a": {
+     "json": [
+      {
+       "number": 1,
+       "title": "t",
+       "state": "open",
+       "user": {
+        "login": 5
+       },
+       "created_at": "c",
+       "html_url": "u"
+      }
+     ]
+    }
+   }
+  },
+  "asked": "derive",
+  "client_call": "list_pulls",
+  "client": "ForgejoReadFailed",
+  "pulls": {
+   "response": {
+    "pulls": [],
+    "reason": "forgejo-read-failed",
+    "disabled_repos": 0,
+    "skipped_repos": 0,
+    "repos_maybe_incomplete": false
+   },
+   "lane": [
+    "READFAIL"
+   ]
+  }
+ },
+ "W12.login-null": {
+  "layers": "BU",
+  "setup": {
+   "search": {
+    "repos": [
+     "a"
+    ],
+    "header": null
+   },
+   "repos": {
+    "a": {
+     "json": [
+      {
+       "number": 1,
+       "title": "t",
+       "state": "open",
+       "user": {
+        "login": null
+       },
+       "created_at": "c",
+       "html_url": "u"
+      }
+     ]
+    }
+   }
+  },
+  "asked": "derive",
+  "client_call": "list_pulls",
+  "client": "ForgejoReadFailed",
+  "pulls": {
+   "response": {
+    "pulls": [],
+    "reason": "forgejo-read-failed",
+    "disabled_repos": 0,
+    "skipped_repos": 0,
+    "repos_maybe_incomplete": false
+   },
+   "lane": [
+    "READFAIL"
+   ]
+  }
+ },
+ "W12.number-missing": {
+  "layers": "BU",
+  "setup": {
+   "search": {
+    "repos": [
+     "a"
+    ],
+    "header": null
+   },
+   "repos": {
+    "a": {
+     "json": [
+      {
+       "title": "t"
+      }
+     ]
+    }
+   }
+  },
+  "asked": "derive",
+  "client_call": "list_pulls",
+  "client": "ForgejoReadFailed",
+  "pulls": {
+   "response": {
+    "pulls": [],
+    "reason": "forgejo-read-failed",
+    "disabled_repos": 0,
+    "skipped_repos": 0,
+    "repos_maybe_incomplete": false
+   },
+   "lane": [
+    "READFAIL"
+   ]
+  }
+ },
+ "W12.absent": {
+  "layers": "BU",
+  "setup": {
+   "search": {
+    "repos": [
+     "a"
+    ],
+    "header": null
+   },
+   "repos": {
+    "a": {
+     "json": [
+      {
+       "number": 1
+      }
+     ]
+    }
+   }
+  },
+  "asked": "derive",
+  "client_call": "list_pulls",
+  "client": "ok",
+  "pulls": {
+   "response": {
+    "pulls": [
+     {
+      "repo": "dmf/a",
+      "number": 1,
+      "title": "",
+      "state": "",
+      "author": "",
+      "created": "",
+      "url": ""
+     }
+    ],
+    "reason": "",
+    "disabled_repos": 0,
+    "skipped_repos": 0,
+    "repos_maybe_incomplete": false
+   },
+   "lane": [
+    "ROWS"
+   ]
+  }
+ },
+ "W13": {
+  "layers": "BC",
+  "setup": {
+   "search": {
+    "repos": [
+     "a",
+     "b"
+    ],
+    "header": null
+   },
+   "repos": {
+    "a": "rows",
+    "b": {
+     "json": [
+      "$GOOD",
+      null
+     ]
+    }
+   }
+  },
+  "asked": "derive",
+  "client_call": "search",
+  "client": null,
+  "pulls": {
+   "response": {
+    "pulls": [
+     {
+      "repo": "dmf/a",
+      "number": 1,
+      "title": "PR 1 of a",
+      "state": "open",
+      "author": "ada",
+      "created": "2026-11-27T09:00:00Z",
+      "url": "http://forgejo.test/dmf/a/pulls/1"
+     }
+    ],
+    "reason": "forgejo-partial",
+    "disabled_repos": 0,
+    "skipped_repos": 0,
+    "repos_maybe_incomplete": false
+   },
+   "lane": [
+    "PARTIAL",
+    "ROWS"
+   ]
+  }
+ },
+ "W13.alone": {
+  "layers": "BC",
+  "setup": {
+   "search": {
+    "repos": [
+     "b"
+    ],
+    "header": null
+   },
+   "repos": {
+    "b": {
+     "json": [
+      "$GOOD",
+      null
+     ]
+    }
+   }
+  },
+  "asked": "derive",
+  "client_call": "search",
+  "client": null,
+  "pulls": {
+   "response": {
+    "pulls": [],
+    "reason": "forgejo-read-failed",
+    "disabled_repos": 0,
+    "skipped_repos": 0,
+    "repos_maybe_incomplete": false
+   },
+   "lane": [
+    "READFAIL"
+   ]
+  }
+ },
+ "W14": {
+  "layers": "BC",
+  "setup": {
+   "search": {
+    "repos": [
+     "a",
+     "b"
+    ],
+    "header": null
+   },
+   "repos": {
+    "a": {
+     "json": [
+      "$GOOD",
+      null
+     ]
+    },
+    "b": "rows"
+   }
+  },
+  "asked": "derive",
+  "client_call": "search",
+  "client": null,
+  "pulls": {
+   "response": {
+    "pulls": [
+     {
+      "repo": "dmf/b",
+      "number": 1,
+      "title": "PR 1 of b",
+      "state": "open",
+      "author": "ada",
+      "created": "2026-11-27T09:00:00Z",
+      "url": "http://forgejo.test/dmf/b/pulls/1"
+     }
+    ],
+    "reason": "forgejo-partial",
+    "disabled_repos": 0,
+    "skipped_repos": 0,
+    "repos_maybe_incomplete": false
+   },
+   "lane": [
+    "PARTIAL",
+    "ROWS"
+   ]
+  }
+ },
+ "W15": {
+  "layers": "BC",
+  "setup": {
+   "search": {
+    "repos": [
+     "a",
+     "b"
+    ],
+    "header": null
+   },
+   "repos": {
+    "a": {
+     "json": [
+      "$GOOD",
+      null
+     ]
+    },
+    "b": {
+     "json": [
+      "$GOOD",
+      null
+     ]
+    }
+   }
+  },
+  "asked": "derive",
+  "client_call": "search",
+  "client": null,
+  "pulls": {
+   "response": {
+    "pulls": [],
+    "reason": "forgejo-read-failed",
+    "disabled_repos": 0,
+    "skipped_repos": 0,
+    "repos_maybe_incomplete": false
+   },
+   "lane": [
+    "READFAIL"
+   ]
+  }
+ },
+ "W16.timeout": {
+  "layers": "BU",
+  "setup": {
+   "search": {
+    "repos": [
+     "a"
+    ],
+    "header": null
+   },
+   "repos": {
+    "a": "bodyfail:timeout"
+   }
+  },
+  "asked": "derive",
+  "client_call": "list_pulls",
+  "client": "ForgejoReadFailed",
+  "pulls": {
+   "response": {
+    "pulls": [],
+    "reason": "forgejo-read-failed",
+    "disabled_repos": 0,
+    "skipped_repos": 0,
+    "repos_maybe_incomplete": false
+   },
+   "lane": [
+    "READFAIL"
+   ]
+  }
+ },
+ "W16.reset": {
+  "layers": "BU",
+  "setup": {
+   "search": {
+    "repos": [
+     "a"
+    ],
+    "header": null
+   },
+   "repos": {
+    "a": "bodyfail:reset"
+   }
+  },
+  "asked": "derive",
+  "client_call": "list_pulls",
+  "client": "ForgejoReadFailed",
+  "pulls": {
+   "response": {
+    "pulls": [],
+    "reason": "forgejo-read-failed",
+    "disabled_repos": 0,
+    "skipped_repos": 0,
+    "repos_maybe_incomplete": false
+   },
+   "lane": [
+    "READFAIL"
+   ]
+  }
+ },
+ "W16.short": {
+  "layers": "BU",
+  "setup": {
+   "search": {
+    "repos": [
+     "a"
+    ],
+    "header": null
+   },
+   "repos": {
+    "a": "bodyfail:short"
+   }
+  },
+  "asked": "derive",
+  "client_call": "list_pulls",
+  "client": "ForgejoReadFailed",
+  "pulls": {
+   "response": {
+    "pulls": [],
+    "reason": "forgejo-read-failed",
+    "disabled_repos": 0,
+    "skipped_repos": 0,
+    "repos_maybe_incomplete": false
+   },
+   "lane": [
+    "READFAIL"
+   ]
+  }
+ },
+ "W17.unreadable": {
+  "layers": "BU",
+  "setup": {
+   "search": {
+    "repos": [
+     "a"
+    ],
+    "header": null
+   },
+   "repos": {
+    "a": "http-unreadable:500"
+   }
+  },
+  "asked": "derive",
+  "client_call": "list_pulls",
+  "client": "ForgejoAPIError",
+  "pulls": {
+   "response": {
+    "pulls": [],
+    "reason": "forgejo-read-failed",
+    "disabled_repos": 0,
+    "skipped_repos": 0,
+    "repos_maybe_incomplete": false
+   },
+   "lane": [
+    "READFAIL"
+   ]
+  }
+ },
+ "W17.nonutf8": {
+  "layers": "BU",
+  "setup": {
+   "search": {
+    "repos": [
+     "a"
+    ],
+    "header": null
+   },
+   "repos": {
+    "a": "http-nonutf8:500"
+   }
+  },
+  "asked": "derive",
+  "client_call": "list_pulls",
+  "client": "ForgejoAPIError",
+  "pulls": {
+   "response": {
+    "pulls": [],
+    "reason": "forgejo-read-failed",
+    "disabled_repos": 0,
+    "skipped_repos": 0,
+    "repos_maybe_incomplete": false
+   },
+   "lane": [
+    "READFAIL"
+   ]
+  }
+ },
+ "W19": {
+  "layers": "BC",
+  "setup": {
+   "search": {
+    "repos": [
+     "a"
+    ],
+    "header": null
+   },
+   "repos": {
+    "a": "http:404"
+   }
+  },
+  "asked": "derive",
+  "client_call": "search",
+  "client": null,
+  "pulls": {
+   "response": {
+    "pulls": [],
+    "reason": "forgejo-read-failed",
+    "disabled_repos": 0,
+    "skipped_repos": 0,
+    "repos_maybe_incomplete": false
+   },
+   "lane": [
+    "READFAIL"
+   ]
+  }
+ },
+ "F-R1": {
+  "layers": "BC",
+  "setup": {
+   "search": {
+    "repos": [
+     "a"
+    ],
+    "header": null
+   },
+   "repos": {
+    "a": "empty"
+   }
+  },
+  "asked": "derive",
+  "client_call": "search",
+  "client": null,
+  "commits": {
+   "response": {
+    "repos": [
+     {
+      "name": "dmf/a",
+      "commits": []
+     }
+    ],
+    "reason": "",
+    "skipped_repos": 0,
+    "repos_maybe_incomplete": false
+   },
+   "lane": [
+    "ROWS"
+   ]
+  }
+ },
+ "F-R2": {
+  "layers": "BC",
+  "setup": {
+   "search": {
+    "repos": [
+     "a"
+    ],
+    "header": null
+   },
+   "repos": {
+    "a": "http:404"
+   }
+  },
+  "asked": "derive",
+  "client_call": "search",
+  "client": null,
+  "commits": {
+   "response": {
+    "repos": [],
+    "reason": "forgejo-read-failed",
+    "skipped_repos": 0,
+    "repos_maybe_incomplete": false
+   },
+   "lane": [
+    "READFAIL"
+   ]
+  }
+ },
+ "F-R3.500": {
+  "layers": "BC",
+  "setup": {
+   "search": {
+    "repos": [
+     "a"
+    ],
+    "header": null
+   },
+   "repos": {
+    "a": "http:500"
+   }
+  },
+  "asked": "derive",
+  "client_call": "search",
+  "client": null,
+  "commits": {
+   "response": {
+    "repos": [],
+    "reason": "forgejo-read-failed",
+    "skipped_repos": 0,
+    "repos_maybe_incomplete": false
+   },
+   "lane": [
+    "READFAIL"
+   ]
+  }
+ },
+ "F-R3.401": {
+  "layers": "BC",
+  "setup": {
+   "search": {
+    "repos": [
+     "a"
+    ],
+    "header": null
+   },
+   "repos": {
+    "a": "http:401"
+   }
+  },
+  "asked": "derive",
+  "client_call": "search",
+  "client": null,
+  "commits": {
+   "response": {
+    "repos": [],
+    "reason": "forgejo-read-failed",
+    "skipped_repos": 0,
+    "repos_maybe_incomplete": false
+   },
+   "lane": [
+    "READFAIL"
+   ]
+  }
+ },
+ "F-R3.403": {
+  "layers": "BC",
+  "setup": {
+   "search": {
+    "repos": [
+     "a"
+    ],
+    "header": null
+   },
+   "repos": {
+    "a": "http:403"
+   }
+  },
+  "asked": "derive",
+  "client_call": "search",
+  "client": null,
+  "commits": {
+   "response": {
+    "repos": [],
+    "reason": "forgejo-read-failed",
+    "skipped_repos": 0,
+    "repos_maybe_incomplete": false
+   },
+   "lane": [
+    "READFAIL"
+   ]
+  }
+ },
+ "F-R4": {
+  "layers": "BC",
+  "setup": {
+   "search": {
+    "repos": [
+     "a"
+    ],
+    "header": null
+   },
+   "repos": {
+    "a": "noanswer:refused"
+   }
+  },
+  "asked": "derive",
+  "client_call": "search",
+  "client": null,
+  "commits": {
+   "response": {
+    "repos": [],
+    "reason": "forgejo-read-failed",
+    "skipped_repos": 0,
+    "repos_maybe_incomplete": false
+   },
+   "lane": [
+    "READFAIL"
+   ]
+  }
+ },
+ "F-M1": {
+  "layers": "BC",
+  "setup": {
+   "search": {
+    "repos": [
+     "a",
+     "b"
+    ],
+    "header": null
+   },
+   "repos": {
+    "a": "rows",
+    "b": "http:404"
+   }
+  },
+  "asked": "derive",
+  "client_call": "search",
+  "client": null,
+  "commits": {
+   "response": {
+    "repos": [
+     {
+      "name": "dmf/a",
+      "commits": [
+       {
+        "sha_short": "6100000",
+        "message": "commit 0 of a",
+        "author": "Ada",
+        "date": "2026-11-27T10:00:00Z",
+        "url": "http://forgejo.test/dmf/a/commit/0"
+       }
+      ]
+     }
+    ],
+    "reason": "forgejo-partial",
+    "skipped_repos": 0,
+    "repos_maybe_incomplete": false
+   },
+   "lane": [
+    "PARTIAL",
+    "ROWS"
+   ]
+  }
+ },
+ "F-M2": {
+  "layers": "BC",
+  "setup": {
+   "search": {
+    "repos": [
+     "a",
+     "b"
+    ],
+    "header": null
+   },
+   "repos": {
+    "a": "empty",
+    "b": "http:404"
+   }
+  },
+  "asked": "derive",
+  "client_call": "search",
+  "client": null,
+  "commits": {
+   "response": {
+    "repos": [
+     {
+      "name": "dmf/a",
+      "commits": []
+     }
+    ],
+    "reason": "forgejo-partial",
+    "skipped_repos": 0,
+    "repos_maybe_incomplete": false
+   },
+   "lane": [
+    "PARTIAL",
+    "ROWS"
+   ]
+  }
+ },
+ "F-M3": {
+  "layers": "BC",
+  "setup": {
+   "search": {
+    "repos": [
+     "a",
+     "b"
+    ],
+    "header": null
+   },
+   "repos": {
+    "a": "rows",
+    "b": "noanswer:refused"
+   }
+  },
+  "asked": "derive",
+  "client_call": "search",
+  "client": null,
+  "commits": {
+   "response": {
+    "repos": [
+     {
+      "name": "dmf/a",
+      "commits": [
+       {
+        "sha_short": "6100000",
+        "message": "commit 0 of a",
+        "author": "Ada",
+        "date": "2026-11-27T10:00:00Z",
+        "url": "http://forgejo.test/dmf/a/commit/0"
+       }
+      ]
+     }
+    ],
+    "reason": "forgejo-partial",
+    "skipped_repos": 0,
+    "repos_maybe_incomplete": false
+   },
+   "lane": [
+    "PARTIAL",
+    "ROWS"
+   ]
+  }
+ },
+ "F-M4": {
+  "layers": "BC",
+  "setup": {
+   "search": {
+    "repos": [
+     "a",
+     "b"
+    ],
+    "header": null
+   },
+   "repos": {
+    "a": "http:404",
+    "b": "noanswer:refused"
+   }
+  },
+  "asked": "derive",
+  "client_call": "search",
+  "client": null,
+  "commits": {
+   "response": {
+    "repos": [],
+    "reason": "forgejo-read-failed",
+    "skipped_repos": 0,
+    "repos_maybe_incomplete": false
+   },
+   "lane": [
+    "READFAIL"
+   ]
+  }
+ },
+ "F-M5": {
+  "layers": "BC",
+  "setup": {
+   "search": {
+    "repos": [
+     "a",
+     "b"
+    ],
+    "header": null
+   },
+   "repos": {
+    "a": "http:404",
+    "b": "http:404"
+   }
+  },
+  "asked": "derive",
+  "client_call": "search",
+  "client": null,
+  "commits": {
+   "response": {
+    "repos": [],
+    "reason": "forgejo-read-failed",
+    "skipped_repos": 0,
+    "repos_maybe_incomplete": false
+   },
+   "lane": [
+    "READFAIL"
+   ]
+  }
+ },
+ "F-M6": {
+  "layers": "BC",
+  "setup": {
+   "search": {
+    "repos": [
+     "a",
+     "b"
+    ],
+    "header": null
+   },
+   "repos": {
+    "a": "noanswer:refused",
+    "b": "noanswer:refused"
+   }
+  },
+  "asked": "derive",
+  "client_call": "search",
+  "client": null,
+  "commits": {
+   "response": {
+    "repos": [],
+    "reason": "forgejo-read-failed",
+    "skipped_repos": 0,
+    "repos_maybe_incomplete": false
+   },
+   "lane": [
+    "READFAIL"
+   ]
+  }
+ },
+ "F-M7": {
+  "layers": "BC",
+  "setup": {
+   "search": {
+    "repos": [
+     "a",
+     "b"
+    ],
+    "header": null
+   },
+   "repos": {
+    "a": "rows",
+    "b": "empty"
+   }
+  },
+  "asked": "derive",
+  "client_call": "search",
+  "client": null,
+  "commits": {
+   "response": {
+    "repos": [
+     {
+      "name": "dmf/a",
+      "commits": [
+       {
+        "sha_short": "6100000",
+        "message": "commit 0 of a",
+        "author": "Ada",
+        "date": "2026-11-27T10:00:00Z",
+        "url": "http://forgejo.test/dmf/a/commit/0"
+       }
+      ]
+     },
+     {
+      "name": "dmf/b",
+      "commits": []
+     }
+    ],
+    "reason": "",
+    "skipped_repos": 0,
+    "repos_maybe_incomplete": false
+   },
+   "lane": [
+    "ROWS"
+   ]
+  }
+ },
+ "F-M8": {
+  "layers": "BC",
+  "setup": {
+   "search": {
+    "repos": [
+     "a:off",
+     "b"
+    ],
+    "header": null
+   },
+   "repos": {
+    "a": "rows",
+    "b": "rows"
+   }
+  },
+  "asked": "derive",
+  "client_call": "search",
+  "client": null,
+  "commits": {
+   "response": {
+    "repos": [
+     {
+      "name": "dmf/a",
+      "commits": [
+       {
+        "sha_short": "6100000",
+        "message": "commit 0 of a",
+        "author": "Ada",
+        "date": "2026-11-27T10:00:00Z",
+        "url": "http://forgejo.test/dmf/a/commit/0"
+       }
+      ]
+     },
+     {
+      "name": "dmf/b",
+      "commits": [
+       {
+        "sha_short": "6200000",
+        "message": "commit 0 of b",
+        "author": "Ada",
+        "date": "2026-11-27T10:00:00Z",
+        "url": "http://forgejo.test/dmf/b/commit/0"
+       }
+      ]
+     }
+    ],
+    "reason": "",
+    "skipped_repos": 0,
+    "repos_maybe_incomplete": false
+   },
+   "lane": [
+    "ROWS"
+   ]
+  }
+ },
+ "F-K1": {
+  "layers": "BC",
+  "setup": {
+   "search": {
+    "repos": [
+     "a",
+     "b",
+     "c",
+     "d",
+     "e",
+     "f",
+     "g"
+    ],
+    "header": null
+   },
+   "repos": {
+    "a": "rows",
+    "b": "rows",
+    "c": "rows",
+    "d": "rows",
+    "e": "rows"
+   }
+  },
+  "asked": "derive",
+  "client_call": "search",
+  "client": null,
+  "commits": {
+   "response": {
+    "repos": [
+     {
+      "name": "dmf/a",
+      "commits": [
+       {
+        "sha_short": "6100000",
+        "message": "commit 0 of a",
+        "author": "Ada",
+        "date": "2026-11-27T10:00:00Z",
+        "url": "http://forgejo.test/dmf/a/commit/0"
+       }
+      ]
+     },
+     {
+      "name": "dmf/b",
+      "commits": [
+       {
+        "sha_short": "6200000",
+        "message": "commit 0 of b",
+        "author": "Ada",
+        "date": "2026-11-27T10:00:00Z",
+        "url": "http://forgejo.test/dmf/b/commit/0"
+       }
+      ]
+     },
+     {
+      "name": "dmf/c",
+      "commits": [
+       {
+        "sha_short": "6300000",
+        "message": "commit 0 of c",
+        "author": "Ada",
+        "date": "2026-11-27T10:00:00Z",
+        "url": "http://forgejo.test/dmf/c/commit/0"
+       }
+      ]
+     },
+     {
+      "name": "dmf/d",
+      "commits": [
+       {
+        "sha_short": "6400000",
+        "message": "commit 0 of d",
+        "author": "Ada",
+        "date": "2026-11-27T10:00:00Z",
+        "url": "http://forgejo.test/dmf/d/commit/0"
+       }
+      ]
+     },
+     {
+      "name": "dmf/e",
+      "commits": [
+       {
+        "sha_short": "6500000",
+        "message": "commit 0 of e",
+        "author": "Ada",
+        "date": "2026-11-27T10:00:00Z",
+        "url": "http://forgejo.test/dmf/e/commit/0"
+       }
+      ]
+     }
+    ],
+    "reason": "",
+    "skipped_repos": 2,
+    "repos_maybe_incomplete": false
+   },
+   "lane": [
+    "SKIPPED:2",
+    "ROWS"
+   ]
+  }
+ },
+ "F-K2": {
+  "layers": "BC",
+  "setup": {
+   "search": {
+    "repos": [
+     "a",
+     "b",
+     "c",
+     "d",
+     "e",
+     "f",
+     "g"
+    ],
+    "header": null
+   },
+   "repos": {}
+  },
+  "asked": "derive",
+  "client_call": "search",
+  "client": null,
+  "commits": {
+   "response": {
+    "repos": [
+     {
+      "name": "dmf/a",
+      "commits": []
+     },
+     {
+      "name": "dmf/b",
+      "commits": []
+     },
+     {
+      "name": "dmf/c",
+      "commits": []
+     },
+     {
+      "name": "dmf/d",
+      "commits": []
+     },
+     {
+      "name": "dmf/e",
+      "commits": []
+     }
+    ],
+    "reason": "",
+    "skipped_repos": 2,
+    "repos_maybe_incomplete": false
+   },
+   "lane": [
+    "SKIPPED:2",
+    "ROWS"
+   ]
+  }
+ },
+ "F-K3": {
+  "layers": "BC",
+  "setup": {
+   "search": {
+    "repos": [
+     "a",
+     "b",
+     "c",
+     "d",
+     "e",
+     "f",
+     "g"
+    ],
+    "header": null
+   },
+   "repos": {
+    "a": "http:404",
+    "b": "rows",
+    "c": "rows",
+    "d": "rows",
+    "e": "rows"
+   }
+  },
+  "asked": "derive",
+  "client_call": "search",
+  "client": null,
+  "commits": {
+   "response": {
+    "repos": [
+     {
+      "name": "dmf/b",
+      "commits": [
+       {
+        "sha_short": "6200000",
+        "message": "commit 0 of b",
+        "author": "Ada",
+        "date": "2026-11-27T10:00:00Z",
+        "url": "http://forgejo.test/dmf/b/commit/0"
+       }
+      ]
+     },
+     {
+      "name": "dmf/c",
+      "commits": [
+       {
+        "sha_short": "6300000",
+        "message": "commit 0 of c",
+        "author": "Ada",
+        "date": "2026-11-27T10:00:00Z",
+        "url": "http://forgejo.test/dmf/c/commit/0"
+       }
+      ]
+     },
+     {
+      "name": "dmf/d",
+      "commits": [
+       {
+        "sha_short": "6400000",
+        "message": "commit 0 of d",
+        "author": "Ada",
+        "date": "2026-11-27T10:00:00Z",
+        "url": "http://forgejo.test/dmf/d/commit/0"
+       }
+      ]
+     },
+     {
+      "name": "dmf/e",
+      "commits": [
+       {
+        "sha_short": "6500000",
+        "message": "commit 0 of e",
+        "author": "Ada",
+        "date": "2026-11-27T10:00:00Z",
+        "url": "http://forgejo.test/dmf/e/commit/0"
+       }
+      ]
+     }
+    ],
+    "reason": "forgejo-partial",
+    "skipped_repos": 2,
+    "repos_maybe_incomplete": false
+   },
+   "lane": [
+    "PARTIAL",
+    "SKIPPED:2",
+    "ROWS"
+   ]
+  }
+ },
+ "F-K4": {
+  "layers": "BC",
+  "setup": {
+   "search": {
+    "repos": [
+     "a",
+     "b",
+     "c",
+     "d",
+     "e"
+    ],
+    "header": null
+   },
+   "repos": {}
+  },
+  "asked": "derive",
+  "client_call": "search",
+  "client": null,
+  "commits": {
+   "response": {
+    "repos": [
+     {
+      "name": "dmf/a",
+      "commits": []
+     },
+     {
+      "name": "dmf/b",
+      "commits": []
+     },
+     {
+      "name": "dmf/c",
+      "commits": []
+     },
+     {
+      "name": "dmf/d",
+      "commits": []
+     },
+     {
+      "name": "dmf/e",
+      "commits": []
+     }
+    ],
+    "reason": "",
+    "skipped_repos": 0,
+    "repos_maybe_incomplete": false
+   },
+   "lane": [
+    "ROWS"
+   ]
+  }
+ },
+ "F-T1a": {
+  "layers": "BC",
+  "setup": {
+   "search": {
+    "repos": [
+     {
+      "repeat": 50,
+      "name": "x"
+     }
+    ],
+    "header": null
+   },
+   "repos": {
+    "x0": "rows",
+    "x1": "rows",
+    "x2": "rows",
+    "x3": "rows",
+    "x4": "rows"
+   }
+  },
+  "asked": "derive",
+  "client_call": "search",
+  "client": null,
+  "commits": {
+   "response": {
+    "repos": [
+     {
+      "name": "dmf/x0",
+      "commits": [
+       {
+        "sha_short": "7800000",
+        "message": "commit 0 of x0",
+        "author": "Ada",
+        "date": "2026-11-27T10:00:00Z",
+        "url": "http://forgejo.test/dmf/x0/commit/0"
+       }
+      ]
+     },
+     {
+      "name": "dmf/x1",
+      "commits": [
+       {
+        "sha_short": "7800000",
+        "message": "commit 0 of x1",
+        "author": "Ada",
+        "date": "2026-11-27T10:00:00Z",
+        "url": "http://forgejo.test/dmf/x1/commit/0"
+       }
+      ]
+     },
+     {
+      "name": "dmf/x2",
+      "commits": [
+       {
+        "sha_short": "7800000",
+        "message": "commit 0 of x2",
+        "author": "Ada",
+        "date": "2026-11-27T10:00:00Z",
+        "url": "http://forgejo.test/dmf/x2/commit/0"
+       }
+      ]
+     },
+     {
+      "name": "dmf/x3",
+      "commits": [
+       {
+        "sha_short": "7800000",
+        "message": "commit 0 of x3",
+        "author": "Ada",
+        "date": "2026-11-27T10:00:00Z",
+        "url": "http://forgejo.test/dmf/x3/commit/0"
+       }
+      ]
+     },
+     {
+      "name": "dmf/x4",
+      "commits": [
+       {
+        "sha_short": "7800000",
+        "message": "commit 0 of x4",
+        "author": "Ada",
+        "date": "2026-11-27T10:00:00Z",
+        "url": "http://forgejo.test/dmf/x4/commit/0"
+       }
+      ]
+     }
+    ],
+    "reason": "",
+    "skipped_repos": 45,
+    "repos_maybe_incomplete": true
+   },
+   "lane": [
+    "SKIPPED:45",
+    "INCOMPLETE",
+    "ROWS"
+   ]
+  }
+ },
+ "F-T1b": {
+  "layers": "BC",
+  "setup": {
+   "search": {
+    "repos": [
+     {
+      "repeat": 50,
+      "name": "x"
+     }
+    ],
+    "header": [
+     "50"
+    ]
+   },
+   "repos": {
+    "x0": "rows",
+    "x1": "rows",
+    "x2": "rows",
+    "x3": "rows",
+    "x4": "rows"
+   }
+  },
+  "asked": "derive",
+  "client_call": "search",
+  "client": null,
+  "commits": {
+   "response": {
+    "repos": [
+     {
+      "name": "dmf/x0",
+      "commits": [
+       {
+        "sha_short": "7800000",
+        "message": "commit 0 of x0",
+        "author": "Ada",
+        "date": "2026-11-27T10:00:00Z",
+        "url": "http://forgejo.test/dmf/x0/commit/0"
+       }
+      ]
+     },
+     {
+      "name": "dmf/x1",
+      "commits": [
+       {
+        "sha_short": "7800000",
+        "message": "commit 0 of x1",
+        "author": "Ada",
+        "date": "2026-11-27T10:00:00Z",
+        "url": "http://forgejo.test/dmf/x1/commit/0"
+       }
+      ]
+     },
+     {
+      "name": "dmf/x2",
+      "commits": [
+       {
+        "sha_short": "7800000",
+        "message": "commit 0 of x2",
+        "author": "Ada",
+        "date": "2026-11-27T10:00:00Z",
+        "url": "http://forgejo.test/dmf/x2/commit/0"
+       }
+      ]
+     },
+     {
+      "name": "dmf/x3",
+      "commits": [
+       {
+        "sha_short": "7800000",
+        "message": "commit 0 of x3",
+        "author": "Ada",
+        "date": "2026-11-27T10:00:00Z",
+        "url": "http://forgejo.test/dmf/x3/commit/0"
+       }
+      ]
+     },
+     {
+      "name": "dmf/x4",
+      "commits": [
+       {
+        "sha_short": "7800000",
+        "message": "commit 0 of x4",
+        "author": "Ada",
+        "date": "2026-11-27T10:00:00Z",
+        "url": "http://forgejo.test/dmf/x4/commit/0"
+       }
+      ]
+     }
+    ],
+    "reason": "",
+    "skipped_repos": 45,
+    "repos_maybe_incomplete": false
+   },
+   "lane": [
+    "SKIPPED:45",
+    "ROWS"
+   ]
+  }
+ },
+ "F-W1": {
+  "layers": "BU",
+  "setup": {
+   "search": {
+    "repos": [
+     "a"
+    ],
+    "header": null
+   },
+   "repos": {
+    "a": "raw:{"
+   }
+  },
+  "asked": "derive",
+  "client_call": "list_commits",
+  "client": "ForgejoReadFailed",
+  "commits": {
+   "response": {
+    "repos": [],
+    "reason": "forgejo-read-failed",
+    "skipped_repos": 0,
+    "repos_maybe_incomplete": false
+   },
+   "lane": [
+    "READFAIL"
+   ]
+  }
+ },
+ "F-W2.object": {
+  "layers": "BU",
+  "setup": {
+   "search": {
+    "repos": [
+     "a"
+    ],
+    "header": null
+   },
+   "repos": {
+    "a": {
+     "json": {
+      "a": 1
+     }
+    }
+   }
+  },
+  "asked": "derive",
+  "client_call": "list_commits",
+  "client": "ForgejoReadFailed",
+  "commits": {
+   "response": {
+    "repos": [],
+    "reason": "forgejo-read-failed",
+    "skipped_repos": 0,
+    "repos_maybe_incomplete": false
+   },
+   "lane": [
+    "READFAIL"
+   ]
+  }
+ },
+ "F-W2.string": {
+  "layers": "BU",
+  "setup": {
+   "search": {
+    "repos": [
+     "a"
+    ],
+    "header": null
+   },
+   "repos": {
+    "a": {
+     "json": "x"
+    }
+   }
+  },
+  "asked": "derive",
+  "client_call": "list_commits",
+  "client": "ForgejoReadFailed",
+  "commits": {
+   "response": {
+    "repos": [],
+    "reason": "forgejo-read-failed",
+    "skipped_repos": 0,
+    "repos_maybe_incomplete": false
+   },
+   "lane": [
+    "READFAIL"
+   ]
+  }
+ },
+ "F-W2.number": {
+  "layers": "BU",
+  "setup": {
+   "search": {
+    "repos": [
+     "a"
+    ],
+    "header": null
+   },
+   "repos": {
+    "a": {
+     "json": 3
+    }
+   }
+  },
+  "asked": "derive",
+  "client_call": "list_commits",
+  "client": "ForgejoReadFailed",
+  "commits": {
+   "response": {
+    "repos": [],
+    "reason": "forgejo-read-failed",
+    "skipped_repos": 0,
+    "repos_maybe_incomplete": false
+   },
+   "lane": [
+    "READFAIL"
+   ]
+  }
+ },
+ "F-W2.null": {
+  "layers": "BU",
+  "setup": {
+   "search": {
+    "repos": [
+     "a"
+    ],
+    "header": null
+   },
+   "repos": {
+    "a": {
+     "json": null
+    }
+   }
+  },
+  "asked": "derive",
+  "client_call": "list_commits",
+  "client": "ForgejoReadFailed",
+  "commits": {
+   "response": {
+    "repos": [],
+    "reason": "forgejo-read-failed",
+    "skipped_repos": 0,
+    "repos_maybe_incomplete": false
+   },
+   "lane": [
+    "READFAIL"
+   ]
+  }
+ },
+ "F-W3.object": {
+  "layers": "BU",
+  "setup": {
+   "search": {
+    "repos": [
+     "a"
+    ],
+    "header": null
+   },
+   "repos": {
+    "a": {
+     "json": {}
+    }
+   }
+  },
+  "asked": "derive",
+  "client_call": "list_commits",
+  "client": "ForgejoReadFailed",
+  "commits": {
+   "response": {
+    "repos": [],
+    "reason": "forgejo-read-failed",
+    "skipped_repos": 0,
+    "repos_maybe_incomplete": false
+   },
+   "lane": [
+    "READFAIL"
+   ]
+  }
+ },
+ "F-W3.string": {
+  "layers": "BU",
+  "setup": {
+   "search": {
+    "repos": [
+     "a"
+    ],
+    "header": null
+   },
+   "repos": {
+    "a": {
+     "json": ""
+    }
+   }
+  },
+  "asked": "derive",
+  "client_call": "list_commits",
+  "client": "ForgejoReadFailed",
+  "commits": {
+   "response": {
+    "repos": [],
+    "reason": "forgejo-read-failed",
+    "skipped_repos": 0,
+    "repos_maybe_incomplete": false
+   },
+   "lane": [
+    "READFAIL"
+   ]
+  }
+ },
+ "F-W3.zero-byte": {
+  "layers": "BU",
+  "setup": {
+   "search": {
+    "repos": [
+     "a"
+    ],
+    "header": null
+   },
+   "repos": {
+    "a": "raw:"
+   }
+  },
+  "asked": "derive",
+  "client_call": "list_commits",
+  "client": "ForgejoReadFailed",
+  "commits": {
+   "response": {
+    "repos": [],
+    "reason": "forgejo-read-failed",
+    "skipped_repos": 0,
+    "repos_maybe_incomplete": false
+   },
+   "lane": [
+    "READFAIL"
+   ]
+  }
+ },
+ "F-W4.mixed": {
+  "layers": "BU",
+  "setup": {
+   "search": {
+    "repos": [
+     "a"
+    ],
+    "header": null
+   },
+   "repos": {
+    "a": {
+     "json": [
+      "$GOOD",
+      null
+     ]
+    }
+   }
+  },
+  "asked": "derive",
+  "client_call": "list_commits",
+  "client": "ForgejoReadFailed",
+  "commits": {
+   "response": {
+    "repos": [],
+    "reason": "forgejo-read-failed",
+    "skipped_repos": 0,
+    "repos_maybe_incomplete": false
+   },
+   "lane": [
+    "READFAIL"
+   ]
+  }
+ },
+ "F-W4.lone": {
+  "layers": "BU",
+  "setup": {
+   "search": {
+    "repos": [
+     "a"
+    ],
+    "header": null
+   },
+   "repos": {
+    "a": {
+     "json": [
+      null
+     ]
+    }
+   }
+  },
+  "asked": "derive",
+  "client_call": "list_commits",
+  "client": "ForgejoReadFailed",
+  "commits": {
+   "response": {
+    "repos": [],
+    "reason": "forgejo-read-failed",
+    "skipped_repos": 0,
+    "repos_maybe_incomplete": false
+   },
+   "lane": [
+    "READFAIL"
+   ]
+  }
+ },
+ "F-W5.commit-null": {
+  "layers": "BU",
+  "setup": {
+   "search": {
+    "repos": [
+     "a"
+    ],
+    "header": null
+   },
+   "repos": {
+    "a": {
+     "json": [
+      {
+       "commit": null,
+       "sha": "0123456789",
+       "html_url": "u"
+      }
+     ]
+    }
+   }
+  },
+  "asked": "derive",
+  "client_call": "list_commits",
+  "client": "ForgejoReadFailed",
+  "commits": {
+   "response": {
+    "repos": [],
+    "reason": "forgejo-read-failed",
+    "skipped_repos": 0,
+    "repos_maybe_incomplete": false
+   },
+   "lane": [
+    "READFAIL"
+   ]
+  }
+ },
+ "F-W5.author-null": {
+  "layers": "BU",
+  "setup": {
+   "search": {
+    "repos": [
+     "a"
+    ],
+    "header": null
+   },
+   "repos": {
+    "a": {
+     "json": [
+      {
+       "commit": {
+        "message": "m",
+        "author": null
+       },
+       "sha": "0123456789",
+       "html_url": "u"
+      }
+     ]
+    }
+   }
+  },
+  "asked": "derive",
+  "client_call": "list_commits",
+  "client": "ForgejoReadFailed",
+  "commits": {
+   "response": {
+    "repos": [],
+    "reason": "forgejo-read-failed",
+    "skipped_repos": 0,
+    "repos_maybe_incomplete": false
+   },
+   "lane": [
+    "READFAIL"
+   ]
+  }
+ },
+ "F-W5.sha-number": {
+  "layers": "BU",
+  "setup": {
+   "search": {
+    "repos": [
+     "a"
+    ],
+    "header": null
+   },
+   "repos": {
+    "a": {
+     "json": [
+      {
+       "commit": {
+        "message": "m",
+        "author": {
+         "name": "n",
+         "date": "d"
+        }
+       },
+       "sha": 5,
+       "html_url": "u"
+      }
+     ]
+    }
+   }
+  },
+  "asked": "derive",
+  "client_call": "list_commits",
+  "client": "ForgejoReadFailed",
+  "commits": {
+   "response": {
+    "repos": [],
+    "reason": "forgejo-read-failed",
+    "skipped_repos": 0,
+    "repos_maybe_incomplete": false
+   },
+   "lane": [
+    "READFAIL"
+   ]
+  }
+ },
+ "F-W6.message": {
+  "layers": "BU",
+  "setup": {
+   "search": {
+    "repos": [
+     "a"
+    ],
+    "header": null
+   },
+   "repos": {
+    "a": {
+     "json": [
+      {
+       "commit": {
+        "message": 5,
+        "author": {
+         "name": "n",
+         "date": "d"
+        }
+       },
+       "sha": "0123456789",
+       "html_url": "u"
+      }
+     ]
+    }
+   }
+  },
+  "asked": "derive",
+  "client_call": "list_commits",
+  "client": "ForgejoReadFailed",
+  "commits": {
+   "response": {
+    "repos": [],
+    "reason": "forgejo-read-failed",
+    "skipped_repos": 0,
+    "repos_maybe_incomplete": false
+   },
+   "lane": [
+    "READFAIL"
+   ]
+  }
+ },
+ "F-W6.author-name": {
+  "layers": "BU",
+  "setup": {
+   "search": {
+    "repos": [
+     "a"
+    ],
+    "header": null
+   },
+   "repos": {
+    "a": {
+     "json": [
+      {
+       "commit": {
+        "message": "m",
+        "author": {
+         "name": 5,
+         "date": "d"
+        }
+       },
+       "sha": "0123456789",
+       "html_url": "u"
+      }
+     ]
+    }
+   }
+  },
+  "asked": "derive",
+  "client_call": "list_commits",
+  "client": "ForgejoReadFailed",
+  "commits": {
+   "response": {
+    "repos": [],
+    "reason": "forgejo-read-failed",
+    "skipped_repos": 0,
+    "repos_maybe_incomplete": false
+   },
+   "lane": [
+    "READFAIL"
+   ]
+  }
+ },
+ "F-W6.author-date": {
+  "layers": "BU",
+  "setup": {
+   "search": {
+    "repos": [
+     "a"
+    ],
+    "header": null
+   },
+   "repos": {
+    "a": {
+     "json": [
+      {
+       "commit": {
+        "message": "m",
+        "author": {
+         "name": "n",
+         "date": 5
+        }
+       },
+       "sha": "0123456789",
+       "html_url": "u"
+      }
+     ]
+    }
+   }
+  },
+  "asked": "derive",
+  "client_call": "list_commits",
+  "client": "ForgejoReadFailed",
+  "commits": {
+   "response": {
+    "repos": [],
+    "reason": "forgejo-read-failed",
+    "skipped_repos": 0,
+    "repos_maybe_incomplete": false
+   },
+   "lane": [
+    "READFAIL"
+   ]
+  }
+ },
+ "F-W6.html-url": {
+  "layers": "BU",
+  "setup": {
+   "search": {
+    "repos": [
+     "a"
+    ],
+    "header": null
+   },
+   "repos": {
+    "a": {
+     "json": [
+      {
+       "commit": {
+        "message": "m",
+        "author": {
+         "name": "n",
+         "date": "d"
+        }
+       },
+       "sha": "0123456789",
+       "html_url": 5
+      }
+     ]
+    }
+   }
+  },
+  "asked": "derive",
+  "client_call": "list_commits",
+  "client": "ForgejoReadFailed",
+  "commits": {
+   "response": {
+    "repos": [],
+    "reason": "forgejo-read-failed",
+    "skipped_repos": 0,
+    "repos_maybe_incomplete": false
+   },
+   "lane": [
+    "READFAIL"
+   ]
+  }
+ },
+ "F-W6.absent": {
+  "layers": "BU",
+  "setup": {
+   "search": {
+    "repos": [
+     "a"
+    ],
+    "header": null
+   },
+   "repos": {
+    "a": {
+     "json": [
+      {}
+     ]
+    }
+   }
+  },
+  "asked": "derive",
+  "client_call": "list_commits",
+  "client": "ok",
+  "commits": {
+   "response": {
+    "repos": [
+     {
+      "name": "dmf/a",
+      "commits": [
+       {
+        "sha_short": "",
+        "message": "",
+        "author": "",
+        "date": "",
+        "url": ""
+       }
+      ]
+     }
+    ],
+    "reason": "",
+    "skipped_repos": 0,
+    "repos_maybe_incomplete": false
+   },
+   "lane": [
+    "ROWS"
+   ]
+  }
+ },
+ "F-W7": {
+  "layers": "BC",
+  "setup": {
+   "search": {
+    "repos": [
+     "a",
+     "b"
+    ],
+    "header": null
+   },
+   "repos": {
+    "a": "rows",
+    "b": {
+     "json": [
+      "$GOOD",
+      null
+     ]
+    }
+   }
+  },
+  "asked": "derive",
+  "client_call": "search",
+  "client": null,
+  "commits": {
+   "response": {
+    "repos": [
+     {
+      "name": "dmf/a",
+      "commits": [
+       {
+        "sha_short": "6100000",
+        "message": "commit 0 of a",
+        "author": "Ada",
+        "date": "2026-11-27T10:00:00Z",
+        "url": "http://forgejo.test/dmf/a/commit/0"
+       }
+      ]
+     }
+    ],
+    "reason": "forgejo-partial",
+    "skipped_repos": 0,
+    "repos_maybe_incomplete": false
+   },
+   "lane": [
+    "PARTIAL",
+    "ROWS"
+   ]
+  }
+ },
+ "F-W8": {
+  "layers": "BC",
+  "setup": {
+   "search": {
+    "repos": [
+     "a",
+     "b"
+    ],
+    "header": null
+   },
+   "repos": {
+    "a": {
+     "json": [
+      "$GOOD",
+      null
+     ]
+    },
+    "b": "rows"
+   }
+  },
+  "asked": "derive",
+  "client_call": "search",
+  "client": null,
+  "commits": {
+   "response": {
+    "repos": [
+     {
+      "name": "dmf/b",
+      "commits": [
+       {
+        "sha_short": "6200000",
+        "message": "commit 0 of b",
+        "author": "Ada",
+        "date": "2026-11-27T10:00:00Z",
+        "url": "http://forgejo.test/dmf/b/commit/0"
+       }
+      ]
+     }
+    ],
+    "reason": "forgejo-partial",
+    "skipped_repos": 0,
+    "repos_maybe_incomplete": false
+   },
+   "lane": [
+    "PARTIAL",
+    "ROWS"
+   ]
+  }
+ },
+ "F-W9": {
+  "layers": "BC",
+  "setup": {
+   "search": {
+    "repos": [
+     "a",
+     "b"
+    ],
+    "header": null
+   },
+   "repos": {
+    "a": {
+     "json": [
+      "$GOOD",
+      null
+     ]
+    },
+    "b": {
+     "json": [
+      "$GOOD",
+      null
+     ]
+    }
+   }
+  },
+  "asked": "derive",
+  "client_call": "search",
+  "client": null,
+  "commits": {
+   "response": {
+    "repos": [],
+    "reason": "forgejo-read-failed",
+    "skipped_repos": 0,
+    "repos_maybe_incomplete": false
+   },
+   "lane": [
+    "READFAIL"
+   ]
+  }
+ },
+ "F-W10.timeout": {
+  "layers": "BU",
+  "setup": {
+   "search": {
+    "repos": [
+     "a"
+    ],
+    "header": null
+   },
+   "repos": {
+    "a": "bodyfail:timeout"
+   }
+  },
+  "asked": "derive",
+  "client_call": "list_commits",
+  "client": "ForgejoReadFailed",
+  "commits": {
+   "response": {
+    "repos": [],
+    "reason": "forgejo-read-failed",
+    "skipped_repos": 0,
+    "repos_maybe_incomplete": false
+   },
+   "lane": [
+    "READFAIL"
+   ]
+  }
+ },
+ "F-W10.reset": {
+  "layers": "BU",
+  "setup": {
+   "search": {
+    "repos": [
+     "a"
+    ],
+    "header": null
+   },
+   "repos": {
+    "a": "bodyfail:reset"
+   }
+  },
+  "asked": "derive",
+  "client_call": "list_commits",
+  "client": "ForgejoReadFailed",
+  "commits": {
+   "response": {
+    "repos": [],
+    "reason": "forgejo-read-failed",
+    "skipped_repos": 0,
+    "repos_maybe_incomplete": false
+   },
+   "lane": [
+    "READFAIL"
+   ]
+  }
+ },
+ "F-W10.short": {
+  "layers": "BU",
+  "setup": {
+   "search": {
+    "repos": [
+     "a"
+    ],
+    "header": null
+   },
+   "repos": {
+    "a": "bodyfail:short"
+   }
+  },
+  "asked": "derive",
+  "client_call": "list_commits",
+  "client": "ForgejoReadFailed",
+  "commits": {
+   "response": {
+    "repos": [],
+    "reason": "forgejo-read-failed",
+    "skipped_repos": 0,
+    "repos_maybe_incomplete": false
+   },
+   "lane": [
+    "READFAIL"
+   ]
+  }
+ },
+ "F-W10.unreadable": {
+  "layers": "BU",
+  "setup": {
+   "search": {
+    "repos": [
+     "a"
+    ],
+    "header": null
+   },
+   "repos": {
+    "a": "http-unreadable:500"
+   }
+  },
+  "asked": "derive",
+  "client_call": "list_commits",
+  "client": "ForgejoAPIError",
+  "commits": {
+   "response": {
+    "repos": [],
+    "reason": "forgejo-read-failed",
+    "skipped_repos": 0,
+    "repos_maybe_incomplete": false
+   },
+   "lane": [
+    "READFAIL"
+   ]
+  }
+ }
+}
