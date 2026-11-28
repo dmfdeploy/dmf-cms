@@ -1,4 +1,6 @@
 /**
+ * Case list: docs/changes-forgejo-cases.md. Row ids in test names refer to it.
+ *
  * Shared helpers for the commits and pull request panels' tests
  * (dmfdeploy/dmfdeploy#1025). They render the real History lane from a fetch
  * mock and read back what one panel shows, top to bottom, as a list of strings.
@@ -84,7 +86,7 @@ export function laneOf(panel: HTMLElement): string[] {
 
 const OFF_PULLS = 'Pull requests are turned off for these repositories'
 
-/** Turn a lane token from the table into the text the panel must show. */
+/** Turn a lane token from the case list into the text the panel must show. */
 export function textFor(token: string, kind: Kind): string {
   const noun = NOUN[kind]
   const [name, arg] = token.split(':')
@@ -116,7 +118,7 @@ export function textFor(token: string, kind: Kind): string {
   }
 }
 
-/** Expand a table "Lane shows" cell into the exact list `laneOf` returns. */
+/** Expand a lane from the case list into the exact list `laneOf` returns. */
 export function expectedLane(tokens: string[], kind: Kind, rowCount: number): string[] {
   return tokens.flatMap((token) =>
     token === 'ROWS' ? Array.from({ length: rowCount }, () => 'ROW') : [textFor(token, kind)],
