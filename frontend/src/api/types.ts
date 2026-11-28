@@ -398,7 +398,18 @@ export interface ChangesCommitsResponse {
   // type saying otherwise (apiCall's generic return type is a compile-time
   // cast, not runtime validation) — so an omitted `reason` is a bug to fix
   // at the source, never a case to design comfortably around here.
-  reason: '' | 'forgejo-unconfigured' | 'forgejo-unreachable' | 'forgejo-partial'
+  reason:
+    | ''
+    | 'forgejo-unconfigured'
+    | 'forgejo-unreachable'
+    | 'forgejo-read-failed'
+    | 'forgejo-partial'
+  // Repositories that were eligible but not read because of the five-repo
+  // cap. Absent from older payloads, so readers treat a missing value as 0.
+  skipped_repos?: number
+  // The repository search may have left repositories out of its reply.
+  // Absent from older payloads, so readers treat a missing value as false.
+  repos_maybe_incomplete?: boolean
 }
 
 export interface PullEntry {
@@ -420,8 +431,12 @@ export interface ChangesPullsResponse {
     | ''
     | 'forgejo-unconfigured'
     | 'forgejo-unreachable'
+    | 'forgejo-read-failed'
     | 'forgejo-partial'
     | 'forgejo-pulls-disabled'
+  // Same meaning as on ChangesCommitsResponse.
+  skipped_repos?: number
+  repos_maybe_incomplete?: boolean
   // How many repositories were left out because pull requests are turned
   // off there. Independent of `reason`: a failed read of another repository
   // sets `reason`, and this count still says some were turned off. Absent

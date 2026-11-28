@@ -16,6 +16,7 @@ import pytest
 from fastapi.testclient import TestClient
 
 from dmf_cms import main as main_module
+from dmf_cms import forgejo
 from dmf_cms.forgejo import ForgejoAPIError
 from dmf_cms.main import create_app
 from dmf_cms.settings import ForgejoSettings, Settings
@@ -33,6 +34,11 @@ def _client(*, forgejo_configured=True, groups=("dmf-console-viewer",)) -> TestC
     client = TestClient(create_app(settings=settings))
     client.get("/auth/login", follow_redirects=False)
     return client
+
+
+def _search(repos):
+    """What ``list_repos`` returns: the repos and the validated header total."""
+    return lambda **kwargs: forgejo.RepoSearch(repos=repos, total=None)
 
 
 def _raise(exc):
@@ -71,22 +77,33 @@ def test_pulls_unconfigured_is_an_explicit_token_not_silent_emptiness():
     "exc",
     [ForgejoAPIError(503, "unavailable"), ForgejoAPIError(401, "nope"), RuntimeError("boom")],
 )
-def test_commits_every_failure_is_unreachable_never_a_500(monkeypatch, exc):
+def test_commits_every_search_failure_is_a_failed_read_never_a_500(monkeypatch, exc):
     monkeypatch.setattr(main_module.forgejo, "list_repos", _raise(exc))
     resp = _client().get("/api/changes/commits")
     assert resp.status_code == 200
-    assert resp.json() == {"repos": [], "reason": "forgejo-unreachable"}
+    assert resp.json() == {
+        "repos": [],
+        "reason": "forgejo-read-failed",
+        "skipped_repos": 0,
+        "repos_maybe_incomplete": False,
+    }
 
 
 @pytest.mark.parametrize(
     "exc",
     [ForgejoAPIError(503, "unavailable"), ForgejoAPIError(401, "nope"), RuntimeError("boom")],
 )
-def test_pulls_every_failure_is_unreachable_never_a_500(monkeypatch, exc):
+def test_pulls_every_search_failure_is_a_failed_read_never_a_500(monkeypatch, exc):
     monkeypatch.setattr(main_module.forgejo, "list_repos", _raise(exc))
     resp = _client().get("/api/changes/pulls")
     assert resp.status_code == 200
-    assert resp.json() == {"pulls": [], "reason": "forgejo-unreachable", "disabled_repos": 0}
+    assert resp.json() == {
+        "pulls": [],
+        "reason": "forgejo-read-failed",
+        "disabled_repos": 0,
+        "skipped_repos": 0,
+        "repos_maybe_incomplete": False,
+    }
 
 
 def test_no_raw_exception_string_survives_in_the_body(monkeypatch):
@@ -104,7 +121,7 @@ def test_commits_success_carries_an_empty_reason(monkeypatch):
     monkeypatch.setattr(
         main_module.forgejo,
         "list_repos",
-        lambda **kwargs: [{"full_name": "dmfdeploy/dmf-cms", "name": "dmf-cms"}],
+        _search([{"full_name": "dmfdeploy/dmf-cms", "name": "dmf-cms"}]),
     )
     monkeypatch.setattr(
         main_module.forgejo,
@@ -127,7 +144,7 @@ def test_pulls_success_carries_an_empty_reason(monkeypatch):
     monkeypatch.setattr(
         main_module.forgejo,
         "list_repos",
-        lambda **kwargs: [{"full_name": "dmfdeploy/dmf-cms", "name": "dmf-cms"}],
+        _search([{"full_name": "dmfdeploy/dmf-cms", "name": "dmf-cms"}]),
     )
     monkeypatch.setattr(
         main_module.forgejo,
@@ -151,9 +168,20 @@ def test_pulls_success_carries_an_empty_reason(monkeypatch):
 def test_reachable_forgejo_with_no_repos_is_a_genuine_empty(monkeypatch):
     # reason "" is what lets the widget honestly say "No recent commits" —
     # Forgejo answered and there was nothing to show.
-    monkeypatch.setattr(main_module.forgejo, "list_repos", lambda **kwargs: [])
-    assert _client().get("/api/changes/commits").json() == {"repos": [], "reason": ""}
-    assert _client().get("/api/changes/pulls").json() == {"pulls": [], "reason": "", "disabled_repos": 0}
+    monkeypatch.setattr(main_module.forgejo, "list_repos", _search([]))
+    assert _client().get("/api/changes/commits").json() == {
+        "repos": [],
+        "reason": "",
+        "skipped_repos": 0,
+        "repos_maybe_incomplete": False,
+    }
+    assert _client().get("/api/changes/pulls").json() == {
+        "pulls": [],
+        "reason": "",
+        "disabled_repos": 0,
+        "skipped_repos": 0,
+        "repos_maybe_incomplete": False,
+    }
 
 
 # ---------------------------------------------------------------------------
@@ -172,23 +200,25 @@ _TWO_REPOS = [
 ]
 
 
-def test_commits_all_repos_fail_is_unreachable_never_a_silent_empty(monkeypatch, caplog):
-    monkeypatch.setattr(main_module.forgejo, "list_repos", lambda **kwargs: _TWO_REPOS)
+def test_commits_all_repos_fail_is_a_failed_read_never_a_silent_empty(monkeypatch, caplog):
+    monkeypatch.setattr(main_module.forgejo, "list_repos", _search(_TWO_REPOS))
     monkeypatch.setattr(main_module.forgejo, "list_commits", _raise(RuntimeError("boom")))
     with caplog.at_level("WARNING"):
         body = _client().get("/api/changes/commits").json()
-    assert body == {"repos": [], "reason": "forgejo-unreachable"}
+    assert body["repos"] == []
+    assert body["reason"] == "forgejo-read-failed"
     # Previously invisible to monitoring: every failed repo now logs.
     assert sum("dmf-cms" in r.message for r in caplog.records) >= 1
     assert sum("dmfdeploy" in r.message for r in caplog.records) >= 1
 
 
-def test_pulls_all_repos_fail_is_unreachable_never_a_silent_empty(monkeypatch, caplog):
-    monkeypatch.setattr(main_module.forgejo, "list_repos", lambda **kwargs: _TWO_REPOS)
+def test_pulls_all_repos_fail_is_a_failed_read_never_a_silent_empty(monkeypatch, caplog):
+    monkeypatch.setattr(main_module.forgejo, "list_repos", _search(_TWO_REPOS))
     monkeypatch.setattr(main_module.forgejo, "list_pulls", _raise(RuntimeError("boom")))
     with caplog.at_level("WARNING"):
         body = _client().get("/api/changes/pulls").json()
-    assert body == {"pulls": [], "reason": "forgejo-unreachable", "disabled_repos": 0}
+    assert body["pulls"] == []
+    assert body["reason"] == "forgejo-read-failed"
     assert sum("dmf-cms" in r.message for r in caplog.records) >= 1
 
 
@@ -203,14 +233,15 @@ def test_commits_per_repo_failure_log_line_sanitizes_hostile_full_name_and_body(
     hostile_repos = [
         {"full_name": "dmfdeploy/dmf-cms\nFORGED actor=admin", "name": "dmf-cms"},
     ]
-    monkeypatch.setattr(main_module.forgejo, "list_repos", lambda **kwargs: hostile_repos)
+    monkeypatch.setattr(main_module.forgejo, "list_repos", _search(hostile_repos))
     monkeypatch.setattr(
         main_module.forgejo, "list_commits",
         _raise(ForgejoAPIError(500, "boom\nFORGED recent changes: Forgejo commits fetch failed: pwned")),
     )
     with caplog.at_level("WARNING"):
         body = _client().get("/api/changes/commits").json()
-    assert body == {"repos": [], "reason": "forgejo-unreachable"}
+    assert body["repos"] == []
+    assert body["reason"] == "forgejo-read-failed"
 
     lines = [
         r.getMessage() for r in caplog.records
@@ -223,7 +254,7 @@ def test_commits_per_repo_failure_log_line_sanitizes_hostile_full_name_and_body(
 
 
 def test_commits_mixed_success_is_partial_and_keeps_the_successful_rows(monkeypatch, caplog):
-    monkeypatch.setattr(main_module.forgejo, "list_repos", lambda **kwargs: _TWO_REPOS)
+    monkeypatch.setattr(main_module.forgejo, "list_repos", _search(_TWO_REPOS))
 
     def _list_commits(*, owner, repo, **kwargs):
         if repo == "dmf-cms":
@@ -249,7 +280,7 @@ def test_commits_mixed_success_is_partial_and_keeps_the_successful_rows(monkeypa
 
 
 def test_pulls_mixed_success_is_partial_and_keeps_the_successful_rows(monkeypatch, caplog):
-    monkeypatch.setattr(main_module.forgejo, "list_repos", lambda **kwargs: _TWO_REPOS)
+    monkeypatch.setattr(main_module.forgejo, "list_repos", _search(_TWO_REPOS))
 
     def _list_pulls(*, owner, repo, **kwargs):
         if repo == "dmf-cms":
@@ -274,16 +305,12 @@ def test_pulls_mixed_success_is_partial_and_keeps_the_successful_rows(monkeypatc
     assert sum("dmfdeploy/dmfdeploy" in r.message for r in caplog.records) >= 1
 
 
-# Pulls aggregation used to choose
-# forgejo-partial vs forgejo-unreachable off `all_pulls` truthiness (item
-# COUNT), not off how many repos were actually READ. A repo can be
-# successfully read and legitimately return zero PRs, contributing no items
-# — so one empty-but-successful repo plus one failed repo produced
-# `forgejo-unreachable`, misreporting a partially-successful read as a
-# total failure. This is the case the mixed-success test above cannot see,
-# because its successful repo happens to return one PR.
-def test_pulls_one_empty_success_plus_one_failure_is_partial_not_unreachable(monkeypatch, caplog):
-    monkeypatch.setattr(main_module.forgejo, "list_repos", lambda **kwargs: _TWO_REPOS)
+# The reason depends on how many repos were READ, not on how many pull request
+# rows came back. A repo can be read in full and have zero pull requests, so one
+# empty-but-read repo plus one failed repo is partial. The mixed-success test
+# above cannot see this, because its read repo returns one pull request.
+def test_pulls_one_empty_success_plus_one_failure_is_partial_not_a_failed_read(monkeypatch, caplog):
+    monkeypatch.setattr(main_module.forgejo, "list_repos", _search(_TWO_REPOS))
 
     def _list_pulls(*, owner, repo, **kwargs):
         if repo == "dmf-cms":

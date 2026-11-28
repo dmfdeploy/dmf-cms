@@ -72,6 +72,11 @@ describe('classifyForgejo', () => {
     expect(classifyForgejo(q)).toBe('partial')
   })
 
+  it('forgejo-read-failed is its own phase, apart from unreachable', () => {
+    const q: ForgejoQueryLike = { isLoading: false, isError: false, data: { reason: 'forgejo-read-failed' } }
+    expect(classifyForgejo(q)).toBe('read-failed')
+  })
+
   it('forgejo-pulls-disabled', () => {
     const q: ForgejoQueryLike = { isLoading: false, isError: false, data: { reason: 'forgejo-pulls-disabled' } }
     expect(classifyForgejo(q)).toBe('disabled')
@@ -149,6 +154,12 @@ describe('forgejoEmptyCopy', () => {
   it('the unconfigured copy states a next action, not just the fact (Art. 8)', () => {
     const copy = forgejoEmptyCopy('unconfigured', 'commits')
     expect(copy).toMatch(/administrator/)
+  })
+
+  it('a failed read claims only that the read failed, not that source control is unreachable', () => {
+    const copy = forgejoEmptyCopy('read-failed', 'pull requests')
+    expect(copy).toBe('Recent pull requests could not be read from source control. Retrying automatically.')
+    expect(copy).not.toMatch(/unreachable/)
   })
 
   it('partial and unreachable read as distinguishable, non-identical copy', () => {

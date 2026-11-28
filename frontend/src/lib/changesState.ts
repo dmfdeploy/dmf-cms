@@ -113,7 +113,8 @@ export function workflowsDegradedCopy(reason: string | undefined): string | null
 export type ForgejoPhase =
   | 'loading'
   | 'ok'
-  | 'unreachable'
+  | 'unreachable' // the repository search got no HTTP reply
+  | 'read-failed' // source control replied, but the read could not be completed
   | 'partial' // some repos read, some failed — rows shown are real but incomplete
   | 'unconfigured'
   | 'disabled' // every listed repo has pull requests turned off; none were read
@@ -135,6 +136,8 @@ export function classifyForgejo(q: ForgejoQueryLike): ForgejoPhase {
   switch (settled.data?.reason) {
     case 'forgejo-unreachable':
       return 'unreachable'
+    case 'forgejo-read-failed':
+      return 'read-failed'
     case 'forgejo-partial':
       return 'partial'
     case 'forgejo-unconfigured':
@@ -160,12 +163,76 @@ export function classifyForgejo(q: ForgejoQueryLike): ForgejoPhase {
 export function pullsDisabledCount(
   data: { disabled_repos?: number } | undefined,
 ): number {
-  const n = data?.disabled_repos
-  return typeof n === 'number' && n > 0 ? n : 0
+  return positiveCount(data?.disabled_repos)
 }
 
 export const PULLS_SOME_DISABLED_COPY =
   'Pull requests are turned off for some repositories, so this list leaves them out.'
+
+export const REPOS_MAYBE_INCOMPLETE_COPY =
+  'The repository list may be incomplete, so some repositories were not read.'
+
+export function reposSkippedCopy(n: number): string {
+  return `${n} more ${n === 1 ? 'repository was' : 'repositories were'} not read, so this list may be incomplete.`
+}
+
+function positiveCount(n: number | undefined): number {
+  return typeof n === 'number' && n > 0 ? n : 0
+}
+
+export type ForgejoNoticeKey = 'read-state' | 'some-off' | 'skipped' | 'incomplete'
+
+export interface ForgejoNotice {
+  key: ForgejoNoticeKey
+  text: string
+}
+
+export interface ForgejoLaneData {
+  disabled_repos?: number
+  skipped_repos?: number
+  repos_maybe_incomplete?: boolean
+}
+
+export interface ForgejoLane {
+  /** Rendered above the rows, in this order. */
+  notices: ForgejoNotice[]
+  /** True only when nothing above qualifies the empty list. */
+  showEmpty: boolean
+  emptyText: string
+}
+
+// One function decides what a Forgejo panel says above its rows and whether it
+// may say "No recent ...", so the commits and pull request panels cannot drift.
+// Order: read state, then pull requests turned off, then repositories not
+// read, then a possibly incomplete repository list. The read-state notice shows
+// whenever the phase is not ok, with or without rows. The other three show
+// whenever their field says so. After a failed refetch the query keeps its last
+// good data, so its counts still qualify the rows it keeps.
+//
+// An absent field (an older server) reads as 0 or false. The commits route
+// never sends `disabled_repos`, so it never gets the pull request notice.
+export function forgejoLane(
+  phase: ForgejoPhase,
+  kind: string,
+  data: ForgejoLaneData | undefined,
+  rowCount: number,
+): ForgejoLane {
+  const disabled = positiveCount(data?.disabled_repos)
+  const skipped = positiveCount(data?.skipped_repos)
+  const incomplete = data?.repos_maybe_incomplete === true
+  const notices: ForgejoNotice[] = []
+  if (phase !== 'ok' && phase !== 'loading') {
+    notices.push({ key: 'read-state', text: forgejoEmptyCopy(phase, kind) })
+  }
+  // The all-off phase says this already.
+  if (disabled > 0 && phase !== 'disabled') {
+    notices.push({ key: 'some-off', text: PULLS_SOME_DISABLED_COPY })
+  }
+  if (skipped > 0) notices.push({ key: 'skipped', text: reposSkippedCopy(skipped) })
+  if (incomplete) notices.push({ key: 'incomplete', text: REPOS_MAYBE_INCOMPLETE_COPY })
+  const showEmpty = phase === 'ok' && rowCount === 0 && disabled === 0 && skipped === 0 && !incomplete
+  return { notices, showEmpty, emptyText: forgejoEmptyCopy('ok', kind) }
+}
 
 // `kind` names what's missing/failed in plain language ("commits",
 // "pull requests") so one function serves both panels without either
@@ -174,6 +241,11 @@ export function forgejoEmptyCopy(phase: ForgejoPhase, kind: string): string {
   switch (phase) {
     case 'unreachable':
       return `Source control is unreachable — recent ${kind} cannot be read right now. Retrying automatically.`
+    case 'read-failed':
+      // Claims only that the read failed: this state also covers an error the
+      // console could not classify, so it does not say whether source control
+      // answered.
+      return `Recent ${kind} could not be read from source control. Retrying automatically.`
     case 'partial':
       return `Some repositories could not be read — recent ${kind} may be incomplete. Retrying automatically.`
     case 'unconfigured':

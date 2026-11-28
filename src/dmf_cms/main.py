@@ -141,7 +141,7 @@ from .switch_source import (
     dispatch_switch_source,
     resolve_topology_for_receiver,
 )
-from . import netbox, prometheus, promsd, forgejo, mxl, media_workloads, capacity, drain, facility, audit_events
+from . import netbox, prometheus, promsd, forgejo, changes_forgejo, mxl, media_workloads, capacity, drain, facility, audit_events
 from starlette.concurrency import run_in_threadpool
 import asyncio
 from .security import (
@@ -5063,48 +5063,73 @@ def create_app(settings: Settings | None = None, contract: AppContract | None = 
             )
             return JSONResponse({"jobs": [], "reason": reason})
 
-    @app.get("/api/changes/commits")
-    async def api_changes_commits(request: Request):
-        """Recent commits, fail-soft (same contract as /api/changes/jobs).
+    async def _forgejo_search(label: str):
+        """Run the repository search. Returns ``(search, None)`` or ``(None, reason)``.
 
-        This endpoint used to answer a genuine failure with a raw 500 whose
-        body was the stringified exception — literally the UX Constitution's
-        own Art. 8 worked example (`"Failed to fetch commits: slice(None, 5,
-        None)"`). It also answered "not configured" with a bare
-        ``{"repos": []}``, indistinguishable from Forgejo having genuinely
-        answered with zero commits. Both are hard-gate-1/8 violations of the
-        same shape the History lane's jobs panel was already fixed for
-        (dmfdeploy/dmfdeploy#285); this closes the gap for its two sibling
-        panels. Every outcome is now a 200 carrying an explicit ``reason``
-        token, rendered by ``lib/changesState.ts``'s ``classifyForgejo``.
-
-        fix-round P1-2 (PR #81): the per-repo ``list_commits`` call was
-        wrapped in its own ``except Exception: pass`` — a failure there was
-        invisible both to the UI (this handler still returned ``reason: ""``
-        as long as ``list_repos`` itself succeeded) AND to monitoring (no
-        log line at all). A repo whose commits call fails is now tracked and
-        logged, not silently skipped, and the aggregate ``reason`` reflects
-        it: ``""`` only when every repo's commits were read; ``"forgejo-
-        partial"`` when some succeeded and some failed (the returned rows
-        are real, just incomplete); ``"forgejo-unreachable"`` when every
-        repo failed (indistinguishable from the source being unreachable, as
-        far as this read is concerned) — same token ``list_repos`` itself
-        raising already uses, so the UI needs exactly one case for it.
+        Only a search that got no HTTP reply is "unreachable". Any other
+        failure, including an error we cannot classify, is a failed read: the
+        console cannot prove whether a reply arrived.
         """
-        if not _require_user(request):
-            return JSONResponse({"error": "unauthorized"}, status_code=401)
-        if not settings.forgejo.configured:
-            return JSONResponse({"repos": [], "reason": "forgejo-unconfigured"})
         try:
-            repos = await run_in_threadpool(
+            search = await run_in_threadpool(
                 forgejo.list_repos,
                 api_url=settings.forgejo.api_url,
                 api_token=settings.forgejo.api_token,
             )
+        except forgejo.ForgejoNoAnswer as exc:
+            # exc and any Forgejo response body are upstream content.
+            logger.warning("recent changes: Forgejo %s fetch failed: %s", label, _sanitize_audit_field(str(exc)))
+            return None, changes_forgejo.REASON_UNREACHABLE
+        except Exception as exc:
+            logger.warning("recent changes: Forgejo %s fetch failed: %s", label, _sanitize_audit_field(str(exc)))
+            return None, changes_forgejo.REASON_READ_FAILED
+        return search, None
 
+    def _log_repo_failure(label: str, full_name: str, exc: Exception) -> None:
+        # full_name is Forgejo response content (whoever can create a repo in
+        # the configured Forgejo org/user names it, and dmf-cms doesn't
+        # constrain that character set), and exc may be a ForgejoAPIError,
+        # whose str() embeds Forgejo's own raw response body.
+        logger.warning(
+            "recent changes: Forgejo %s fetch failed for %s: %s",
+            label, _sanitize_audit_field(full_name), _sanitize_audit_field(str(exc)),
+        )
+
+    @app.get("/api/changes/commits")
+    async def api_changes_commits(request: Request):
+        """Recent commits, fail-soft (same contract as /api/changes/jobs).
+
+        Every outcome is a 200 carrying an explicit ``reason`` token, rendered
+        by ``lib/changesState.ts``'s ``classifyForgejo``, never a raw
+        exception string. ``""`` means every repository asked was read.
+
+        The repository search decides the first rung: no HTTP reply is
+        ``forgejo-unreachable``; any other failure of the search is
+        ``forgejo-read-failed``. After a good search, a repository whose own
+        call fails counts as failed: ``forgejo-partial`` when another was read,
+        ``forgejo-read-failed`` when none was. That a repository's call got no
+        answer does not make source control unreachable, since the search just
+        answered.
+
+        A repository is added to the rows, and to the count of repositories
+        read, only after its whole reply converted. Repositories beyond the cap
+        of five are reported in ``skipped_repos``. ``repos_maybe_incomplete``
+        says the search itself may have left repositories out.
+        """
+        if not _require_user(request):
+            return JSONResponse({"error": "unauthorized"}, status_code=401)
+        defaults = changes_forgejo.READ_FIELD_DEFAULTS
+        if not settings.forgejo.configured:
+            return JSONResponse({"repos": [], "reason": "forgejo-unconfigured", **defaults})
+        search, search_reason = await _forgejo_search("commits")
+        if search is None:
+            return JSONResponse({"repos": [], "reason": search_reason, **defaults})
+        try:
+            repos = search.repos
+            asked = repos[: changes_forgejo.REPO_CAP]
             repos_commits = []
             failed_repos = 0
-            for repo in repos[:5]:
+            for repo in asked:
                 full_name = repo.get("full_name", "")
                 parts = full_name.split("/")
                 owner = parts[0] if parts else ""
@@ -5119,8 +5144,7 @@ def create_app(settings: Settings | None = None, contract: AppContract | None = 
                         repo=repo_name,
                         limit=10,
                     )
-
-                    repos_commits.append({
+                    entry = {
                         "name": full_name,
                         "commits": [
                             {
@@ -5132,77 +5156,59 @@ def create_app(settings: Settings | None = None, contract: AppContract | None = 
                             }
                             for c in commits
                         ],
-                    })
+                    }
                 except Exception as exc:
                     failed_repos += 1
-                    # umbrella dmf-cms#108 fix-round 4: full_name is Forgejo
-                    # response content (whoever can create a repo in the
-                    # configured Forgejo org/user names it — dmf-cms doesn't
-                    # constrain that character set), and exc may be
-                    # ForgejoAPIError, whose str() embeds Forgejo's own raw
-                    # response body. Both are upstream response content.
-                    logger.warning(
-                        "recent changes: Forgejo commits fetch failed for %s: %s",
-                        _sanitize_audit_field(full_name), _sanitize_audit_field(str(exc)),
-                    )
+                    _log_repo_failure("commits", full_name, exc)
+                    continue
+                repos_commits.append(entry)
 
-            if failed_repos == 0:
-                reason = ""
-            elif repos_commits:
-                reason = "forgejo-partial"
-            else:
-                reason = "forgejo-unreachable"
-            return JSONResponse({"repos": repos_commits, "reason": reason})
+            return JSONResponse({
+                "repos": repos_commits,
+                "reason": changes_forgejo.read_state(failed=failed_repos, read=len(repos_commits)),
+                "skipped_repos": max(len(repos) - changes_forgejo.REPO_CAP, 0),
+                "repos_maybe_incomplete": changes_forgejo.repos_maybe_incomplete(search),
+            })
         except Exception as exc:
-            # umbrella dmf-cms#108 fix-round 4: exc may be ForgejoAPIError.
+            # exc may be an upstream-derived string.
             logger.warning("recent changes: Forgejo commits fetch failed: %s", _sanitize_audit_field(str(exc)))
-            return JSONResponse({"repos": [], "reason": "forgejo-unreachable"})
+            return JSONResponse({"repos": [], "reason": changes_forgejo.REASON_READ_FAILED, **defaults})
 
     @app.get("/api/changes/pulls")
     async def api_changes_pulls(request: Request):
-        """Recent pull requests, fail-soft — see api_changes_commits for why,
-        including the fix-round P1-2 per-repo failure tracking (same
-        ``""``/``"forgejo-partial"``/``"forgejo-unreachable"`` ladder)."""
+        """Recent pull requests, fail-soft. See api_changes_commits for the
+        reason ladder and the ``skipped_repos`` and ``repos_maybe_incomplete``
+        fields; this route adds ``disabled_repos``.
+
+        Repos with pull requests turned off (mirror repos ship this way)
+        answer 404 on their pulls endpoint, which would read as a failure.
+        Forgejo reports the setting in the repo object, so those repos are left
+        out before the five-repo cap and are never asked. They count as read
+        because the search reply shows Forgejo answered, so another repo's
+        failure makes ``forgejo-partial``, not ``forgejo-read-failed``. That
+        count is not evidence that those repos have no pull requests, so
+        ``disabled_repos`` reports them separately, independent of ``reason``.
+        A repo object without the field, or with a null field, is asked as
+        before.
+        """
         if not _require_user(request):
             return JSONResponse({"error": "unauthorized"}, status_code=401)
+        defaults = {"disabled_repos": 0, **changes_forgejo.READ_FIELD_DEFAULTS}
         if not settings.forgejo.configured:
-            return JSONResponse({"pulls": [], "reason": "forgejo-unconfigured", "disabled_repos": 0})
+            return JSONResponse({"pulls": [], "reason": "forgejo-unconfigured", **defaults})
+        search, search_reason = await _forgejo_search("pulls")
+        if search is None:
+            return JSONResponse({"pulls": [], "reason": search_reason, **defaults})
         try:
-            repos = await run_in_threadpool(
-                forgejo.list_repos,
-                api_url=settings.forgejo.api_url,
-                api_token=settings.forgejo.api_token,
-            )
+            repos = search.repos
+            pull_repos = [r for r in repos if r.get("has_pull_requests") is not False]
+            disabled_repos = len(repos) - len(pull_repos)
+            asked = pull_repos[: changes_forgejo.REPO_CAP]
 
             all_pulls = []
             failed_repos = 0
-            # fix-round P2 (PR #81, second pass): the ladder below keys off
-            # THIS count, not `all_pulls` truthiness — a repo can be
-            # successfully read and legitimately have zero open+closed PRs,
-            # contributing no items at all (unlike commits, where a
-            # successful repo always appends its own entry, even with an
-            # empty `commits` list — see api_changes_commits). Keying off
-            # `all_pulls` conflated "nothing succeeded" with "something
-            # succeeded and found nothing": one empty-but-successful repo
-            # plus one failed repo classified as `forgejo-unreachable`, not
-            # `forgejo-partial` — the wrong claim, since Forgejo WAS
-            # reachable for at least one of the two.
-            successful_repos = 0
-            # Repos with pull requests turned off (mirror repos ship this
-            # way) answer 404 on their pulls endpoint, which would read as a
-            # failure. Forgejo reports the setting in the repo object, so
-            # those repos are left out before the five-repo cap and are never
-            # asked. They count as read because the search reply shows
-            # Forgejo answered. That count is not evidence that those repos
-            # have no pull requests, so the response reports it separately
-            # as `disabled_repos`, independent of `reason`. A repo object
-            # without the field is queried as before.
-            pull_repos = [
-                r for r in repos if r.get("has_pull_requests") is not False
-            ]
-            disabled_repos = len(repos) - len(pull_repos)
-            successful_repos += disabled_repos
-            for repo in pull_repos[:5]:
+            read_repos = 0
+            for repo in asked:
                 full_name = repo.get("full_name", "")
                 parts = full_name.split("/")
                 owner = parts[0] if parts else ""
@@ -5217,49 +5223,43 @@ def create_app(settings: Settings | None = None, contract: AppContract | None = 
                         repo=repo_name,
                         state="all",
                     )
-                    successful_repos += 1
-
-                    for pr in pulls:
-                        all_pulls.append({
+                    converted = [
+                        {
                             "repo": full_name,
                             "number": pr.get("number"),
-                            "title": pr.get("title"),
-                            "state": pr.get("state"),
+                            "title": pr.get("title", ""),
+                            "state": pr.get("state", ""),
                             "author": pr.get("user", {}).get("login", ""),
                             "created": pr.get("created_at", ""),
                             "url": pr.get("html_url", ""),
-                        })
+                        }
+                        for pr in pulls
+                    ]
                 except Exception as exc:
                     failed_repos += 1
-                    # umbrella dmf-cms#108 fix-round 4: same as the commits
-                    # handler above — full_name is Forgejo response content,
-                    # exc may be ForgejoAPIError.
-                    logger.warning(
-                        "recent changes: Forgejo pulls fetch failed for %s: %s",
-                        _sanitize_audit_field(full_name), _sanitize_audit_field(str(exc)),
-                    )
+                    _log_repo_failure("pulls", full_name, exc)
+                    continue
+                read_repos += 1
+                all_pulls.extend(converted)
 
-            if failed_repos == 0:
-                # When every listed repo is turned off, nothing was asked,
-                # and that is not reported as an empty-but-read list. When
-                # only some are off, `disabled_repos` carries that fact. A
-                # failed read keeps its own reason below, so the two facts
-                # never replace each other. `forgejo-unreachable` stays
-                # true: disabled repos count as read, so it cannot be set
-                # while any repo is turned off.
-                reason = "" if pull_repos or not repos else "forgejo-pulls-disabled"
-            elif successful_repos > 0:
-                reason = "forgejo-partial"
+            if not asked:
+                # Nothing was asked. When every listed repo is turned off, that
+                # is not reported as an empty-but-read list.
+                reason = changes_forgejo.REASON_PULLS_DISABLED if repos and not pull_repos else ""
             else:
-                reason = "forgejo-unreachable"
+                reason = changes_forgejo.read_state(
+                    failed=failed_repos, read=read_repos, other_read=disabled_repos,
+                )
             return JSONResponse({
                 "pulls": all_pulls,
                 "reason": reason,
                 "disabled_repos": disabled_repos,
+                "skipped_repos": max(len(pull_repos) - changes_forgejo.REPO_CAP, 0),
+                "repos_maybe_incomplete": changes_forgejo.repos_maybe_incomplete(search),
             })
         except Exception as exc:
             logger.warning("recent changes: Forgejo pulls fetch failed: %s", _sanitize_audit_field(str(exc)))
-            return JSONResponse({"pulls": [], "reason": "forgejo-unreachable", "disabled_repos": 0})
+            return JSONResponse({"pulls": [], "reason": changes_forgejo.REASON_READ_FAILED, **defaults})
 
     @app.get("/api/audit/events")
     async def api_audit_events(request: Request):
